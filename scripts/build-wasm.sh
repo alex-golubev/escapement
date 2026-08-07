@@ -17,7 +17,11 @@ destination="$root/web/public/engine.wasm"
 # settings — no lto and no panic = "abort".
 cd "$root"
 
-if ! rustup target list --installed | grep -qx "$target"; then
+# An assignment rather than a pipeline: set -e catches a missing or broken
+# rustup here, so the branch below only fires for a genuinely absent target.
+installed="$(rustup target list --installed)"
+
+if ! grep -qx "$target" <<<"$installed"; then
     echo "Target $target is not installed." >&2
     echo "Install it with: rustup target add $target" >&2
     exit 1
@@ -43,6 +47,9 @@ expected=(
 )
 
 if command -v node >/dev/null 2>&1; then
+    # The single quotes are the point: ${...} below is a JS template literal
+    # and must reach node unexpanded.
+    # shellcheck disable=SC2016
     node --input-type=module -e '
         import { readFileSync } from "node:fs";
         const [file, ...expected] = process.argv.slice(1);
