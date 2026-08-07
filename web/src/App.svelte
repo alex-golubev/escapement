@@ -2,6 +2,7 @@
   import { describeStartFailure, startEngine } from './audio/host'
   import type { Command } from './audio/protocol'
   import type { RingWriter } from './audio/ring-writer'
+  import type { TelemetryReader } from './audio/telemetry'
   import type { WorkletMessage } from './audio/worklet-messages'
 
   // The readiness criterion for this milestone, checked on the page instead of
@@ -46,10 +47,38 @@
   let playing = $state(false)
   let bpm = $state(120) // DEFAULT_BPM in transport.rs; the engine starts here too
 
-  // Not `$state`: it is assigned once, and every reader of it is an event
-  // handler that runs long after. Making it reactive would be reactivity that
-  // nothing subscribes to.
+  // Not `$state`: both are assigned once, and every reader of them runs long
+  // after — an event handler, or the frame loop below. Making them reactive
+  // would be reactivity that nothing subscribes to.
   let commands: RingWriter | null = null
+  let telemetry: TelemetryReader | null = null
+
+  // What the engine says about itself. Unlike `playing` above, these are not
+  // the page's belief about the audio thread — they came from it.
+  let position = $state(0)
+  let peakL = $state(0)
+  let peakR = $state(0)
+
+  // Read per frame, not per quantum: at 48 kHz the engine publishes 375 times
+  // a second and a screen shows 60. Sampling the newest value is the whole
+  // point of a seqlock over a queue — nothing accumulates, nothing is missed
+  // that could have been displayed.
+  $effect(() => {
+    if (status !== 'running' || telemetry === null) return
+    const reader = telemetry
+
+    let frame = requestAnimationFrame(function tick() {
+      const reading = reader.read()
+      if (reading !== null) {
+        position = reading.position
+        peakL = reading.peakL
+        peakR = reading.peakR
+      }
+      frame = requestAnimationFrame(tick)
+    })
+
+    return () => cancelAnimationFrame(frame)
+  })
 
   // The click is what makes this legal: an AudioContext built outside a user
   // gesture stays suspended under the autoplay policy, silently.
@@ -70,7 +99,20 @@
     sampleRate = started.value.sampleRate
     protocolVersion = started.value.protocolVersion
     commands = started.value.commands
+    telemetry = started.value.telemetry
     status = 'running'
+  }
+
+  /**
+   * The position as a clock. Derived from the sample count and the rate the
+   * context reported — not accumulated here, because a second counter running
+   * beside the engine's is a second answer to drift away from it.
+   */
+  function formatClock(samples: number, rate: number | null): string {
+    if (rate === null || rate <= 0) return '—'
+    const total = samples / rate
+    const minutes = Math.floor(total / 60)
+    return `${minutes}:${(total - minutes * 60).toFixed(3).padStart(6, '0')}`
   }
 
   function receive(message: WorkletMessage): void {
@@ -149,10 +191,25 @@
         <output>{bpm} BPM</output>
       </label>
     </div>
+    <ul class="checks">
+      <li>
+        <code>transport</code>
+        <span>{position.toLocaleString('en-US')} · {formatClock(position, sampleRate)}</span>
+      </li>
+      <li>
+        <code>peak L / R</code>
+        <span class="peaks">
+          <span class="meter"><span style="width: {Math.min(1, peakL) * 100}%"></span></span>
+          <span class="meter"><span style="width: {Math.min(1, peakR) * 100}%"></span></span>
+          {peakL.toFixed(3)}
+        </span>
+      </li>
+    </ul>
+
     <p class="verdict ok">
-      The metronome is computed in Rust on the audio thread, and commands reach it through the
-      ring in shared memory. Nothing is read back yet — the position on screen would be the
-      page's own guess, so there is none.
+      The metronome is computed in Rust on the audio thread. Commands reach it through the ring
+      in shared memory, and the two numbers above came back the same way — read under a seqlock,
+      once per frame.
     </p>
   {:else}
     <button onclick={start} disabled={status === 'starting'}>
@@ -225,6 +282,29 @@
     min-width: 5.5rem;
     color: var(--dim);
     font-variant-numeric: tabular-nums;
+  }
+
+  .peaks {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  /* The engine's meter has ballistics — a peak falls at a fixed rate rather
+     than snapping back — precisely so that a reader running once a frame has
+     something to see. A bare number would hide that. */
+  .meter {
+    width: 3rem;
+    height: 0.4rem;
+    background: var(--line);
+    border-radius: 0.2rem;
+    overflow: hidden;
+  }
+
+  .meter span {
+    display: block;
+    height: 100%;
+    background: var(--ok);
   }
 
   button {

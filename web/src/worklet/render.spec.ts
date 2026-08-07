@@ -6,7 +6,14 @@
 
 import { describe, expect, it, vi } from 'vitest'
 
-import { WORD_CMD_READ, createRing, openRing } from '../audio/ring'
+import { TELEMETRY_TRANSPORT_LO } from '../audio/protocol'
+import {
+  WORD_CMD_READ,
+  WORD_TELEMETRY_SEQ,
+  WORD_TRANSPORT_LO,
+  createRing,
+  openRing,
+} from '../audio/ring'
 import { createWriter } from '../audio/ring-writer'
 import { openEngine } from './engine'
 import type { EngineState } from './engine'
@@ -81,6 +88,27 @@ describe('renderQuantum', () => {
     const output = [emptyBlock(QUANTUM)]
     expect(renderQuantum(state, [output])).toBe(QUANTUM)
     expect(Array.from(output[0])).toEqual(Array.from(state.views.outL))
+  })
+
+  it('publishes what the engine left in its telemetry block', () => {
+    // `engine_process` fills that block on the way out. Getting it into the
+    // ring is this function's last act, and the page has no other source.
+    const { state } = openedEngine()
+    state.views.telemetry[TELEMETRY_TRANSPORT_LO] = 4242
+
+    renderQuantum(state, [[emptyBlock(QUANTUM)]])
+
+    expect(state.ring.words[WORD_TRANSPORT_LO]).toBe(4242)
+    expect(state.ring.words[WORD_TELEMETRY_SEQ]).toBe(2)
+  })
+
+  it('publishes nothing for a block it never rendered', () => {
+    // Otherwise the same quantum is republished under a fresh sequence number,
+    // and a reader watching a stalled engine sees a healthy one holding still.
+    const { state } = openedEngine()
+
+    expect(renderQuantum(state, [])).toBe(0)
+    expect(state.ring.words[WORD_TELEMETRY_SEQ]).toBe(0)
   })
 
   it('allocates nothing on the block size Web Audio actually uses', () => {

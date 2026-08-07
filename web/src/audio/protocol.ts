@@ -26,6 +26,20 @@ export const PROTOCOL_VERSION = 1
 /** Mirror of `TELEMETRY_WORDS` in engine.rs. */
 export const TELEMETRY_WORDS = 4
 
+// Mirrors of the telemetry word indices in engine.rs. These address the block
+// the engine writes in WASM linear memory, which is not where those values end
+// up: the worklet copies them into the ring, whose own word indices live in
+// ring.ts. Two index spaces, and the copy is the only place they meet.
+export const TELEMETRY_TRANSPORT_LO = 0
+export const TELEMETRY_TRANSPORT_HI = 1
+/**
+ * Peaks travel as `f32` bits, put there by `f32::to_bits`. Reading them as
+ * numbers means reading the same bytes through a `Float32Array` — converting
+ * by hand would be a second, disagreeing definition of what an f32 is.
+ */
+export const TELEMETRY_PEAK_L = 2
+export const TELEMETRY_PEAK_R = 3
+
 /** Mirror of `COMMAND_SIZE` in commands.rs. */
 export const COMMAND_SIZE = 16
 

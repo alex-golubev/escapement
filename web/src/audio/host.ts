@@ -8,6 +8,8 @@
 import { createRing } from './ring'
 import { createWriter } from './ring-writer'
 import type { RingWriter } from './ring-writer'
+import { createReader } from './telemetry'
+import type { TelemetryReader } from './telemetry'
 import type { ReadyMessage, WorkletMessage } from './worklet-messages'
 
 /** A failure that is a value. The twin of the one in worklet/engine.ts. */
@@ -41,6 +43,8 @@ export interface EngineHandle {
   protocolVersion: number
   /** The one way to reach the audio thread. Every gesture goes through here. */
   commands: RingWriter
+  /** The one way to hear back from it. Read from `requestAnimationFrame`. */
+  telemetry: TelemetryReader
 }
 
 export type StartFailure =
@@ -181,6 +185,7 @@ async function bringUp(
     // ring is draining it; a writer handed out before that would accept
     // commands into a buffer nobody reads.
     commands: createWriter(ring),
+    telemetry: createReader(ring),
   })
 }
 

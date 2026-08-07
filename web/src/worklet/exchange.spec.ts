@@ -9,16 +9,23 @@
 
 import { describe, expect, it, vi } from 'vitest'
 
-import { COMMAND_SIZE } from '../audio/protocol'
+import {
+  COMMAND_SIZE,
+  TELEMETRY_TRANSPORT_HI,
+  TELEMETRY_TRANSPORT_LO,
+  TELEMETRY_WORDS,
+} from '../audio/protocol'
 import {
   RING_CAPACITY,
   WORD_CMD_READ,
   WORD_CMD_WRITE,
+  WORD_TELEMETRY_SEQ,
+  WORD_TRANSPORT_LO,
   createRing,
   openRing,
 } from '../audio/ring'
 import { createWriter } from '../audio/ring-writer'
-import { drainCommands } from './exchange'
+import { drainCommands, publishTelemetry } from './exchange'
 
 /** What the engine reports through `engine_cmd_capacity`. */
 const CMD_CAPACITY = 256
@@ -137,6 +144,79 @@ describe('drainCommands', () => {
     expect(Atomics.load(views.words, WORD_CMD_READ)).toBe(4)
   })
 })
+
+describe('publishTelemetry', () => {
+  it('leaves the sequence even, having taken it through odd', () => {
+    // The whole protocol in one assertion: a reader that sees an even number
+    // unchanged around its read knows the fields between are from one quantum.
+    const { views } = ring()
+
+    publishTelemetry(views, block(1_234))
+
+    expect(views.words[WORD_TELEMETRY_SEQ] % 2).toBe(0)
+    expect(views.words[WORD_TRANSPORT_LO]).toBe(1_234)
+  })
+
+  it('moves the sequence on every quantum, so a stalled writer is visible', () => {
+    // Republishing under the same number would make a stopped audio thread
+    // indistinguishable from a stopped transport.
+    const { views } = ring()
+    const seen: number[] = []
+
+    for (let quantum = 0; quantum < 3; quantum += 1) {
+      publishTelemetry(views, block(quantum * 128))
+      seen.push(views.words[WORD_TELEMETRY_SEQ])
+    }
+
+    expect(seen).toEqual([2, 4, 6])
+  })
+
+  it('keeps the sequence even across the point where a u32 runs out', () => {
+    // Parity is what the reader checks, and it survives the wrap only because
+    // 2^32 is even. Four billion quanta is a day and a half of playback.
+    const { views } = ring()
+    Atomics.store(views.words, WORD_TELEMETRY_SEQ, 0xfffffffe)
+
+    publishTelemetry(views, block(0))
+
+    expect(views.words[WORD_TELEMETRY_SEQ]).toBe(0)
+  })
+
+  it('recovers a sequence left odd by a writer that died mid-publish', () => {
+    // `panic = "abort"` kills the worklet outright, and a page that then
+    // builds a new processor over the same ring inherits the odd counter.
+    // Carried on as-is the parity stays inverted, and the reader — which has
+    // no way to tell that from a write in progress — refuses every frame from
+    // then on. Silent, permanent, and nowhere near its cause.
+    const { views } = ring()
+    Atomics.store(views.words, WORD_TELEMETRY_SEQ, 7)
+
+    publishTelemetry(views, block(99))
+
+    expect(views.words[WORD_TELEMETRY_SEQ] % 2).toBe(0)
+    expect(views.words[WORD_TRANSPORT_LO]).toBe(99)
+  })
+
+  it('allocates nothing', () => {
+    const { views } = ring()
+    const words = block(0)
+
+    const subarray = vi.spyOn(Uint32Array.prototype, 'subarray')
+    try {
+      publishTelemetry(views, words)
+      expect(subarray).not.toHaveBeenCalled()
+    } finally {
+      subarray.mockRestore()
+    }
+  })
+})
+
+function block(position: number): Uint32Array {
+  const words = new Uint32Array(TELEMETRY_WORDS)
+  words[TELEMETRY_TRANSPORT_LO] = position >>> 0
+  words[TELEMETRY_TRANSPORT_HI] = Math.floor(position / 2 ** 32)
+  return words
+}
 
 function ring() {
   const buffer = createRing()

@@ -6,8 +6,23 @@
 // locking, nothing thrown. In particular no `subarray` — it builds a view
 // object per call, and this runs 375 times a second.
 
-import { COMMAND_SIZE } from '../audio/protocol'
-import { RING_SLOT_MASK, WORD_CMD_READ, WORD_CMD_WRITE } from '../audio/ring'
+import {
+  COMMAND_SIZE,
+  TELEMETRY_PEAK_L,
+  TELEMETRY_PEAK_R,
+  TELEMETRY_TRANSPORT_HI,
+  TELEMETRY_TRANSPORT_LO,
+} from '../audio/protocol'
+import {
+  RING_SLOT_MASK,
+  WORD_CMD_READ,
+  WORD_CMD_WRITE,
+  WORD_PEAK_L,
+  WORD_PEAK_R,
+  WORD_TELEMETRY_SEQ,
+  WORD_TRANSPORT_HI,
+  WORD_TRANSPORT_LO,
+} from '../audio/ring'
 import type { RingViews } from '../audio/ring'
 
 /**
@@ -49,4 +64,47 @@ export function drainCommands(ring: RingViews, destination: Uint8Array): number 
   // bytes above are still being read until this line.
   Atomics.store(words, WORD_CMD_READ, (read + count) >>> 0)
   return count
+}
+
+/**
+ * Copy the engine's telemetry block into the ring, the other direction of
+ * step 5 in §3.5. Called once per quantum, after `engine_process`.
+ *
+ * The transport position is 64 bits and no single operation can carry it, so
+ * the reader would be free to catch the low word of one quantum beside the
+ * high word of the next — a jump of a day, at the exact moment the low word
+ * wraps. Hence the seqlock: the counter goes odd before the fields move and
+ * even after, and a reader that sees an odd value, or two different values
+ * around its read, knows to look again.
+ *
+ * The writer never waits for anything, which is what makes this usable from
+ * the audio thread at all. Only the reader retries.
+ */
+export function publishTelemetry(ring: RingViews, telemetry: Uint32Array): void {
+  const { words } = ring
+
+  // The worklet is the only writer, so its own last value is what is there.
+  // Keeping the counter here rather than in a field means nothing to reset and
+  // nothing that can disagree with the buffer.
+  //
+  // Rounded up to even before use. It is already even in every ordinary case,
+  // this writer having left it so — but a publish cut off half way leaves it
+  // odd, and under `panic = "abort"` a killed worklet is exactly that. Carried
+  // on from an odd value the parity stays inverted for good, and the page
+  // never reads telemetry again: a permanent failure inherited through the
+  // buffer from a processor that is already gone.
+  const seq = Atomics.load(words, WORD_TELEMETRY_SEQ)
+  const start = (seq + (seq & 1)) >>> 0
+
+  Atomics.store(words, WORD_TELEMETRY_SEQ, (start + 1) >>> 0)
+
+  Atomics.store(words, WORD_TRANSPORT_LO, telemetry[TELEMETRY_TRANSPORT_LO])
+  Atomics.store(words, WORD_TRANSPORT_HI, telemetry[TELEMETRY_TRANSPORT_HI])
+  // Copied as the bits they already are. Reading them as floats here and
+  // writing them back would round-trip through a second representation for no
+  // reason; the page has a Float32Array over these very bytes.
+  Atomics.store(words, WORD_PEAK_L, telemetry[TELEMETRY_PEAK_L])
+  Atomics.store(words, WORD_PEAK_R, telemetry[TELEMETRY_PEAK_R])
+
+  Atomics.store(words, WORD_TELEMETRY_SEQ, (start + 2) >>> 0)
 }

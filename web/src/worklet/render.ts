@@ -6,7 +6,7 @@
 
 import { buildViews } from './engine'
 import type { EngineState } from './engine'
-import { drainCommands } from './exchange'
+import { drainCommands, publishTelemetry } from './exchange'
 
 /**
  * Rebuild after the `memory.grow` detach described in `buildViews`. The
@@ -42,6 +42,12 @@ export function renderQuantum(state: EngineState, outputs: Float32Array[][]): nu
 
   copyChannel(left, state.views.outL)
   if (output.length > 1) copyChannel(output[1], state.views.outR)
+
+  // Last, and only on a quantum that actually rendered: `engine_process` wrote
+  // this block, and publishing without one would republish the quantum before
+  // under a fresh sequence number — a reader would see the position stand
+  // still and have no way to tell that from a stopped transport.
+  publishTelemetry(state.ring, state.views.telemetry)
 
   return frames
 }
