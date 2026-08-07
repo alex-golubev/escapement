@@ -1,4 +1,7 @@
 <script lang="ts">
+  import { startEngine } from './audio/host'
+  import type { WorkletMessage } from './audio/worklet-messages'
+
   // The readiness criterion for this milestone, checked on the page instead of
   // in devtools. Without cross-origin isolation there is no
   // `SharedArrayBuffer`, and without that there is no UI -> audio link at all.
@@ -6,20 +9,55 @@
   // that simply never sounds, it costs an evening.
 
   // Deliberately plain constants rather than `$state`: both are settled before
-  // the first paint and never change afterwards. Reactivity that nothing needs
+  // the first paint and never change afterward. Reactivity that nothing needs
   // is still something to read past later.
   const isolated = crossOriginIsolated
 
   // The flag alone does not prove the constructor is reachable, so probe the
   // thing we will actually be using.
-  let sabError: string | null = null
-  try {
-    new SharedArrayBuffer(1024)
-  } catch (error) {
-    sabError = error instanceof Error ? error.message : String(error)
+  const sabError = probeSharedArrayBuffer()
+  const isolationReady = isolated && sabError === null
+
+  function probeSharedArrayBuffer(): string | null {
+    try {
+      new SharedArrayBuffer(1024)
+      return null
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error)
+    }
   }
 
-  const ready = isolated && sabError === null
+  // These do move, so they are state. The contrast with the two constants above
+  // is the entire rule: reactivity where a value changes, nothing where it does
+  // not.
+  type Status = 'idle' | 'starting' | 'running' | 'failed'
+
+  let status = $state<Status>('idle')
+  let failure = $state<string | null>(null)
+  let sampleRate = $state<number | null>(null)
+  let protocolVersion = $state<number | null>(null)
+  let quantum = $state<number | null>(null)
+
+  // The click is what makes this legal: an AudioContext built outside a user
+  // gesture stays suspended under the autoplay policy, silently.
+  async function start(): Promise<void> {
+    status = 'starting'
+    failure = null
+
+    try {
+      const engine = await startEngine(receive)
+      sampleRate = engine.sampleRate
+      protocolVersion = engine.protocolVersion
+      status = 'running'
+    } catch (error) {
+      failure = error instanceof Error ? error.message : String(error)
+      status = 'failed'
+    }
+  }
+
+  function receive(message: WorkletMessage): void {
+    if (message.type === 'first-quantum') quantum = message.frames
+  }
 </script>
 
 <main>
@@ -35,13 +73,37 @@
       <code>new SharedArrayBuffer(1024)</code>
       <span>{sabError ?? 'ok'}</span>
     </li>
+
+    {#if status === 'running'}
+      <li class="ok">
+        <code>AudioContext.sampleRate</code>
+        <span>{sampleRate} Hz</span>
+      </li>
+      <li class:ok={quantum === 128} class:fail={quantum !== null && quantum !== 128}>
+        <code>render quantum</code>
+        <span>{quantum ?? 'awaiting first block'}</span>
+      </li>
+      <li class="ok">
+        <code>engine_protocol_version()</code>
+        <span>{protocolVersion}</span>
+      </li>
+    {/if}
   </ul>
 
-  <p class="verdict" class:ok={ready} class:fail={!ready}>
-    {ready
-      ? 'Isolation is in place. Next: the worklet and the first sound.'
-      : 'Not isolated — check the COOP/COEP headers in vite.config.ts.'}
-  </p>
+  {#if !isolationReady}
+    <p class="verdict fail">Not isolated — check the COOP/COEP headers in vite.config.ts.</p>
+  {:else if status === 'failed'}
+    <p class="verdict fail">{failure}</p>
+  {:else if status === 'running'}
+    <p class="verdict ok">
+      Engine instantiated in the worklet and connected. It renders silence: the
+      transport is stopped and no commands reach it yet.
+    </p>
+  {:else}
+    <button onclick={start} disabled={status === 'starting'}>
+      {status === 'starting' ? 'Starting…' : 'Start engine'}
+    </button>
+  {/if}
 </main>
 
 <style>
@@ -84,6 +146,26 @@
 
   .verdict {
     margin-top: 2rem;
+  }
+
+  button {
+    margin-top: 2rem;
+    padding: 0.6rem 1.2rem;
+    font: inherit;
+    color: var(--fg);
+    background: transparent;
+    border: 1px solid var(--line);
+    border-radius: 0.25rem;
+    cursor: pointer;
+  }
+
+  button:hover:not(:disabled) {
+    border-color: var(--dim);
+  }
+
+  button:disabled {
+    color: var(--dim);
+    cursor: default;
   }
 
   .ok {
