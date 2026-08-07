@@ -8,21 +8,36 @@ A browser DAW. All audio is computed by a single Rust engine compiled to WASM an
 
 ## Commands
 
+Rust, from the repository root:
+
 ```sh
 cargo test                                   # all tests, native target
 cargo test transport::                       # one module
 cargo test clicks_land_exactly_on_beats      # one test
 cargo check
 ./scripts/build-wasm.sh                      # release WASM → web/public/engine.wasm
+./scripts/build-worklet.sh                   # esbuild bundle → web/public/worklet/processor.js
+```
+
+TypeScript, from `web/` (pnpm, not npm):
+
+```sh
+pnpm dev                                     # Vite, with the COOP/COEP headers
+pnpm test                                    # vitest, one run
+pnpm test:watch
+pnpm lint                                    # eslint, type-aware
+pnpm format                                  # prettier --write
+pnpm check                                   # svelte-check + tsc over all three projects
+pnpm build:worklet                           # alias for ../scripts/build-worklet.sh
 ```
 
 `scripts/build-wasm.sh` must be used instead of a bare `cargo build`: it forces the build from the workspace root (see profiles below), checks that the `wasm32-unknown-unknown` target is installed, and verifies via `node` that the compiled module still exports every ABI function plus `memory`. **When adding or renaming an exported ABI function, update the `expected` array in that script** — a lost `#[unsafe(no_mangle)]` otherwise produces a successful build and a silently useless module.
 
-The planned `web/` half (Vite host, worklet, SAB ring writer, Svelte UI) does not exist yet — `web/public/engine.wasm` is a build artifact and is gitignored.
+Both build artifacts — `web/public/engine.wasm` and `web/public/worklet/processor.js` — are gitignored and reproduced in full by their scripts. Neither is rebuilt by `pnpm dev`: the worklet is outside Vite's module graph, so **it must be rebuilt by hand after every edit to `src/worklet/`**. `pnpm test` fails loudly rather than skipping when `engine.wasm` is absent.
 
 ## Current state
 
-The first milestone is the skeleton: a metronome computed in Rust, and nothing beyond it. The Rust half is done — transport, command codec, ring decoding, metronome, C-ABI. Still missing: the worklet, the SAB ring buffer, the Vite host with COOP/COEP headers, and the first sound.
+The first milestone is the skeleton: a metronome computed in Rust, and nothing beyond it. Done: the Rust half (transport, command codec, ring decoding, metronome, C-ABI), the Vite host with COOP/COEP headers, and the worklet — the engine is instantiated on the audio thread and renders. Still missing: the SAB ring buffer, and the first sound. Nothing sends a command yet, so the transport never starts and the output is silence by construction.
 
 **The rule for this milestone is to stop at the metronome.** No sampler, no pattern, no extra ABI functions. The temptation to keep going is strongest here, because the scaffolding is already in front of you — and a skeleton that was never finished is a skeleton verified nowhere.
 
@@ -59,6 +74,24 @@ This is not stylistic. Rendering proceeds in segments *between* commands, so a q
 - `commands::tests::wire_format_is_pinned` fails on any byte-layout change — that failure is the signal to update both sides.
 
 Transport position is `u64` end to end, carried as two `u32` words (lo/hi) in both the protocol and the telemetry. On the JS side it stays a plain `number` (exact to 2^53); `BigInt` is not used anywhere.
+
+### The TypeScript half splits by what a test can reach
+
+`AudioWorkletProcessor` cannot be constructed outside a browser, and `registerProcessor` runs on import — so anything left inside `processor.ts` is code no test will ever run, and nothing can import out of it either. The split follows from that, not from taste:
+
+- `worklet/processor.ts` — only what needs a browser: the class shape, the port, the render loop.
+- `worklet/engine.ts` — bring-up as decisions. `openEngine` takes `EngineExports` rather than a `WebAssembly.Module` precisely so a fake can report the wrong version or refuse the arguments; the real artifact never will on demand.
+- `worklet/render.ts` — the hot path, under different rules from everything around it.
+- `audio/host.ts` — main-thread bring-up: compile, load, connect, and the check that the context actually reached `running`.
+- `audio/protocol.ts` — the JS half of the two-file contract above.
+
+**Failures are values, not exceptions.** Forced, not stylistic: the processor constructor cannot let an exception escape — it would reach the page as a bare `processorerror` event carrying no reason at all — and on the page every failure presents identically, as silence, so the case has to survive to somewhere it can be described. Each side has a tagged error union and a `describe*` function whose `switch` has no `default`. `@typescript-eslint/switch-exhaustiveness-check` is on, and both unions are pinned again by a test keyed on `Record<Kind, …>`, so adding a case fails to compile in two places at once.
+
+`engine.ts` and `host.ts` each declare their own `Result` rather than sharing one. They never exchange these values — different threads, neither calls the other — so a shared type would link them by name without linking anything real. The tests unwrap both through one structural helper, which is the only identity that has to hold.
+
+**Nothing allocates in `renderQuantum`.** At 48 kHz that path runs 375 times a second on the one thread that must not collect garbage. `subarray` builds a new view object per call, which is why the whole-view copy is a separate branch and not a micro-optimisation; `render.spec.ts` spies on `Float32Array.prototype.subarray` to keep it that way.
+
+**Tests are `*.spec.ts` and sit next to the module they cover. `src/` holds nothing else that is test-only** — support and fakes live in `web/tests/support/`, so what ships and what does not is visible from the path rather than inferred from a filename. `web/tests/` also holds the one spec with no module to sit beside: `engine-abi.spec.ts` instantiates the compiled wasm and checks it against `protocol.ts`, which is the contract neither side can verify alone.
 
 ### Everything crossing the ABI is untrusted
 
