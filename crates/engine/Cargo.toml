@@ -1,0 +1,13 @@
+[package]
+name = "engine"
+version = "0.1.0"
+edition.workspace = true
+publish = false
+
+# cdylib — so the linker emits a .wasm.
+# rlib — so the crate also links as a library: without it, integration tests
+# in tests/ and benchmarks will not build at all. See §5.2.
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
