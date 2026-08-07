@@ -1,0 +1,26 @@
+/* Baseline only. The real UI arrives with the step grid and the mixer strip;
+   nothing here is meant to survive that. */
+
+:root {
+  --bg: #16161a;
+  --fg: #e8e8ea;
+  --dim: #8a8a94;
+  --line: #2a2a31;
+  --ok: #6cc07a;
+  --fail: #e0685f;
+
+  color-scheme: dark;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  line-height: 1.5;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+}
+
+code {
+  font-family: ui-monospace, monospace;
+  font-size: 0.9em;
+}
