@@ -1,0 +1,28 @@
+{
+  "compilerOptions": {
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.test.tsbuildinfo",
+    "target": "es2023",
+    /**
+     * `WebAssembly` is declared in lib.dom and nowhere else — @types/node does
+     * not provide it. The tests run under Node and touch no DOM API beyond
+     * that one namespace; the lib is here for it alone.
+     */
+    "lib": ["ES2023", "DOM"],
+    "types": ["node"],
+
+    /* Bundler mode: Vitest resolves these files through Vite. */
+    "module": "preserve",
+    "verbatimModuleSyntax": true,
+    "moduleDetection": "force",
+    "isolatedModules": true,
+    "noEmit": true,
+
+    /* Linting */
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "erasableSyntaxOnly": true,
+    "noFallthroughCasesInSwitch": true
+  },
+  "include": ["tests/**/*.ts"]
+}

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { startEngine } from './audio/host'
+  import { describeStartFailure, startEngine } from './audio/host'
   import type { WorkletMessage } from './audio/worklet-messages'
 
   // The readiness criterion for this milestone, checked on the page instead of
@@ -44,15 +44,19 @@
     status = 'starting'
     failure = null
 
-    try {
-      const engine = await startEngine(receive)
-      sampleRate = engine.sampleRate
-      protocolVersion = engine.protocolVersion
-      status = 'running'
-    } catch (error) {
-      failure = error instanceof Error ? error.message : String(error)
+    // No try/catch: `startEngine` reports every way it can fail as a value, so
+    // a catch here could only ever hide a bug in it.
+    const started = await startEngine(receive)
+
+    if (!started.ok) {
+      failure = describeStartFailure(started.error)
       status = 'failed'
+      return
     }
+
+    sampleRate = started.value.sampleRate
+    protocolVersion = started.value.protocolVersion
+    status = 'running'
   }
 
   function receive(message: WorkletMessage): void {
@@ -96,8 +100,8 @@
     <p class="verdict fail">{failure}</p>
   {:else if status === 'running'}
     <p class="verdict ok">
-      Engine instantiated in the worklet and connected. It renders silence: the
-      transport is stopped and no commands reach it yet.
+      Engine instantiated in the worklet and connected. It renders silence: the transport is
+      stopped and no commands reach it yet.
     </p>
   {:else}
     <button onclick={start} disabled={status === 'starting'}>

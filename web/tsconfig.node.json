@@ -13,11 +13,20 @@
     "moduleDetection": "force",
     "noEmit": true,
 
+    /**
+     * The config files are JS and were in no project at all, so `pnpm check`
+     * ignored them while the editor checked them under settings of its own —
+     * and reported two problems no command-line tool could see. Being checked
+     * by one tool and not the other is worse than either answer.
+     */
+    "allowJs": true,
+    "checkJs": true,
+
     /* Linting */
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "erasableSyntaxOnly": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["vite.config.ts"]
+  "include": ["vite.config.ts", "eslint.config.js", "svelte.config.js"]
 }

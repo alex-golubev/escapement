@@ -43,9 +43,8 @@ fi
 # build-wasm.sh guards against, and just as far from its cause.
 #
 # Only value imports can trip this; `import type` is erased before bundling even
-# starts. Today the processor imports nothing else, so the check has nothing to
-# bite on yet — it becomes load-bearing as soon as the worklet pulls a real
-# constant out of the command protocol.
+# starts. The processor pulls real values out of engine.ts, render.ts and the
+# command protocol, so the check has something to bite on.
 if grep -nE '^[[:space:]]*(import|export)[[:space:]]' "$destination"; then
     echo "Bundle still contains import/export — it will not load in AudioWorkletGlobalScope" >&2
     exit 1

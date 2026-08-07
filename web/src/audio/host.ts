@@ -1,10 +1,33 @@
 // Main-thread setup for the audio engine: compile the module, load the
 // worklet, hand the two together and connect the result to the speakers.
+//
+// Nothing here throws. Every way this can fail is a case in `StartFailure`,
+// which is the point of the file: from the outside these failures are one
+// event — the page is silent — while the fix for each is different.
 
 import type { ReadyMessage, WorkletMessage } from './worklet-messages'
 
+/** A failure that is a value. The twin of the one in worklet/engine.ts. */
+type Result<T, E> =
+  { readonly ok: true; readonly value: T } | { readonly ok: false; readonly error: E }
+
+const ok = <T>(value: T): Result<T, never> => ({ ok: true, value })
+const err = <E>(error: E): Result<never, E> => ({ ok: false, error })
+
+function messageOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
 const WASM_URL = '/engine.wasm'
 const WORKLET_URL = '/worklet/processor.js'
+
+/**
+ * How long the processor gets to say anything at all. It posts `ready` from
+ * its own constructor, so the bound is only for the case where it never
+ * answers — without one that is a promise pending forever and a button stuck
+ * on "Starting…".
+ */
+const READY_TIMEOUT_MS = 5000
 
 export interface EngineHandle {
   context: AudioContext
@@ -15,72 +38,172 @@ export interface EngineHandle {
   protocolVersion: number
 }
 
+export type StartFailure =
+  | { readonly kind: 'context-unavailable'; readonly message: string }
+  | { readonly kind: 'wasm-unavailable'; readonly message: string }
+  | { readonly kind: 'worklet-unavailable'; readonly message: string }
+  | { readonly kind: 'node-unavailable'; readonly message: string }
+  | { readonly kind: 'processor-failed'; readonly message: string }
+  | { readonly kind: 'processor-crashed' }
+  | { readonly kind: 'processor-silent'; readonly ms: number }
+  | { readonly kind: 'context-suspended'; readonly state: AudioContextState }
+
+export function describeStartFailure(failure: StartFailure): string {
+  switch (failure.kind) {
+    case 'context-unavailable':
+      return `The browser would not open an AudioContext: ${failure.message}`
+    case 'wasm-unavailable':
+      return `${WASM_URL} could not be fetched or compiled: ${failure.message}. Build it with ./scripts/build-wasm.sh`
+    case 'worklet-unavailable':
+      return `${WORKLET_URL} could not be loaded: ${failure.message}. Build it with pnpm build:worklet`
+    case 'node-unavailable':
+      return `The worklet loaded but no processor named "engine" was registered in it: ${failure.message}`
+    case 'processor-failed':
+      return failure.message
+    case 'processor-crashed':
+      return 'The worklet processor threw before it could report a reason'
+    case 'processor-silent':
+      return `The worklet processor said nothing within ${failure.ms} ms — it was constructed but never reported ready or failed`
+    case 'context-suspended':
+      return `The audio context is ${failure.state}, not running. Autoplay policy blocks a context built outside a user gesture, and it does so silently`
+  }
+}
+
 /**
  * Start the engine and connect it to the destination.
  *
  * Must be called from a user gesture. Built outside one, the context stays
- * `suspended` under the autoplay policy: nothing throws, nothing logs, and no
- * sound ever arrives.
+ * `suspended` under the autoplay policy — nothing throws and nothing logs,
+ * which is why the state is checked at the end rather than assumed.
  */
 export async function startEngine(
   onMessage?: (message: WorkletMessage) => void,
-): Promise<EngineHandle> {
-  const context = new AudioContext()
-
+): Promise<Result<EngineHandle, StartFailure>> {
+  let context: AudioContext
   try {
-    // Compiling here rather than inside the worklet is not a preference:
-    // AudioWorkletGlobalScope has neither fetch nor XMLHttpRequest. A compiled
-    // WebAssembly.Module does survive structured clone, so it can be handed
-    // over in processorOptions and instantiated synchronously on the far side.
-    //
-    // The two loads do not depend on each other, so they overlap.
-    const [module] = await Promise.all([
-      WebAssembly.compileStreaming(fetch(WASM_URL)),
-      context.audioWorklet.addModule(WORKLET_URL),
-    ])
+    context = new AudioContext()
+  } catch (error) {
+    return err({ kind: 'context-unavailable', message: messageOf(error) })
+  }
 
-    const node = new AudioWorkletNode(context, 'engine', {
+  const started = await bringUp(context, onMessage)
+
+  // Released only on failure, which is the one shape a plain `acquireRelease`
+  // does not give you: on success the context is the thing being returned and
+  // must outlive this call. Left behind on a failed start it would hold an
+  // audio device open for the lifetime of the page.
+  if (!started.ok) await context.close().catch(() => undefined)
+
+  return started
+}
+
+async function bringUp(
+  context: AudioContext,
+  onMessage: ((message: WorkletMessage) => void) | undefined,
+): Promise<Result<EngineHandle, StartFailure>> {
+  // Compiling here rather than inside the worklet is not a preference:
+  // AudioWorkletGlobalScope has neither fetch nor XMLHttpRequest. A compiled
+  // module does survive structured clone, so it goes over in processorOptions.
+  //
+  // The loads overlap, but each maps its own rejection before they join: the
+  // two artifacts are rebuilt by different scripts, so "one of them is
+  // missing" would not be an answer anyone could act on.
+  const [module, worklet] = await Promise.all([
+    WebAssembly.compileStreaming(fetch(WASM_URL)).then(ok, (error: unknown) =>
+      err({ kind: 'wasm-unavailable' as const, message: messageOf(error) }),
+    ),
+    context.audioWorklet.addModule(WORKLET_URL).then(
+      () => ok(undefined),
+      (error: unknown) =>
+        err({ kind: 'worklet-unavailable' as const, message: messageOf(error) }),
+    ),
+  ])
+  if (!module.ok) return module
+  if (!worklet.ok) return worklet
+
+  let node: AudioWorkletNode
+  try {
+    node = new AudioWorkletNode(context, 'engine', {
       numberOfInputs: 0,
       numberOfOutputs: 1,
       outputChannelCount: [2],
-      processorOptions: { module },
+      processorOptions: { module: module.value },
     })
-
-    const ready = await waitForReady(node, onMessage)
-
-    node.connect(context.destination)
-    await context.resume()
-
-    return {
-      context,
-      node,
-      sampleRate: ready.sampleRate,
-      protocolVersion: ready.protocolVersion,
-    }
   } catch (error) {
-    // A context left behind on a failed start holds an audio device open for
-    // the lifetime of the page.
-    await context.close()
-    throw error
+    // The module loaded but `registerProcessor('engine', …)` never ran in it,
+    // or ran under another name.
+    return err({ kind: 'node-unavailable', message: messageOf(error) })
   }
+
+  const ready = await awaitReady(node, onMessage, READY_TIMEOUT_MS)
+  if (!ready.ok) return ready
+
+  node.connect(context.destination)
+  await context.resume()
+
+  // `resume()` does not reject when the autoplay policy refuses; the context
+  // simply stays suspended. This is the check that turns the failure this
+  // file's own header warns about into something reportable.
+  if (context.state !== 'running') {
+    return err({ kind: 'context-suspended', state: context.state })
+  }
+
+  return ok({
+    context,
+    node,
+    sampleRate: ready.value.sampleRate,
+    protocolVersion: ready.value.protocolVersion,
+  })
 }
 
-function waitForReady(
-  node: AudioWorkletNode,
-  onMessage?: (message: WorkletMessage) => void,
-): Promise<ReadyMessage> {
-  return new Promise((resolve, reject) => {
+/**
+ * The part of `AudioWorkletNode` that bring-up listens to. Narrow on purpose:
+ * a real node cannot be constructed outside a browser, and against this shape
+ * every failure below is reachable from a test.
+ */
+export interface ReadyEndpoint {
+  port: { onmessage: ((event: MessageEvent<WorkletMessage>) => void) | null }
+  // `ErrorEvent` and not `Event`: that is how lib.dom types the property, and
+  // a wider parameter here would stop a real node from fitting the shape.
+  onprocessorerror: ((event: ErrorEvent) => void) | null
+}
+
+/**
+ * Wait for the processor to report how it went. The listener stays installed
+ * afterward on purpose: `first-quantum` arrives later, and `onMessage` is the
+ * only thing that will see it.
+ */
+export function awaitReady(
+  node: ReadyEndpoint,
+  onMessage: ((message: WorkletMessage) => void) | undefined,
+  timeoutMs: number,
+): Promise<Result<ReadyMessage, StartFailure>> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(
+      () => resolve(err({ kind: 'processor-silent', ms: timeoutMs })),
+      timeoutMs,
+    )
+
+    // A second `resolve` is a no-op, so a late message cannot overturn the
+    // verdict — but the timer still has to be cleared, or it holds the page
+    // awake for whatever it has left to run.
+    const settle = (result: Result<ReadyMessage, StartFailure>): void => {
+      clearTimeout(timer)
+      resolve(result)
+    }
+
     node.port.onmessage = (event: MessageEvent<WorkletMessage>) => {
       const message = event.data
       onMessage?.(message)
-      if (message.type === 'ready') resolve(message)
-      else if (message.type === 'failed') reject(new Error(message.message))
+      if (message.type === 'ready') settle(ok(message))
+      else if (message.type === 'failed') {
+        settle(err({ kind: 'processor-failed', message: message.message }))
+      }
     }
 
     // Covers whatever escapes before the processor can describe its own
-    // failure — this event carries no reason, which is exactly why the
-    // processor reports by message instead of throwing.
-    node.onprocessorerror = () =>
-      reject(new Error('The worklet processor threw before it could report a reason'))
+    // failure. The event carries no reason, which is why the processor reports
+    // by message instead of throwing.
+    node.onprocessorerror = () => settle(err({ kind: 'processor-crashed' }))
   })
 }

@@ -1,4 +1,4 @@
-import { defineConfig } from 'vite'
+import { defineConfig } from 'vitest/config'
 import { svelte } from '@sveltejs/vite-plugin-svelte'
 
 // Cross-origin isolation. Without these two headers `SharedArrayBuffer` does
@@ -19,4 +19,14 @@ export default defineConfig({
   plugins: [svelte()],
   server: { headers: isolation },
   preview: { headers: isolation },
+  test: {
+    // Nothing under test needs a DOM: the engine tests read the compiled wasm
+    // off disk and call it. A test that does need one asks for it per file,
+    // rather than every suite paying for jsdom it does not use.
+    environment: 'node',
+    // Tests sit next to the module they cover; `tests/` holds the two things
+    // that have no module to sit next to — what examines a build artifact,
+    // and the support the suites share.
+    include: ['src/**/*.spec.ts', 'tests/**/*.spec.ts'],
+  },
 })
