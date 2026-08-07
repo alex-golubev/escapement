@@ -6,7 +6,7 @@ publish = false
 
 # cdylib — so the linker emits a .wasm.
 # rlib — so the crate also links as a library: without it, integration tests
-# in tests/ and benchmarks will not build at all. See §5.2.
+# in tests/ and benchmarks will not build at all.
 [lib]
 crate-type = ["cdylib", "rlib"]
 

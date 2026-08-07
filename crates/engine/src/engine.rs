@@ -1,21 +1,21 @@
 //! The heart of the engine: applying commands and rendering a quantum.
 //!
 //! `Engine` owns neither the output buffers nor the exchange area — it is
-//! handed slices. Ownership of that memory sits in the C-ABI layer (§5.2):
-//! that is where addresses must stay stable between calls, and that is where
-//! all the `unsafe` lives. What remains here is pure DSP, testable with plain
+//! handed slices. Ownership of that memory sits in the C-ABI layer: that is
+//! where addresses must stay stable between calls, and that is where all the
+//! `unsafe` lives. What remains here is pure DSP, testable with plain
 //! `cargo test` on the native target and able to render anywhere — including
-//! into the offline render buffer at M3.
+//! into an offline render buffer.
 //!
-//! The rules of §3.10 apply from the first line: no allocation in `process`,
-//! feedback state is flushed below a threshold, the module has a `reset`,
-//! behaviour is deterministic.
+//! The house rules for sample-processing code apply from the first line: no
+//! allocation in `process`, feedback state flushed below a threshold, an
+//! explicit `reset`, deterministic behavior.
 
 use crate::commands::Command;
 use crate::ring::CommandBlock;
 use crate::transport::Transport;
 
-/// Telemetry words, in the order the worklet copies them into the SAB (§6.2).
+/// Telemetry words, in the order the worklet copies them into the SAB.
 ///
 /// `underrun_count` is deliberately absent: the engine cannot notice a missed
 /// `process` call at all — only the worklet observes that, and it writes that
@@ -28,7 +28,7 @@ pub const TELEMETRY_TRANSPORT_HI: usize = 1;
 pub const TELEMETRY_PEAK_L: usize = 2;
 pub const TELEMETRY_PEAK_R: usize = 3;
 
-/// Denormal flush threshold (§3.10, rule 1).
+/// Denormal flush threshold.
 const DENORMAL_THRESHOLD: f32 = 1e-20;
 
 /// Flush denormals to zero. WASM has no FPU-level flush-to-zero, so decaying
@@ -48,9 +48,9 @@ const CLICK_DECAY_SECONDS: f32 = 0.008;
 const CLICK_GATE: f32 = 1e-4;
 const CLICK_GAIN: f32 = 0.25;
 
-/// Accent every fourth beat. Bar length is fixed at M0: time signatures are
-/// M2 work, and without an accent you cannot tell a steady metronome from a
-/// drifting one by ear.
+/// Accent every fourth beat. The bar length is fixed for now — time
+/// signatures come later — and without an accent you cannot tell a steady
+/// metronome from a drifting one by ear.
 const BEATS_PER_BAR: i64 = 4;
 
 /// How far a peak reading falls per second. A meter needs ballistics: the UI
@@ -108,9 +108,9 @@ impl Click {
             self.phase -= std::f32::consts::TAU;
         }
 
-        // The envelope is feedback state (§3.10, rule 1). The gate switches
-        // off a finished voice; fz is the backstop against denormals should
-        // the gate threshold ever be lowered.
+        // The envelope is feedback state. The gate switches off a finished
+        // voice; fz is the backstop against denormals should the gate
+        // threshold ever be lowered.
         let env = fz(self.env * self.env_decay);
         self.env = if env < CLICK_GATE { 0.0 } else { env };
 
@@ -141,8 +141,8 @@ impl Engine {
         self.peak.get(channel).copied().unwrap_or(0.0)
     }
 
-    /// Return to the "as constructed" state (§3.10, rule 5). Without it the
-    /// offline render would be comparing a warmed-up instance to a cold one.
+    /// Return to the "as constructed" state. Without it the offline render
+    /// would be comparing a warmed-up instance to a cold one.
     pub fn reset(&mut self) {
         let sample_rate = self.transport.sample_rate();
         self.transport = Transport::new(sample_rate);
@@ -185,15 +185,14 @@ impl Engine {
             let mut next_edge = frames;
             while cursor < total {
                 let Some(entry) = block.entry(cursor, quantum_start, frames as u32) else {
-                    // An unrecognised record means we are out of sync with
+                    // An unrecognized record means we are out of sync with
                     // `protocol.ts`. Skip it: stopping mid-quantum is worse.
                     cursor += 1;
                     continue;
                 };
                 match entry.offset {
-                    // The instant has not arrived yet. This cannot happen at
-                    // M0 — the UI only sends immediate commands; a queue of
-                    // deferred ones arrives together with scheduling ahead.
+                    // Not this quantum's instant — impossible while the UI
+                    // only sends immediate commands.
                     None => cursor += 1,
                     Some(offset) if offset as usize <= done => {
                         self.apply(entry.record.command);
@@ -218,9 +217,9 @@ impl Engine {
     }
 
     /// Telemetry to be copied into the SAB. Position is split into two `u32`
-    /// words (§6.1); the seqlock around them is the worklet's job, because
-    /// what needs protecting is the moment of reading on the other side, not
-    /// the write here.
+    /// words; the seqlock around them is the worklet's job, because what needs
+    /// protecting is the moment of reading on the other side, not to write
+    /// here.
     pub fn write_telemetry(&self, words: &mut [u32]) {
         if words.len() < TELEMETRY_WORDS {
             return;
@@ -266,7 +265,7 @@ impl Engine {
             }
 
             let sample = self.click.next_sample();
-            // §3.10, rule 3: a NaN poisons feedback forever.
+            // A NaN poisons feedback forever.
             debug_assert!(sample.is_finite(), "non-finite sample out of the metronome");
 
             out_l[frame] = sample;
@@ -289,7 +288,7 @@ impl Engine {
             // f32::max returns the non-NaN argument, so a stray NaN on the
             // input will not poison the meter reading permanently.
             let block_peak = out.iter().fold(0.0f32, |peak, s| peak.max(s.abs()));
-            // The falling reading is feedback state (§3.10, rule 1).
+            // The falling reading is feedback state.
             self.peak[channel] = fz(self.peak[channel] * decay).max(block_peak);
         }
     }
@@ -310,13 +309,13 @@ mod tests {
         records.iter().flat_map(|r| r.encode()).collect()
     }
 
-    /// One quantum. Also checks the M0 mono invariant: the channels match.
+    /// One quantum. Also checks the mono invariant: the channels match.
     fn quantum(engine: &mut Engine, records: &[Record]) -> Vec<f32> {
         let bytes = encode(records);
         let mut left = vec![0.0f32; Q];
         let mut right = vec![0.0f32; Q];
         engine.process(&mut left, &mut right, &bytes, records.len() as u32);
-        assert_eq!(left, right, "the M0 engine is mono: channels must match");
+        assert_eq!(left, right, "the engine is mono: channels must match");
         left
     }
 
@@ -391,7 +390,7 @@ mod tests {
         assert_eq!(onsets(&first), vec![0], "playback begins on a beat");
     }
 
-    /// The milestone's key test: clicks land exactly on beats and none is lost.
+    /// The key test: clicks land exactly on beats and none is lost.
     #[test]
     fn clicks_land_exactly_on_beats() {
         for bpm in [120.0f32, AWKWARD_BPM, 200.0] {
@@ -405,7 +404,7 @@ mod tests {
             };
             let expected: Vec<usize> = (0i64..)
                 .map(|beat| reference.sample_of_beat(beat as f64) as usize)
-                // An onset is recognised by the sample that follows it, so a
+                // An onset is recognized by the sample that follows it, so a
                 // beat at the very end of the signal does not count.
                 .take_while(|&pos| pos + 1 < signal.len())
                 .collect();
@@ -462,7 +461,7 @@ mod tests {
     #[test]
     fn click_tail_ends_in_exact_silence() {
         // The voice gate must produce an exact zero, not an endless denormal
-        // tail (§3.10, rule 1).
+        // tail.
         let (mut engine, _) = started(120.0);
         let quiet = render(&mut engine, 100); // ~0.27 s; the next beat is far off
         assert_eq!(
@@ -597,8 +596,7 @@ mod tests {
     #[test]
     fn peak_decays_to_exact_zero() {
         // The meter reading decays forever and, without an explicit flush,
-        // slides into denormals (§3.10, rule 1). An exact zero is the proof
-        // that fz is doing its job.
+        // slides into denormals. An exact zero is the proof that fz works.
         let (mut engine, _) = started(120.0);
         quantum(&mut engine, &[Record::immediate(Command::Stop)]);
         assert!(engine.peak(0) > 0.0);
@@ -610,8 +608,7 @@ mod tests {
 
     #[test]
     fn render_is_deterministic() {
-        // §3.10, rule 4. Without it §9 does not work: the golden tests at M3
-        // compare bit for bit.
+        // The golden render tests compare a bit for bit and rest on this.
         fn script(engine: &mut Engine) -> Vec<f32> {
             let mut signal = quantum(
                 engine,
@@ -631,8 +628,6 @@ mod tests {
 
     #[test]
     fn reset_restores_the_initial_state() {
-        // §3.10, rule 5: otherwise the offline render compares a warmed-up
-        // instance to a cold one and diverges from realtime.
         let mut used = Engine::new(SR);
         quantum(&mut used, &[Record::immediate(Command::SetBpm { bpm: 63.5 })]);
         quantum(&mut used, &[Record::immediate(Command::Play)]);
@@ -643,8 +638,6 @@ mod tests {
         assert_eq!(used.transport().sample_pos(), 0);
         assert_eq!(used.peak(0), 0.0);
 
-        // The same script on a reset engine and on a fresh one must produce
-        // a bit-identical signal.
         let (mut fresh, mut expected) = started(AWKWARD_BPM);
         expected.extend(render(&mut fresh, 200));
 

@@ -1,13 +1,13 @@
 //! Parsing the block of commands the worklet copied out of the SAB.
 //!
 //! The ring itself lives in a `SharedArrayBuffer` and is invisible to the
-//! engine (§3.5). At the top of each quantum the worklet drains whatever is
+//! engine. At the top of each quantum the worklet drains whatever is
 //! available, copies those bytes into WASM linear memory and passes the record
 //! count to `engine_process`. This module is what happens to them next:
 //! decoding, and placing them on frames within the quantum.
 //!
 //! The input is untrusted end to end. Another thread writes the bytes, the
-//! record count comes from there too, and the only synchronisation between
+//! record count comes from there too, and the only synchronization between
 //! writer and reader is a pair of atomic indices — so any value here may turn
 //! out to be garbage. No function in this module may panic: under
 //! `panic = "abort"` a panic kills the whole worklet, and sound is gone until
@@ -18,7 +18,7 @@ use crate::commands::{COMMAND_SIZE, Record};
 /// How many records the engine accepts per quantum.
 ///
 /// This is the size of the exchange area in WASM linear memory, not the size
-/// of the ring in the SAB (1024 records there, §6.2). Per quantum the worklet
+/// of the ring in the SAB (1024 records there). Per quantum the worklet
 /// copies no more than this; the remainder waits for the next quantum — 128
 /// frames later, i.e. under 3 ms. `engine_cmd_capacity` returns this value.
 pub const CMD_CAPACITY: usize = 256;
@@ -30,9 +30,8 @@ pub struct Entry {
     /// The frame within the quantum at which the command must be applied.
     ///
     /// `None` — the instant has not arrived yet, so this record is not for
-    /// this quantum. What to do about it is the engine's call: at M0 no such
-    /// records occur (the UI only sends immediate commands), later this is
-    /// where a queue of deferred commands will hook in.
+    /// this quantum. What to do about it is the engine's call: no such records
+    /// occur yet, since the UI only sends immediate commands.
     pub offset: Option<u32>,
 }
 
@@ -52,7 +51,7 @@ impl<'a> CommandBlock<'a> {
         Self { bytes, count: (count as usize).min(available) }
     }
 
-    /// Number of records in the block before decoding. Unrecognised ones
+    /// Number of records in the block before decoding. Unrecognized ones
     /// count too.
     pub fn len(&self) -> usize {
         self.count
@@ -64,7 +63,7 @@ impl<'a> CommandBlock<'a> {
 
     /// A record by index, with its frame of application computed.
     ///
-    /// `None` means either past the end of the block or an unrecognised
+    /// `None` means either past the end of the block or an unrecognized
     /// record — to the engine these are the same case: it simply moves to the
     /// next index, and knows the bound from [`len`](Self::len).
     ///
@@ -88,10 +87,9 @@ impl<'a> CommandBlock<'a> {
     /// The block's records in submission order, each with its frame of
     /// application.
     ///
-    /// Order is preserved and it matters: `SetBpm` before `Play` and `Play`
-    /// before `SetBpm` sound different. Empty and unrecognised records are
-    /// skipped silently; there should be none under normal operation, and one
-    /// showing up means we are out of sync with `protocol.ts`.
+    /// Empty and unrecognized records are skipped silently; there should be
+    /// none under normal operation, and one showing up means we are out of
+    /// sync with `protocol.ts`.
     pub fn entries(
         &self,
         quantum_start: u64,
@@ -107,10 +105,10 @@ impl<'a> CommandBlock<'a> {
 /// Returns `None` if the instant lies past the end of the quantum.
 pub fn offset_in_quantum(at_sample: u64, quantum_start: u64, frames: u32) -> Option<u32> {
     if at_sample <= quantum_start {
-        // Zero means "immediately" (§6.1). A value below the start of the
-        // quantum means the command is late: that happens when the UI stamps
-        // a deadline from a stale telemetry reading. A late command is applied
-        // at the top of the quantum rather than dropped: a lost Stop would
+        // Zero means "immediately". A value below the start of the quantum
+        // means the command is late: that happens when the UI stamps a
+        // deadline from a stale telemetry reading. A late command is applied
+        // at the top of the quantum rather than dropped — a lost Stop would
         // leave the transport running forever, whereas a delay of a fraction
         // of a millisecond is inaudible.
         return Some(0);
@@ -184,8 +182,6 @@ mod tests {
 
     #[test]
     fn preserves_submission_order() {
-        // Order is part of the meaning: SetBpm before and after Play sound
-        // different.
         let sent = [
             Record::immediate(Command::SetBpm { bpm: 90.0 }),
             Record::immediate(Command::Play),
@@ -201,7 +197,7 @@ mod tests {
     }
 
     #[test]
-    fn skips_empty_and_unknown_records_without_losing_neighbours() {
+    fn skips_empty_and_unknown_records_without_losing_neighbors() {
         let mut bytes = block_of(&[
             Record::immediate(Command::Play),
             Record::immediate(Command::Stop), // will be zeroed
@@ -214,7 +210,7 @@ mod tests {
         assert_eq!(
             commands_of(CommandBlock::new(&bytes, 4).entries(0, FRAMES)),
             vec![Command::Play, Command::SetBpm { bpm: 140.0 }],
-            "a corrupt record must not drag its neighbours down with it"
+            "a corrupt record must not drag its neighbors down with it"
         );
     }
 
@@ -231,7 +227,6 @@ mod tests {
 
     #[test]
     fn late_commands_are_applied_not_dropped() {
-        // A lost Stop would leave the transport running forever.
         for at_sample in [1, 100, 9_999] {
             let record = Record { command: Command::Stop, at_sample };
             let bytes = block_of(&[record]);
@@ -281,8 +276,6 @@ mod tests {
 
     #[test]
     fn every_sample_of_the_quantum_is_covered_exactly_once() {
-        // No gaps and no overlap at the seam between quanta: every position
-        // belongs to exactly one quantum.
         let start = 1_000_000u64;
         for offset in 0..FRAMES {
             let at = start + u64::from(offset);
@@ -297,8 +290,8 @@ mod tests {
 
     #[test]
     fn offset_is_correct_across_the_2_pow_32_boundary() {
-        // Position is u64 but travels the wire as two u32 words (§6.1).
-        // A mistake in reassembling them surfaces a day into a session.
+        // Position is u64 but travels the wire as two u32 words. A mistake in
+        // reassembling them surfaces a day into a session.
         let start = (1u64 << 32) - 64;
         for offset in 0..FRAMES {
             let at = start + u64::from(offset);

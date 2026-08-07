@@ -1,13 +1,13 @@
 //! The transport — the single source of truth about playback position.
 //!
-//! Position is kept in whole samples (§3.3). Musical position is not
-//! accumulated frame by frame but computed from the sample position:
-//! accumulating `f64` would drift, and that drift shows up not right away
-//! but tens of minutes in, where it is agony to debug.
+//! Position is kept in whole samples. Musical position is not accumulated
+//! frame by frame but computed from the sample position: accumulating `f64`
+//! would drift, and that drift shows up not right away but tens of minutes
+//! in, where it is agony to debug.
 //!
 //! A tempo change does not break continuity: at the moment of the change we
 //! drop an anchor (sample position plus musical position at that instant) and
-//! count from it afterwards. The difference between positions is always
+//! count from it afterward. The difference between positions is always
 //! integral, so error cannot pile up from one change to the next.
 
 /// Tempo limits. The value arrives from the UI over the command protocol,
@@ -67,7 +67,7 @@ impl Transport {
     ///
     /// A non-finite value is ignored outright: `f64::clamp` lets NaN through,
     /// and NaN in the tempo would poison every derived quantity beyond
-    /// recovery (§3.10, rule 3).
+    /// recovery.
     pub fn set_bpm(&mut self, bpm: f64) {
         if !bpm.is_finite() {
             return;
@@ -227,8 +227,6 @@ mod tests {
     #[test]
     fn boundary_never_goes_backwards() {
         let t = at(AWKWARD_BPM);
-        // Walk the first few beats sample by sample: rounding must never
-        // yield a boundary to the left of the requested position.
         for pos in 0..200_000u64 {
             assert!(t.next_beat_boundary(pos) >= pos, "boundary left of pos={pos}");
         }
@@ -276,8 +274,6 @@ mod tests {
 
     #[test]
     fn tempo_change_is_continuous() {
-        // A tempo change at an arbitrary point has no right to shift musical
-        // position — not by any amount.
         let mut t = at(AWKWARD_BPM);
         t.play();
         for (frames, bpm) in [(1_000u32, 90.0), (12_345, 174.0), (7, 63.5), (99_999, 128.0)] {

@@ -2,7 +2,7 @@
 //!
 //! The internal modules are written in safe Rust and tested with plain
 //! `cargo test` on the native target. All `unsafe` is locked up in this
-//! file — the C-ABI layer (§5.2).
+//! file — the C-ABI layer.
 //!
 //! # The boundary with the outside world
 //!
@@ -18,10 +18,16 @@
 //!   kills the whole worklet: sound is gone until the page is reloaded. Every
 //!   input is untrusted, every index is checked, every pointer is null-checked.
 //! - **Hot-path buffers are allocated once** in [`engine_new`] and never move
-//!   again (§3.5). After initialisation there is not one allocation here, so
-//!   WASM linear memory never grows and the worklet's views never detach.
-//!   That stops holding at M1, when sample loading appears — view
-//!   revalidation is needed in the worklet from the very beginning.
+//!   again. After initialization there is not one allocation here, so WASM
+//!   linear memory never grows and the worklet's views never detach. Sample
+//!   loading will break that, so the worklet revalidates its views every
+//!   quantum rather than trusting this.
+//!
+//! # Safety contract, shared by every function below
+//!
+//! `instance` is either `null` or a value obtained from [`engine_new`] and not
+//! yet passed to [`engine_free`]. Null is accepted everywhere and does nothing.
+//! Pointers handed out stay valid until [`engine_free`]; after it, they dangle.
 
 pub mod commands;
 pub mod engine;
@@ -33,15 +39,15 @@ use engine::{Engine, TELEMETRY_WORDS};
 use ring::CMD_CAPACITY;
 
 /// Upper bound on quantum length. Web Audio asks for 128 frames; the headroom
-/// is for the offline renderer at M3, where the buffer is larger. The limit
+/// is for the offline renderer, which works in far larger blocks. The limit
 /// guards against allocating on a garbage argument.
 const MAX_FRAMES_LIMIT: u32 = 65_536;
 
 /// Owner of the memory whose addresses are handed outside.
 ///
-/// It exists for exactly that: [`Engine`] works on slices and owns nothing
-/// (§5.2), while the ABI needs pointers that stay valid from [`engine_new`]
-/// to [`engine_free`].
+/// It exists for exactly that: [`Engine`] works on slices and owns nothing,
+/// while the ABI needs pointers that stay valid from [`engine_new`] to
+/// [`engine_free`].
 pub struct Instance {
     engine: Engine,
     /// Output per channel. Each is `max_frames` long.
@@ -69,8 +75,7 @@ impl Instance {
 ///
 /// # Safety
 ///
-/// `instance` is either `null` or a value obtained from [`engine_new`] and
-/// not yet passed to [`engine_free`].
+/// See the module contract.
 unsafe fn as_instance<'a>(instance: *mut Instance) -> Option<&'a mut Instance> {
     if instance.is_null() {
         None
@@ -85,7 +90,7 @@ unsafe fn as_instance<'a>(instance: *mut Instance) -> Option<&'a mut Instance> {
 /// carries a version number, but the UI is what writes it — comparing that
 /// field against the constant in `protocol.ts` proves nothing, both halves
 /// being on the same side. A mismatch with Rust is only caught by comparing
-/// against a number that came out of the compiled engine (§6.1).
+/// against a number that came out of the compiled engine.
 #[unsafe(no_mangle)]
 pub extern "C" fn engine_protocol_version() -> u32 {
     PROTOCOL_VERSION
@@ -122,8 +127,8 @@ pub unsafe extern "C" fn engine_free(instance: *mut Instance) {
 ///
 /// # Safety
 ///
-/// See [`as_instance`]. The pointer is valid until [`engine_free`]; no more
-/// than the `frames` passed to the last [`engine_process`] may be read from it.
+/// No more than the `frames` passed to the last [`engine_process`] may be
+/// read from the returned pointer.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn engine_out_ptr(instance: *mut Instance, channel: u32) -> *mut f32 {
     let Some(instance) = (unsafe { as_instance(instance) }) else {
@@ -139,8 +144,7 @@ pub unsafe extern "C" fn engine_out_ptr(instance: *mut Instance, channel: u32) -
 ///
 /// # Safety
 ///
-/// See [`as_instance`]. No more than [`engine_cmd_capacity`] × 16 bytes may
-/// be written.
+/// No more than [`engine_cmd_capacity`] × 16 bytes may be written.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn engine_cmd_ptr(instance: *mut Instance) -> *mut u8 {
     match unsafe { as_instance(instance) } {
@@ -153,7 +157,7 @@ pub unsafe extern "C" fn engine_cmd_ptr(instance: *mut Instance) -> *mut u8 {
 ///
 /// # Safety
 ///
-/// See [`as_instance`].
+/// See the module contract.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn engine_cmd_capacity(instance: *mut Instance) -> u32 {
     match unsafe { as_instance(instance) } {
@@ -166,8 +170,8 @@ pub unsafe extern "C" fn engine_cmd_capacity(instance: *mut Instance) -> u32 {
 ///
 /// # Safety
 ///
-/// See [`as_instance`]. [`TELEMETRY_WORDS`] words may be read; the values are
-/// refreshed by [`engine_process`].
+/// [`TELEMETRY_WORDS`] words may be read; the values are refreshed by
+/// [`engine_process`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn engine_telemetry_ptr(instance: *mut Instance) -> *const u32 {
     match unsafe { as_instance(instance) } {
@@ -179,20 +183,18 @@ pub unsafe extern "C" fn engine_telemetry_ptr(instance: *mut Instance) -> *const
 /// The hot path: exactly one call per quantum.
 ///
 /// `frames` is clamped to `max_frames`, `cmd_count` to the capacity of the
-/// exchange area. Both arguments arrive from another thread and deserve no
-/// trust.
+/// exchange area — both arrive from another thread.
 ///
 /// # Safety
 ///
-/// See [`as_instance`].
+/// See the module contract.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn engine_process(instance: *mut Instance, frames: u32, cmd_count: u32) {
     let Some(instance) = (unsafe { as_instance(instance) }) else {
         return;
     };
 
-    // Destructure the fields: the engine needs the output, exchange area and
-    // telemetry slices at the same time, and they live in one struct.
+    // Destructured because the engine needs three of these slices at once.
     let Instance { engine, out, cmd, telemetry, max_frames } = instance;
     let frames = (frames as usize).min(*max_frames);
     let [out_l, out_r] = out;
@@ -253,8 +255,8 @@ mod tests {
 
     #[test]
     fn rejects_nonsense_arguments() {
-        // Return null rather than panic: there is nothing to panic with here —
-        // the call comes from JS, and there is no stack to unwind into.
+        // Null rather than a panic: the call comes from JS, and there is no
+        // stack to unwind into.
         for rate in [0.0, -48_000.0, f64::NAN, f64::INFINITY] {
             assert!(engine_new(rate, Q).is_null(), "sample_rate={rate}");
         }
@@ -265,8 +267,6 @@ mod tests {
 
     #[test]
     fn null_instance_is_tolerated_everywhere() {
-        // If engine_new returned null and the JS side failed to check, every
-        // subsequent call must still be harmless.
         let null = core::ptr::null_mut();
         unsafe {
             engine_free(null);
@@ -292,8 +292,8 @@ mod tests {
 
     #[test]
     fn buffers_never_move() {
-        // §3.5: the worklet caches views over this memory once. If an address
-        // moves, those views end up looking at somebody else's data.
+        // The worklet caches views over this memory. If an address moves,
+        // those views end up looking at somebody else's data.
         fn addresses(owned: &Owned) -> (*mut f32, *mut f32, *mut u8, *const u32) {
             unsafe {
                 (
@@ -319,8 +319,6 @@ mod tests {
 
     #[test]
     fn abi_renders_the_same_as_the_engine() {
-        // The ABI layer has no business changing the sound: all it does is
-        // lay out memory.
         let records = [
             Record::immediate(Command::SetBpm { bpm: 127.0 }),
             Record::immediate(Command::Play),
@@ -362,8 +360,7 @@ mod tests {
 
     #[test]
     fn frames_are_clamped_to_max_frames() {
-        // A request longer than the buffer must be clamped, not run past it:
-        // under panic = "abort" an out-of-bounds access would kill the worklet.
+        // Under panic = "abort" out-of-bounds access kills the worklet.
         let owned = Owned::new(SR, Q);
         owned.write_commands(&[Record::immediate(Command::Play)]);
         unsafe {
@@ -380,8 +377,8 @@ mod tests {
     fn command_count_is_clamped_to_capacity() {
         let owned = Owned::new(SR, Q);
         owned.write_commands(&[Record::immediate(Command::Play)]);
-        // A claim of records the exchange area does not hold: reading past the
-        // buffer is forbidden, and the one real command must still apply.
+        // A claim of records the exchange area does not hold. Nothing may be
+        // read past the buffer, and the one real command must still apply.
         unsafe { engine_process(owned.raw(), Q, u32::MAX) };
         assert!(owned.output(0, Q as usize).iter().any(|&s| s != 0.0));
     }
@@ -415,7 +412,6 @@ mod tests {
 
     #[test]
     fn protocol_version_comes_from_the_codec() {
-        // The single source of truth is the constant in commands.rs.
         assert_eq!(engine_protocol_version(), PROTOCOL_VERSION);
     }
 

@@ -2,9 +2,9 @@
 //!
 //! This module is one half of a contract. The other half lives in
 //! `web/src/audio/protocol.ts`, and the two are edited together: a mismatch
-//! here produces silently wrong behaviour that is very hard to diagnose
-//! (§6.1). Hence [`PROTOCOL_VERSION`], checked at init, and a byte layout
-//! pinned by [`tests::wire_format_is_pinned`].
+//! here produces silently wrong behavior that is very hard to diagnose.
+//! Hence [`PROTOCOL_VERSION`], checked at init, and a byte layout pinned by
+//! [`tests::wire_format_is_pinned`].
 //!
 //! Record layout, 16 bytes, little-endian:
 //!
@@ -21,7 +21,7 @@
 //! requires stating it explicitly (the trailing `true` argument).
 
 /// Protocol version. Bumped on any change to the layout or the opcode set.
-/// Checked when the engine is initialised.
+/// Checked when the engine is initialized.
 pub const PROTOCOL_VERSION: u32 = 1;
 
 /// Size of a single record, in bytes.
@@ -211,9 +211,6 @@ mod tests {
 
     #[test]
     fn codec_is_transparent_to_non_finite_values() {
-        // The codec passes no judgement on values — NaN must arrive
-        // unchanged, so that rejection happens in exactly one place,
-        // at the consumer.
         let bytes = Record::immediate(Command::SetBpm { bpm: f32::NAN }).encode();
         match Record::decode(&bytes) {
             Some(Record { command: Command::SetBpm { bpm }, .. }) => assert!(bpm.is_nan()),
