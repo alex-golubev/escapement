@@ -1,0 +1,17 @@
+[workspace]
+members = ["crates/engine"]
+resolver = "3"
+
+[workspace.package]
+edition = "2024"
+# license = "..."  # §10: pick a license before the first third-party dependency
+
+# Profiles are read ONLY from the workspace root manifest. In a member's
+# manifest they are silently ignored — see §5.2.
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+# A panic on the audio thread is unacceptable, period.
+# Release only: in dev/test, abort breaks the test harness, which needs unwind.
+panic = "abort"
