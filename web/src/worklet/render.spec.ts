@@ -6,6 +6,8 @@
 
 import { describe, expect, it, vi } from 'vitest'
 
+import { WORD_CMD_READ, createRing, openRing } from '../audio/ring'
+import { createWriter } from '../audio/ring-writer'
 import { openEngine } from './engine'
 import type { EngineState } from './engine'
 import { refreshViews, renderQuantum } from './render'
@@ -40,11 +42,36 @@ describe('renderQuantum', () => {
     // `engine_process` anyway would advance the transport against silence
     // nobody asked for, and the drift would never be recovered.
     let calls = 0
-    const { state } = openedEngine({ engine_process: () => void (calls += 1) })
+    const { state, writer } = openedEngine({ engine_process: () => void (calls += 1) })
+    writer.send({ op: 'play' })
 
     expect(renderQuantum(state, [])).toBe(0)
     expect(renderQuantum(state, [[]])).toBe(0)
     expect(calls).toBe(0)
+    // And the command is still in the ring. Drained here it would have been
+    // copied into an exchange area that no `engine_process` will read, which
+    // is a command accepted from the page and then thrown away.
+    expect(Atomics.load(state.ring.words, WORD_CMD_READ)).toBe(0)
+  })
+
+  it('hands the engine however many commands the page had queued', () => {
+    // The count is the whole contract with `engine_process`: the exchange area
+    // holds bytes either way, and this number is what says how many of them
+    // are records from this quantum.
+    const counts: number[] = []
+    const { state, writer } = openedEngine({
+      engine_process: (_instance, _frames, cmdCount) => counts.push(cmdCount),
+    })
+
+    renderQuantum(state, [[emptyBlock(QUANTUM)]])
+
+    writer.send({ op: 'play' })
+    writer.send({ op: 'set-bpm', bpm: 90 })
+    renderQuantum(state, [[emptyBlock(QUANTUM)]])
+
+    renderQuantum(state, [[emptyBlock(QUANTUM)]])
+
+    expect(counts).toEqual([0, 2, 0])
   })
 
   it('fills the one channel it was given when the output is mono', () => {
@@ -117,7 +144,12 @@ describe('refreshViews', () => {
 
 function openedEngine(overrides: Parameters<typeof fakeEngine>[0] = {}) {
   const engine = fakeEngine(overrides)
-  return { engine, state: unwrapValue(openEngine(engine, SAMPLE_RATE, QUANTUM)) }
+  const buffer = createRing()
+  return {
+    engine,
+    writer: createWriter(buffer),
+    state: unwrapValue(openEngine(engine, openRing(buffer), SAMPLE_RATE, QUANTUM)),
+  }
 }
 
 /** Distinct, non-zero data per channel, so a mixed-up copy cannot pass. */

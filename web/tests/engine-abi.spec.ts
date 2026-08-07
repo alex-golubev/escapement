@@ -12,7 +12,11 @@ import { readFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import { beforeAll, describe, expect, it } from 'vitest'
 
-import { PROTOCOL_VERSION } from '../src/audio/protocol'
+import { COMMAND_SIZE, PROTOCOL_VERSION, writeCommand } from '../src/audio/protocol'
+// The interface the worklet itself declares, not a copy of the parts used
+// here: a second description of the ABI would drift from the first, and this
+// file exists to catch drift.
+import type { EngineExports } from '../src/worklet/engine'
 
 const WASM_PATH = fileURLToPath(new URL('../public/engine.wasm', import.meta.url))
 
@@ -21,20 +25,6 @@ const QUANTUM = 128
 
 /** A rate the engine accepts. Not 48000 — nothing may assume that one. */
 const SAMPLE_RATE = 44100
-
-/**
- * The subset of the C ABI these tests call. The worklet declares the full
- * interface; when `initEngine` moves out of `processor.ts` into a module that
- * can be imported, this shape goes away and the real one is used instead.
- */
-interface EngineExports {
-  memory: WebAssembly.Memory
-  engine_protocol_version(): number
-  engine_new(sampleRate: number, maxFrames: number): number
-  engine_free(instance: number): void
-  engine_out_ptr(instance: number, channel: number): number
-  engine_process(instance: number, frames: number, cmdCount: number): void
-}
 
 let compiled: WebAssembly.Module
 
@@ -99,9 +89,88 @@ describe('the compiled engine', () => {
 
     engine.engine_free(instance)
   })
+
+  it('takes a TypeScript-encoded command and runs the transport by it', () => {
+    // The half of the two-file contract that neither side can check alone.
+    // Rust pins its byte layout in `wire_format_is_pinned` and protocol.spec.ts
+    // pins the mirror of it, but both are one language asserting about itself.
+    // Here the encoder that ships writes bytes the decoder that ships reads,
+    // through the same exchange area the worklet copies into.
+    const engine = instantiate()
+    const instance = engine.engine_new(SAMPLE_RATE, QUANTUM)
+    expect(instance).not.toBe(0)
+
+    // 44100 × 60 / 147 is exactly 18 000 samples, so the assertion below can
+    // be an equality rather than a tolerance.
+    const BPM = 147
+    const samplesPerBeat = (SAMPLE_RATE * 60) / BPM
+
+    const exchange = new DataView(
+      engine.memory.buffer,
+      engine.engine_cmd_ptr(instance),
+      engine.engine_cmd_capacity(instance) * COMMAND_SIZE,
+    )
+    writeCommand(exchange, 0, { op: 'set-bpm', bpm: BPM }, 0)
+    writeCommand(exchange, COMMAND_SIZE, { op: 'play' }, 0)
+
+    const onsets = clickOnsets(render(engine, instance, 200, 2))
+
+    expect(onsets, 'expected exactly two clicks in the rendered window').toHaveLength(2)
+    expect(onsets[0], 'Play did not take effect in the quantum it arrived in').toBeLessThan(
+      QUANTUM,
+    )
+    // The one number that could only have come through the wire: a tempo
+    // dropped, misread as another type, or reassembled from the wrong offset
+    // puts this beat somewhere else entirely.
+    expect(onsets[1] - onsets[0], 'the tempo did not survive the crossing').toBe(samplesPerBeat)
+
+    engine.engine_free(instance)
+  })
 })
 
 function instantiate(): EngineExports {
   const instance = new WebAssembly.Instance(compiled, {})
   return instance.exports as unknown as EngineExports
+}
+
+/** Render `quanta` blocks, passing the command count on the first one only. */
+function render(
+  engine: EngineExports,
+  instance: number,
+  quanta: number,
+  cmdCount: number,
+): Float32Array {
+  const out = new Float32Array(quanta * QUANTUM)
+  const left = new Float32Array(
+    engine.memory.buffer,
+    engine.engine_out_ptr(instance, 0),
+    QUANTUM,
+  )
+
+  for (let block = 0; block < quanta; block += 1) {
+    engine.engine_process(instance, QUANTUM, block === 0 ? cmdCount : 0)
+    out.set(left, block * QUANTUM)
+  }
+  return out
+}
+
+/**
+ * The first sample of each click.
+ *
+ * Blocks are separated at quantum resolution before the exact frame is taken,
+ * and that order matters: a click is a decaying sine and passes through zero
+ * on its way, but never for a whole block — while between beats the engine
+ * gates the voice off and the samples are exact zeros for thousands of frames.
+ */
+function clickOnsets(samples: Float32Array): number[] {
+  const onsets: number[] = []
+  let silent = true
+
+  for (let start = 0; start < samples.length; start += QUANTUM) {
+    const block = samples.subarray(start, start + QUANTUM)
+    const sounding = block.some((sample) => sample !== 0)
+    if (sounding && silent) onsets.push(start + block.findIndex((sample) => sample !== 0))
+    silent = !sounding
+  }
+  return onsets
 }

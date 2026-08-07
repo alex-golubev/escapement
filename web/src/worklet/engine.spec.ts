@@ -6,8 +6,9 @@
 
 import { describe, expect, it } from 'vitest'
 
-import { PROTOCOL_VERSION, TELEMETRY_WORDS } from '../audio/protocol'
-import { describeInitError, openEngine, readModule } from './engine'
+import { COMMAND_SIZE, PROTOCOL_VERSION, TELEMETRY_WORDS } from '../audio/protocol'
+import { RING_BYTES, createRing, openRing } from '../audio/ring'
+import { describeInitError, openEngine, readModule, readRing } from './engine'
 import type { EngineExports, EngineInitError } from './engine'
 import { FAKE_LAYOUT, fakeEngine } from '../../tests/support/engine-fake'
 import { unwrapError, unwrapValue } from '../../tests/support/unwrap'
@@ -15,6 +16,9 @@ import { unwrapError, unwrapValue } from '../../tests/support/unwrap'
 const QUANTUM = FAKE_LAYOUT.quantum
 /** Not 48000: nothing in this codebase may assume that rate. */
 const SAMPLE_RATE = 44100
+
+/** The real thing: `SharedArrayBuffer` needs no browser, only Node. */
+const ring = () => openRing(createRing())
 
 /** The eight bytes of a valid, empty WebAssembly module. */
 const EMPTY_MODULE = new Uint8Array([0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00])
@@ -43,12 +47,55 @@ describe('readModule', () => {
   })
 })
 
+describe('readRing', () => {
+  it('refuses an option bag that never carried a ring', () => {
+    expect(unwrapError(readRing(undefined))).toEqual({ kind: 'no-ring', received: 'undefined' })
+    expect(unwrapError(readRing({ ring: null }))).toEqual({ kind: 'no-ring', received: 'null' })
+  })
+
+  it('refuses a buffer that is not shared', () => {
+    // An ArrayBuffer would cross by copy, and every command written into it
+    // would land in memory the audio thread never sees. The page would look
+    // like it was working and the engine would hear nothing.
+    expect(unwrapError(readRing({ ring: new ArrayBuffer(RING_BYTES) })).kind).toBe('no-ring')
+  })
+
+  it('refuses a ring shorter than this build reads', () => {
+    const short = new SharedArrayBuffer(RING_BYTES - 4)
+    expect(unwrapError(readRing({ ring: short }))).toEqual({
+      kind: 'ring-too-small',
+      bytes: RING_BYTES - 4,
+      needed: RING_BYTES,
+    })
+  })
+
+  it('refuses a ring stamped by a page that speaks another version', () => {
+    // The everyday version of this is not a protocol change at all: the
+    // worklet bundle is built by its own script, outside Vite's module graph,
+    // and one left unrebuilt is a stale program with a live page in front of
+    // it. The symptom without this check is silence.
+    const stale = createRing()
+    new Uint32Array(stale, 0, 1)[0] = PROTOCOL_VERSION + 1
+
+    expect(unwrapError(readRing({ ring: stale }))).toEqual({
+      kind: 'ring-version-mismatch',
+      ring: PROTOCOL_VERSION + 1,
+      worklet: PROTOCOL_VERSION,
+    })
+  })
+
+  it('accepts the ring the page builds', () => {
+    const built = createRing()
+    expect(unwrapValue(readRing({ ring: built }))).toBe(built)
+  })
+})
+
 describe('openEngine', () => {
   it('refuses an engine whose protocol version is not the one this build encodes', () => {
     // The mismatch that matters: the wasm was rebuilt from a commands.rs the
     // TypeScript side has not caught up with, or the other way round.
     const engine = fakeEngine({ engine_protocol_version: () => PROTOCOL_VERSION + 1 })
-    expect(unwrapError(openEngine(engine, SAMPLE_RATE, QUANTUM))).toEqual({
+    expect(unwrapError(openEngine(engine, ring(), SAMPLE_RATE, QUANTUM))).toEqual({
       kind: 'protocol-mismatch',
       engine: PROTOCOL_VERSION + 1,
       expected: PROTOCOL_VERSION,
@@ -60,7 +107,9 @@ describe('openEngine', () => {
     // thread. Checked here and nowhere later, so this test is the only thing
     // standing behind that "nowhere later".
     expect(
-      unwrapError(openEngine(fakeEngine({ engine_new: () => 0 }), SAMPLE_RATE, QUANTUM)),
+      unwrapError(
+        openEngine(fakeEngine({ engine_new: () => 0 }), ring(), SAMPLE_RATE, QUANTUM),
+      ),
     ).toEqual({ kind: 'engine-refused', sampleRate: SAMPLE_RATE, maxFrames: QUANTUM })
   })
 
@@ -72,7 +121,9 @@ describe('openEngine', () => {
     const broken = fakeEngine({
       engine_new: undefined as unknown as EngineExports['engine_new'],
     })
-    expect(unwrapError(openEngine(broken, SAMPLE_RATE, QUANTUM)).kind).toBe('abi-unusable')
+    expect(unwrapError(openEngine(broken, ring(), SAMPLE_RATE, QUANTUM)).kind).toBe(
+      'abi-unusable',
+    )
   })
 
   it('passes the arguments it was given straight through to the engine', () => {
@@ -83,7 +134,7 @@ describe('openEngine', () => {
         return 1
       },
     })
-    unwrapValue(openEngine(engine, SAMPLE_RATE, QUANTUM))
+    unwrapValue(openEngine(engine, ring(), SAMPLE_RATE, QUANTUM))
     expect(seen).toEqual([[SAMPLE_RATE, QUANTUM]])
   })
 
@@ -98,7 +149,7 @@ describe('openEngine', () => {
         return PROTOCOL_VERSION
       },
     })
-    expect(unwrapValue(openEngine(engine, SAMPLE_RATE, QUANTUM)).protocolVersion).toBe(
+    expect(unwrapValue(openEngine(engine, ring(), SAMPLE_RATE, QUANTUM)).protocolVersion).toBe(
       PROTOCOL_VERSION,
     )
     expect(calls).toBe(1)
@@ -106,7 +157,7 @@ describe('openEngine', () => {
 
   it('builds every view over the pointers the engine handed out', () => {
     const engine = fakeEngine()
-    const { views } = unwrapValue(openEngine(engine, SAMPLE_RATE, QUANTUM))
+    const { views } = unwrapValue(openEngine(engine, ring(), SAMPLE_RATE, QUANTUM))
 
     expect(views.outL.byteOffset).toBe(FAKE_LAYOUT.outL)
     expect(views.outR.byteOffset).toBe(FAKE_LAYOUT.outR)
@@ -114,6 +165,12 @@ describe('openEngine', () => {
     expect(views.outR).toHaveLength(QUANTUM)
     expect(views.telemetry.byteOffset).toBe(FAKE_LAYOUT.telemetry)
     expect(views.telemetry).toHaveLength(TELEMETRY_WORDS)
+
+    // Sized from `engine_cmd_capacity`, because that view's length is what
+    // caps a quantum's worth of commands. Too long is a copy past the end of
+    // the exchange area; too short silently throttles the command path.
+    expect(views.cmd.byteOffset).toBe(engine.engine_cmd_ptr(1))
+    expect(views.cmd).toHaveLength(engine.engine_cmd_capacity(1) * COMMAND_SIZE)
 
     // Kept so `process()` can spot a detach by reference. If this stopped
     // being the buffer the views were built over, the comparison would fire
@@ -129,6 +186,9 @@ describe('describeInitError', () => {
     // branch, so it fails to compile too. Both ends of the switch are pinned.
     const samples: Record<EngineInitError['kind'], EngineInitError> = {
       'no-module': { kind: 'no-module', received: 'undefined' },
+      'no-ring': { kind: 'no-ring', received: 'undefined' },
+      'ring-too-small': { kind: 'ring-too-small', bytes: 64, needed: RING_BYTES },
+      'ring-version-mismatch': { kind: 'ring-version-mismatch', ring: 2, worklet: 1 },
       'instantiation-failed': { kind: 'instantiation-failed', message: 'LinkError' },
       'abi-unusable': { kind: 'abi-unusable', message: 'not a function' },
       'protocol-mismatch': { kind: 'protocol-mismatch', engine: 2, expected: 1 },

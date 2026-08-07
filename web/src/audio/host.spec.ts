@@ -112,6 +112,10 @@ describe('describeStartFailure', () => {
     // given a sample, and `describeStartFailure` has no default branch, so it
     // fails to compile too.
     const samples: Record<StartFailure['kind'], StartFailure> = {
+      'ring-unavailable': {
+        kind: 'ring-unavailable',
+        message: 'SharedArrayBuffer is not defined',
+      },
       'context-unavailable': { kind: 'context-unavailable', message: 'no device' },
       'wasm-unavailable': { kind: 'wasm-unavailable', message: '404' },
       'worklet-unavailable': { kind: 'worklet-unavailable', message: '404' },

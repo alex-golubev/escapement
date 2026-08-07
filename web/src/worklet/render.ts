@@ -6,6 +6,7 @@
 
 import { buildViews } from './engine'
 import type { EngineState } from './engine'
+import { drainCommands } from './exchange'
 
 /**
  * Rebuild after the `memory.grow` detach described in `buildViews`. The
@@ -14,7 +15,10 @@ import type { EngineState } from './engine'
  */
 export function refreshViews(state: EngineState): EngineState {
   if (state.views.buffer === state.exports.memory.buffer) return state
-  return { ...state, views: buildViews(state.exports, state.instance, state.maxFrames) }
+  return {
+    ...state,
+    views: buildViews(state.exports, state.instance, state.maxFrames, state.cmdCapacity),
+  }
 }
 
 /**
@@ -29,7 +33,12 @@ export function renderQuantum(state: EngineState, outputs: Float32Array[][]): nu
   const left = output[0]
   const frames = left.length
 
-  state.exports.engine_process(state.instance, frames, 0)
+  // Drained here and not before the early return above: a command copied into
+  // the exchange area without an `engine_process` to follow is a command
+  // consumed and thrown away. Left in the ring it merely waits.
+  const commands = drainCommands(state.ring, state.views.cmd)
+
+  state.exports.engine_process(state.instance, frames, commands)
 
   copyChannel(left, state.views.outL)
   if (output.length > 1) copyChannel(output[1], state.views.outR)

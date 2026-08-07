@@ -54,6 +54,12 @@ export default defineConfig(
       // on, so a value import of a type-only module survives into the emitted
       // worklet bundle.
       '@typescript-eslint/consistent-type-imports': 'error',
+      // Both failure unions are switched over without a `default`, so that a
+      // new case has to be described before it compiles. The explicit return
+      // type on each `describe*` already catches that, and this catches the
+      // switches that do not return a value — the same guard, one step earlier
+      // and with a message that names the union.
+      '@typescript-eslint/switch-exhaustiveness-check': 'error',
     },
   },
 

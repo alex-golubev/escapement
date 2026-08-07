@@ -5,6 +5,9 @@
 // which is the point of the file: from the outside these failures are one
 // event — the page is silent — while the fix for each is different.
 
+import { createRing } from './ring'
+import { createWriter } from './ring-writer'
+import type { RingWriter } from './ring-writer'
 import type { ReadyMessage, WorkletMessage } from './worklet-messages'
 
 /** A failure that is a value. The twin of the one in worklet/engine.ts. */
@@ -36,9 +39,12 @@ export interface EngineHandle {
   sampleRate: number
   /** Reported by the compiled engine, not read from any TypeScript constant. */
   protocolVersion: number
+  /** The one way to reach the audio thread. Every gesture goes through here. */
+  commands: RingWriter
 }
 
 export type StartFailure =
+  | { readonly kind: 'ring-unavailable'; readonly message: string }
   | { readonly kind: 'context-unavailable'; readonly message: string }
   | { readonly kind: 'wasm-unavailable'; readonly message: string }
   | { readonly kind: 'worklet-unavailable'; readonly message: string }
@@ -50,6 +56,8 @@ export type StartFailure =
 
 export function describeStartFailure(failure: StartFailure): string {
   switch (failure.kind) {
+    case 'ring-unavailable':
+      return `SharedArrayBuffer is unavailable, so nothing can reach the audio thread: ${failure.message}. The page needs cross-origin isolation — check the COOP/COEP headers`
     case 'context-unavailable':
       return `The browser would not open an AudioContext: ${failure.message}`
     case 'wasm-unavailable':
@@ -79,6 +87,18 @@ export function describeStartFailure(failure: StartFailure): string {
 export async function startEngine(
   onMessage?: (message: WorkletMessage) => void,
 ): Promise<Result<EngineHandle, StartFailure>> {
+  // First, and before any device is opened: without shared memory there is no
+  // path from the page to the audio thread at all, and an AudioContext that
+  // can only render silence is worse than none.
+  let ring: SharedArrayBuffer
+  try {
+    ring = createRing()
+  } catch (error) {
+    // A ReferenceError when the constructor is absent entirely, which is how a
+    // page without cross-origin isolation presents.
+    return err({ kind: 'ring-unavailable', message: messageOf(error) })
+  }
+
   let context: AudioContext
   try {
     context = new AudioContext()
@@ -86,7 +106,7 @@ export async function startEngine(
     return err({ kind: 'context-unavailable', message: messageOf(error) })
   }
 
-  const started = await bringUp(context, onMessage)
+  const started = await bringUp(context, ring, onMessage)
 
   // Released only on failure, which is the one shape a plain `acquireRelease`
   // does not give you: on success the context is the thing being returned and
@@ -99,6 +119,7 @@ export async function startEngine(
 
 async function bringUp(
   context: AudioContext,
+  ring: SharedArrayBuffer,
   onMessage: ((message: WorkletMessage) => void) | undefined,
 ): Promise<Result<EngineHandle, StartFailure>> {
   // Compiling here rather than inside the worklet is not a preference:
@@ -127,7 +148,10 @@ async function bringUp(
       numberOfInputs: 0,
       numberOfOutputs: 1,
       outputChannelCount: [2],
-      processorOptions: { module: module.value },
+      // Both cross by structured clone: a compiled module survives it, and a
+      // SharedArrayBuffer crosses as the same memory rather than a copy, which
+      // is the entire point of it being one.
+      processorOptions: { module: module.value, ring },
     })
   } catch (error) {
     // The module loaded but `registerProcessor('engine', …)` never ran in it,
@@ -153,6 +177,10 @@ async function bringUp(
     node,
     sampleRate: ready.value.sampleRate,
     protocolVersion: ready.value.protocolVersion,
+    // Built only now. The processor reported `ready`, so the far end of this
+    // ring is draining it; a writer handed out before that would accept
+    // commands into a buffer nobody reads.
+    commands: createWriter(ring),
   })
 }
 

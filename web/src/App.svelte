@@ -1,5 +1,7 @@
 <script lang="ts">
   import { describeStartFailure, startEngine } from './audio/host'
+  import type { Command } from './audio/protocol'
+  import type { RingWriter } from './audio/ring-writer'
   import type { WorkletMessage } from './audio/worklet-messages'
 
   // The readiness criterion for this milestone, checked on the page instead of
@@ -38,6 +40,17 @@
   let protocolVersion = $state<number | null>(null)
   let quantum = $state<number | null>(null)
 
+  // The transport as the page believes it to be. Believes, and does not know:
+  // the engine holds the truth, and until telemetry is read back this is an
+  // open loop. It is honest for one button that only ever moves on a click.
+  let playing = $state(false)
+  let bpm = $state(120) // DEFAULT_BPM in transport.rs; the engine starts here too
+
+  // Not `$state`: it is assigned once, and every reader of it is an event
+  // handler that runs long after. Making it reactive would be reactivity that
+  // nothing subscribes to.
+  let commands: RingWriter | null = null
+
   // The click is what makes this legal: an AudioContext built outside a user
   // gesture stays suspended under the autoplay policy, silently.
   async function start(): Promise<void> {
@@ -56,11 +69,41 @@
 
     sampleRate = started.value.sampleRate
     protocolVersion = started.value.protocolVersion
+    commands = started.value.commands
     status = 'running'
   }
 
   function receive(message: WorkletMessage): void {
     if (message.type === 'first-quantum') quantum = message.frames
+  }
+
+  /**
+   * Every gesture goes through here, so the ring being full is diagnosed in
+   * one place. It cannot happen while the worklet is draining — 1024 records
+   * against one click — so when it does, the audio thread has stopped, and the
+   * fix is nowhere near the button that reported it.
+   */
+  function send(command: Command): boolean {
+    if (commands?.send(command) === true) return true
+    failure = 'The command ring is full: the audio thread has stopped draining it'
+    status = 'failed'
+    return false
+  }
+
+  function toggle(): void {
+    if (send({ op: playing ? 'stop' : 'play' })) playing = !playing
+  }
+
+  // On every step of the drag, not on release: a tempo change that only lands
+  // when the pointer comes up cannot show whether the change itself is
+  // seamless, which is the criterion being tested.
+  //
+  // The value is taken off the element rather than through `bind:value`, which
+  // would leave this handler and the binding racing to run first — and losing
+  // that race means sending the tempo from one step back, for every step.
+  function setTempo(event: Event & { currentTarget: HTMLInputElement }): void {
+    bpm = event.currentTarget.valueAsNumber
+    send({ op: 'set-bpm', bpm })
   }
 </script>
 
@@ -99,9 +142,17 @@
   {:else if status === 'failed'}
     <p class="verdict fail">{failure}</p>
   {:else if status === 'running'}
+    <div class="transport">
+      <button onclick={toggle}>{playing ? 'Stop' : 'Play'}</button>
+      <label>
+        <input type="range" min="20" max="300" step="1" value={bpm} oninput={setTempo} />
+        <output>{bpm} BPM</output>
+      </label>
+    </div>
     <p class="verdict ok">
-      Engine instantiated in the worklet and connected. It renders silence: the transport is
-      stopped and no commands reach it yet.
+      The metronome is computed in Rust on the audio thread, and commands reach it through the
+      ring in shared memory. Nothing is read back yet — the position on screen would be the
+      page's own guess, so there is none.
     </p>
   {:else}
     <button onclick={start} disabled={status === 'starting'}>
@@ -150,6 +201,30 @@
 
   .verdict {
     margin-top: 2rem;
+  }
+
+  .transport {
+    display: flex;
+    align-items: center;
+    gap: 1.5rem;
+    margin-top: 2rem;
+  }
+
+  .transport button {
+    margin-top: 0;
+    min-width: 6rem;
+  }
+
+  .transport label {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+  }
+
+  .transport output {
+    min-width: 5.5rem;
+    color: var(--dim);
+    font-variant-numeric: tabular-nums;
   }
 
   button {
