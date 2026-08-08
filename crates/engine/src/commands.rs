@@ -6,6 +6,11 @@
 //! Hence [`PROTOCOL_VERSION`], checked at init, and a byte layout pinned by
 //! `tests::wire_format_is_pinned`.
 //!
+//! Adding an opcode touches five places here — [`Op`], [`Op::from_byte`],
+//! [`Command`], and the two matches in [`Record`] — of which the compiler
+//! guards all but `from_byte`. `tests::OPCODES` guards that one, and is the
+//! list to extend first.
+//!
 //! Record layout, 16 bytes, little-endian:
 //!
 //! ```text
@@ -130,18 +135,56 @@ impl Record {
 mod tests {
     use super::*;
 
+    /// Every opcode: the byte it travels as, the [`Op`] that byte must decode
+    /// to, and a command that encodes with it.
+    ///
+    /// The numbers are literals rather than `Op::Play as u8`, for the reason
+    /// every pin in this repository is a literal — a table read out of the enum
+    /// agrees with whatever the enum says, renumbering included. Here it closes
+    /// the one gap the compiler leaves open. `decode` and `encode` match on
+    /// their enums with no `_` arm, so a new variant fails to compile until
+    /// both are extended; [`Op::from_byte`] ends in `_ => None`, and a variant
+    /// missing from *it* compiles cleanly and decodes to nothing at all. The
+    /// symptom is a command the page sends, the engine discards, and no one
+    /// reports.
+    ///
+    /// A new opcode is added here too, and forgetting to is caught rather than
+    /// tolerated: a byte `from_byte` recognizes but this table does not fails
+    /// `no_byte_outside_the_table_decodes`.
+    const OPCODES: &[(u8, Op, Command)] = &[
+        (1, Op::Play, Command::Play),
+        (2, Op::Stop, Command::Stop),
+        (3, Op::SetBpm, Command::SetBpm { bpm: 127.5 }),
+    ];
+
     fn round_trip(record: Record) -> Option<Record> {
         Record::decode(&record.encode())
     }
 
     #[test]
+    fn every_opcode_decodes_to_the_variant_it_is_numbered_for() {
+        for &(byte, op, _) in OPCODES {
+            assert_eq!(Op::from_byte(byte), Some(op), "byte {byte} decoded to something else");
+            // The enum's own discriminant, checked separately from the mapping
+            // above: `from_byte` could agree with this table while `encode`,
+            // which writes `op as u8`, disagrees with both.
+            assert_eq!(op as u8, byte, "{op:?} is {} in the enum and {byte} here", op as u8);
+        }
+    }
+
+    #[test]
+    fn every_command_encodes_with_its_own_opcode() {
+        // The same pairing from the other end. `encode` picks an opcode by
+        // matching on `Command`, and nothing else checks that it picks the one
+        // `decode` reads back.
+        for &(byte, _, command) in OPCODES {
+            assert_eq!(Record::immediate(command).encode()[0], byte, "{command:?}");
+        }
+    }
+
+    #[test]
     fn round_trips_every_command() {
-        let commands = [
-            Command::Play,
-            Command::Stop,
-            Command::SetBpm { bpm: 127.5 },
-        ];
-        for command in commands {
+        for &(_, _, command) in OPCODES {
             let record = Record::immediate(command);
             assert_eq!(round_trip(record), Some(record), "{command:?} did not survive");
         }
@@ -196,11 +239,23 @@ mod tests {
     }
 
     #[test]
-    fn unknown_op_is_rejected_not_panicked() {
-        for op in 4..=u8::MAX {
+    fn no_byte_outside_the_table_decodes() {
+        // The boundary was written as `4..=u8::MAX`: a literal to be moved by
+        // hand on every addition, and one that said nothing about which
+        // opcodes exist. Derived from the table it also bites the other way —
+        // an opcode reachable through `from_byte` but absent from the table
+        // decodes here, where nothing must.
+        //
+        // Every other field is 0xFF, so this doubles as the check that
+        // decoding is total: the exchange area holds whatever another thread
+        // wrote, and under `panic = "abort"` one panic takes the sound with it.
+        for byte in 0..=u8::MAX {
+            if OPCODES.iter().any(|&(known, _, _)| known == byte) {
+                continue;
+            }
             let mut bytes = [0xFFu8; COMMAND_SIZE];
-            bytes[0] = op;
-            assert_eq!(Record::decode(&bytes), None, "opcode {op} must not decode");
+            bytes[0] = byte;
+            assert_eq!(Record::decode(&bytes), None, "byte {byte} must not decode");
         }
     }
 

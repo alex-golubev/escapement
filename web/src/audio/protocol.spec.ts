@@ -13,9 +13,30 @@
 import { describe, expect, it } from 'vitest'
 
 import { COMMAND_SIZE, OP_PLAY, OP_SET_BPM, OP_STOP, writeCommand } from './protocol'
+import type { Command } from './protocol'
 
 /** 0x0000_00AB_1234_5678 — the same instant the Rust test encodes. */
 const PINNED_AT_SAMPLE = 0xab * 2 ** 32 + 0x12345678
+
+/**
+ * Every command, with the opcode byte commands.rs numbers it with.
+ *
+ * Keyed by the union, the way the error unions are pinned elsewhere: a command
+ * added to `Command` fails to compile here until it is given an entry, and
+ * `writeCommand` has no default branch, so it fails to compile too.
+ *
+ * The numbers are literals rather than the `OP_*` constants. An encoded record
+ * compared against the very constant that encoded it is one expression checked
+ * against itself and stays green through any renumbering — the same reason the
+ * Rust table opposite this one is written out in literals. Two tables in two
+ * languages holding the same numbers is what makes this a contract; one table
+ * read twice would be a copy.
+ */
+const OPCODES: Record<Command['op'], readonly [command: Command, opcode: number]> = {
+  play: [{ op: 'play' }, 1],
+  stop: [{ op: 'stop' }, 2],
+  'set-bpm': [{ op: 'set-bpm', bpm: 120 }, 3],
+}
 
 describe('writeCommand', () => {
   it('lays out a record byte for byte the way commands.rs pins it', () => {
@@ -39,10 +60,18 @@ describe('writeCommand', () => {
     ])
   })
 
-  it('gives each command the opcode the engine decodes it by', () => {
-    expect(encode({ op: 'play' }, 0)[0]).toBe(OP_PLAY)
-    expect(encode({ op: 'stop' }, 0)[0]).toBe(OP_STOP)
-    expect(encode({ op: 'set-bpm', bpm: 120 }, 0)[0]).toBe(OP_SET_BPM)
+  it('gives each command the opcode number commands.rs decodes it by', () => {
+    for (const [command, opcode] of Object.values(OPCODES)) {
+      expect(encode(command, 0)[0], `${command.op} went out under another opcode`).toBe(opcode)
+    }
+  })
+
+  it('exports an opcode constant for each of those numbers', () => {
+    // Separate from the table above, and not a restatement of it: these
+    // constants are how ring-writer.spec.ts names the record it expects to find
+    // in a slot, so they are read outside this file, and nothing else says what
+    // they are worth.
+    expect([OP_PLAY, OP_STOP, OP_SET_BPM]).toEqual([1, 2, 3])
   })
 
   it('carries the tempo as the f32 the engine reads back', () => {
@@ -83,7 +112,7 @@ describe('writeCommand', () => {
   })
 })
 
-function encode(command: Parameters<typeof writeCommand>[2], atSample: number): Uint8Array {
+function encode(command: Command, atSample: number): Uint8Array {
   const bytes = new Uint8Array(COMMAND_SIZE)
   writeCommand(new DataView(bytes.buffer), 0, command, atSample)
   return bytes
