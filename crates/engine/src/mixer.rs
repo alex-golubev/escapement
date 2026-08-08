@@ -19,7 +19,7 @@
 //! sends out-of-range values is a UI with a bug, and it is not told.
 
 use crate::TRACKS;
-use crate::dsp::Smoothed;
+use crate::dsp::{Smoothed, fz};
 
 /// Gain limits. The ceiling is above unity on purpose: summing eight tracks
 /// needs headroom above the loudest single one, and a fader that cannot go
@@ -61,7 +61,7 @@ impl Mixer {
     /// The master gain for one frame. Called once per rendered frame.
     #[inline]
     pub fn next_master_gain(&mut self) -> f32 {
-        self.master.next()
+        self.master.tick()
     }
 
     /// What the master gain is heading for — the number the UI last asked
@@ -76,10 +76,29 @@ impl Mixer {
         }
     }
 
+    /// Reading past the end answers **silence**, not the default gain, and the
+    /// difference is the whole point of the line. Both this and
+    /// [`crate::pattern::Pattern::velocity`] have to be total — under
+    /// `panic = "abort"` an indexing panic ends the sound until the page is
+    /// reloaded — but a total function still has to choose which way it fails,
+    /// and in audio the two directions are not equally bad. A miscomputed index
+    /// answered with `DEFAULT_GAIN` is a track that does not exist playing at
+    /// full volume; answered with zero it is a track that does not exist making
+    /// no sound. The second is a bug you go looking for, the first is a bug you
+    /// hear. The pattern already fails the quiet way; this used to fail the
+    /// loud one.
+    ///
+    /// Unreachable from the sequencer, which walks `0..TRACKS`. It is for
+    /// whoever computes an index some other way later.
     pub fn track_gain(&self, track: usize) -> f32 {
-        self.track_gain.get(track).copied().unwrap_or(DEFAULT_GAIN)
+        self.track_gain.get(track).copied().unwrap_or(0.0)
     }
 
+    /// Past the end this answers centre, and that is not the safe direction —
+    /// there isn't one. A pan has no quiet end: hard left is as loud as hard
+    /// right. Centre is simply the value that says least, which is why the
+    /// reasoning above does not apply here and this getter is not changed to
+    /// match it.
     pub fn track_pan(&self, track: usize) -> f32 {
         self.track_pan.get(track).copied().unwrap_or(DEFAULT_PAN)
     }
@@ -113,8 +132,22 @@ impl Mixer {
 /// and poison it permanently. Non-finite is therefore refused rather than
 /// clamped, which is what `Transport::set_bpm` does with the tempo for the
 /// same reason.
+///
+/// Denormals are flushed here, and this is the second door they come through.
+/// The house rule names feedback state — decaying tails, filter memory — and
+/// that is where the problem is usually made; but `1e-40` is finite and inside
+/// every range this function guards, so it passes both checks above and lands
+/// in a parameter that multiplies every frame from then on. The symptom is the
+/// same one the rule exists for, CPU climbing during silence, reached without
+/// any feedback at all. A slider cannot produce such a value; a project file, a
+/// MIDI controller and an automation curve can, and everything crossing the
+/// thread boundary is input here.
+///
+/// The threshold has room to spare rather than being tuned: `f32` denormals
+/// start below 1.2e-38, so flushing below 1e-20 covers the products too — no
+/// sample times a multiplier that small is audible, whatever the sample.
 fn clamped(value: f32, low: f32, high: f32) -> Option<f32> {
-    value.is_finite().then(|| value.clamp(low, high))
+    value.is_finite().then(|| fz(value.clamp(low, high)))
 }
 
 #[cfg(test)]
@@ -214,9 +247,35 @@ mod tests {
             assert_eq!(mixer.track_gain(track), 1.0, "track {track} was written through");
             assert_eq!(mixer.track_pan(track), 0.0, "track {track} was written through");
         }
-        // Reading past the end answers with the default rather than panicking.
-        assert_eq!(mixer.track_gain(TRACKS), DEFAULT_GAIN);
+        // Reading past the end answers rather than panicking — and answers
+        // silence, which is the direction that matters. A track that does not
+        // exist reporting unity gain is one that plays at full volume the
+        // moment anything sums it in; reporting zero, it makes no sound. Both
+        // are the same bug upstream, and only one of them is audible.
+        assert_eq!(mixer.track_gain(TRACKS), 0.0);
+        assert_eq!(mixer.track_gain(usize::MAX), 0.0);
+        // Pan has no quiet end, so there is nothing to choose here: centre is
+        // the value that says least, not the safe one.
         assert_eq!(mixer.track_pan(usize::MAX), DEFAULT_PAN);
+    }
+
+    #[test]
+    fn a_denormal_gain_becomes_exact_silence() {
+        // Finite, inside the range, and past both guards — the value would
+        // reach `Smoothed` and multiply every frame from then on, producing
+        // denormal products for as long as it stood. That is the CPU-on-silence
+        // symptom without any feedback involved, which is the door the house
+        // rule does not cover.
+        let mut mixer = Mixer::new(SR);
+        for tiny in [1e-40f32, -1e-40, f32::MIN_POSITIVE / 2.0] {
+            mixer.set_master_gain(tiny);
+            mixer.set_track_gain(1, tiny);
+            mixer.set_track_pan(1, tiny);
+
+            assert_eq!(mixer.master_gain(), 0.0, "master kept {tiny:e}");
+            assert_eq!(mixer.track_gain(1), 0.0, "track gain kept {tiny:e}");
+            assert_eq!(mixer.track_pan(1), 0.0, "track pan kept {tiny:e}");
+        }
     }
 
     #[test]

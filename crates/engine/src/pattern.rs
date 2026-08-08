@@ -18,6 +18,7 @@
 //! that bug into a wrong sound.
 
 use crate::TRACKS;
+use crate::dsp::fz;
 
 /// Steps per pattern. Sixteen, i.e. one bar of sixteenths.
 pub const STEPS: usize = 16;
@@ -71,6 +72,15 @@ impl Pattern {
     /// Set one step. Both indices arrive from another thread; an index past
     /// the end of the grid drops the command, and a non-finite velocity is
     /// refused outright, the way every value crossing the ABI is.
+    ///
+    /// A denormal velocity is flushed to zero, which here means the step is
+    /// simply off. `1e-40` is finite and inside the range, so it survives both
+    /// guards, and [`is_active`](Self::is_active) asks only whether the value
+    /// is above zero — leaving a step that counts as struck and would scale a
+    /// voice by a denormal on every frame it sounds. That is the CPU-during-
+    /// silence symptom arriving through the front door instead of through
+    /// feedback, which is the case the house rule does not name. `mixer.rs`
+    /// flushes at its clamp for the same reason.
     pub fn set_step(&mut self, track: u8, step: u16, velocity: f32) {
         if !velocity.is_finite() {
             return;
@@ -80,7 +90,7 @@ impl Pattern {
             .get_mut(usize::from(track))
             .and_then(|row| row.get_mut(usize::from(step)))
         {
-            *slot = velocity.clamp(MIN_VELOCITY, MAX_VELOCITY);
+            *slot = fz(velocity.clamp(MIN_VELOCITY, MAX_VELOCITY));
         }
     }
 }
@@ -145,6 +155,22 @@ mod tests {
                 (MIN_VELOCITY..=MAX_VELOCITY).contains(&pattern.velocity(0, 0)),
                 "accepted {velocity}"
             );
+        }
+    }
+
+    #[test]
+    fn a_denormal_velocity_is_not_a_struck_step() {
+        // The value passes both guards — finite, inside the range — and
+        // `is_active` asks only whether it is above zero, so without the flush
+        // this is a step that counts as struck and scales its voice by a
+        // denormal on every frame it sounds. Stated as `is_active` and not just
+        // as the stored number, because being *active* is what makes it cost
+        // anything.
+        let mut pattern = Pattern::new();
+        for tiny in [1e-40f32, f32::MIN_POSITIVE / 2.0] {
+            pattern.set_step(4, 4, tiny);
+            assert_eq!(pattern.velocity(4, 4), 0.0, "kept {tiny:e}");
+            assert!(!pattern.is_active(4, 4), "{tiny:e} counted as a strike");
         }
     }
 

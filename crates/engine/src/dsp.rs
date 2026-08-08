@@ -94,7 +94,7 @@ impl Smoothed {
 
     /// The value for one frame. Called once per frame, per parameter.
     #[inline]
-    pub fn next(&mut self) -> f32 {
+    pub fn tick(&mut self) -> f32 {
         if self.remaining > 0 {
             self.remaining -= 1;
             // Backwards from the target rather than forwards from the last
@@ -127,7 +127,7 @@ mod tests {
         // Construction is not a change: an engine built with gain 1.0 must
         // render at 1.0 from the first frame, not fade up to it.
         let mut gain = Smoothed::new(0.75, SR);
-        assert_eq!(gain.next(), 0.75);
+        assert_eq!(gain.tick(), 0.75);
         assert_eq!(gain.target(), 0.75);
     }
 
@@ -139,7 +139,7 @@ mod tests {
         // The size of the first step is the whole point: a jump straight to
         // the target is the zipper noise, and one 480th of the distance is
         // what 10 ms at 48 kHz comes to.
-        let first = gain.next();
+        let first = gain.tick();
         assert!(first < 1.0, "the parameter did not move");
         assert!(first > 0.99, "the parameter jumped: {first}");
     }
@@ -153,11 +153,11 @@ mod tests {
         gain.set(0.0);
 
         let mut frames = 0;
-        while gain.next() != 0.0 {
+        while gain.tick() != 0.0 {
             frames += 1;
             assert!(frames < 48_000, "one second was not enough to reach the target");
         }
-        assert_eq!(gain.next(), 0.0, "the parameter left a target it had reached");
+        assert_eq!(gain.tick(), 0.0, "the parameter left a target it had reached");
     }
 
     #[test]
@@ -173,9 +173,9 @@ mod tests {
             let mut param = Smoothed::new(1.0, SR);
             param.set(target);
             for _ in 0..SR as usize {
-                param.next();
+                param.tick();
             }
-            assert_eq!(param.next(), target, "stalled short of {target}");
+            assert_eq!(param.tick(), target, "stalled short of {target}");
         }
     }
 
@@ -188,7 +188,7 @@ mod tests {
         gain.set(1.0);
 
         let mut frames = 0;
-        while gain.next() != 1.0 {
+        while gain.tick() != 1.0 {
             frames += 1;
             assert!(frames <= 480, "the glide overran its length");
         }
@@ -203,12 +203,12 @@ mod tests {
         let mut gain = Smoothed::new(1.0, SR);
         gain.set(0.0);
         for _ in 0..100 {
-            gain.next();
+            gain.tick();
         }
 
-        let before = gain.next();
+        let before = gain.tick();
         gain.set(1.0);
-        let after = gain.next();
+        let after = gain.tick();
 
         assert!(after > before, "the parameter did not turn around");
         assert!(after - before < 0.01, "retargeting produced a step: {before} → {after}");
@@ -220,7 +220,7 @@ mod tests {
             let mut param = Smoothed::new(from, SR);
             param.set(to);
             for _ in 0..10_000 {
-                let value = param.next();
+                let value = param.tick();
                 assert!(value.is_finite(), "non-finite value gliding {from} → {to}");
                 let (low, high) = if from < to { (from, to) } else { (to, from) };
                 assert!(value >= low && value <= high, "{value} is outside {low}..{high}");
@@ -234,11 +234,11 @@ mod tests {
         // would leave the old target to glide back to.
         let mut gain = Smoothed::new(1.0, SR);
         gain.set(0.0);
-        gain.next();
+        gain.tick();
         gain.snap_to(0.5);
 
         assert_eq!(gain.target(), 0.5);
-        assert_eq!(gain.next(), 0.5);
+        assert_eq!(gain.tick(), 0.5);
     }
 
     #[test]
@@ -254,13 +254,13 @@ mod tests {
         // Half the glide at each rate — the midpoint rather than the end,
         // where both would read 0.0 whatever the length.
         for _ in 0..220 {
-            at_44.next();
+            at_44.tick();
         }
         for _ in 0..480 {
-            at_96.next();
+            at_96.tick();
         }
 
-        let (left, right) = (at_44.next(), at_96.next());
+        let (left, right) = (at_44.tick(), at_96.tick());
         assert!((left - right).abs() < 1e-3, "5 ms in is not 5 ms in: {left} vs {right}");
     }
 }
