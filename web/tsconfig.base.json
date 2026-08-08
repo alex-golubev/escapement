@@ -1,0 +1,50 @@
+{
+  /**
+   * What every project in this package is checked with. The three configs
+   * beside it extend this one and keep only what genuinely differs between
+   * them: which library and types they see, how they resolve modules, whether
+   * they contain JavaScript, and what they include.
+   *
+   * The split exists because the alternative had already happened: `test` and
+   * `node` were written later and each picked up a set of checks that `app`
+   * never got — so the strictest settings applied to the code that matters
+   * least, and the shipping half of the package was checked with the fewest.
+   * That is the failure `tsconfig.node.json` already names in its own comment:
+   * being checked by one tool and not the other is worse than either answer.
+   */
+  "compilerOptions": {
+    "target": "es2023",
+    "moduleDetection": "force",
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+
+    /* Strictness. Uniform on purpose — see above. */
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "erasableSyntaxOnly": true,
+    "noFallthroughCasesInSwitch": true,
+
+    /**
+     * Off, and stated rather than omitted, because the difference between a
+     * decision and an oversight is whether it is written down.
+     *
+     * Measured before deciding: it reports 13 places in shipping code, and all
+     * 13 are one shape — an index that is in range because a length was checked
+     * directly above it or a mask was applied. One is `records[from & MASK]` in
+     * the per-quantum copy; nine are constant indices into a view built with a
+     * matching length; three are the host's own arrays, read after their length
+     * was tested. Not one is a place where the index could actually escape. The
+     * flag would buy thirteen `!` assertions in a codebase whose rule is that an
+     * assertion has to be explained.
+     *
+     * The check it would have made mandatory — `outputs[0] === undefined` in
+     * render.ts — is held by a test instead, which is stronger than either
+     * answer here. See the note at that line, and `no-unnecessary-condition` in
+     * eslint.config.js, which would delete it.
+     */
+    "noUncheckedIndexedAccess": false
+  }
+}

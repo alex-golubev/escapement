@@ -9,6 +9,16 @@
 // next to `svelte-check` here — the rules at the bottom of this file are ones
 // the compiler cannot express, and both of them guard a failure mode this
 // project has already written down.
+//
+// `recommendedTypeChecked` and not `strictTypeChecked`, deliberately. The rule
+// that decides it is `no-unnecessary-condition`, which lives in the stricter
+// preset: it reads a guard against input the type system was never told about
+// as dead code. It has exactly one target here today — the check on the host's
+// output array in `renderQuantum` — and that check is right, for a reason no
+// type in this codebase expresses: what crosses a thread boundary is input, not
+// a promise. Taking the preset would mean deleting it, or annotating around it
+// at every such boundary from here to M9. Revisit if the stricter preset ever
+// earns its way in on other rules; this one would still have to be turned off.
 
 import { defineConfig, globalIgnores } from 'eslint/config'
 import js from '@eslint/js'

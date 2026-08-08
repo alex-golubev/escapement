@@ -1,32 +1,23 @@
 {
+  /**
+   * The build and lint configuration itself. Checked as seriously as the code
+   * it configures: these files were in no project at all once, so `pnpm check`
+   * ignored them while the editor checked them under settings of its own — and
+   * reported two problems no command-line tool could see. Being checked by one
+   * tool and not the other is worse than either answer.
+   */
+  "extends": "./tsconfig.base.json",
   "compilerOptions": {
-    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.node.tsbuildinfo",
-    "target": "es2023",
     "lib": ["ES2023"],
     "types": ["node"],
-    "skipLibCheck": true,
 
-    /* Bundler mode */
+    /* Node, not a bundler: these run under the toolchain, not in the app. */
     "module": "nodenext",
     "allowImportingTsExtensions": true,
-    "verbatimModuleSyntax": true,
-    "moduleDetection": "force",
-    "noEmit": true,
 
-    /**
-     * The config files are JS and were in no project at all, so `pnpm check`
-     * ignored them while the editor checked them under settings of its own —
-     * and reported two problems no command-line tool could see. Being checked
-     * by one tool and not the other is worse than either answer.
-     */
+    /* The configs are JavaScript, and are checked as such. */
     "allowJs": true,
-    "checkJs": true,
-
-    /* Linting */
-    "noUnusedLocals": true,
-    "noUnusedParameters": true,
-    "erasableSyntaxOnly": true,
-    "noFallthroughCasesInSwitch": true
+    "checkJs": true
   },
   "include": ["vite.config.ts", "eslint.config.js", "svelte.config.js"]
 }
