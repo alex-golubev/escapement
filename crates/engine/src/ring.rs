@@ -32,6 +32,12 @@ pub struct Entry {
     /// `None` — the instant has not arrived yet, so this record is not for
     /// this quantum. What to do about it is the engine's call: no such records
     /// occur yet, since the UI only sends immediate commands.
+    ///
+    /// The call it makes today is to **drop** the record, and that is worth
+    /// knowing from here: `None` reads like "later" and means nothing of the
+    /// sort, because nothing downstream keeps a record across quanta. The
+    /// reasoning, and what has to be settled before it changes, is at that
+    /// branch in `Engine::process`.
     pub offset: Option<u32>,
 }
 
@@ -256,7 +262,12 @@ mod tests {
     }
 
     #[test]
-    fn command_past_the_quantum_is_deferred() {
+    fn command_past_the_quantum_has_no_frame_in_it() {
+        // Named for what it observes rather than for what one would like to
+        // follow from it. This module reports that the instant is not in this
+        // quantum; it does not hold the record for a later one, and neither
+        // does anything downstream — `Engine::process` drops it, which is
+        // pinned there. "Deferred" was the old name and claimed the opposite.
         let start = 48_000u64;
         // The first frame of the next quantum is already not ours — otherwise
         // the command would fire twice: now, and in the quantum it belongs to.
@@ -326,7 +337,8 @@ mod tests {
     #[test]
     fn empty_quantum_still_applies_pending_commands() {
         // The engine never asks for frames = 0, but decoding must stay
-        // meaningful: apply an immediate command, defer a future one.
+        // meaningful: place an immediate command on the first frame, and
+        // report a future one as having no frame here.
         assert_eq!(offset_in_quantum(0, 500, 0), Some(0));
         assert_eq!(offset_in_quantum(500, 500, 0), Some(0));
         assert_eq!(offset_in_quantum(501, 500, 0), None);

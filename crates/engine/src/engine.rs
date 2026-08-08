@@ -207,8 +207,43 @@ impl Engine {
                     continue;
                 };
                 match entry.offset {
-                    // Not this quantum's instant — impossible while the UI
-                    // only sends immediate commands.
+                    // Not this quantum's instant, so the record is **dropped**
+                    // — not held back. There is nowhere to hold it: the block
+                    // lives for one quantum and the worklet has already taken
+                    // these bytes out of the ring, so a record passed over here
+                    // is gone. `CommandBlock` leaves the choice to this branch,
+                    // and this is the branch making it.
+                    //
+                    // Unreachable today: the UI stamps every command 0, meaning
+                    // "immediately". `tests::a_command_stamped_for_a_later_quantum_is_dropped`
+                    // is what states it, since a comment about what cannot
+                    // happen yet is not a description of what does.
+                    //
+                    // The asymmetry with `ring::offset_in_quantum` is deliberate
+                    // and reads as an oversight otherwise: a command that
+                    // arrives *late* is applied at the top of the quantum
+                    // rather than dropped, because a lost Stop leaves the
+                    // transport running forever while the error it costs is
+                    // bounded by one quantum. Early is not bounded by anything.
+                    // Clamping a command stamped an hour ahead to the end of
+                    // this quantum would fire it an hour early, which is worse
+                    // than losing it.
+                    //
+                    // Before anything schedules ahead, two things have to be
+                    // settled, and they are one feature rather than two:
+                    //
+                    // 1. this branch, which needs somewhere to keep a record
+                    //    across quanta;
+                    // 2. `next_edge` below, taken from the first unapplied
+                    //    command in submission order rather than the smallest
+                    //    offset among those left — so `Play @ 64` followed by
+                    //    `SetBpm @ 32` both land on frame 64.
+                    //
+                    // The second decides the first. Taking the minimum among
+                    // the remaining means the queue may hold records in any
+                    // order; a contract that submission order is non-decreasing
+                    // in time means it need not sort but must reject. Writing
+                    // the queue before that is settled is guessing which.
                     None => cursor += 1,
                     Some(offset) if offset as usize <= done => {
                         self.apply(entry.record.command);
@@ -519,6 +554,46 @@ mod tests {
             64,
             "the transport only counts from the moment of Play"
         );
+    }
+
+    #[test]
+    fn a_command_stamped_for_a_later_quantum_is_dropped() {
+        // What `process` does with a record whose instant lies past the end of
+        // the quantum, stated because the code says only that it cannot happen
+        // yet — and because `CommandBlock` reports the case without deciding
+        // it, so the answer exists in one place and used to be written down in
+        // none.
+        //
+        // The distinguishing assertion is the second one. "It did not apply in
+        // this quantum" is equally true of a record that was held back, which
+        // is the reading the word `deferred` invites; only rendering the
+        // quanta the instant actually falls in separates the two.
+        // The transport has to be running for the instant to be reached at all,
+        // which rules out `Play` as the record being stamped: a held `Play`
+        // would start the clock that has to advance for a held `Play` to fire,
+        // so dropping and holding look identical from outside. The tempo has no
+        // such circularity.
+        let mut engine = Engine::new(SR);
+        let default_bpm = engine.transport().bpm();
+        let records = [
+            Record::immediate(Command::Play),
+            // Frame 500, three quanta past the end of this 128-frame block.
+            Record { command: Command::SetBpm { bpm: AWKWARD_BPM }, at_sample: 500 },
+            // A neighbour behind the one passed over: skipping a record must
+            // not take the rest of the block with it, any more than an
+            // unrecognized record does.
+            Record::immediate(Command::SetMasterGain { gain: 0.5 }),
+        ];
+        quantum(&mut engine, &records);
+
+        assert!(engine.transport().is_playing());
+        assert_eq!(engine.mixer().master_gain(), 0.5, "the record behind it was lost too");
+        assert_eq!(engine.transport().bpm(), default_bpm, "a future instant was applied at once");
+
+        // Past frame 500 now, which is where a held record would have fired.
+        render(&mut engine, 10);
+        assert!(engine.transport().sample_pos() > 500, "the instant was never reached");
+        assert_eq!(engine.transport().bpm(), default_bpm, "the record came back later");
     }
 
     #[test]
