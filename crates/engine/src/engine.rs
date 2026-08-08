@@ -12,6 +12,8 @@
 //! explicit `reset`, deterministic behavior.
 
 use crate::commands::Command;
+use crate::dsp::fz;
+use crate::mixer::Mixer;
 use crate::ring::CommandBlock;
 use crate::transport::Transport;
 
@@ -36,16 +38,6 @@ pub const TELEMETRY_TRANSPORT_HI: usize = 1;
 /// On the JS side the same bytes are read through a `Float32Array` view.
 pub const TELEMETRY_PEAK_L: usize = 2;
 pub const TELEMETRY_PEAK_R: usize = 3;
-
-/// Denormal flush threshold.
-const DENORMAL_THRESHOLD: f32 = 1e-20;
-
-/// Flush denormals to zero. WASM has no FPU-level flush-to-zero, so decaying
-/// tails have to be cut off by hand — otherwise CPU climbs during silence.
-#[inline(always)]
-fn fz(x: f32) -> f32 {
-    if x.abs() < DENORMAL_THRESHOLD { 0.0 } else { x }
-}
 
 /// Click frequency on a beat and on the first beat of a bar.
 const CLICK_HZ: f32 = 1000.0;
@@ -130,6 +122,7 @@ impl Click {
 pub struct Engine {
     transport: Transport,
     click: Click,
+    mixer: Mixer,
     peak: [f32; 2],
 }
 
@@ -138,12 +131,17 @@ impl Engine {
         Self {
             transport: Transport::new(sample_rate),
             click: Click::new(sample_rate),
+            mixer: Mixer::new(sample_rate),
             peak: [0.0; 2],
         }
     }
 
     pub fn transport(&self) -> &Transport {
         &self.transport
+    }
+
+    pub fn mixer(&self) -> &Mixer {
+        &self.mixer
     }
 
     pub fn peak(&self, channel: usize) -> f32 {
@@ -156,6 +154,7 @@ impl Engine {
         let sample_rate = self.transport.sample_rate();
         self.transport = Transport::new(sample_rate);
         self.click.reset();
+        self.mixer.reset();
         self.peak = [0.0; 2];
     }
 
@@ -247,6 +246,9 @@ impl Engine {
             // of the buffer is precisely the click that ruins the sound.
             Command::Stop => self.transport.stop(),
             Command::SetBpm { bpm } => self.transport.set_bpm(f64::from(bpm)),
+            Command::SetTrackGain { track, gain } => self.mixer.set_track_gain(track, gain),
+            Command::SetTrackPan { track, pan } => self.mixer.set_track_pan(track, pan),
+            Command::SetMasterGain { gain } => self.mixer.set_master_gain(gain),
         }
     }
 
@@ -276,6 +278,13 @@ impl Engine {
             let sample = self.click.next_sample();
             // A NaN poisons feedback forever.
             debug_assert!(sample.is_finite(), "non-finite sample out of the metronome");
+
+            // Per frame, not per segment or per quantum: a gain that stepped
+            // would be zipper noise, and the smoothing that prevents it only
+            // advances when it is asked for a value. The metronome goes
+            // through the master like everything else will.
+            let sample = sample * self.mixer.next_master_gain();
+            debug_assert!(sample.is_finite(), "non-finite sample out of the mixer");
 
             out_l[frame] = sample;
             out_r[frame] = sample;
@@ -527,6 +536,80 @@ mod tests {
     }
 
     #[test]
+    fn mixer_commands_reach_the_mixer_with_their_track() {
+        // `arg_a` was a field nothing filled until these three commands, and
+        // a decoder that dropped it would put every track's gain on track 0
+        // while every assertion about "the gain" still passed.
+        let mut engine = Engine::new(SR);
+        quantum(
+            &mut engine,
+            &[
+                Record::immediate(Command::SetTrackGain { track: 3, gain: 0.25 }),
+                Record::immediate(Command::SetTrackPan { track: 3, pan: -0.75 }),
+                Record::immediate(Command::SetMasterGain { gain: 0.5 }),
+            ],
+        );
+
+        assert_eq!(engine.mixer().track_gain(3), 0.25);
+        assert_eq!(engine.mixer().track_pan(3), -0.75);
+        assert_eq!(engine.mixer().master_gain(), 0.5);
+        assert_eq!(engine.mixer().track_gain(0), 1.0, "the command reached the wrong track");
+        assert_eq!(engine.mixer().track_pan(0), 0.0, "the command reached the wrong track");
+    }
+
+    #[test]
+    fn the_master_gain_scales_the_output() {
+        fn peak_at(gain: f32) -> f32 {
+            let mut engine = Engine::new(SR);
+            quantum(&mut engine, &[Record::immediate(Command::SetMasterGain { gain })]);
+            // The glide is 10 ms; 100 quanta is 267 ms, long since settled.
+            // Measured after it lands, so this is about the gain and not
+            // about the smoothing, which dsp.rs tests on its own.
+            skip(&mut engine, 100);
+
+            let mut signal = quantum(&mut engine, &[Record::immediate(Command::Play)]);
+            signal.extend(render(&mut engine, 20));
+            signal.iter().fold(0.0f32, |peak, s| peak.max(s.abs()))
+        }
+
+        let unity = peak_at(1.0);
+        assert!(unity > 0.0, "there was nothing to scale");
+        assert!((peak_at(0.5) - unity / 2.0).abs() < 1e-6, "half gain is not half");
+        assert!((peak_at(2.0) - unity * 2.0).abs() < 1e-6, "the ceiling is not reachable");
+    }
+
+    #[test]
+    fn a_master_gain_of_zero_is_exact_silence() {
+        // Not "very quiet": a one-pole approach converges without arriving, so
+        // without the snap in `Smoothed` a muted output would keep a residue
+        // forever — inaudible, but enough to make every "is it silent" test
+        // downstream of it a tolerance comparison.
+        let (mut engine, _) = started(120.0);
+        quantum(&mut engine, &[Record::immediate(Command::SetMasterGain { gain: 0.0 })]);
+        skip(&mut engine, 100);
+
+        assert!(
+            render(&mut engine, 200).iter().all(|&s| s == 0.0),
+            "a muted master still let something through"
+        );
+    }
+
+    #[test]
+    fn a_gain_change_glides_rather_than_stepping() {
+        // The audible half of the rule that parameters are interpolated per
+        // frame. Muting mid-click must not cut the buffer off in one frame —
+        // that discontinuity is itself a click, which is the noise the gain
+        // was being turned down to avoid.
+        let (mut engine, _) = started(120.0);
+        let muted = quantum(&mut engine, &[Record::immediate(Command::SetMasterGain { gain: 0.0 })]);
+
+        assert!(
+            muted.iter().any(|&s| s != 0.0),
+            "the gain reached zero within a single quantum"
+        );
+    }
+
+    #[test]
     fn out_of_range_bpm_does_not_break_the_grid() {
         let mut engine = Engine::new(SR);
         for bpm in [f32::NAN, f32::INFINITY, -1.0, 0.0, 1e9] {
@@ -663,6 +746,11 @@ mod tests {
     fn reset_restores_the_initial_state() {
         let mut used = Engine::new(SR);
         quantum(&mut used, &[Record::immediate(Command::SetBpm { bpm: 63.5 })]);
+        // The mixer is part of "as constructed" too, and the comparison at the
+        // end of this test is what proves it: a master gain left at 0.3 would
+        // make every sample after the reset three tenths of the fresh one.
+        quantum(&mut used, &[Record::immediate(Command::SetMasterGain { gain: 0.3 })]);
+        quantum(&mut used, &[Record::immediate(Command::SetTrackGain { track: 6, gain: 0.1 })]);
         quantum(&mut used, &[Record::immediate(Command::Play)]);
         render(&mut used, 500);
         used.reset();
@@ -670,6 +758,8 @@ mod tests {
         assert!(!used.transport().is_playing());
         assert_eq!(used.transport().sample_pos(), 0);
         assert_eq!(used.peak(0), 0.0);
+        assert_eq!(used.mixer().master_gain(), 1.0);
+        assert_eq!(used.mixer().track_gain(6), 1.0);
 
         let (mut fresh, mut expected) = started(AWKWARD_BPM);
         expected.extend(render(&mut fresh, 200));

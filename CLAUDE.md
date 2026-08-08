@@ -118,8 +118,8 @@ Another thread writes the command bytes and supplies the record count, so every 
 
 Checked at review alongside "no allocations". These defects surface far from where they were introduced:
 
-1. **Flush denormals explicitly.** WASM has no FPU flush-to-zero, and the symptom is CPU climbing *during silence*. Any module with feedback state (filters, delays, envelopes, meter ballistics, parameter smoothing) runs its state through `fz()` — threshold `1e-20`.
-2. **Interpolate parameters per frame** — a stepped gain/cutoff/pan change is zipper noise.
+1. **Flush denormals explicitly.** WASM has no FPU flush-to-zero, and the symptom is CPU climbing *during silence*. Any module with feedback state (filters, delays, envelopes, meter ballistics) runs its state through `fz()` in `dsp.rs` — threshold `1e-20`. What decides is feedback, not the category: `Smoothed` is a parameter smoother with no state fed back into itself, so it needs no flush, and its doc comment says why rather than leaving the omission to be read as an oversight.
+2. **Interpolate parameters per frame** — a stepped gain/cutoff/pan change is zipper noise. `dsp::Smoothed` is what does it, and it is a **linear ramp rather than a one-pole**, for a reason worth knowing before writing another smoother: a one-pole does not arrive in `f32`. As the remaining distance shrinks its per-frame increment falls below half an ulp of the current value and rounds away, so the parameter stalls short of the target — measured at 0.5000143 when gliding to 0.5. Gliding to *zero* converges fine, which is what makes it easy to ship: the failure hides wherever the target is not zero, and only an exact comparison finds it.
 3. **No NaN or Inf on the output.** One NaN poisons feedback permanently. Debug builds assert at module boundaries.
 4. **Deterministic.** No wall-clock time, no ambient randomness; noise only from an explicitly seeded generator. The golden render tests compare bit for bit.
 5. **Explicit `reset()`** returning the module to its as-constructed state, or the offline render compares a warmed-up instance against a cold one.

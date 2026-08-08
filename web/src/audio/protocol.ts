@@ -36,7 +36,7 @@
  *
  * Bump on any change to either shape.
  */
-export const PROTOCOL_VERSION = 1
+export const PROTOCOL_VERSION = 2
 
 /** Mirror of `COMMAND_SIZE` in commands.rs. */
 export const COMMAND_SIZE = 16
@@ -45,17 +45,29 @@ export const COMMAND_SIZE = 16
 export const OP_PLAY = 1
 export const OP_STOP = 2
 export const OP_SET_BPM = 3
+export const OP_SET_TRACK_GAIN = 4
+export const OP_SET_TRACK_PAN = 5
+export const OP_SET_MASTER_GAIN = 6
 
 /**
  * A command as the page states it. This mirrors the `Command` enum rather than
- * the wire record on purpose: no opcode in this milestone carries `arg_a` or
- * `arg_b`, and a caller with nothing to put in them should not be asked for
- * them. Zeroing those fields is the encoder's job, below.
+ * the wire record on purpose: a caller states a track and a gain, not an
+ * `arg_a` and a `value`, and the ones with nothing to address are not asked
+ * for an address at all. Which field of the record each lands in — and zeroing
+ * the fields an opcode does not use — is the encoder's job, below.
+ *
+ * Ranges are not stated here either. The engine clamps whatever arrives,
+ * because a value that crossed a thread boundary is input rather than a
+ * promise; that clamp is a guard and not a channel, so it corrects in silence.
+ * Keeping the UI inside the range is the UI's own business.
  */
 export type Command =
   | { readonly op: 'play' }
   | { readonly op: 'stop' }
   | { readonly op: 'set-bpm'; readonly bpm: number }
+  | { readonly op: 'set-track-gain'; readonly track: number; readonly gain: number }
+  | { readonly op: 'set-track-pan'; readonly track: number; readonly pan: number }
+  | { readonly op: 'set-master-gain'; readonly gain: number }
 
 /**
  * Write one record at `byteOffset`.
@@ -65,6 +77,11 @@ export type Command =
  * decodes every field it knows about regardless of opcode — a leftover byte
  * read as a live field is precisely the silently-wrong behaviour this contract
  * exists to prevent.
+ *
+ * A track number occupies the single byte `arg_a`, so anything outside 0–255
+ * wraps rather than failing here. Eight tracks make that unreachable from a
+ * working UI, and the engine drops an index past the last track in any case —
+ * but the wrap happens on this side, before the engine has anything to drop.
  *
  * `atSample` is `0` for "immediately". It stays a plain number: exact to 2^53,
  * which is 22 000 years at 48 kHz, so `BigInt` buys nothing. `>>> 0` is a
@@ -80,6 +97,7 @@ export function writeCommand(
   // Declared without a value so that a command variant with no branch below is
   // a compile error here, not a record with opcode `undefined` on the wire.
   let op: number
+  let argA = 0
   let value = 0
 
   switch (command.op) {
@@ -93,10 +111,24 @@ export function writeCommand(
       op = OP_SET_BPM
       value = command.bpm
       break
+    case 'set-track-gain':
+      op = OP_SET_TRACK_GAIN
+      argA = command.track
+      value = command.gain
+      break
+    case 'set-track-pan':
+      op = OP_SET_TRACK_PAN
+      argA = command.track
+      value = command.pan
+      break
+    case 'set-master-gain':
+      op = OP_SET_MASTER_GAIN
+      value = command.gain
+      break
   }
 
   records.setUint8(byteOffset, op)
-  records.setUint8(byteOffset + 1, 0)
+  records.setUint8(byteOffset + 1, argA)
   records.setUint16(byteOffset + 2, 0, true)
   records.setFloat32(byteOffset + 4, value, true)
   records.setUint32(byteOffset + 8, atSample >>> 0, true)

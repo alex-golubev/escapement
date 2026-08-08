@@ -30,7 +30,9 @@
 //! Pointers handed out stay valid until [`engine_free`]; after it, they dangle.
 
 pub mod commands;
+pub mod dsp;
 pub mod engine;
+pub mod mixer;
 pub mod ring;
 pub mod transport;
 

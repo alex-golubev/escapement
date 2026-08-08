@@ -37,7 +37,7 @@
 /// Bumped on any change to either shape. One number rather than two: a second
 /// version would itself need reconciling with this one, and four telemetry
 /// words do not earn that.
-pub const PROTOCOL_VERSION: u32 = 1;
+pub const PROTOCOL_VERSION: u32 = 2;
 
 /// Size of a single record, in bytes.
 pub const COMMAND_SIZE: usize = 16;
@@ -53,6 +53,9 @@ pub enum Op {
     Play = 1,
     Stop = 2,
     SetBpm = 3,
+    SetTrackGain = 4,
+    SetTrackPan = 5,
+    SetMasterGain = 6,
 }
 
 impl Op {
@@ -61,17 +64,28 @@ impl Op {
             1 => Some(Op::Play),
             2 => Some(Op::Stop),
             3 => Some(Op::SetBpm),
+            4 => Some(Op::SetTrackGain),
+            5 => Some(Op::SetTrackPan),
+            6 => Some(Op::SetMasterGain),
             _ => None,
         }
     }
 }
 
 /// A decoded command.
+///
+/// Ranges are not this type's business. A `track` here is whatever byte
+/// arrived, and a gain is whatever the four bytes said — validating on the
+/// merits belongs to whoever applies the command, which is the only place that
+/// knows how many tracks exist or what a sensible gain is.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Command {
     Play,
     Stop,
     SetBpm { bpm: f32 },
+    SetTrackGain { track: u8, gain: f32 },
+    SetTrackPan { track: u8, pan: f32 },
+    SetMasterGain { gain: f32 },
 }
 
 /// A command together with the instant it applies at.
@@ -95,6 +109,7 @@ impl Record {
     /// (see `Transport::set_bpm`).
     pub fn decode(bytes: &[u8; COMMAND_SIZE]) -> Option<Self> {
         let op = Op::from_byte(bytes[0])?;
+        let arg_a = bytes[1];
         let value = f32::from_le_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
         let at_lo = u32::from_le_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]);
         let at_hi = u32::from_le_bytes([bytes[12], bytes[13], bytes[14], bytes[15]]);
@@ -103,6 +118,9 @@ impl Record {
             Op::Play => Command::Play,
             Op::Stop => Command::Stop,
             Op::SetBpm => Command::SetBpm { bpm: value },
+            Op::SetTrackGain => Command::SetTrackGain { track: arg_a, gain: value },
+            Op::SetTrackPan => Command::SetTrackPan { track: arg_a, pan: value },
+            Op::SetMasterGain => Command::SetMasterGain { gain: value },
         };
 
         Some(Self {
@@ -118,6 +136,9 @@ impl Record {
             Command::Play => (Op::Play, 0u8, 0u16, 0.0f32),
             Command::Stop => (Op::Stop, 0, 0, 0.0),
             Command::SetBpm { bpm } => (Op::SetBpm, 0, 0, bpm),
+            Command::SetTrackGain { track, gain } => (Op::SetTrackGain, track, 0, gain),
+            Command::SetTrackPan { track, pan } => (Op::SetTrackPan, track, 0, pan),
+            Command::SetMasterGain { gain } => (Op::SetMasterGain, 0, 0, gain),
         };
 
         let mut out = [0u8; COMMAND_SIZE];
@@ -151,10 +172,17 @@ mod tests {
     /// A new opcode is added here too, and forgetting to is caught rather than
     /// tolerated: a byte `from_byte` recognizes but this table does not fails
     /// `no_byte_outside_the_table_decodes`.
+    /// Track numbers in the specimens are non-zero on purpose: `arg_a` was a
+    /// field every command wrote as zero until the mixer arrived, so a
+    /// specimen that left it at zero would round-trip through a decoder that
+    /// ignored the field entirely.
     const OPCODES: &[(u8, Op, Command)] = &[
         (1, Op::Play, Command::Play),
         (2, Op::Stop, Command::Stop),
         (3, Op::SetBpm, Command::SetBpm { bpm: 127.5 }),
+        (4, Op::SetTrackGain, Command::SetTrackGain { track: 5, gain: 0.75 }),
+        (5, Op::SetTrackPan, Command::SetTrackPan { track: 2, pan: -0.5 }),
+        (6, Op::SetMasterGain, Command::SetMasterGain { gain: 1.25 }),
     ];
 
     fn round_trip(record: Record) -> Option<Record> {
@@ -228,6 +256,23 @@ mod tests {
                 0x00, 0x00, 0x80, 0x3F, // value = 1.0f32, little-endian
                 0x78, 0x56, 0x34, 0x12, // at_lo
                 0xAB, 0x00, 0x00, 0x00, // at_hi
+            ]
+        );
+
+        // A second record, because the one above says nothing about where
+        // `arg_a` sits: it writes a zero there, and so does every byte around
+        // it. Until the mixer there was no command that filled the field at
+        // all, so its offset was pinned by the comment and by nothing else.
+        let addressed = Record::immediate(Command::SetTrackGain { track: 5, gain: 0.5 });
+        assert_eq!(
+            addressed.encode(),
+            [
+                0x04, // op = SetTrackGain
+                0x05, // arg_a = track 5
+                0x00, 0x00, // arg_b
+                0x00, 0x00, 0x00, 0x3F, // value = 0.5f32, little-endian
+                0x00, 0x00, 0x00, 0x00, // at_lo — immediate
+                0x00, 0x00, 0x00, 0x00, // at_hi
             ]
         );
     }

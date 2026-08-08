@@ -12,7 +12,16 @@
 
 import { describe, expect, it } from 'vitest'
 
-import { COMMAND_SIZE, OP_PLAY, OP_SET_BPM, OP_STOP, writeCommand } from './protocol'
+import {
+  COMMAND_SIZE,
+  OP_PLAY,
+  OP_SET_BPM,
+  OP_SET_MASTER_GAIN,
+  OP_SET_TRACK_GAIN,
+  OP_SET_TRACK_PAN,
+  OP_STOP,
+  writeCommand,
+} from './protocol'
 import type { Command } from './protocol'
 
 /** 0x0000_00AB_1234_5678 — the same instant the Rust test encodes. */
@@ -36,6 +45,9 @@ const OPCODES: Record<Command['op'], readonly [command: Command, opcode: number]
   play: [{ op: 'play' }, 1],
   stop: [{ op: 'stop' }, 2],
   'set-bpm': [{ op: 'set-bpm', bpm: 120 }, 3],
+  'set-track-gain': [{ op: 'set-track-gain', track: 5, gain: 0.75 }, 4],
+  'set-track-pan': [{ op: 'set-track-pan', track: 2, pan: -0.5 }, 5],
+  'set-master-gain': [{ op: 'set-master-gain', gain: 1.25 }, 6],
 }
 
 describe('writeCommand', () => {
@@ -71,7 +83,40 @@ describe('writeCommand', () => {
     // constants are how ring-writer.spec.ts names the record it expects to find
     // in a slot, so they are read outside this file, and nothing else says what
     // they are worth.
-    expect([OP_PLAY, OP_STOP, OP_SET_BPM]).toEqual([1, 2, 3])
+    expect([
+      OP_PLAY,
+      OP_STOP,
+      OP_SET_BPM,
+      OP_SET_TRACK_GAIN,
+      OP_SET_TRACK_PAN,
+      OP_SET_MASTER_GAIN,
+    ]).toEqual([1, 2, 3, 4, 5, 6])
+  })
+
+  it('addresses a track through arg_a, the way commands.rs pins it', () => {
+    // The second half of the byte-for-byte pin, and the reason commands.rs
+    // grew one too: until the mixer, every command wrote a zero into arg_a,
+    // so the field's offset was held by a comment and by nothing else. A track
+    // written one byte over would land in arg_b, decode as zero, and put every
+    // track's gain on track 0.
+    expect(Array.from(encode({ op: 'set-track-gain', track: 5, gain: 0.5 }, 0))).toEqual([
+      0x04, // op = SetTrackGain
+      0x05, // arg_a = track 5
+      0x00,
+      0x00, // arg_b
+      0x00,
+      0x00,
+      0x00,
+      0x3f, // value = 0.5f32, little-endian
+      0x00,
+      0x00,
+      0x00,
+      0x00, // at_lo — immediate
+      0x00,
+      0x00,
+      0x00,
+      0x00, // at_hi
+    ])
   })
 
   it('carries the tempo as the f32 the engine reads back', () => {

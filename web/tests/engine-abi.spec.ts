@@ -136,6 +136,51 @@ describe('the compiled engine', () => {
     engine.engine_free(instance)
   })
 
+  it('scales its output by a master gain that crossed the wire', () => {
+    // The one command the mixer added whose effect is observable from this
+    // side. Track gain and pan are stored in the engine and multiply nothing
+    // yet — there are no voices — so no assertion here could tell a working
+    // decode from a discarded one, and the native tests hold those instead.
+    //
+    // This one goes further than the tempo test above, which shows a number
+    // surviving the crossing. A gain that arrived as an integer, or landed in
+    // arg_a, or was read from the wrong offset would still be *a* number; only
+    // scaling the samples by exactly it rules that out.
+    const BPM = 600
+    /** Past the 10 ms parameter glide, so this measures the gain, not the ramp. */
+    const SETTLED = 1_000
+
+    function peakAt(gain: number): number {
+      const engine = instantiate()
+      const instance = engine.engine_new(SAMPLE_RATE, QUANTUM)
+      expect(instance).not.toBe(0)
+
+      const exchange = new DataView(
+        engine.memory.buffer,
+        engine.engine_cmd_ptr(instance),
+        engine.engine_cmd_capacity(instance) * COMMAND_SIZE,
+      )
+      writeCommand(exchange, 0, { op: 'set-master-gain', gain }, 0)
+      writeCommand(exchange, COMMAND_SIZE, { op: 'set-bpm', bpm: BPM }, 0)
+      writeCommand(exchange, 2 * COMMAND_SIZE, { op: 'play' }, 0)
+
+      const samples = render(engine, instance, 100, 3).subarray(SETTLED)
+      engine.engine_free(instance)
+      return samples.reduce((peak, sample) => Math.max(peak, Math.abs(sample)), 0)
+    }
+
+    const unity = peakAt(1)
+    expect(unity, 'the metronome was silent, so there was nothing to scale').toBeGreaterThan(0)
+    // Exactly half: 0.5 is a power of two, so scaling by it is lossless, and a
+    // tolerance here would accept a gain that merely resembled the one sent.
+    expect(peakAt(0.5)).toBe(unity / 2)
+    // And exactly zero, which is a property of the ramp rather than of the
+    // gain: a parameter that converged on its target without reaching it would
+    // leave an inaudible residue here, and every "is it silent" check
+    // downstream would have to become a tolerance.
+    expect(peakAt(0)).toBe(0)
+  })
+
   it('lays its telemetry block out where protocol.ts says it does', () => {
     // The half of the contract going the other way, and the one nothing used
     // to hold against the compiled engine. The record format is pinned in both
