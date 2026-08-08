@@ -189,6 +189,16 @@ mod tests {
     /// every command wrote as zero until the mixer arrived, and `arg_b` until
     /// the pattern did, so a specimen leaving either at zero would round-trip
     /// happily through a decoder that ignored the field entirely.
+    ///
+    /// `arg_b` needs more than non-zero: both of its bytes have to carry
+    /// something, which is why the step here is 513 rather than one the grid
+    /// has. It is the only 16-bit field in the record, and any step inside the
+    /// sixteen leaves the high byte at zero — a specimen that cannot tell a
+    /// `u16` from a `u8`. Narrowing the field to one byte on both sides of the
+    /// codec was tried and left every test in the crate green. Out of range is
+    /// no obstacle: this codec validates nothing on the merits, and the field
+    /// is sixteen bits precisely because it will carry a parameter index, where
+    /// 513 is an ordinary value rather than an impossible one.
     const OPCODES: &[(u8, Op, Command)] = &[
         (1, Op::Play, Command::Play),
         (2, Op::Stop, Command::Stop),
@@ -196,7 +206,7 @@ mod tests {
         (4, Op::SetTrackGain, Command::SetTrackGain { track: 5, gain: 0.75 }),
         (5, Op::SetTrackPan, Command::SetTrackPan { track: 2, pan: -0.5 }),
         (6, Op::SetMasterGain, Command::SetMasterGain { gain: 1.25 }),
-        (7, Op::SetStep, Command::SetStep { track: 3, step: 11, velocity: 0.6 }),
+        (7, Op::SetStep, Command::SetStep { track: 3, step: 513, velocity: 0.6 }),
         (8, Op::ClearPattern, Command::ClearPattern),
     ];
 
@@ -254,6 +264,20 @@ mod tests {
         }
     }
 
+    #[test]
+    fn round_trips_the_full_range_of_a_step() {
+        // The property the specimen in the table is carrying, said out loud so
+        // that the pin does not rest on one value. A step of 513 up there is
+        // exactly the kind of thing a later reader replaces with a step the
+        // grid has, out of tidiness, and both bytes of `arg_b` stop being
+        // exercised the moment they do. The boundary is 255/256, where a field
+        // narrowed to a byte stops agreeing with one that was not.
+        for step in [0u16, 1, 15, 255, 256, 257, u16::MAX] {
+            let record = Record::immediate(Command::SetStep { track: 3, step, velocity: 0.5 });
+            assert_eq!(round_trip(record), Some(record), "step {step} did not survive");
+        }
+    }
+
     /// Pins the byte layout. This test must fail on any format change — that
     /// is the signal to update both `protocol.ts` and [`PROTOCOL_VERSION`].
     #[test]
@@ -283,13 +307,19 @@ mod tests {
         // both — and the two are adjacent, which is exactly where a one-byte
         // slip stays plausible: a step written one byte early lands in
         // `arg_a`, and every strike goes to the wrong track.
-        let addressed = Record::immediate(Command::SetStep { track: 3, step: 11, velocity: 0.5 });
+        //
+        // The step is 513 and not a legal one so that both bytes of `arg_b`
+        // hold something. With a step from inside the grid the high byte is
+        // zero, and the array below would be equally true of a field only
+        // eight bits wide — which is the one shape of this record no pin here
+        // used to rule out.
+        let addressed = Record::immediate(Command::SetStep { track: 3, step: 513, velocity: 0.5 });
         assert_eq!(
             addressed.encode(),
             [
                 0x07, // op = SetStep
                 0x03, // arg_a = track 3
-                0x0B, 0x00, // arg_b = step 11, little-endian
+                0x01, 0x02, // arg_b = step 513, little-endian
                 0x00, 0x00, 0x00, 0x3F, // value = 0.5f32, little-endian
                 0x00, 0x00, 0x00, 0x00, // at_lo — immediate
                 0x00, 0x00, 0x00, 0x00, // at_hi

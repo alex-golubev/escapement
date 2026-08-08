@@ -50,7 +50,7 @@ const OPCODES: Record<Command['op'], readonly [command: Command, opcode: number]
   'set-track-gain': [{ op: 'set-track-gain', track: 5, gain: 0.75 }, 4],
   'set-track-pan': [{ op: 'set-track-pan', track: 2, pan: -0.5 }, 5],
   'set-master-gain': [{ op: 'set-master-gain', gain: 1.25 }, 6],
-  'set-step': [{ op: 'set-step', track: 3, step: 11, velocity: 0.6 }, 7],
+  'set-step': [{ op: 'set-step', track: 3, step: 513, velocity: 0.6 }, 7],
   'clear-pattern': [{ op: 'clear-pattern' }, 8],
 }
 
@@ -106,13 +106,19 @@ describe('writeCommand', () => {
     // nothing else. The two fields are adjacent, which is where a one-byte
     // slip stays plausible — a step written one byte early lands on the track
     // number, and every strike in the grid goes to the same track.
+    //
+    // The step is 513, which the grid does not have, so that both bytes of
+    // arg_b hold something. It is the only 16-bit field in the record, and a
+    // step from inside the sixteen leaves the high byte zero — an array that
+    // would be just as true of a field eight bits wide. Narrowing it here was
+    // tried and passed every test in this file.
     expect(
-      Array.from(encode({ op: 'set-step', track: 3, step: 11, velocity: 0.5 }, 0)),
+      Array.from(encode({ op: 'set-step', track: 3, step: 513, velocity: 0.5 }, 0)),
     ).toEqual([
       0x07, // op = SetStep
       0x03, // arg_a = track 3
-      0x0b,
-      0x00, // arg_b = step 11, little-endian
+      0x01,
+      0x02, // arg_b = step 513, little-endian
       0x00,
       0x00,
       0x00,
@@ -126,6 +132,24 @@ describe('writeCommand', () => {
       0x00,
       0x00, // at_hi
     ])
+  })
+
+  it('carries a step in the two bytes the engine reads back', () => {
+    // What the pin above rests on, said out loud so that it does not rest on
+    // one specimen. A step of 513 up there is exactly the kind of thing a
+    // later reader replaces with one the grid has, out of tidiness, and the
+    // high byte of arg_b stops being written the moment they do. The boundary
+    // is 255/256, where a field narrowed to a byte stops agreeing with one
+    // that was not.
+    //
+    // Rust holds the same range in `round_trips_the_full_range_of_a_step`, and
+    // from the other end: there a step survives the round trip, here it
+    // reaches the bytes at all. Neither side can check the other's half.
+    for (const step of [0, 1, 15, 255, 256, 257, 65535]) {
+      const bytes = encode({ op: 'set-step', track: 3, step, velocity: 0.5 }, 0)
+      const argB = new DataView(bytes.buffer).getUint16(2, true)
+      expect(argB, `step ${step} did not survive the write`).toBe(step)
+    }
   })
 
   it('carries the tempo as the f32 the engine reads back', () => {
