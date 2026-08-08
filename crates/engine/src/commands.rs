@@ -28,15 +28,25 @@
 /// Protocol version. Checked when the engine is initialized.
 ///
 /// Its scope is **everything that crosses the ABI, in either direction**: the
-/// record layout and the opcode set here, and the telemetry block laid out in
-/// [`crate::engine`] going the other way. Declared this widely on purpose — the
-/// number is what makes a JavaScript artifact built against an older shape
-/// refuse to start, and a layout left outside its scope is one where that
-/// refusal never happens and the symptom is wrong values instead of silence.
+/// record layout and the opcode set here, the telemetry block laid out in
+/// [`crate::engine`] going the other way, and the grid the address fields of a
+/// record index — [`crate::TRACKS`] by [`crate::pattern::STEPS`]. Declared this
+/// widely on purpose — the number is what makes a JavaScript artifact built
+/// against an older shape refuse to start, and anything left outside its scope
+/// is where that refusal never happens and the symptom is wrong values instead
+/// of silence.
 ///
-/// Bumped on any change to either shape. One number rather than two: a second
-/// version would itself need reconciling with this one, and four telemetry
-/// words do not earn that.
+/// The grid is in scope even though no byte moves when it changes, and that is
+/// the case worth spelling out. Its symptom is neither wrong values nor
+/// silence: an index past the end of the grid is dropped, correctly, so a page
+/// built for twelve tracks against an engine holding eight gets four tracks
+/// that accept commands and do nothing, reported by nobody. The two numbers are
+/// mirrored in `protocol.ts` and pinned on both sides;
+/// `tests::grid_dimensions_are_pinned` is what fails first.
+///
+/// Bumped on any change to any of the three. One number rather than three: the
+/// others would themselves need reconciling with this one, and four telemetry
+/// words and two dimensions do not earn that.
 pub const PROTOCOL_VERSION: u32 = 3;
 
 /// Size of a single record, in bytes.
@@ -168,6 +178,12 @@ impl Record {
 #[cfg(test)]
 mod tests {
     use super::*;
+    // The grid is the receiver's, not the codec's, and the codec stays ignorant
+    // of it — this import is `cfg(test)` and reaches no shipping line here. The
+    // pins below sit in this file rather than beside either declaration because
+    // a pin belongs with the shape it holds and opposite its mirror, and the
+    // mirror of these two is in `protocol.spec.ts` with the rest.
+    use crate::{TRACKS, pattern::STEPS};
 
     /// Every opcode: the byte it travels as, the [`Op`] that byte must decode
     /// to, and a command that encodes with it.
@@ -325,6 +341,40 @@ mod tests {
                 0x00, 0x00, 0x00, 0x00, // at_hi
             ]
         );
+    }
+
+    /// Pins the grid the two address fields index — the third thing
+    /// [`PROTOCOL_VERSION`] covers, after the record layout and the telemetry
+    /// block. Literals, like every pin here, and for the same reason.
+    ///
+    /// This one holds a shape no byte belongs to, which is why it is easy to
+    /// leave unheld. Changing either number moves nothing in the record and
+    /// breaks no other test: `arg_a` is a byte at 8 tracks and at 12. What it
+    /// changes is which addresses mean anything on the far side, and since an
+    /// index past the end of the grid is dropped — correctly, that is the
+    /// guard — a page built for twelve tracks against an engine holding eight
+    /// gets four tracks that take commands and do nothing.
+    ///
+    /// A failure here is an ABI change: update `protocol.ts` alongside and bump
+    /// [`PROTOCOL_VERSION`]. Between the languages nothing else can catch it —
+    /// two literals in two languages each agree with their own side — and the
+    /// version is what turns the divergence into a refusal to start.
+    #[test]
+    fn grid_dimensions_are_pinned() {
+        assert_eq!(TRACKS, 8);
+        assert_eq!(STEPS, 16);
+    }
+
+    #[test]
+    fn the_grid_fits_the_fields_that_address_it() {
+        // The only statement anywhere tying "a field this wide" to "a grid this
+        // big", and the two are set in different files by different reasoning.
+        // Neither wrap is loud: Rust would take a `track` of 300 as 44 through
+        // the `u8`, and `writeCommand` would put it there in the first place,
+        // `setUint8` being a modulo. Growing the grid past a field is a change
+        // to the record, not to the grid alone.
+        assert!(TRACKS <= usize::from(u8::MAX) + 1, "arg_a cannot address {TRACKS} tracks");
+        assert!(STEPS <= usize::from(u16::MAX) + 1, "arg_b cannot address {STEPS} steps");
     }
 
     #[test]

@@ -22,6 +22,8 @@ import {
   OP_SET_TRACK_GAIN,
   OP_SET_TRACK_PAN,
   OP_STOP,
+  STEPS,
+  TRACKS,
   writeCommand,
 } from './protocol'
 import type { Command } from './protocol'
@@ -132,6 +134,33 @@ describe('writeCommand', () => {
       0x00,
       0x00, // at_hi
     ])
+  })
+
+  it('mirrors the grid the address fields index', () => {
+    // The third thing PROTOCOL_VERSION covers, after the record layout and the
+    // telemetry block, and the one that moves no byte when it changes: arg_a is
+    // one byte at eight tracks and at twelve. What changes is which addresses
+    // mean anything on the far side. An index past the end of the grid is
+    // dropped by the engine — the right guard — so a page built for twelve
+    // tracks against an engine holding eight gets four tracks that take every
+    // command and do nothing, with no counter anywhere to show it.
+    //
+    // Literals, like every pin here. This one cannot catch a divergence from
+    // Rust on its own — it agrees with its own side by construction, as the
+    // Rust pin agrees with its own. Only the version check does that, and this
+    // is what makes bumping the version non-optional: a failure here is an ABI
+    // change, so mirror commands.rs and lib.rs and raise the number.
+    expect([TRACKS, STEPS]).toEqual([8, 16])
+  })
+
+  it('keeps the grid inside the fields that address it', () => {
+    // The only statement on this side tying "a field this wide" to "a grid this
+    // big", mirroring the one in commands.rs. Neither wrap is loud: setUint8 is
+    // a modulo, so a track of 300 would go out as 44 and arrive as a legal
+    // address for the wrong track. Growing the grid past a field is a change to
+    // the record, not to the grid alone.
+    expect(TRACKS, 'arg_a is one byte').toBeLessThanOrEqual(2 ** 8)
+    expect(STEPS, 'arg_b is two bytes').toBeLessThanOrEqual(2 ** 16)
   })
 
   it('carries a step in the two bytes the engine reads back', () => {

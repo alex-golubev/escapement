@@ -27,19 +27,47 @@
  * Mirror of `PROTOCOL_VERSION` in commands.rs.
  *
  * Its scope is everything that crosses the ABI in either direction: the record
- * layout below, and the telemetry block in `worklet/telemetry-block.ts` coming
- * back. Declared that widely there and repeated here because the scope is what
- * makes the number useful — a layout left outside it is one where neither guard
+ * layout below, the telemetry block in `worklet/telemetry-block.ts` coming back,
+ * and the grid the record's address fields index — `TRACKS` by `STEPS`, just
+ * below. Declared that widely there and repeated here because the scope is what
+ * makes the number useful — anything left outside it is where neither guard
  * fires. Both do: the page stamps this into the ring header and the worklet
  * checks it, catching a bundle that was not rebuilt; and the worklet compares it
  * against `engine_protocol_version()`, catching a wasm that was.
  *
- * Bump on any change to either shape.
+ * The second of those is the only thing that can catch a grid which differs
+ * between the languages. A pin agrees with its own side by construction, so
+ * both pins stay green through a one-sided change; what they buy is that
+ * bumping this number stops being optional.
+ *
+ * Bump on any change to any of the three.
  */
 export const PROTOCOL_VERSION = 3
 
 /** Mirror of `COMMAND_SIZE` in commands.rs. */
 export const COMMAND_SIZE = 16
+
+/**
+ * The grid a record addresses into: `TRACKS` mirrors the constant of that name
+ * in lib.rs, `STEPS` the one in pattern.rs.
+ *
+ * Here rather than left to whoever draws the grid, because these two are a
+ * contract and not a layout choice, and the failure they carry is unlike the
+ * other two this file mirrors. A record with a wrong byte layout produces wrong
+ * values; a worklet built against an older shape produces silence. A grid
+ * larger on this side than in the engine produces neither: the engine drops an
+ * index past the end of its own grid, which is the right guard, so the extra
+ * tracks accept every command and do nothing at all, and no counter anywhere
+ * moves. Changing either number is an ABI change — mirror it in the other
+ * language and bump `PROTOCOL_VERSION` above.
+ *
+ * Ranges are a different matter and are not mirrored here. A gain outside its
+ * limits is clamped and still sounds, so keeping the UI inside it is the UI's
+ * own business; an index outside the grid is not clamped into a neighbour, it
+ * is dropped. Only the second kind has to agree across the wire.
+ */
+export const TRACKS = 8
+export const STEPS = 16
 
 /** Mirror of `Op` in commands.rs. Numbering starts at 1; 0 means "empty". */
 export const OP_PLAY = 1
@@ -90,9 +118,10 @@ export type Command =
  *
  * A track number occupies the single byte `arg_a` and a step the two bytes of
  * `arg_b`, so anything outside 0–255 and 0–65535 wraps rather than failing
- * here. Eight tracks and sixteen steps make that unreachable from a working
- * UI, and the engine drops an index past the end of the grid in any case — but
- * the wrap happens on this side, before the engine has anything to drop.
+ * here. `TRACKS` and `STEPS` keep that unreachable from a working UI by a wide
+ * margin, and the engine drops an index past the end of the grid in any case —
+ * but the wrap happens on this side, before the engine has anything to drop,
+ * which is why the spec asserts the grid still fits these two fields.
  *
  * `atSample` is `0` for "immediately". It stays a plain number: exact to 2^53,
  * which is 22 000 years at 48 kHz, so `BigInt` buys nothing. `>>> 0` is a
