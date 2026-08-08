@@ -39,10 +39,10 @@ export interface EngineExports {
    * is kept by not allocating twice rather than by freeing.
    *
    * It is not dead ABI. Reloading a sample slot frees the previous contents
-   * inside `engine_sample_alloc` (§5.2 of the plan), so M1 needs no teardown
-   * either; the caller that needs this one is the offline renderer on M3, which
-   * builds and drops instances off the audio thread entirely, and
-   * `engine-abi.spec.ts`, which does exactly that today.
+   * inside `engine_sample_alloc` itself, so M1 needs no teardown either; the
+   * caller that needs this one is the offline renderer on M3, which builds and
+   * drops instances off the audio thread entirely, and `engine-abi.spec.ts`,
+   * which does exactly that today.
    */
   engine_free(instance: number): void
   engine_out_ptr(instance: number, channel: number): number

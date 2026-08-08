@@ -2,9 +2,9 @@
 // that states it. Imported by the page and by the worklet bundle alike.
 //
 // This is a contract between two JavaScript programs, not with Rust: the
-// engine never sees the ring (§3.5 of the plan). It gets a copy of the command
-// bytes in its own linear memory, and hands telemetry back the same way. What
-// crosses to Rust is the record format, which lives in protocol.ts.
+// engine never sees the ring. It gets a copy of the command bytes in its own
+// linear memory, and hands telemetry back the same way. What crosses to Rust
+// is the record format, which lives in protocol.ts.
 //
 // Word indices, into a Uint32Array laid over the whole buffer:
 //

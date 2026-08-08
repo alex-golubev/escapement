@@ -5,8 +5,8 @@
 // than by hand: the interesting property is that the two halves agree, and a
 // test that lays out the words itself would only prove that this file agrees
 // with itself. What cannot be reached from here is the two threads racing —
-// the torn read below is produced by substitution, which is exactly what §6.2
-// asks for, the alternative being a test that waits for a coincidence.
+// the torn read below is produced by substitution, and deliberately so: the
+// alternative is a test that waits for a coincidence.
 
 import { describe, expect, it, vi } from 'vitest'
 

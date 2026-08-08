@@ -1,6 +1,9 @@
-// The audio thread's end of the ring: steps 1-3 of the per-quantum exchange in
-// §3.5 of the plan. The SharedArrayBuffer and WASM linear memory are different
-// buffers, and this is the copy between them.
+// The audio thread's end of the ring. Once per quantum: read the write index,
+// copy the command bytes out of the SAB and into WASM linear memory, advance
+// the read index, let the engine render, then copy the telemetry block back the
+// other way. Both copies live here, because the SharedArrayBuffer and WASM
+// linear memory are different buffers and nothing else moves bytes between
+// them.
 //
 // Hot path, so the rules from render.ts apply here too: no allocation, no
 // locking, nothing thrown. In particular no `subarray` — it builds a view
@@ -75,8 +78,8 @@ export function drainCommands(ring: RingViews, destination: Uint8Array): number 
 }
 
 /**
- * Copy the engine's telemetry block into the ring, the other direction of
- * step 5 in §3.5. Called once per quantum, after `engine_process`.
+ * Copy the engine's telemetry block into the ring — the other direction of the
+ * exchange above. Called once per quantum, after `engine_process`.
  *
  * The transport position is 64 bits and no single operation can carry it, so
  * the reader would be free to catch the low word of one quantum beside the

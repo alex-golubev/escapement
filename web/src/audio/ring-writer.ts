@@ -31,15 +31,15 @@ export interface RingWriter {
    * and nothing here sends in bulk yet.
    *
    * Nothing calls this outside its own spec, and that is the honest state of it
-   * rather than an oversight. §6.2 of the plan asks for a visible counter so
-   * drops cannot pile up unseen — and today they cannot, because `send` returns
+   * rather than an oversight. What the counter exists for is that drops must
+   * never pile up unseen — and today they cannot, because `send` returns
    * `false` in the same breath as the increment, and the page turns the first
    * one into a failure on screen. The counter says nothing the caller was not
    * just told.
    *
    * It stops being redundant with the first caller that sends in bulk — opening
-   * a project pushes hundreds of parameters through here (§10) — and at that
-   * point the useful question is how many were lost, not whether one was.
+   * a project pushes hundreds of parameters through here — and at that point
+   * the useful question is how many were lost, not whether one was.
    */
   dropped(): number
 }
