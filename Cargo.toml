@@ -4,7 +4,14 @@ resolver = "3"
 
 [workspace.package]
 edition = "2024"
-# license = "..."  # pick one before taking the first third-party dependency
+# Proprietary, all rights reserved. `license` takes an SPDX expression, and
+# SPDX only names licenses that grant something, so the file is named instead.
+license-file = "LICENSE"
+
+# Dependency policy: permissive (MIT, Apache-2.0, BSD, ISC) and MPL-2.0 only.
+# GPL, AGPL and LGPL are out — the page ships its JS and WASM to every visitor,
+# which is distribution, and copyleft would then oblige us to hand each of them
+# the source. Check the license before adding anything, not after.
 
 # Profiles are read ONLY from the workspace root manifest. In a member's
 # manifest they are silently ignored.

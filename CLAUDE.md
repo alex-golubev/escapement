@@ -126,6 +126,16 @@ Checked at review alongside "no allocations". These defects surface far from whe
 - `panic = "abort"` is in `[profile.release]` only — in dev/test it breaks the test harness, which needs unwind.
 - `crate-type = ["cdylib", "rlib"]`. Without `rlib`, integration tests under `tests/` and benchmarks do not link at all.
 
+## Dependencies and license
+
+The project is proprietary — all rights reserved, `LICENSE` at the root — and the repository is public only so the code can be read. Being public grants nothing: a license is a permission, and none is given.
+
+That fixes what may be depended on. **Permissive licenses (MIT, Apache-2.0, BSD, ISC) and MPL-2.0 are fine. GPL, AGPL and LGPL are not.** The page ships its JavaScript and WASM to every visitor, and that is distribution — copyleft would then oblige us to hand each of them the source. LGPL's escape hatch, that the user be able to swap the library out, means nothing for a statically linked WASM module, so it goes with the rest.
+
+Check the license before adding a dependency, not after; removing one later costs more than writing the thing did. Today the engine has zero dependencies and `web/` has none outside devDependencies, all of them permissive.
+
+The one place this will bite is time-stretching on M7: Rubber Band is GPL-3.0 or a paid commercial license, SoundTouch is LGPL. That algorithm gets written here or bought — it is the only point on the roadmap where the license choice costs anything.
+
 ## Test style
 
 Tests here are documentation of *why*, not just coverage. Test names are sentences and comments explain the failure being guarded against — match that style when adding to them.
