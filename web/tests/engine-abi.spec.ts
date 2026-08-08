@@ -15,8 +15,17 @@ import { beforeAll, describe, expect, it } from 'vitest'
 import { COMMAND_SIZE, PROTOCOL_VERSION, writeCommand } from '../src/audio/protocol'
 // The interface the worklet itself declares, not a copy of the parts used
 // here: a second description of the ABI would drift from the first, and this
-// file exists to catch drift.
+// file exists to catch drift. The telemetry indices arrive the same way, and
+// from the worklet's side of the tree for the same reason they live there: the
+// block is in linear memory, which only the audio thread ever addresses.
 import type { EngineExports } from '../src/worklet/engine'
+import {
+  TELEMETRY_PEAK_L,
+  TELEMETRY_PEAK_R,
+  TELEMETRY_TRANSPORT_HI,
+  TELEMETRY_TRANSPORT_LO,
+  TELEMETRY_WORDS,
+} from '../src/worklet/telemetry-block'
 
 const WASM_PATH = fileURLToPath(new URL('../public/engine.wasm', import.meta.url))
 
@@ -123,6 +132,72 @@ describe('the compiled engine', () => {
     // dropped, misread as another type, or reassembled from the wrong offset
     // puts this beat somewhere else entirely.
     expect(onsets[1] - onsets[0], 'the tempo did not survive the crossing').toBe(samplesPerBeat)
+
+    engine.engine_free(instance)
+  })
+
+  it('lays its telemetry block out where protocol.ts says it does', () => {
+    // The half of the contract going the other way, and the one nothing used
+    // to hold against the compiled engine. The record format is pinned in both
+    // languages and crossed end to end above; the telemetry block is mirrored
+    // in protocol.ts by hand, and no version word covers it — `PROTOCOL_VERSION`
+    // is about the record layout and the opcode set. Reorder two words in
+    // engine.rs and every other test in this repository stays green while the
+    // page shows a position that is a peak.
+    const engine = instantiate()
+    const instance = engine.engine_new(SAMPLE_RATE, QUANTUM)
+    expect(instance).not.toBe(0)
+
+    const exchange = new DataView(
+      engine.memory.buffer,
+      engine.engine_cmd_ptr(instance),
+      engine.engine_cmd_capacity(instance) * COMMAND_SIZE,
+    )
+    writeCommand(exchange, 0, { op: 'set-bpm', bpm: 120 }, 0)
+    writeCommand(exchange, COMMAND_SIZE, { op: 'play' }, 0)
+
+    // The same bytes twice, exactly as the worklet and the page see them: the
+    // block is copied word by word into the ring, and the peaks are read back
+    // through a Float32Array because Rust put them there with `f32::to_bits`.
+    const telemetry = engine.engine_telemetry_ptr(instance)
+    const words = new Uint32Array(engine.memory.buffer, telemetry, TELEMETRY_WORDS)
+    const floats = new Float32Array(engine.memory.buffer, telemetry, TELEMETRY_WORDS)
+
+    // Before the first block, so that everything below is a change this test
+    // caused rather than whatever happened to be at that address.
+    expect(Array.from(words), 'the block is not zeroed at construction').toEqual([0, 0, 0, 0])
+
+    render(engine, instance, 1, 2)
+    const struck = floats[TELEMETRY_PEAK_L]
+
+    expect(words[TELEMETRY_TRANSPORT_LO]).toBe(QUANTUM)
+    expect(words[TELEMETRY_TRANSPORT_HI], 'the high word is not the position').toBe(0)
+    // A meter reading, not a position and not a count: bounded by one, and
+    // greater than zero because Play landed inside this very block and the
+    // metronome struck a beat in it.
+    expect(struck).toBeGreaterThan(0)
+    expect(struck).toBeLessThanOrEqual(1)
+    // The same word read as the integer it is not. This is what "f32 bits"
+    // means concretely — anything that decoded to a small number here would be
+    // a second definition of an f32, which is the arrangement these two views
+    // exist to avoid.
+    expect(words[TELEMETRY_PEAK_L], 'the peak word is not f32 bits').toBeGreaterThan(1)
+    // Both channels carry the same metronome at this milestone, so this pins
+    // that the second peak is a peak — not that L and R are the right way
+    // round. Nothing in M0 can tell those two apart, and a test that claimed to
+    // would be claiming more than it checks.
+    expect(floats[TELEMETRY_PEAK_R]).toBe(struck)
+
+    const QUIET = 20
+    render(engine, instance, QUIET, 0)
+
+    expect(words[TELEMETRY_TRANSPORT_LO]).toBe((QUIET + 1) * QUANTUM)
+    // Falling, and still sounding. The click is over within some 8 ms while
+    // the meter falls by `PEAK_FALL_PER_SECOND` — so a word that held still
+    // here would be something other than the meter, and one that dropped to
+    // zero would be the raw block level.
+    expect(floats[TELEMETRY_PEAK_L]).toBeLessThan(struck)
+    expect(floats[TELEMETRY_PEAK_L]).toBeGreaterThan(0)
 
     engine.engine_free(instance)
   })

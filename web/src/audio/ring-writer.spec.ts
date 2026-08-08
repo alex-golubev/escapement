@@ -102,6 +102,6 @@ describe('createWriter', () => {
 })
 
 function ring() {
-  const buffer = createRing()
-  return { ...openRing(buffer), writer: createWriter(buffer) }
+  const views = openRing(createRing())
+  return { ...views, writer: createWriter(views) }
 }

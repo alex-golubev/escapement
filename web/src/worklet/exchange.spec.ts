@@ -9,12 +9,7 @@
 
 import { describe, expect, it, vi } from 'vitest'
 
-import {
-  COMMAND_SIZE,
-  TELEMETRY_TRANSPORT_HI,
-  TELEMETRY_TRANSPORT_LO,
-  TELEMETRY_WORDS,
-} from '../audio/protocol'
+import { COMMAND_SIZE } from '../audio/protocol'
 import {
   RING_CAPACITY,
   WORD_CMD_READ,
@@ -26,6 +21,11 @@ import {
 } from '../audio/ring'
 import { createWriter } from '../audio/ring-writer'
 import { drainCommands, publishTelemetry } from './exchange'
+import {
+  TELEMETRY_TRANSPORT_HI,
+  TELEMETRY_TRANSPORT_LO,
+  TELEMETRY_WORDS,
+} from './telemetry-block'
 
 /** What the engine reports through `engine_cmd_capacity`. */
 const CMD_CAPACITY = 256
@@ -112,6 +112,20 @@ describe('drainCommands', () => {
     for (let index = 0; index < 4; index += 1) {
       expect(tempoAt(destination, index), `record ${index} came back wrong`).toBe(60 + index)
     }
+  })
+
+  it('takes no more than the ring holds, however far ahead the write index is', () => {
+    // The write index is written by the other thread, so it is input and not a
+    // promise — `ring.rs` clamps the record count for the same reason. A page
+    // that got ahead of itself would otherwise have this copying out slots the
+    // writer is filling right now, and then releasing them as delivered.
+    const { views } = ring()
+    const roomy = new Uint8Array((RING_CAPACITY + 512) * COMMAND_SIZE)
+
+    Atomics.store(views.words, WORD_CMD_WRITE, RING_CAPACITY + 500)
+
+    expect(drainCommands(views, roomy)).toBe(RING_CAPACITY)
+    expect(Atomics.load(views.words, WORD_CMD_READ)).toBe(RING_CAPACITY)
   })
 
   it('allocates nothing', () => {
@@ -219,10 +233,10 @@ function block(position: number): Uint32Array {
 }
 
 function ring() {
-  const buffer = createRing()
+  const views = openRing(createRing())
   return {
-    views: openRing(buffer),
-    writer: createWriter(buffer),
+    views,
+    writer: createWriter(views),
     // Stands in for the view over `engine_cmd_ptr`, at the size the real
     // engine reports.
     destination: new Uint8Array(CMD_CAPACITY * COMMAND_SIZE),

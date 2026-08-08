@@ -65,13 +65,21 @@ This is not stylistic. Rendering proceeds in segments *between* commands, so a q
 
 **All `unsafe` lives in `lib.rs`.** Everything else is safe Rust tested with plain `cargo test` on the native target.
 
-### The command protocol is a two-file contract
+### The ABI contract is mirrored, in both directions
 
-`crates/engine/src/commands.rs` and `web/src/audio/protocol.ts` describe the same 16-byte little-endian record and are edited together. A mismatch produces silently wrong behavior that is very expensive to diagnose. The guards:
+Two shapes cross the ABI, each described twice — once per language — and each pair edited together. A mismatch produces silently wrong behavior that is very expensive to diagnose.
 
-- `PROTOCOL_VERSION` — bump on any layout or opcode change.
-- `engine_protocol_version()` is exported so the check compares against a number that came out of the *compiled engine*. The version field in the SAB header is written by the UI, so comparing it against `protocol.ts` compares JS with itself and proves nothing.
-- `commands::tests::wire_format_is_pinned` fails on any byte-layout change — that failure is the signal to update both sides.
+- **UI → audio, the 16-byte little-endian record:** `crates/engine/src/commands.rs` and `web/src/audio/protocol.ts`.
+- **audio → UI, the telemetry block in linear memory:** the constants at the top of `crates/engine/src/engine.rs` and `web/src/worklet/telemetry-block.ts`.
+
+The guards:
+
+- `PROTOCOL_VERSION` — **its scope is both shapes**, and that is what makes it useful: a layout left outside its scope is one where neither check below fires and the symptom is wrong values rather than silence. Bump on any change to either.
+- `engine_protocol_version()` is exported so the check compares against a number that came out of the *compiled engine*. The version field in the SAB header is written by the UI, so comparing it against `protocol.ts` compares JS with itself and proves nothing — what that one does catch is a worklet bundle that was not rebuilt.
+- Four pinning tests, one per shape per language: `commands::tests::wire_format_is_pinned` and `protocol.spec.ts` for the record, `engine::tests::telemetry_layout_is_pinned` and `telemetry-block.spec.ts` for the block. Each asserts against literals rather than against the constants the code reads — a test that reads them agrees with whatever they say, which is why swapping two telemetry indices once left all sixty-nine Rust tests green. Any of the four failing is the signal to update both sides and bump the version.
+- `tests/engine-abi.spec.ts` is the only place either shape is checked against the *compiled* artifact, in both directions.
+
+There is deliberately no `engine_telemetry_words()`: the version check already refuses a mismatched build, and refuses it before the first quantum rather than after the field counts disagree.
 
 Transport position is `u64` end to end, carried as two `u32` words (lo/hi) in both the protocol and the telemetry. On the JS side it stays a plain `number` (exact to 2^53); `BigInt` is not used anywhere.
 
@@ -83,7 +91,8 @@ Transport position is `u64` end to end, carried as two `u32` words (lo/hi) in bo
 - `worklet/engine.ts` — bring-up as decisions. `openEngine` takes `EngineExports` rather than a `WebAssembly.Module` precisely so a fake can report the wrong version or refuse the arguments; the real artifact never will on demand.
 - `worklet/render.ts` — the hot path, under different rules from everything around it.
 - `audio/host.ts` — main-thread bring-up: compile, load, connect, and the check that the context actually reached `running`.
-- `audio/protocol.ts` — the JS half of the two-file contract above.
+- `audio/protocol.ts` — the record format, the JS half of the first contract above. In `audio/` because both threads use it: the page encodes, the worklet copies.
+- `worklet/telemetry-block.ts` — the block layout, the JS half of the second. In `worklet/` because the three contracts here divide by which memory each describes, and this one describes WASM linear memory, which only the audio thread ever addresses. By the same rule `audio/ring.ts` describes the SAB and is shared, and anything added later lands by asking the same question.
 
 **Failures are values, not exceptions.** Forced, not stylistic: the processor constructor cannot let an exception escape — it would reach the page as a bare `processorerror` event carrying no reason at all — and on the page every failure presents identically, as silence, so the case has to survive to somewhere it can be described. Each side has a tagged error union and a `describe*` function whose `switch` has no `default`. `@typescript-eslint/switch-exhaustiveness-check` is on, and both unions are pinned again by a test keyed on `Record<Kind, …>`, so adding a case fails to compile in two places at once.
 
@@ -91,7 +100,7 @@ Transport position is `u64` end to end, carried as two `u32` words (lo/hi) in bo
 
 **Nothing allocates in `renderQuantum`.** At 48 kHz that path runs 375 times a second on the one thread that must not collect garbage. `subarray` builds a new view object per call, which is why the whole-view copy is a separate branch and not a micro-optimisation; `render.spec.ts` spies on `Float32Array.prototype.subarray` to keep it that way.
 
-**Tests are `*.spec.ts` and sit next to the module they cover. `src/` holds nothing else that is test-only** — support and fakes live in `web/tests/support/`, so what ships and what does not is visible from the path rather than inferred from a filename. `web/tests/` also holds the one spec with no module to sit beside: `engine-abi.spec.ts` instantiates the compiled wasm and checks it against `protocol.ts`, which is the contract neither side can verify alone.
+**Tests are `*.spec.ts` and sit next to the module they cover. `src/` holds nothing else that is test-only** — support and fakes live in `web/tests/support/`, so what ships and what does not is visible from the path rather than inferred from a filename. `web/tests/` also holds the one spec with no module to sit beside: `engine-abi.spec.ts` instantiates the compiled wasm and checks it against the TypeScript mirrors in both directions — records written by the shipping encoder and read by the shipping decoder, and the telemetry block read back where `telemetry-block.ts` says it is. That is the part of the contract neither side can verify alone.
 
 ### Everything crossing the ABI is untrusted
 

@@ -6,7 +6,6 @@
 
 import { describe, expect, it, vi } from 'vitest'
 
-import { TELEMETRY_TRANSPORT_LO } from '../audio/protocol'
 import {
   WORD_CMD_READ,
   WORD_TELEMETRY_SEQ,
@@ -18,6 +17,7 @@ import { createWriter } from '../audio/ring-writer'
 import { openEngine } from './engine'
 import type { EngineState } from './engine'
 import { refreshViews, renderQuantum } from './render'
+import { TELEMETRY_TRANSPORT_LO } from './telemetry-block'
 import { FAKE_LAYOUT, fakeEngine } from '../../tests/support/engine-fake'
 import { unwrapValue } from '../../tests/support/unwrap'
 
@@ -39,7 +39,7 @@ describe('renderQuantum', () => {
     expect(output[0][1]).not.toBe(output[1][1])
   })
 
-  it('returns the number of frames it rendered', () => {
+  it('returns the size of the block it was handed', () => {
     const { state } = openedEngine()
     expect(renderQuantum(state, [[emptyBlock(QUANTUM), emptyBlock(QUANTUM)]])).toBe(QUANTUM)
   })
@@ -127,6 +127,41 @@ describe('renderQuantum', () => {
     }
   })
 
+  it('asks the engine for no more than it was allocated for', () => {
+    // The opposite direction from the test below, and the one that used to be
+    // silent: the engine clamps `frames` to `max_frames` on its own side, so a
+    // larger block was rendered half way while the number crossing the ABI
+    // claimed otherwise. Passing the clamped count is what keeps the two sides
+    // saying the same thing.
+    const asked: number[] = []
+    const { state } = openedEngine({
+      engine_process: (_instance, frames) => void asked.push(frames),
+    })
+
+    const long = QUANTUM * 2
+    expect(
+      renderQuantum(state, [[emptyBlock(long)]]),
+      'the block size is what is reported',
+    ).toBe(long)
+    expect(asked).toEqual([QUANTUM])
+  })
+
+  it('leaves no stale tail on a block longer than the engine allocated for', () => {
+    // The frames past what was rendered belong to a buffer the host may well
+    // reuse. Left alone they are the previous block played a second time —
+    // audible, and pointing nowhere near this line.
+    const { state } = openedEngine()
+    fillViews(state)
+
+    const long = QUANTUM * 2
+    const left = emptyBlock(long)
+    left.fill(0.7, QUANTUM)
+    renderQuantum(state, [[left]])
+
+    expect(Array.from(left.subarray(0, QUANTUM))).toEqual(Array.from(state.views.outL))
+    expect(Array.from(left.subarray(QUANTUM)).filter((sample) => sample !== 0)).toEqual([])
+  })
+
   it('still comes out right on a block shorter than the engine allocated for', () => {
     // "Always 128" is a property of the host, not of this code. The trimming
     // branch is what keeps that assumption from being load-bearing.
@@ -172,11 +207,11 @@ describe('refreshViews', () => {
 
 function openedEngine(overrides: Parameters<typeof fakeEngine>[0] = {}) {
   const engine = fakeEngine(overrides)
-  const buffer = createRing()
+  const views = openRing(createRing())
   return {
     engine,
-    writer: createWriter(buffer),
-    state: unwrapValue(openEngine(engine, openRing(buffer), SAMPLE_RATE, QUANTUM)),
+    writer: createWriter(views),
+    state: unwrapValue(openEngine(engine, views, SAMPLE_RATE, QUANTUM)),
   }
 }
 

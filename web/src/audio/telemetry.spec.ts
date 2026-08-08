@@ -10,24 +10,31 @@
 
 import { describe, expect, it, vi } from 'vitest'
 
+import { WORD_TELEMETRY_SEQ, createRing, openRing } from './ring'
+import { createReader } from './telemetry'
+import { publishTelemetry } from '../worklet/exchange'
+// The block layout, from the worklet's side of the tree: these indices address
+// WASM linear memory, which no code on this page ever touches. Imported here
+// because `engineWords` below stands in for Rust — same reason this spec calls
+// the worklet's own `publishTelemetry` rather than laying out the ring by hand.
 import {
   TELEMETRY_PEAK_L,
   TELEMETRY_PEAK_R,
   TELEMETRY_TRANSPORT_HI,
   TELEMETRY_TRANSPORT_LO,
   TELEMETRY_WORDS,
-} from './protocol'
-import { WORD_TELEMETRY_SEQ, createRing, openRing } from './ring'
-import { createReader } from './telemetry'
-import { publishTelemetry } from '../worklet/exchange'
+} from '../worklet/telemetry-block'
 
 describe('createReader', () => {
   it('reads back what the worklet published', () => {
-    const { views, reader, buffer } = setup()
+    const { views, reader } = setup()
     publishTelemetry(views, engineWords(48_000, 0.5, 0.25))
 
     expect(reader.read()).toEqual({ position: 48_000, peakL: 0.5, peakR: 0.25 })
-    expect(seqOf(buffer) % 2, 'the sequence must be left even for the next reader').toBe(0)
+    expect(
+      Atomics.load(views.words, WORD_TELEMETRY_SEQ) % 2,
+      'the sequence must be left even for the next reader',
+    ).toBe(0)
   })
 
   it('carries a position that no single word could hold', () => {
@@ -58,9 +65,9 @@ describe('createReader', () => {
     // An odd sequence means the fields are a mix of two quanta right now.
     // Returning them would be worse than returning nothing: the caller has a
     // previous frame to fall back on, and no way to spot a bad reading.
-    const { views, buffer, reader } = setup()
+    const { views, reader } = setup()
     publishTelemetry(views, engineWords(1_000, 0, 0))
-    Atomics.store(new Uint32Array(buffer), WORD_TELEMETRY_SEQ, 3)
+    Atomics.store(views.words, WORD_TELEMETRY_SEQ, 3)
 
     expect(reader.read()).toBeNull()
   })
@@ -93,9 +100,9 @@ describe('createReader', () => {
 
   it('is good again on the next frame once the writer has finished', () => {
     // A refusal is not a state to recover from — the next read simply works.
-    const { views, buffer, reader } = setup()
+    const { views, reader } = setup()
 
-    Atomics.store(new Uint32Array(buffer), WORD_TELEMETRY_SEQ, 1)
+    Atomics.store(views.words, WORD_TELEMETRY_SEQ, 1)
     expect(reader.read()).toBeNull()
 
     publishTelemetry(views, engineWords(256, 0, 0))
@@ -104,12 +111,8 @@ describe('createReader', () => {
 })
 
 function setup() {
-  const buffer = createRing()
-  return { buffer, views: openRing(buffer), reader: createReader(buffer) }
-}
-
-function seqOf(buffer: SharedArrayBuffer): number {
-  return Atomics.load(new Uint32Array(buffer), WORD_TELEMETRY_SEQ)
+  const views = openRing(createRing())
+  return { views, reader: createReader(views) }
 }
 
 /**

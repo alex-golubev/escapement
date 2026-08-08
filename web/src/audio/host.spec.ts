@@ -19,7 +19,7 @@ const READY: WorkletMessage = { type: 'ready', sampleRate: 44100, protocolVersio
 describe('awaitReady', () => {
   it('settles on the ready message the processor posts from its constructor', async () => {
     const endpoint = fakeEndpoint()
-    const pending = awaitReady(endpoint.node, undefined, TIMEOUT_MS)
+    const pending = awaitReady(endpoint.node, {}, TIMEOUT_MS)
 
     endpoint.post(READY)
     expect(unwrapValue(await pending)).toEqual(READY)
@@ -29,7 +29,7 @@ describe('awaitReady', () => {
     // The reason crossed a thread boundary to get here. Rewording it on the
     // way out would lose the only description of what actually went wrong.
     const endpoint = fakeEndpoint()
-    const pending = awaitReady(endpoint.node, undefined, TIMEOUT_MS)
+    const pending = awaitReady(endpoint.node, {}, TIMEOUT_MS)
 
     endpoint.post({ type: 'failed', message: 'Protocol mismatch: the engine reports 2' })
     expect(unwrapError(await pending)).toEqual({
@@ -40,7 +40,7 @@ describe('awaitReady', () => {
 
   it('reports a crash that happened before the processor could describe it', async () => {
     const endpoint = fakeEndpoint()
-    const pending = awaitReady(endpoint.node, undefined, TIMEOUT_MS)
+    const pending = awaitReady(endpoint.node, {}, TIMEOUT_MS)
 
     endpoint.crash()
     expect(unwrapError(await pending).kind).toBe('processor-crashed')
@@ -51,7 +51,7 @@ describe('awaitReady', () => {
     // "Starting…" — a failure with no message, no log and no end.
     vi.useFakeTimers()
     try {
-      const pending = awaitReady(fakeEndpoint().node, undefined, TIMEOUT_MS)
+      const pending = awaitReady(fakeEndpoint().node, {}, TIMEOUT_MS)
       await vi.advanceTimersByTimeAsync(TIMEOUT_MS)
       expect(unwrapError(await pending)).toEqual({ kind: 'processor-silent', ms: TIMEOUT_MS })
     } finally {
@@ -66,7 +66,7 @@ describe('awaitReady', () => {
     vi.useFakeTimers()
     try {
       const endpoint = fakeEndpoint()
-      const pending = awaitReady(endpoint.node, undefined, TIMEOUT_MS)
+      const pending = awaitReady(endpoint.node, {}, TIMEOUT_MS)
       expect(vi.getTimerCount()).toBe(1)
 
       endpoint.post(READY)
@@ -82,7 +82,11 @@ describe('awaitReady', () => {
     // handler outliving the promise is what delivers every later message.
     const endpoint = fakeEndpoint()
     const seen: WorkletMessage[] = []
-    const pending = awaitReady(endpoint.node, (message) => seen.push(message), TIMEOUT_MS)
+    const pending = awaitReady(
+      endpoint.node,
+      { onMessage: (message) => seen.push(message) },
+      TIMEOUT_MS,
+    )
 
     endpoint.post(READY)
     await pending
@@ -91,11 +95,41 @@ describe('awaitReady', () => {
     expect(seen).toEqual([READY, { type: 'first-quantum', frames: 128 }])
   })
 
+  it('reports a processor that dies after it had already started', async () => {
+    // The same event as `processor-crashed`, meaning the opposite thing. Before
+    // the verdict it is a start that failed; after it, the engine ran, rendered
+    // and is now gone — `panic = "abort"` leaves no other trace. Nothing else
+    // on the page moves when this happens: the last telemetry frame stays put
+    // and the transport button goes on accepting clicks.
+    const endpoint = fakeEndpoint()
+    let crashes = 0
+    const pending = awaitReady(endpoint.node, { onCrash: () => (crashes += 1) }, TIMEOUT_MS)
+
+    endpoint.post(READY)
+    expect(unwrapValue(await pending)).toEqual(READY)
+    expect(crashes, 'a healthy start must not look like a crash').toBe(0)
+
+    endpoint.crash()
+    expect(crashes).toBe(1)
+  })
+
+  it('does not call onCrash for a crash that was the verdict', async () => {
+    // Reported once, as a failed start, and not a second time as a death. The
+    // page has one status line and two reports would make the second one win.
+    const endpoint = fakeEndpoint()
+    let crashes = 0
+    const pending = awaitReady(endpoint.node, { onCrash: () => (crashes += 1) }, TIMEOUT_MS)
+
+    endpoint.crash()
+    expect(unwrapError(await pending).kind).toBe('processor-crashed')
+    expect(crashes).toBe(0)
+  })
+
   it('lets a late message stand without overturning the verdict', async () => {
     vi.useFakeTimers()
     try {
       const endpoint = fakeEndpoint()
-      const pending = awaitReady(endpoint.node, undefined, TIMEOUT_MS)
+      const pending = awaitReady(endpoint.node, {}, TIMEOUT_MS)
       await vi.advanceTimersByTimeAsync(TIMEOUT_MS)
 
       endpoint.post(READY)
@@ -129,6 +163,31 @@ describe('describeStartFailure', () => {
     const messages = Object.values(samples).map(describeStartFailure)
     expect(messages.every((message) => message.length > 0)).toBe(true)
     expect(new Set(messages).size).toBe(messages.length)
+  })
+
+  it('never continues a sentence after text that came from the browser', () => {
+    // A `DOMException` message ends with a full stop of its own, and ours ran
+    // on after it: the page showed `…load a worklet's module.. Build it with
+    // pnpm build:worklet`. Whether foreign text is punctuated is not this
+    // file's business, so nothing of ours may follow it — and the samples here
+    // end with a full stop precisely because the real ones do.
+    const browserSaid = 'Unable to load a worklet’s module.'
+    const carrying: StartFailure[] = [
+      { kind: 'ring-unavailable', message: browserSaid },
+      { kind: 'context-unavailable', message: browserSaid },
+      { kind: 'wasm-unavailable', message: browserSaid },
+      { kind: 'worklet-unavailable', message: browserSaid },
+      { kind: 'node-unavailable', message: browserSaid },
+      { kind: 'processor-failed', message: browserSaid },
+    ]
+
+    for (const failure of carrying) {
+      const message = describeStartFailure(failure)
+      expect(message, `${failure.kind} runs on after the browser's own text`).not.toContain(
+        '..',
+      )
+      expect(message.endsWith(browserSaid), `${failure.kind} buries it mid-sentence`).toBe(true)
+    }
   })
 
   it('names the script that rebuilds whichever artifact is missing', () => {

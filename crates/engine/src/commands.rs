@@ -4,7 +4,7 @@
 //! `web/src/audio/protocol.ts`, and the two are edited together: a mismatch
 //! here produces silently wrong behavior that is very hard to diagnose.
 //! Hence [`PROTOCOL_VERSION`], checked at init, and a byte layout pinned by
-//! [`tests::wire_format_is_pinned`].
+//! `tests::wire_format_is_pinned`.
 //!
 //! Record layout, 16 bytes, little-endian:
 //!
@@ -20,8 +20,18 @@
 //! Little-endian is WASM's own byte order; on the JS side `DataView`
 //! requires stating it explicitly (the trailing `true` argument).
 
-/// Protocol version. Bumped on any change to the layout or the opcode set.
-/// Checked when the engine is initialized.
+/// Protocol version. Checked when the engine is initialized.
+///
+/// Its scope is **everything that crosses the ABI, in either direction**: the
+/// record layout and the opcode set here, and the telemetry block laid out in
+/// [`crate::engine`] going the other way. Declared this widely on purpose — the
+/// number is what makes a JavaScript artifact built against an older shape
+/// refuse to start, and a layout left outside its scope is one where that
+/// refusal never happens and the symptom is wrong values instead of silence.
+///
+/// Bumped on any change to either shape. One number rather than two: a second
+/// version would itself need reconciling with this one, and four telemetry
+/// words do not earn that.
 pub const PROTOCOL_VERSION: u32 = 1;
 
 /// Size of a single record, in bytes.

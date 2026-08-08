@@ -6,14 +6,15 @@
 // locking, nothing thrown. In particular no `subarray` — it builds a view
 // object per call, and this runs 375 times a second.
 
+import { COMMAND_SIZE } from '../audio/protocol'
 import {
-  COMMAND_SIZE,
   TELEMETRY_PEAK_L,
   TELEMETRY_PEAK_R,
   TELEMETRY_TRANSPORT_HI,
   TELEMETRY_TRANSPORT_LO,
-} from '../audio/protocol'
+} from './telemetry-block'
 import {
+  RING_CAPACITY,
   RING_SLOT_MASK,
   WORD_CMD_READ,
   WORD_CMD_WRITE,
@@ -43,7 +44,14 @@ export function drainCommands(ring: RingViews, destination: Uint8Array): number 
   const write = Atomics.load(words, WORD_CMD_WRITE)
   const read = Atomics.load(words, WORD_CMD_READ)
 
-  const available = (write - read) >>> 0
+  // Capped at the ring itself before anything else looks at it. The index came
+  // off another thread, which makes it input rather than a promise — the same
+  // reason `ring.rs` clamps the record count the worklet claims. A page that
+  // ran the write index further ahead than the ring is long would otherwise
+  // have this reading slots the writer is overwriting at that moment, and
+  // releasing them afterwards as though they had been delivered.
+  const queued = (write - read) >>> 0
+  const available = queued < RING_CAPACITY ? queued : RING_CAPACITY
   const capacity = (destination.length / COMMAND_SIZE) | 0
   const count = available < capacity ? available : capacity
   if (count === 0) return 0

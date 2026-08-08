@@ -6,13 +6,13 @@
 // — a frame is 16 ms and the writer's critical section is a handful of stores.
 
 import {
-  COMMANDS_BYTE_OFFSET,
   WORD_PEAK_L,
   WORD_PEAK_R,
   WORD_TELEMETRY_SEQ,
   WORD_TRANSPORT_HI,
   WORD_TRANSPORT_LO,
 } from './ring'
+import type { RingViews } from './ring'
 
 /** One coherent look at the engine: all of it from the same quantum. */
 export interface Telemetry {
@@ -41,12 +41,11 @@ export interface TelemetryReader {
  */
 const ATTEMPTS = 4
 
-export function createReader(ring: SharedArrayBuffer): TelemetryReader {
-  const words = new Uint32Array(ring, 0, COMMANDS_BYTE_OFFSET / Uint32Array.BYTES_PER_ELEMENT)
-  // The same bytes as two of the words above, read as what they are. Rust put
-  // them there with `f32::to_bits`, and this is the reading that cannot
-  // disagree with it — an f32 decoded by hand would be a second definition.
-  const peaks = new Float32Array(ring, 0, COMMANDS_BYTE_OFFSET / Float32Array.BYTES_PER_ELEMENT)
+export function createReader(ring: RingViews): TelemetryReader {
+  // `peaks` is the same bytes as `words`, read as what they are. Rust put them
+  // there with `f32::to_bits`, and this is the reading that cannot disagree
+  // with it — an f32 decoded by hand would be a second definition.
+  const { words, peaks } = ring
 
   return {
     read(): Telemetry | null {

@@ -58,18 +58,51 @@ export const RING_BYTES = COMMANDS_BYTE_OFFSET + RING_CAPACITY * COMMAND_SIZE
  * The views both sides build over the buffer. Neither can detach: a
  * SharedArrayBuffer does not grow, which is the whole difference between these
  * and the views over WASM linear memory.
+ *
+ * All four are built at once even though no single caller uses all four — the
+ * page writes records and reads peaks, the worklet reads records and writes
+ * position. A view is one object built once, and the alternative is each end
+ * restating where the area it wants begins, which is how this file stops being
+ * the only place the layout is written down.
  */
 export interface RingViews {
   /** Header, telemetry and both atomic index words. */
   readonly words: Uint32Array
+  /**
+   * The same bytes as `words`, read as the floats the peaks are. One index
+   * space serves both because a `u32` and an `f32` are four bytes alike, which
+   * is why `WORD_PEAK_L` addresses this view as well.
+   */
+  readonly peaks: Float32Array
   /** The command area alone, so a slot offset is not also a base offset. */
   readonly records: Uint8Array
+  /**
+   * The same records as fields in a stated byte order — what the page writes
+   * a command through. Built here, once, rather than per command: that path is
+   * the one a fader drag takes, and a `DataView` per gesture is an allocation
+   * on it.
+   */
+  readonly recordFields: DataView
+}
+
+/**
+ * The header alone, as words.
+ *
+ * Apart from `openRing` because the version has to be read before anything is
+ * built over the buffer at all — a ring stamped by a page this bundle does not
+ * agree with is one nothing should be built over.
+ */
+export function headerWords(ring: SharedArrayBuffer): Uint32Array {
+  return new Uint32Array(ring, 0, COMMANDS_BYTE_OFFSET / Uint32Array.BYTES_PER_ELEMENT)
 }
 
 export function openRing(ring: SharedArrayBuffer): RingViews {
+  const recordBytes = RING_CAPACITY * COMMAND_SIZE
   return {
-    words: new Uint32Array(ring, 0, COMMANDS_BYTE_OFFSET / Uint32Array.BYTES_PER_ELEMENT),
-    records: new Uint8Array(ring, COMMANDS_BYTE_OFFSET, RING_CAPACITY * COMMAND_SIZE),
+    words: headerWords(ring),
+    peaks: new Float32Array(ring, 0, COMMANDS_BYTE_OFFSET / Float32Array.BYTES_PER_ELEMENT),
+    records: new Uint8Array(ring, COMMANDS_BYTE_OFFSET, recordBytes),
+    recordFields: new DataView(ring, COMMANDS_BYTE_OFFSET, recordBytes),
   }
 }
 
@@ -85,6 +118,12 @@ export function openRing(ring: SharedArrayBuffer): RingViews {
  */
 export function createRing(): SharedArrayBuffer {
   const ring = new SharedArrayBuffer(RING_BYTES)
-  new Uint32Array(ring, 0, 1)[0] = PROTOCOL_VERSION
+  // Through `Atomics`, like every other word that crosses to the other thread.
+  // A plain store would in fact be safe here — this runs before the buffer is
+  // posted, and `postMessage` orders everything written before it — but being
+  // the one exception is worth more than the instruction it saves: the rule
+  // "cross-thread words go through Atomics" is easier to keep when it has no
+  // exceptions to remember.
+  Atomics.store(headerWords(ring), WORD_PROTOCOL_VERSION, PROTOCOL_VERSION)
   return ring
 }

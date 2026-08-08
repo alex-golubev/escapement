@@ -17,6 +17,15 @@ use crate::transport::Transport;
 
 /// Telemetry words, in the order the worklet copies them into the SAB.
 ///
+/// This block crosses the ABI, which makes it the second half of the contract
+/// `commands.rs` describes the first half of — audio → UI, where that one is
+/// UI → audio. The mirror is `web/src/worklet/telemetry-block.ts`, the two are
+/// edited together, and [`PROTOCOL_VERSION`](crate::commands::PROTOCOL_VERSION)
+/// governs both: a renumbering here without a bump leaves a worklet built
+/// yesterday copying the wrong words out of a block built today, and the
+/// symptom is wrong numbers on screen with nothing reported anywhere.
+/// `tests::telemetry_layout_is_pinned` is what fails first.
+///
 /// `underrun_count` is deliberately absent: the engine cannot notice a missed
 /// `process` call at all — only the worklet observes that, and it writes that
 /// counter into the SAB directly.
@@ -566,6 +575,30 @@ mod tests {
             engine.process(&mut left, &mut right, &bytes, u32::MAX);
             assert!(left.iter().all(|s| s.is_finite()));
         }
+    }
+
+    #[test]
+    fn telemetry_layout_is_pinned() {
+        // The counterpart of `commands::tests::wire_format_is_pinned`, for the
+        // block going the other way, and necessary for the same reason: the
+        // test below reads the very constants the code writes, so it stays
+        // green through any renumbering of them. Swapping two of these was
+        // tried, and all sixty-nine tests passed.
+        //
+        // Literals, therefore. A change here is a change to the ABI, and this
+        // failure is the signal to update `telemetry-block.ts` alongside it and
+        // to bump PROTOCOL_VERSION — the number that makes a worklet built
+        // against the old block refuse to start rather than misreport.
+        assert_eq!(TELEMETRY_WORDS, 4);
+        assert_eq!(
+            [
+                TELEMETRY_TRANSPORT_LO,
+                TELEMETRY_TRANSPORT_HI,
+                TELEMETRY_PEAK_L,
+                TELEMETRY_PEAK_R,
+            ],
+            [0, 1, 2, 3],
+        );
     }
 
     #[test]

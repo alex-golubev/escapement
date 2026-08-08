@@ -1,8 +1,7 @@
 <script lang="ts">
   import { describeStartFailure, startEngine } from './audio/host'
+  import type { EngineHandle } from './audio/host'
   import type { Command } from './audio/protocol'
-  import type { RingWriter } from './audio/ring-writer'
-  import type { TelemetryReader } from './audio/telemetry'
   import type { WorkletMessage } from './audio/worklet-messages'
 
   // The readiness criterion for this milestone, checked on the page instead of
@@ -35,23 +34,49 @@
   // not.
   type Status = 'idle' | 'starting' | 'running' | 'failed'
 
-  let status = $state<Status>('idle')
+  /**
+   * Everything a successful start produced, in one holder — and the only thing
+   * that says whether the page is driving a live engine. Non-null exactly while
+   * it is: both failure paths go through `fail` below, which is what keeps that
+   * true.
+   *
+   * One holder rather than a field apiece, because separate fields have to be
+   * assigned in an order that nothing enforces. The frame loop below used to
+   * wake on `status` while reading the reader out of a plain `let`, so it worked
+   * only as long as the reader was assigned first — and swapping two lines in
+   * `start` would have stopped the loop for good, with the numbers frozen at
+   * zero and neither the compiler nor a test noticing.
+   *
+   * `$state.raw` and not `$state`: Svelte proxies plain-object state, and this is
+   * a plain object holding two more, so `commands.send` on every step of a fader
+   * drag and `telemetry.read` on every frame would go through two proxy layers.
+   * Nothing mutates the handle — it is replaced whole, which is what raw means.
+   *
+   * Reactive at all because a reactive scope reads it. That is the rule the two
+   * plain `let`s it replaces got half right: what a reactive scope reads has to
+   * be reactive, what an event handler reads does not.
+   */
+  let engine = $state.raw<EngineHandle | null>(null)
+
+  let starting = $state(false)
   let failure = $state<string | null>(null)
-  let sampleRate = $state<number | null>(null)
-  let protocolVersion = $state<number | null>(null)
   let quantum = $state<number | null>(null)
+
+  /**
+   * Derived, so it cannot disagree with the holder above. Kept as its own name
+   * because the template asks four questions of it and `engine !== null` answers
+   * only one of them — but computed, because a `status` assigned by hand beside
+   * `engine` would be the same ordering trap one level up.
+   */
+  const status: Status = $derived(
+    failure !== null ? 'failed' : engine !== null ? 'running' : starting ? 'starting' : 'idle',
+  )
 
   // The transport as the page believes it to be. Believes, and does not know:
   // the engine holds the truth, and until telemetry is read back this is an
   // open loop. It is honest for one button that only ever moves on a click.
   let playing = $state(false)
   let bpm = $state(120) // DEFAULT_BPM in transport.rs; the engine starts here too
-
-  // Not `$state`: both are assigned once, and every reader of them runs long
-  // after — an event handler, or the frame loop below. Making them reactive
-  // would be reactivity that nothing subscribes to.
-  let commands: RingWriter | null = null
-  let telemetry: TelemetryReader | null = null
 
   // What the engine says about itself. Unlike `playing` above, these are not
   // the page's belief about the audio thread — they came from it.
@@ -64,8 +89,12 @@
   // point of a seqlock over a queue — nothing accumulates, nothing is missed
   // that could have been displayed.
   $effect(() => {
-    if (status !== 'running' || telemetry === null) return
-    const reader = telemetry
+    // One reactive read, and it is the same one `status` is derived from — so
+    // there is no second value whose assignment order could matter. A non-null
+    // handle is precisely the condition this loop needs.
+    const running = engine
+    if (running === null) return
+    const reader = running.telemetry
 
     let frame = requestAnimationFrame(function tick() {
       const reading = reader.read()
@@ -83,24 +112,38 @@
   // The click is what makes this legal: an AudioContext built outside a user
   // gesture stays suspended under the autoplay policy, silently.
   async function start(): Promise<void> {
-    status = 'starting'
+    starting = true
     failure = null
 
     // No try/catch: `startEngine` reports every way it can fail as a value, so
     // a catch here could only ever hide a bug in it.
-    const started = await startEngine(receive)
+    const started = await startEngine({ onMessage: receive, onCrash: crashed })
+    starting = false
 
     if (!started.ok) {
-      failure = describeStartFailure(started.error)
-      status = 'failed'
+      fail(describeStartFailure(started.error))
       return
     }
 
-    sampleRate = started.value.sampleRate
-    protocolVersion = started.value.protocolVersion
-    commands = started.value.commands
-    telemetry = started.value.telemetry
-    status = 'running'
+    // One assignment, and it is what makes the page running: the frame loop
+    // wakes on it, and `status` is computed from it.
+    engine = started.value
+  }
+
+  /**
+   * Give up on the engine we were driving.
+   *
+   * The two assignments belong together, and they are in one function so they
+   * cannot come apart: `failure` is what the page shows, `engine` is what the
+   * frame loop follows. A failure that left the handle in place would leave the
+   * loop reading telemetry off an engine nobody is driving, and `send` writing
+   * into a ring nobody drains — reachable or not, that is a live handle to a
+   * dead thread, which is worth removing by construction rather than by the
+   * template happening to hide the button.
+   */
+  function fail(message: string): void {
+    failure = message
+    engine = null
   }
 
   /**
@@ -108,8 +151,8 @@
    * context reported — not accumulated here, because a second counter running
    * beside the engine's is a second answer to drift away from it.
    */
-  function formatClock(samples: number, rate: number | null): string {
-    if (rate === null || rate <= 0) return '—'
+  function formatClock(samples: number, rate: number | undefined): string {
+    if (rate === undefined || rate <= 0) return '—'
     const total = samples / rate
     const minutes = Math.floor(total / 60)
     return `${minutes}:${(total - minutes * 60).toFixed(3).padStart(6, '0')}`
@@ -120,15 +163,34 @@
   }
 
   /**
+   * The audio thread died mid-session. Dropping the handle is the substantive
+   * part: it stops the frame loop and takes away the transport, so the page
+   * stops showing a position that has not moved since and stops taking clicks
+   * into a ring nobody drains.
+   */
+  function crashed(): void {
+    fail('The audio thread stopped. Sound will not come back without a reload')
+  }
+
+  /**
    * Every gesture goes through here, so the ring being full is diagnosed in
    * one place. It cannot happen while the worklet is draining — 1024 records
    * against one click — so when it does, the audio thread has stopped, and the
    * fix is nowhere near the button that reported it.
    */
   function send(command: Command): boolean {
-    if (commands?.send(command) === true) return true
-    failure = 'The command ring is full: the audio thread has stopped draining it'
-    status = 'failed'
+    const commands = engine?.commands
+    // Two failures, and they were one message until this holder made them
+    // distinguishable: no handle at all means this ran while the page was not
+    // driving anything — unreachable through the template, and worth naming
+    // rather than reporting as the ring being full, which is a different fault
+    // with a different fix.
+    if (commands === undefined) {
+      fail('No engine to send to: the transport was used before the page had one')
+      return false
+    }
+    if (commands.send(command)) return true
+    fail('The command ring is full: the audio thread has stopped draining it')
     return false
   }
 
@@ -166,7 +228,7 @@
     {#if status === 'running'}
       <li class="ok">
         <code>AudioContext.sampleRate</code>
-        <span>{sampleRate} Hz</span>
+        <span>{engine?.sampleRate} Hz</span>
       </li>
       <li class:ok={quantum === 128} class:fail={quantum !== null && quantum !== 128}>
         <code>render quantum</code>
@@ -174,7 +236,7 @@
       </li>
       <li class="ok">
         <code>engine_protocol_version()</code>
-        <span>{protocolVersion}</span>
+        <span>{engine?.protocolVersion}</span>
       </li>
     {/if}
   </ul>
@@ -194,14 +256,19 @@
     <ul class="checks">
       <li>
         <code>transport</code>
-        <span>{position.toLocaleString('en-US')} · {formatClock(position, sampleRate)}</span>
+        <span
+          >{position.toLocaleString('en-US')} · {formatClock(
+            position,
+            engine?.sampleRate,
+          )}</span
+        >
       </li>
       <li>
         <code>peak L / R</code>
         <span class="peaks">
           <span class="meter"><span style="width: {Math.min(1, peakL) * 100}%"></span></span>
           <span class="meter"><span style="width: {Math.min(1, peakR) * 100}%"></span></span>
-          {peakL.toFixed(3)}
+          {peakL.toFixed(3)} / {peakR.toFixed(3)}
         </span>
       </li>
     </ul>

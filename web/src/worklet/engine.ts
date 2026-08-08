@@ -8,9 +8,10 @@
 // a bare `processorerror` carrying no reason — so every throw would have to be
 // caught and converted anyway.
 
-import { COMMAND_SIZE, PROTOCOL_VERSION, TELEMETRY_WORDS } from '../audio/protocol'
-import { RING_BYTES, WORD_PROTOCOL_VERSION, openRing } from '../audio/ring'
+import { COMMAND_SIZE, PROTOCOL_VERSION } from '../audio/protocol'
+import { RING_BYTES, WORD_PROTOCOL_VERSION, headerWords, openRing } from '../audio/ring'
 import type { RingViews } from '../audio/ring'
+import { TELEMETRY_WORDS } from './telemetry-block'
 
 /**
  * A failure that is a value. Declared again in audio/host.ts on purpose: the
@@ -28,6 +29,21 @@ export interface EngineExports {
   memory: WebAssembly.Memory
   engine_protocol_version(): number
   engine_new(sampleRate: number, maxFrames: number): number
+  /**
+   * Declared, and deliberately never called from here.
+   *
+   * The processor's lifetime is the context's lifetime: there is no message that
+   * ends it, and linear memory dies with the worklet global scope when the page
+   * closes the context. A free issued from this side would have to prove that no
+   * `process` call is in flight, which the worklet cannot know — so the pairing
+   * is kept by not allocating twice rather than by freeing.
+   *
+   * It is not dead ABI. Reloading a sample slot frees the previous contents
+   * inside `engine_sample_alloc` (§5.2 of the plan), so M1 needs no teardown
+   * either; the caller that needs this one is the offline renderer on M3, which
+   * builds and drops instances off the audio thread entirely, and
+   * `engine-abi.spec.ts`, which does exactly that today.
+   */
   engine_free(instance: number): void
   engine_out_ptr(instance: number, channel: number): number
   engine_cmd_ptr(instance: number): number
@@ -102,8 +118,9 @@ export function describeInitError(error: EngineInitError): string {
     case 'protocol-mismatch':
       return (
         `Protocol mismatch: the engine reports ${error.engine}, this build expects ` +
-        `${error.expected}. Rebuild the wasm module, or reconcile commands.rs ` +
-        `with its TypeScript mirror.`
+        `${error.expected}. Rebuild the wasm module, or reconcile both halves of ` +
+        `the ABI — commands.rs with protocol.ts, and the telemetry block in ` +
+        `engine.rs with telemetry-block.ts.`
       )
     case 'engine-refused':
       return `engine_new refused sampleRate=${error.sampleRate}, maxFrames=${error.maxFrames}`
@@ -149,7 +166,11 @@ export function readRing(
     return err({ kind: 'ring-too-small', bytes: ring.byteLength, needed: RING_BYTES })
   }
 
-  const stamped = new Uint32Array(ring, 0, 1)[WORD_PROTOCOL_VERSION]
+  // Through the same header view the page stamped it with. Read off a
+  // one-element view of its own, this held only while the word stayed at index
+  // zero: move it, and the read is `undefined` and every start fails with a
+  // mismatch against a number that was never there.
+  const stamped = Atomics.load(headerWords(ring), WORD_PROTOCOL_VERSION)
   if (stamped !== PROTOCOL_VERSION) {
     return err({ kind: 'ring-version-mismatch', ring: stamped, worklet: PROTOCOL_VERSION })
   }
@@ -172,6 +193,7 @@ export function openEngine(
   let engineVersion: number
   let instance: number
   let cmdCapacity: number
+  let views: EngineViews
   try {
     engineVersion = exports.engine_protocol_version()
     if (engineVersion !== PROTOCOL_VERSION) {
@@ -195,9 +217,20 @@ export function openEngine(
     // number the drain obeys and the number the engine allocated for cannot
     // become two different numbers.
     cmdCapacity = exports.engine_cmd_capacity(instance)
+
+    // Inside the same block as the calls above, and that is the whole point:
+    // this is where the other five ABI functions are first called, and where
+    // the pointers they return are first believed. Left outside, a module
+    // missing `engine_out_ptr` — or handing back an address that does not fit
+    // the memory behind it — threw straight out of the processor constructor,
+    // and the page saw a bare `processorerror` with no reason: the exact
+    // failure the whole error union exists to prevent.
+    views = buildViews(exports, instance, maxFrames, cmdCapacity)
   } catch (error) {
-    // A missing or non-function export lands here. `build-wasm.sh` guards the
-    // surface, but skips that check when node is absent.
+    // A missing or non-function export lands here, and so does a RangeError
+    // from a view that does not fit. `build-wasm.sh` guards the export
+    // surface, but skips that check when node is absent — and it cannot check
+    // the pointers at all.
     return err({ kind: 'abi-unusable', message: messageOf(error) })
   }
 
@@ -208,7 +241,7 @@ export function openEngine(
     protocolVersion: engineVersion,
     cmdCapacity,
     ring,
-    views: buildViews(exports, instance, maxFrames, cmdCapacity),
+    views,
   })
 }
 
@@ -268,6 +301,7 @@ export function initEngine(
   return openEngine(exports, openRing(ring.value), sampleRate, maxFrames)
 }
 
+/** The twin of the one in audio/host.ts, which is where the reason is written. */
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }

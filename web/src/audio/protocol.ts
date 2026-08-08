@@ -1,11 +1,14 @@
 // The TypeScript half of the two-file contract with commands.rs, edited
-// together with it. Here rather than in the worklet because `processor.ts`
-// calls `registerProcessor` on load, so nothing can import out of it — and a
-// number no test can reach is a number that drifts.
+// together with it. Here in `audio/` rather than in the worklet because both
+// threads need it: the page encodes records through `writeCommand`, the worklet
+// reads `COMMAND_SIZE` to copy and to size its exchange area.
 //
-// This file mirrors the record format and nothing else. The layout of the ring
-// the records travel in is a separate contract with no Rust half at all — the
-// engine never sees the ring — and it lives in ring.ts.
+// This file mirrors the record format and nothing else. Two other contracts sit
+// beside it, divided by which memory each describes: the layout of the ring the
+// records travel in is `ring.ts` — the SharedArrayBuffer, and no Rust half at
+// all, since the engine never sees the ring — and the block coming back the
+// other way is `worklet/telemetry-block.ts`, which describes WASM linear memory
+// and is therefore addressed by the audio thread alone.
 //
 // Record layout, 16 bytes, little-endian, mirroring the block at the top of
 // commands.rs:
@@ -20,25 +23,20 @@
 // Little-endian is WASM's own byte order; `DataView` requires saying so, which
 // is the trailing `true` on every call below.
 
-/** Mirror of `PROTOCOL_VERSION` in commands.rs. Bump on any layout change. */
-export const PROTOCOL_VERSION = 1
-
-/** Mirror of `TELEMETRY_WORDS` in engine.rs. */
-export const TELEMETRY_WORDS = 4
-
-// Mirrors of the telemetry word indices in engine.rs. These address the block
-// the engine writes in WASM linear memory, which is not where those values end
-// up: the worklet copies them into the ring, whose own word indices live in
-// ring.ts. Two index spaces, and the copy is the only place they meet.
-export const TELEMETRY_TRANSPORT_LO = 0
-export const TELEMETRY_TRANSPORT_HI = 1
 /**
- * Peaks travel as `f32` bits, put there by `f32::to_bits`. Reading them as
- * numbers means reading the same bytes through a `Float32Array` — converting
- * by hand would be a second, disagreeing definition of what an f32 is.
+ * Mirror of `PROTOCOL_VERSION` in commands.rs.
+ *
+ * Its scope is everything that crosses the ABI in either direction: the record
+ * layout below, and the telemetry block in `worklet/telemetry-block.ts` coming
+ * back. Declared that widely there and repeated here because the scope is what
+ * makes the number useful — a layout left outside it is one where neither guard
+ * fires. Both do: the page stamps this into the ring header and the worklet
+ * checks it, catching a bundle that was not rebuilt; and the worklet compares it
+ * against `engine_protocol_version()`, catching a wasm that was.
+ *
+ * Bump on any change to either shape.
  */
-export const TELEMETRY_PEAK_L = 2
-export const TELEMETRY_PEAK_R = 3
+export const PROTOCOL_VERSION = 1
 
 /** Mirror of `COMMAND_SIZE` in commands.rs. */
 export const COMMAND_SIZE = 16

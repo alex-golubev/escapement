@@ -6,10 +6,17 @@
 
 import { describe, expect, it } from 'vitest'
 
-import { COMMAND_SIZE, PROTOCOL_VERSION, TELEMETRY_WORDS } from '../audio/protocol'
-import { RING_BYTES, createRing, openRing } from '../audio/ring'
+import { COMMAND_SIZE, PROTOCOL_VERSION } from '../audio/protocol'
+import {
+  RING_BYTES,
+  WORD_PROTOCOL_VERSION,
+  createRing,
+  headerWords,
+  openRing,
+} from '../audio/ring'
 import { describeInitError, openEngine, readModule, readRing } from './engine'
 import type { EngineExports, EngineInitError } from './engine'
+import { TELEMETRY_WORDS } from './telemetry-block'
 import { FAKE_LAYOUT, fakeEngine } from '../../tests/support/engine-fake'
 import { unwrapError, unwrapValue } from '../../tests/support/unwrap'
 
@@ -75,7 +82,9 @@ describe('readRing', () => {
     // and one left unrebuilt is a stale program with a live page in front of
     // it. The symptom without this check is silence.
     const stale = createRing()
-    new Uint32Array(stale, 0, 1)[0] = PROTOCOL_VERSION + 1
+    // Through `Atomics`, the way `createRing` stamps it: this stands in for a
+    // page, so it should write the way a page writes.
+    Atomics.store(headerWords(stale), WORD_PROTOCOL_VERSION, PROTOCOL_VERSION + 1)
 
     expect(unwrapError(readRing({ ring: stale }))).toEqual({
       kind: 'ring-version-mismatch',
@@ -121,6 +130,37 @@ describe('openEngine', () => {
     const broken = fakeEngine({
       engine_new: undefined as unknown as EngineExports['engine_new'],
     })
+    expect(unwrapError(openEngine(broken, ring(), SAMPLE_RATE, QUANTUM)).kind).toBe(
+      'abi-unusable',
+    )
+  })
+
+  it('stays describable when the export that is missing is a pointer', () => {
+    // The same lost #[unsafe(no_mangle)], on one of the five functions called
+    // while the views are built rather than one of the three called before.
+    // Those five used to sit outside the catch, so this threw out of the
+    // processor constructor instead — and a throw there reaches the page as a
+    // `processorerror` carrying no reason, which is the one outcome every
+    // failure in this file is shaped to avoid.
+    for (const absent of [
+      'engine_out_ptr',
+      'engine_cmd_ptr',
+      'engine_telemetry_ptr',
+    ] as const) {
+      const broken = fakeEngine({ [absent]: undefined })
+      expect(
+        unwrapError(openEngine(broken, ring(), SAMPLE_RATE, QUANTUM)).kind,
+        `${absent} threw instead of being reported`,
+      ).toBe('abi-unusable')
+    }
+  })
+
+  it('stays describable when a pointer does not fit the memory behind it', () => {
+    // An engine that answers every call and answers wrong. The view
+    // constructor is what notices, with a RangeError — nothing else here ever
+    // compares a pointer against the size of linear memory, and nothing should:
+    // one check at the boundary is what the exchange area is for.
+    const broken = fakeEngine({ engine_telemetry_ptr: () => 65_530 })
     expect(unwrapError(openEngine(broken, ring(), SAMPLE_RATE, QUANTUM)).kind).toBe(
       'abi-unusable',
     )
@@ -198,5 +238,22 @@ describe('describeInitError', () => {
     const messages = Object.values(samples).map(describeInitError)
     expect(messages.every((message) => message.length > 0)).toBe(true)
     expect(new Set(messages).size).toBe(messages.length)
+  })
+
+  it('never continues a sentence after text that came from elsewhere', () => {
+    // The rule `describeStartFailure` states on the page side, held here too:
+    // these two carry the text of a caught throw, which ends with a full stop
+    // of its own as often as not. Ours running on after it produced a visible
+    // `..` on screen once already.
+    const thrown = 'WebAssembly.Instance(): Import #0 not found.'
+
+    for (const error of [
+      { kind: 'instantiation-failed', message: thrown },
+      { kind: 'abi-unusable', message: thrown },
+    ] as const) {
+      const message = describeInitError(error)
+      expect(message, `${error.kind} runs on after the thrown text`).not.toContain('..')
+      expect(message.endsWith(thrown), `${error.kind} buries it mid-sentence`).toBe(true)
+    }
   })
 })

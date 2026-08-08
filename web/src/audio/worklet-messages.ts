@@ -7,13 +7,17 @@
 // standalone, so a shared type is the only thing keeping the two ends from
 // drifting apart silently.
 
+// `readonly` throughout, like both failure unions: these arrive from another
+// thread through structured clone, so they are readings of what happened there
+// and there is nothing here for anyone to write back into.
+
 /** The processor constructed and instantiated the engine. */
 export interface ReadyMessage {
-  type: 'ready'
+  readonly type: 'ready'
   /** As seen inside the worklet, which is the authority — not what the page assumed. */
-  sampleRate: number
+  readonly sampleRate: number
   /** Reported by the compiled engine, not by this side of the code. */
-  protocolVersion: number
+  readonly protocolVersion: number
 }
 
 /**
@@ -22,8 +26,8 @@ export interface ReadyMessage {
  * event carrying no reason at all.
  */
 export interface FailedMessage {
-  type: 'failed'
-  message: string
+  readonly type: 'failed'
+  readonly message: string
 }
 
 /**
@@ -32,8 +36,8 @@ export interface FailedMessage {
  * is reported once and checked here.
  */
 export interface FirstQuantumMessage {
-  type: 'first-quantum'
-  frames: number
+  readonly type: 'first-quantum'
+  readonly frames: number
 }
 
 export type WorkletMessage = ReadyMessage | FailedMessage | FirstQuantumMessage

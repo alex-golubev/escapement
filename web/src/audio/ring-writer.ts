@@ -15,8 +15,8 @@ import {
   WORD_CMD_DROPPED,
   WORD_CMD_READ,
   WORD_CMD_WRITE,
-  COMMANDS_BYTE_OFFSET,
 } from './ring'
+import type { RingViews } from './ring'
 
 export interface RingWriter {
   /**
@@ -29,16 +29,25 @@ export interface RingWriter {
    * How many commands have been thrown away for want of room. Non-zero is a
    * bug, not a load condition: 1024 records is some three seconds of gestures,
    * and nothing here sends in bulk yet.
+   *
+   * Nothing calls this outside its own spec, and that is the honest state of it
+   * rather than an oversight. §6.2 of the plan asks for a visible counter so
+   * drops cannot pile up unseen — and today they cannot, because `send` returns
+   * `false` in the same breath as the increment, and the page turns the first
+   * one into a failure on screen. The counter says nothing the caller was not
+   * just told.
+   *
+   * It stops being redundant with the first caller that sends in bulk — opening
+   * a project pushes hundreds of parameters through here (§10) — and at that
+   * point the useful question is how many were lost, not whether one was.
    */
   dropped(): number
 }
 
-export function createWriter(ring: SharedArrayBuffer): RingWriter {
-  const words = new Uint32Array(ring, 0, COMMANDS_BYTE_OFFSET / Uint32Array.BYTES_PER_ELEMENT)
-  // One view for the lifetime of the page. `DataView` is what writes an f32 in
-  // a stated byte order, and building one per command would put an allocation
-  // on the path a fader drag takes.
-  const records = new DataView(ring, COMMANDS_BYTE_OFFSET, RING_CAPACITY * COMMAND_SIZE)
+export function createWriter(ring: RingViews): RingWriter {
+  // Taken from the opened ring rather than built here: where the header ends
+  // and the records begin is stated in ring.ts and nowhere else.
+  const { words, recordFields } = ring
 
   return {
     send(command: Command): boolean {
@@ -59,7 +68,7 @@ export function createWriter(ring: SharedArrayBuffer): RingWriter {
       // Immediate: `at_sample = 0`. Nothing schedules ahead yet, and until
       // something does, the engine applying commands in submission order
       // cannot be told apart from applying them in time order.
-      writeCommand(records, (write & RING_SLOT_MASK) * COMMAND_SIZE, command, 0)
+      writeCommand(recordFields, (write & RING_SLOT_MASK) * COMMAND_SIZE, command, 0)
 
       // Publishes every byte written above. Must stay last.
       Atomics.store(words, WORD_CMD_WRITE, (write + 1) >>> 0)
