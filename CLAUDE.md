@@ -33,7 +33,12 @@ pnpm build:worklet                           # alias for ../scripts/build-workle
 
 `scripts/build-wasm.sh` must be used instead of a bare `cargo build`: it forces the build from the workspace root (see profiles below), checks that the `wasm32-unknown-unknown` target is installed, and verifies via `node` that the compiled module still exports every ABI function plus `memory`. **When adding or renaming an exported ABI function, update the `expected` array in that script** — a lost `#[unsafe(no_mangle)]` otherwise produces a successful build and a silently useless module.
 
-Both build artifacts — `web/public/engine.wasm` and `web/public/worklet/processor.js` — are gitignored and reproduced in full by their scripts. Neither is rebuilt by `pnpm dev`: the worklet is outside Vite's module graph, so **it must be rebuilt by hand after every edit to `src/worklet/`**. `pnpm test` fails loudly rather than skipping when `engine.wasm` is absent.
+Both build artifacts — `web/public/engine.wasm` and `web/public/worklet/processor.js` — are gitignored and reproduced in full by their scripts. `pnpm test` fails loudly rather than skipping when `engine.wasm` is absent.
+
+Neither is in Vite's module graph, so two plugins in `web/plugins/artifacts.ts` keep them in step with their sources — the reasoning is there, in full:
+
+- **The worklet is rebuilt for you.** `vite dev` and `vite build` both build it first, and while serving, any change to a `.ts` under `src/` rebuilds it and reloads the page — but only when the bundle actually came out different, so page-only edits cost nothing. A page reload is the ceiling: a processor name is registered once per `AudioWorkletGlobalScope`, so new worklet code always means a new `AudioContext`.
+- **The engine is not rebuilt, only reported on.** A release build with `lto` on every keystroke is untenable, and a dev-profile build would be a different artifact from the shipped one. Instead the dev server says when `engine.wasm` is older than `crates/engine/src` and names the script; `vite build` fails outright rather than shipping a stale or missing engine. **Rebuilding the engine after a Rust edit is still yours to do.**
 
 ## Current state
 

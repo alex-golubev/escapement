@@ -112,7 +112,7 @@ export default defineConfig(
   },
 
   {
-    files: ['tests/**', '*.config.ts', '*.config.js'],
+    files: ['tests/**', 'plugins/**', '*.config.ts', '*.config.js'],
     languageOptions: { globals: globals.node },
   },
 

@@ -33,7 +33,7 @@ pnpm install
 pnpm dev
 ```
 
-Both build artifacts are gitignored and reproduced in full by their scripts. Neither is rebuilt by `pnpm dev` — the worklet sits outside Vite's module graph, so it has to be rebuilt by hand after every edit under `web/src/worklet/`.
+Both build artifacts are gitignored and reproduced in full by their scripts. Neither sits in Vite's module graph, so the dev server takes care of them itself: it rebuilds the worklet bundle on every relevant edit and reloads the page, and it tells you when the compiled engine has fallen behind its Rust sources. That second one it only reports — a release build with link-time optimisation is not something to run on every keystroke, so `./scripts/build-wasm.sh` after a Rust edit stays yours to run.
 
 Tests: `cargo test` from the root for the engine, `pnpm test` from `web/` for the TypeScript half.
 

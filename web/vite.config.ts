@@ -1,6 +1,8 @@
 import { defineConfig } from 'vitest/config'
 import { svelte } from '@sveltejs/vite-plugin-svelte'
 
+import { engineFreshness, workletBundle } from './plugins/artifacts.ts'
+
 // Cross-origin isolation. Without these two headers `SharedArrayBuffer` does
 // not exist, and the entire UI -> audio link goes with it: commands reach the
 // worklet through a ring buffer in shared memory, and there is no fallback
@@ -16,7 +18,10 @@ const isolation = {
 }
 
 export default defineConfig({
-  plugins: [svelte()],
+  // The two artifact plugins are the reason the worklet no longer has to be
+  // rebuilt by hand, and the reason a stale engine says so. Both are in
+  // plugins/artifacts.ts, with the reasoning.
+  plugins: [svelte(), workletBundle(), engineFreshness()],
   server: { headers: isolation },
   preview: { headers: isolation },
   test: {
