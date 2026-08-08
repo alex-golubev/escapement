@@ -16,7 +16,9 @@ The page and the audio thread talk through lock-free ring buffers in a `SharedAr
 
 ## State
 
-The first milestone, and only that: a metronome computed in Rust. The transport, the command protocol, the ring buffer in both directions, the WASM build and the worklet are done and tested. There is no sampler, no pattern, no mixer yet.
+The first milestone is closed, and it is only that: a metronome computed in Rust. The transport, the command protocol, the ring buffer in both directions, the WASM build and the worklet are done and tested — 70 tests on the native target, 89 under vitest. There is no sampler, no pattern, no mixer yet; the drum machine is next.
+
+One known gap comes with it: nothing here detects an audio dropout. `currentTime` advances with the render thread rather than with the device, so the obvious detector compares that thread against itself, and Chrome has no `AudioRenderCapacity` yet.
 
 ## Building it
 

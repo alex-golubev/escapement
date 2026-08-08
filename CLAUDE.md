@@ -42,9 +42,11 @@ Neither is in Vite's module graph, so two plugins in `web/plugins/artifacts.ts` 
 
 ## Current state
 
-The first milestone is the skeleton: a metronome computed in Rust, and nothing beyond it. Done: the Rust half (transport, command codec, ring decoding, metronome, C-ABI), the Vite host with COOP/COEP headers, and the worklet — the engine is instantiated on the audio thread and renders. Still missing: the SAB ring buffer, and the first sound. Nothing sends a command yet, so the transport never starts and the output is silence by construction.
+**The skeleton milestone is closed** (2026-08-08). A metronome computed in Rust reaches the speakers, and nothing beyond it exists: no sampler, no pattern, no mixer. Done and verified — the Rust half (transport, command codec, ring decoding, metronome, C-ABI), the Vite host with COOP/COEP headers, the worklet, the ring buffer in both directions, and a page that starts the transport, drags the tempo, and reads position and levels back out. 70 native tests, 89 in vitest.
 
-**The rule for this milestone is to stop at the metronome.** No sampler, no pattern, no extra ABI functions. The temptation to keep going is strongest here, because the scaffolding is already in front of you — and a skeleton that was never finished is a skeleton verified nowhere.
+It closed carrying one recorded gap, which is worth knowing before you trust a number: **there is no underrun detector, and `underrun_count` in the telemetry block is a reserved zero.** `currentTime` advances with the render thread rather than with the device, so pairing it against a rendered-frame counter compares that thread with itself and reports a confident 0.0 ms; Chrome 151 has no `AudioRenderCapacity`. Nothing here measures dropouts, so do not read silence in that word as evidence of anything.
+
+Next is the drum machine: 16 steps, 8 tracks, a sampler, an editable grid. Two things settled during the skeleton come due with it — `Op` and `Command` are synchronised by hand through `Op::from_byte`, which is honest at three opcodes and risky at eight, and a clamped BPM is currently corrected in silence with no channel to say so.
 
 ## Architecture
 
