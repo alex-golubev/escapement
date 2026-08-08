@@ -33,12 +33,22 @@ pub mod commands;
 pub mod dsp;
 pub mod engine;
 pub mod mixer;
+pub mod pattern;
 pub mod ring;
 pub mod transport;
 
 use commands::{COMMAND_SIZE, PROTOCOL_VERSION};
 use engine::{Engine, TELEMETRY_WORDS};
 use ring::CMD_CAPACITY;
+
+/// Tracks in the drum machine.
+///
+/// Here rather than in one of the modules that uses it, because more than one
+/// does — the mixer keeps a gain and a pan per track, the pattern a row of
+/// steps per track — and two modules each declaring "8" would be two numbers
+/// that are equal today. A `track` field crossing the ABI is addressed against
+/// this one, so they cannot be allowed to disagree.
+pub const TRACKS: usize = 8;
 
 /// Upper bound on quantum length. Web Audio asks for 128 frames; the headroom
 /// is for the offline renderer, which works in far larger blocks. The limit

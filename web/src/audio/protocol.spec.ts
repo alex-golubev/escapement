@@ -14,9 +14,11 @@ import { describe, expect, it } from 'vitest'
 
 import {
   COMMAND_SIZE,
+  OP_CLEAR_PATTERN,
   OP_PLAY,
   OP_SET_BPM,
   OP_SET_MASTER_GAIN,
+  OP_SET_STEP,
   OP_SET_TRACK_GAIN,
   OP_SET_TRACK_PAN,
   OP_STOP,
@@ -48,6 +50,8 @@ const OPCODES: Record<Command['op'], readonly [command: Command, opcode: number]
   'set-track-gain': [{ op: 'set-track-gain', track: 5, gain: 0.75 }, 4],
   'set-track-pan': [{ op: 'set-track-pan', track: 2, pan: -0.5 }, 5],
   'set-master-gain': [{ op: 'set-master-gain', gain: 1.25 }, 6],
+  'set-step': [{ op: 'set-step', track: 3, step: 11, velocity: 0.6 }, 7],
+  'clear-pattern': [{ op: 'clear-pattern' }, 8],
 }
 
 describe('writeCommand', () => {
@@ -90,20 +94,25 @@ describe('writeCommand', () => {
       OP_SET_TRACK_GAIN,
       OP_SET_TRACK_PAN,
       OP_SET_MASTER_GAIN,
-    ]).toEqual([1, 2, 3, 4, 5, 6])
+      OP_SET_STEP,
+      OP_CLEAR_PATTERN,
+    ]).toEqual([1, 2, 3, 4, 5, 6, 7, 8])
   })
 
-  it('addresses a track through arg_a, the way commands.rs pins it', () => {
-    // The second half of the byte-for-byte pin, and the reason commands.rs
-    // grew one too: until the mixer, every command wrote a zero into arg_a,
-    // so the field's offset was held by a comment and by nothing else. A track
-    // written one byte over would land in arg_b, decode as zero, and put every
-    // track's gain on track 0.
-    expect(Array.from(encode({ op: 'set-track-gain', track: 5, gain: 0.5 }, 0))).toEqual([
-      0x04, // op = SetTrackGain
-      0x05, // arg_a = track 5
-      0x00,
-      0x00, // arg_b
+  it('addresses a track and a step where commands.rs pins them', () => {
+    // The second byte-for-byte pin, mirroring the one commands.rs grew for the
+    // same reason: until the mixer and the pattern, every command wrote zeros
+    // into arg_a and arg_b, so their offsets were held by a comment and by
+    // nothing else. The two fields are adjacent, which is where a one-byte
+    // slip stays plausible — a step written one byte early lands on the track
+    // number, and every strike in the grid goes to the same track.
+    expect(
+      Array.from(encode({ op: 'set-step', track: 3, step: 11, velocity: 0.5 }, 0)),
+    ).toEqual([
+      0x07, // op = SetStep
+      0x03, // arg_a = track 3
+      0x0b,
+      0x00, // arg_b = step 11, little-endian
       0x00,
       0x00,
       0x00,

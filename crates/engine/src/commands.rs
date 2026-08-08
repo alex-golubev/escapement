@@ -37,7 +37,7 @@
 /// Bumped on any change to either shape. One number rather than two: a second
 /// version would itself need reconciling with this one, and four telemetry
 /// words do not earn that.
-pub const PROTOCOL_VERSION: u32 = 2;
+pub const PROTOCOL_VERSION: u32 = 3;
 
 /// Size of a single record, in bytes.
 pub const COMMAND_SIZE: usize = 16;
@@ -56,6 +56,8 @@ pub enum Op {
     SetTrackGain = 4,
     SetTrackPan = 5,
     SetMasterGain = 6,
+    SetStep = 7,
+    ClearPattern = 8,
 }
 
 impl Op {
@@ -67,6 +69,8 @@ impl Op {
             4 => Some(Op::SetTrackGain),
             5 => Some(Op::SetTrackPan),
             6 => Some(Op::SetMasterGain),
+            7 => Some(Op::SetStep),
+            8 => Some(Op::ClearPattern),
             _ => None,
         }
     }
@@ -86,6 +90,10 @@ pub enum Command {
     SetTrackGain { track: u8, gain: f32 },
     SetTrackPan { track: u8, pan: f32 },
     SetMasterGain { gain: f32 },
+    /// Velocity `0.0` is a step that does not sound; there is no separate
+    /// on/off flag on the wire, for the reason [`crate::pattern`] gives.
+    SetStep { track: u8, step: u16, velocity: f32 },
+    ClearPattern,
 }
 
 /// A command together with the instant it applies at.
@@ -110,6 +118,7 @@ impl Record {
     pub fn decode(bytes: &[u8; COMMAND_SIZE]) -> Option<Self> {
         let op = Op::from_byte(bytes[0])?;
         let arg_a = bytes[1];
+        let arg_b = u16::from_le_bytes([bytes[2], bytes[3]]);
         let value = f32::from_le_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
         let at_lo = u32::from_le_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]);
         let at_hi = u32::from_le_bytes([bytes[12], bytes[13], bytes[14], bytes[15]]);
@@ -121,6 +130,8 @@ impl Record {
             Op::SetTrackGain => Command::SetTrackGain { track: arg_a, gain: value },
             Op::SetTrackPan => Command::SetTrackPan { track: arg_a, pan: value },
             Op::SetMasterGain => Command::SetMasterGain { gain: value },
+            Op::SetStep => Command::SetStep { track: arg_a, step: arg_b, velocity: value },
+            Op::ClearPattern => Command::ClearPattern,
         };
 
         Some(Self {
@@ -139,6 +150,8 @@ impl Record {
             Command::SetTrackGain { track, gain } => (Op::SetTrackGain, track, 0, gain),
             Command::SetTrackPan { track, pan } => (Op::SetTrackPan, track, 0, pan),
             Command::SetMasterGain { gain } => (Op::SetMasterGain, 0, 0, gain),
+            Command::SetStep { track, step, velocity } => (Op::SetStep, track, step, velocity),
+            Command::ClearPattern => (Op::ClearPattern, 0, 0, 0.0),
         };
 
         let mut out = [0u8; COMMAND_SIZE];
@@ -172,10 +185,10 @@ mod tests {
     /// A new opcode is added here too, and forgetting to is caught rather than
     /// tolerated: a byte `from_byte` recognizes but this table does not fails
     /// `no_byte_outside_the_table_decodes`.
-    /// Track numbers in the specimens are non-zero on purpose: `arg_a` was a
-    /// field every command wrote as zero until the mixer arrived, so a
-    /// specimen that left it at zero would round-trip through a decoder that
-    /// ignored the field entirely.
+    /// Addresses in the specimens are non-zero on purpose. `arg_a` was a field
+    /// every command wrote as zero until the mixer arrived, and `arg_b` until
+    /// the pattern did, so a specimen leaving either at zero would round-trip
+    /// happily through a decoder that ignored the field entirely.
     const OPCODES: &[(u8, Op, Command)] = &[
         (1, Op::Play, Command::Play),
         (2, Op::Stop, Command::Stop),
@@ -183,6 +196,8 @@ mod tests {
         (4, Op::SetTrackGain, Command::SetTrackGain { track: 5, gain: 0.75 }),
         (5, Op::SetTrackPan, Command::SetTrackPan { track: 2, pan: -0.5 }),
         (6, Op::SetMasterGain, Command::SetMasterGain { gain: 1.25 }),
+        (7, Op::SetStep, Command::SetStep { track: 3, step: 11, velocity: 0.6 }),
+        (8, Op::ClearPattern, Command::ClearPattern),
     ];
 
     fn round_trip(record: Record) -> Option<Record> {
@@ -260,16 +275,21 @@ mod tests {
         );
 
         // A second record, because the one above says nothing about where
-        // `arg_a` sits: it writes a zero there, and so does every byte around
-        // it. Until the mixer there was no command that filled the field at
-        // all, so its offset was pinned by the comment and by nothing else.
-        let addressed = Record::immediate(Command::SetTrackGain { track: 5, gain: 0.5 });
+        // `arg_a` and `arg_b` sit: it writes zeros into both, and so does
+        // every byte around them. Until the mixer and the pattern, no command
+        // filled either field at all, and their offsets were pinned by the
+        // comment at the top of this file and by nothing else. `SetStep` is
+        // the specimen because it is the only command that addresses through
+        // both — and the two are adjacent, which is exactly where a one-byte
+        // slip stays plausible: a step written one byte early lands in
+        // `arg_a`, and every strike goes to the wrong track.
+        let addressed = Record::immediate(Command::SetStep { track: 3, step: 11, velocity: 0.5 });
         assert_eq!(
             addressed.encode(),
             [
-                0x04, // op = SetTrackGain
-                0x05, // arg_a = track 5
-                0x00, 0x00, // arg_b
+                0x07, // op = SetStep
+                0x03, // arg_a = track 3
+                0x0B, 0x00, // arg_b = step 11, little-endian
                 0x00, 0x00, 0x00, 0x3F, // value = 0.5f32, little-endian
                 0x00, 0x00, 0x00, 0x00, // at_lo — immediate
                 0x00, 0x00, 0x00, 0x00, // at_hi

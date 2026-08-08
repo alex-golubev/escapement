@@ -14,6 +14,7 @@
 use crate::commands::Command;
 use crate::dsp::fz;
 use crate::mixer::Mixer;
+use crate::pattern::Pattern;
 use crate::ring::CommandBlock;
 use crate::transport::Transport;
 
@@ -123,6 +124,7 @@ pub struct Engine {
     transport: Transport,
     click: Click,
     mixer: Mixer,
+    pattern: Pattern,
     peak: [f32; 2],
 }
 
@@ -132,6 +134,7 @@ impl Engine {
             transport: Transport::new(sample_rate),
             click: Click::new(sample_rate),
             mixer: Mixer::new(sample_rate),
+            pattern: Pattern::new(),
             peak: [0.0; 2],
         }
     }
@@ -142,6 +145,10 @@ impl Engine {
 
     pub fn mixer(&self) -> &Mixer {
         &self.mixer
+    }
+
+    pub fn pattern(&self) -> &Pattern {
+        &self.pattern
     }
 
     pub fn peak(&self, channel: usize) -> f32 {
@@ -155,6 +162,7 @@ impl Engine {
         self.transport = Transport::new(sample_rate);
         self.click.reset();
         self.mixer.reset();
+        self.pattern.reset();
         self.peak = [0.0; 2];
     }
 
@@ -249,6 +257,10 @@ impl Engine {
             Command::SetTrackGain { track, gain } => self.mixer.set_track_gain(track, gain),
             Command::SetTrackPan { track, pan } => self.mixer.set_track_pan(track, pan),
             Command::SetMasterGain { gain } => self.mixer.set_master_gain(gain),
+            Command::SetStep { track, step, velocity } => {
+                self.pattern.set_step(track, step, velocity)
+            }
+            Command::ClearPattern => self.pattern.clear(),
         }
     }
 
@@ -558,6 +570,81 @@ mod tests {
     }
 
     #[test]
+    fn pattern_commands_reach_the_grid_at_their_own_cell() {
+        // `arg_b` had been a zero on every record until SetStep, and it sits
+        // right beside `arg_a`. A step read one byte early would land on the
+        // track number, so every strike in the pattern would go to one track —
+        // and an assertion about "the step" would still pass.
+        let mut engine = Engine::new(SR);
+        quantum(
+            &mut engine,
+            &[
+                Record::immediate(Command::SetStep { track: 3, step: 11, velocity: 0.6 }),
+                Record::immediate(Command::SetStep { track: 0, step: 0, velocity: 1.0 }),
+            ],
+        );
+
+        assert_eq!(engine.pattern().velocity(3, 11), 0.6);
+        assert_eq!(engine.pattern().velocity(0, 0), 1.0);
+        assert_eq!(engine.pattern().velocity(11, 3), 0.0, "track and step were swapped");
+        assert_eq!(engine.pattern().velocity(3, 0), 0.0, "the step index was dropped");
+        assert_eq!(engine.pattern().velocity(0, 11), 0.0, "the track index was dropped");
+    }
+
+    #[test]
+    fn clearing_the_pattern_leaves_the_rest_of_the_engine_alone() {
+        // ClearPattern is the one command that touches a whole structure
+        // rather than one cell; it must not take the tempo or the mixer with
+        // it, which nothing but this would notice.
+        let mut engine = Engine::new(SR);
+        quantum(
+            &mut engine,
+            &[
+                Record::immediate(Command::SetBpm { bpm: AWKWARD_BPM }),
+                Record::immediate(Command::SetMasterGain { gain: 0.4 }),
+                Record::immediate(Command::SetStep { track: 7, step: 15, velocity: 1.0 }),
+            ],
+        );
+        quantum(&mut engine, &[Record::immediate(Command::ClearPattern)]);
+
+        assert!(!engine.pattern().is_active(7, 15), "the step survived the clear");
+        assert_eq!(engine.transport().bpm(), f64::from(AWKWARD_BPM));
+        assert_eq!(engine.mixer().master_gain(), 0.4);
+    }
+
+    #[test]
+    fn a_filled_pattern_changes_nothing_yet() {
+        // Stated rather than assumed. A grid with every step struck must
+        // render identically to an empty one, because there are no voices for
+        // it to trigger — which is what keeps the metronome tests above
+        // testing the metronome and nothing else.
+        //
+        // Written as an equality rather than as silence, since the metronome
+        // is sounding in both. **This test is meant to fail when the sampler
+        // lands** — that failure is the sampler working, and the signal to
+        // replace it with one that asserts what the pattern now does.
+        fn signal(fill: bool) -> Vec<f32> {
+            let mut engine = Engine::new(SR);
+            let mut setup = vec![Record::immediate(Command::SetBpm { bpm: 120.0 })];
+            if fill {
+                for track in 0..8u8 {
+                    for step in 0..16u16 {
+                        let strike = Command::SetStep { track, step, velocity: 1.0 };
+                        setup.push(Record::immediate(strike));
+                    }
+                }
+            }
+            setup.push(Record::immediate(Command::Play));
+
+            let mut rendered = quantum(&mut engine, &setup);
+            rendered.extend(render(&mut engine, 200));
+            rendered
+        }
+
+        assert_eq!(signal(true), signal(false), "the pattern reached the output");
+    }
+
+    #[test]
     fn the_master_gain_scales_the_output() {
         fn peak_at(gain: f32) -> f32 {
             let mut engine = Engine::new(SR);
@@ -751,6 +838,7 @@ mod tests {
         // make every sample after the reset three tenths of the fresh one.
         quantum(&mut used, &[Record::immediate(Command::SetMasterGain { gain: 0.3 })]);
         quantum(&mut used, &[Record::immediate(Command::SetTrackGain { track: 6, gain: 0.1 })]);
+        quantum(&mut used, &[Record::immediate(Command::SetStep { track: 2, step: 9, velocity: 1.0 })]);
         quantum(&mut used, &[Record::immediate(Command::Play)]);
         render(&mut used, 500);
         used.reset();
@@ -760,6 +848,7 @@ mod tests {
         assert_eq!(used.peak(0), 0.0);
         assert_eq!(used.mixer().master_gain(), 1.0);
         assert_eq!(used.mixer().track_gain(6), 1.0);
+        assert!(!used.pattern().is_active(2, 9), "the pattern survived the reset");
 
         let (mut fresh, mut expected) = started(AWKWARD_BPM);
         expected.extend(render(&mut fresh, 200));

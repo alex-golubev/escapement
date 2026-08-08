@@ -18,10 +18,8 @@
 //! non-finite argument outright. Clamping is a guard, not a channel: a UI that
 //! sends out-of-range values is a UI with a bug, and it is not told.
 
+use crate::TRACKS;
 use crate::dsp::Smoothed;
-
-/// Tracks in the drum machine. Fixed for this milestone.
-pub const TRACKS: usize = 8;
 
 /// Gain limits. The ceiling is above unity on purpose: summing eight tracks
 /// needs headroom above the loudest single one, and a fader that cannot go

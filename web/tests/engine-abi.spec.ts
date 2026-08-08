@@ -137,10 +137,14 @@ describe('the compiled engine', () => {
   })
 
   it('scales its output by a master gain that crossed the wire', () => {
-    // The one command the mixer added whose effect is observable from this
-    // side. Track gain and pan are stored in the engine and multiply nothing
-    // yet — there are no voices — so no assertion here could tell a working
-    // decode from a discarded one, and the native tests hold those instead.
+    // The one command of the eight whose effect is observable from this side.
+    // Track gain, pan and the pattern are stored in the engine and reach no
+    // sample yet — there are no voices — so no assertion here could tell a
+    // working decode from a discarded one, and the native tests hold those
+    // instead. Worth knowing precisely because of the mutation this file
+    // exists to catch: an opcode numbered differently in the two languages is
+    // caught here for the master gain and by nothing at all for the rest,
+    // until the sampler gives them an audible effect.
     //
     // This one goes further than the tempo test above, which shows a number
     // surviving the crossing. A gain that arrived as an integer, or landed in

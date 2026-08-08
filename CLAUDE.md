@@ -48,6 +48,8 @@ It closed carrying one recorded gap, which is worth knowing before you trust a n
 
 Next is the drum machine: 16 steps, 8 tracks, a sampler, an editable grid. `Op` and `Command` stay synchronised by hand — generating them would still leave `Command` and its payloads to write out, so the manual list is the honest one — but the gap that made it risky at eight opcodes is closed: `tests::OPCODES` is the table both directions are checked against. What remains open from the skeleton is that a clamped BPM is corrected in silence, with no channel to say so.
 
+**In progress.** The command protocol is at eight opcodes and `PROTOCOL_VERSION` 3: transport, the mixer's three, and `SetStep` / `ClearPattern`. `mixer.rs` holds a gain and a pan per track plus a master, `pattern.rs` a velocity per track per step, and `dsp.rs` the primitives both need. **Of all of it, only the master gain reaches a sample** — track levels and the grid are stored and multiply nothing until there are voices, which is what the sampler brings, and each module says so where it is declared rather than leaving the omission to look like a bug. An opcode arrives with its receiver here: a variant whose `apply` branch is empty compiles, does nothing, and cannot be tested, which is why `TriggerTrack` is not in the protocol yet.
+
 ## Architecture
 
 ### Memory: two buffers that are not the same buffer
