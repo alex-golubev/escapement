@@ -20,6 +20,7 @@ import {
   openRing,
 } from '../audio/ring'
 import { createWriter } from '../audio/ring-writer'
+import { probe, probeMismatch } from '../../tests/support/ring-harness'
 import { drainCommands, publishTelemetry } from './exchange'
 import {
   TELEMETRY_TRANSPORT_HI,
@@ -29,6 +30,12 @@ import {
 
 /** What the engine reports through `engine_cmd_capacity`. */
 const CMD_CAPACITY = 256
+
+/**
+ * Records in the long run below, and the number §6.2 names. It laps the
+ * 1024-record ring some ninety-eight times.
+ */
+const RUN_LENGTH = 100_000
 
 describe('drainCommands', () => {
   it('moves what the page queued, in submission order', () => {
@@ -126,6 +133,66 @@ describe('drainCommands', () => {
 
     expect(drainCommands(views, roomy)).toBe(RING_CAPACITY)
     expect(Atomics.load(views.words, WORD_CMD_READ)).toBe(RING_CAPACITY)
+  })
+
+  it('carries a hundred thousand records through in order, across the wrap of the index', () => {
+    // The run §6.2 asks for, and single-threaded on purpose: what it covers is
+    // the arithmetic over distance, not the ordering between two threads, and
+    // the two want opposite things from a test. This one is deterministic and
+    // reproducible; the ordering is `tests/ring-concurrency.spec.ts`, which is
+    // neither by nature.
+    //
+    // The indices start five hundred short of where a u32 runs out, so the wrap
+    // happens early and with a backlog in the ring — slots in use, a reader
+    // mid-lap. The wrap is covered next door by substitution on an empty ring,
+    // and the point here is the same arithmetic while the ring is working.
+    const { writer, views, destination } = ring()
+    const block = new DataView(destination.buffer)
+    const start = (0xffffffff - 500) >>> 0
+    Atomics.store(views.words, WORD_CMD_WRITE, start)
+    Atomics.store(views.words, WORD_CMD_READ, start)
+
+    let sent = 0
+    let taken = 0
+    let attempts = 0
+    let refused = 0
+    let mismatch: string | null = null
+
+    for (let quantum = 0; taken < RUN_LENGTH; quantum += 1) {
+      // A burst that sweeps every size from 1 to 512 against a drain of 256, so
+      // the ring spends the run swinging between empty and full instead of
+      // settling at one of them. Deterministic — a random burst size would make
+      // a failure impossible to reproduce, which §9 rules out for the engine and
+      // which is no more welcome here.
+      const burst = 1 + ((quantum * 137) % 512)
+      for (let n = 0; n < burst && sent < RUN_LENGTH; n += 1) {
+        attempts += 1
+        // A refusal is the ring full, not a record lost: the drain below makes
+        // room and the next burst re-sends this same record.
+        if (writer.send(probe(sent))) sent += 1
+        else refused += 1
+      }
+
+      const count = drainCommands(views, destination)
+      for (let slot = 0; slot < count && mismatch === null; slot += 1) {
+        mismatch = probeMismatch(block, slot, taken + slot)
+      }
+      taken += count
+    }
+
+    expect(mismatch).toBeNull()
+    expect(taken).toBe(RUN_LENGTH)
+    expect(sent).toBe(RUN_LENGTH)
+    // Every call to `send` did one of two things and never both: put a record
+    // in the ring, or add one to the counter.
+    expect(attempts).toBe(sent + refused)
+    expect(writer.dropped()).toBe(refused)
+    // Proof the run went past the point where the index no longer fits a u32,
+    // rather than merely being long.
+    expect(
+      Atomics.load(views.words, WORD_CMD_WRITE),
+      'the run has to cross the wrap, or it is only a long run',
+    ).toBeLessThan(start)
   })
 
   it('allocates nothing', () => {
