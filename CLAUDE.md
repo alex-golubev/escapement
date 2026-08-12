@@ -153,6 +153,10 @@ Check the license before adding a dependency, not after; removing one later cost
 
 The one place this will bite is time-stretching on M7: Rubber Band is GPL-3.0 or a paid commercial license, SoundTouch is LGPL. That algorithm gets written here or bought — it is the only point on the roadmap where the license choice costs anything.
 
+## Comment style
+
+A comment argues for itself, in front of whoever is reading the repository. Planning for this project happens in a document that is not in git, and **a reference to it does not belong in code**: a pointer to a file the reader cannot open explains nothing, and the reasoning it stands in for is exactly what the comment was supposed to carry. Write the argument out. This has been cleaned out of the code twice already — the second time from comments written a day after the first.
+
 ## Test style
 
 Tests here are documentation of *why*, not just coverage. Test names are sentences and comments explain the failure being guarded against — match that style when adding to them.

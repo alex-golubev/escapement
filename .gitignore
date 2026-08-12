@@ -17,4 +17,8 @@ web/public/worklet/processor.js
 # JetBrains
 .idea/
 
+# Planning documents. Kept out of the repository on purpose: they are written
+# in another language than the code, they record intent rather than what was
+# built, and a reader of a public repository is owed neither.
 PLAN.md
+SAMPLER.md
