@@ -64,6 +64,15 @@ pub const VOICES: usize = 32;
 /// is why `engine_new` refuses a rate above its own limit: without that bound
 /// this constant would turn an argument into an allocation of any size it
 /// liked, and an allocation that fails here does not return null — it aborts.
+///
+/// **What this number was measured against is a drum kit, and that is the
+/// limit of it.** A sustained sound — a pad, a vocal phrase, anything held
+/// rather than struck — passes four seconds routinely, and for that case
+/// raising this constant is the whole of the answer, at the price of the
+/// memory doubling with it. What a larger number would *not* answer is an
+/// instrument wanting many samples at once, one per key range or velocity
+/// layer: that meets the fixed count of slots rather than their size, and a
+/// fixed count is a different design rather than a different number.
 pub const SLOT_SECONDS: f64 = 4.0;
 
 /// Channels a slot will accept. Every slot is sized for the larger of the two,
@@ -377,6 +386,16 @@ impl Sampler {
     /// The alternative is delaying the new note by the length of the fade,
     /// which trades a rare quiet click for a sample-accurate onset — and the
     /// onset is the property the whole milestone is built on.
+    ///
+    /// **The last rank rests on something true of struck sounds and of nothing
+    /// else.** "Least of its sample left" stands in for "quietest", and it may
+    /// stand in for it because a drum decays: what remains of one is its tail.
+    /// A sound that is held until it is let go has no such relation between how
+    /// much is left and how loud it is, and against a pool of those this order
+    /// picks the loudest voice there is. Ranking by envelope level instead is a
+    /// small repair; what makes it worth writing down before it is needed is
+    /// that until then the defect is silent, and it is silent in the direction
+    /// of an audible click.
     fn allocate(&self) -> usize {
         let mut best = 0usize;
         let mut best_rank = (u8::MAX, usize::MAX);
