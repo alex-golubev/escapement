@@ -110,23 +110,59 @@ impl Transport {
         if pos <= 0.0 { 0 } else { pos.round() as u64 }
     }
 
-    /// The nearest beat boundary at or after `pos`.
+    /// Musical position in divisions of a beat.
+    ///
+    /// A division is the unit a grid is laid out in: four per beat is a
+    /// sixteenth, which is what the step sequencer counts in. Derived from
+    /// [`beat_at`](Self::beat_at) rather than computed beside it — the beat is
+    /// the primitive here, and a second route from samples to musical time
+    /// would be a second thing to keep in step with the tempo anchor.
+    pub fn division_at(&self, pos: u64, per_beat: u32) -> f64 {
+        debug_assert!(per_beat > 0, "a beat cannot be divided into nothing");
+        self.beat_at(pos) * f64::from(per_beat)
+    }
+
+    /// Sample position of a musical position given in divisions.
+    pub fn sample_of_division(&self, division: f64, per_beat: u32) -> u64 {
+        debug_assert!(per_beat > 0, "a beat cannot be divided into nothing");
+        self.sample_of_beat(division / f64::from(per_beat))
+    }
+
+    /// The nearest division boundary at or after `pos`.
     ///
     /// If `pos` is itself a boundary, `pos` is returned — a boundary belongs
     /// to the frame it starts on.
-    pub fn next_beat_boundary(&self, pos: u64) -> u64 {
-        // Count from floor, not from ceil. Rounding a boundary to a whole
-        // sample makes beat_at slightly larger than the integer right on the
-        // boundary (4.0000147 instead of 4.0), and ceil would jump past it —
-        // the metronome click would silently vanish at fractional beat
-        // lengths.
-        let beat = self.beat_at(pos).floor();
-        let boundary = self.sample_of_beat(beat);
+    ///
+    /// **Counted from floor, never from ceil.** Rounding a boundary to a whole
+    /// sample leaves the musical position reading slightly past the integer
+    /// when asked right on that boundary — 4.0000147 rather than 4.0 — and
+    /// `ceil` then jumps to the next one, so the boundary is skipped with
+    /// nothing to show for it. Landing the other side of the integer is
+    /// equally possible and harmless: the comparison below reaches for the
+    /// next division only when this one is genuinely behind `pos`.
+    ///
+    /// This is also the reason there is one implementation rather than one per
+    /// musical unit. A beat that lands on a whole sample says nothing about
+    /// its quarters landing on whole ones, so the case this guard exists for is
+    /// strictly more reachable at a subdivision than at the beat — and a second
+    /// copy of the reasoning would be the copy that got it wrong.
+    pub fn next_division_boundary(&self, pos: u64, per_beat: u32) -> u64 {
+        let division = self.division_at(pos, per_beat).floor();
+        let boundary = self.sample_of_division(division, per_beat);
         if boundary >= pos {
             boundary
         } else {
-            self.sample_of_beat(beat + 1.0)
+            self.sample_of_division(division + 1.0, per_beat)
         }
+    }
+
+    /// The nearest beat boundary at or after `pos` — one division per beat.
+    ///
+    /// A wrapper and not a second implementation, deliberately: everything the
+    /// beat-level tests assert about boundaries is therefore asserted about the
+    /// general path too.
+    pub fn next_beat_boundary(&self, pos: u64) -> u64 {
+        self.next_division_boundary(pos, 1)
     }
 }
 
@@ -138,6 +174,9 @@ mod tests {
     /// A tempo with a fractional beat length: 60/127*48000 = 22677.165...
     /// Round values like 120 BPM hide rounding bugs.
     const AWKWARD_BPM: f64 = 127.0;
+    /// Divisions per beat for a sixteenth — the grid the step sequencer counts
+    /// in, and the first caller this generalization is for.
+    const SIXTEENTH: u32 = 4;
 
     fn at(bpm: f64) -> Transport {
         let mut t = Transport::new(SR);
@@ -248,6 +287,90 @@ mod tests {
                 "gap between boundaries {gap} is out of range"
             );
             previous = boundary;
+        }
+    }
+
+    #[test]
+    fn a_division_is_a_fraction_of_a_beat() {
+        // Against literals rather than against samples_per_beat: at 120 BPM and
+        // 48 kHz a beat is 24 000 samples and a sixteenth 6 000. An expression
+        // built from the same constants the code reads would agree with a
+        // subdivision that counted in the wrong unit entirely.
+        let t = at(120.0);
+        for (division, expected) in [(0.0, 0), (1.0, 6_000), (4.0, 24_000), (16.0, 96_000)] {
+            assert_eq!(
+                t.sample_of_division(division, SIXTEENTH),
+                expected,
+                "division {division}"
+            );
+        }
+        assert_eq!(t.division_at(6_000, SIXTEENTH), 1.0);
+        assert_eq!(t.division_at(96_000, SIXTEENTH), 16.0);
+    }
+
+    #[test]
+    fn every_beat_boundary_is_also_a_division_boundary() {
+        // The failure guarded against: a subdivision counted from an origin of
+        // its own rather than off the beat grid. It would keep perfect spacing
+        // and sit a fraction of a step away from the beat — audible as flam,
+        // and invisible to any test that looks at only one of the two grids.
+        let t = at(AWKWARD_BPM);
+        for beat in 0..256 {
+            let pos = t.sample_of_beat(beat as f64);
+            assert_eq!(
+                t.next_division_boundary(pos, SIXTEENTH),
+                pos,
+                "beat {beat} is not on the sixteenth grid"
+            );
+        }
+    }
+
+    #[test]
+    fn division_boundaries_are_evenly_spaced() {
+        // The floor-versus-ceil trap at the resolution where it actually bites.
+        // A beat landing on a whole sample says nothing about its quarters
+        // doing the same, so a skip is more reachable here than the beat-level
+        // test can show — and a skipped boundary is a step that never fires:
+        // one drum silent, once a bar, at some tempos and not others.
+        let t = at(AWKWARD_BPM);
+        let spd = t.samples_per_beat() / f64::from(SIXTEENTH);
+        let mut previous = t.next_division_boundary(0, SIXTEENTH);
+        for _ in 0..4_000 {
+            let boundary = t.next_division_boundary(previous + 1, SIXTEENTH);
+            let gap = boundary - previous;
+            assert!(
+                gap == spd.floor() as u64 || gap == spd.ceil() as u64,
+                "gap between divisions is {gap}, not one division of {spd}"
+            );
+            previous = boundary;
+        }
+    }
+
+    #[test]
+    fn division_boundaries_never_go_backwards() {
+        let t = at(AWKWARD_BPM);
+        for pos in 0..200_000u64 {
+            assert!(
+                t.next_division_boundary(pos, SIXTEENTH) >= pos,
+                "division boundary left of pos={pos}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_odd_subdivision_still_lands_on_the_beat() {
+        // Triplets are not on the roadmap, and that is not what this is for:
+        // the point is that the arithmetic must not be quietly resting on the
+        // divisor being a power of two, where dividing by it is exact. Three is
+        // where such an assumption stops being invisible.
+        let t = at(AWKWARD_BPM);
+        for beat in 0..128 {
+            let pos = t.sample_of_beat(beat as f64);
+            assert_eq!(
+                t.next_division_boundary(pos, 3),
+                pos,
+                "beat {beat} is off the triplet grid"
+            );
         }
     }
 
