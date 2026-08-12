@@ -35,6 +35,7 @@ pub mod engine;
 pub mod mixer;
 pub mod pattern;
 pub mod ring;
+pub mod sampler;
 pub mod transport;
 
 use commands::{COMMAND_SIZE, PROTOCOL_VERSION};
@@ -54,6 +55,17 @@ pub const TRACKS: usize = 8;
 /// is for the offline renderer, which works in far larger blocks. The limit
 /// guards against allocating on a garbage argument.
 const MAX_FRAMES_LIMIT: u32 = 65_536;
+
+/// Upper bound on the sample rate.
+///
+/// Not a musical limit, and the reason is the sampler. Every slot is given a
+/// buffer holding a fixed number of *seconds*, so the memory this function asks
+/// for is proportional to this argument — and an allocation WASM cannot serve
+/// does not fail, it aborts, which would turn the one promise made here (null
+/// for arguments that make no sense) into the end of sound. 192 kHz is past
+/// every rate an `AudioContext` offers on real hardware and still bounds the
+/// engine to tens of megabytes.
+const MAX_SAMPLE_RATE: f64 = 192_000.0;
 
 /// Owner of the memory whose addresses are handed outside.
 ///
@@ -112,7 +124,7 @@ pub extern "C" fn engine_protocol_version() -> u32 {
 /// side is required to check for that.
 #[unsafe(no_mangle)]
 pub extern "C" fn engine_new(sample_rate: f64, max_frames: u32) -> *mut Instance {
-    if !sample_rate.is_finite() || sample_rate <= 0.0 {
+    if !sample_rate.is_finite() || sample_rate <= 0.0 || sample_rate > MAX_SAMPLE_RATE {
         return core::ptr::null_mut();
     }
     if max_frames == 0 || max_frames > MAX_FRAMES_LIMIT {
@@ -269,9 +281,16 @@ mod tests {
     fn rejects_nonsense_arguments() {
         // Null rather than a panic: the call comes from JS, and there is no
         // stack to unwind into.
-        for rate in [0.0, -48_000.0, f64::NAN, f64::INFINITY] {
+        // The upper bound is not fussiness: the sampler holds a fixed number
+        // of seconds per slot, so the rate decides how much memory this call
+        // asks for, and an allocation WASM cannot serve aborts rather than
+        // returning the null this function promises.
+        for rate in [0.0, -48_000.0, f64::NAN, f64::INFINITY, MAX_SAMPLE_RATE + 1.0, 1e12] {
             assert!(engine_new(rate, Q).is_null(), "sample_rate={rate}");
         }
+        // The bound itself is accepted. Through `Owned` so that the instance
+        // is freed rather than leaked past the end of the test.
+        let _at_the_bound = Owned::new(MAX_SAMPLE_RATE, Q);
         for frames in [0, MAX_FRAMES_LIMIT + 1, u32::MAX] {
             assert!(engine_new(SR, frames).is_null(), "max_frames={frames}");
         }
