@@ -85,6 +85,33 @@ const MAX_CHANNELS: u8 = 2;
 /// far above the one frame where a cut is heard as a click.
 const RELEASE_SECONDS: f64 = 0.002;
 
+/// Why a slot would not take a sample.
+///
+/// A refusal is a value with a name on it rather than a `false`, and the
+/// reason is not tidiness. Each of these is a different thing to say on the
+/// page and a different thing to do about it — a file too long is trimmed, a
+/// file with six channels is mixed down, a slot that does not exist is a bug
+/// in the caller — and a single `false` makes the page invent which. The
+/// TypeScript half already answers failure this way, with a tagged union and a
+/// `describe` whose match has no default; this is the same answer on the side
+/// that had never given it.
+///
+/// It also sharpens the test. Five refusals asserted as `false` cannot tell
+/// which guard fired, so a mutation that swaps two of them passes; asserted as
+/// values, they cannot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Refusal {
+    /// No slot carries that index.
+    NoSuchSlot,
+    /// Neither mono nor stereo.
+    Channels(u8),
+    /// A sample of no frames is not a sample.
+    Empty,
+    /// Longer than the slot holds. Both numbers travel with it because the
+    /// page can act on the difference and cannot guess the capacity.
+    TooLong { frames: usize, capacity: usize },
+}
+
 /// One slot: a buffer that never moves, and what is currently declared in it.
 #[derive(Debug, Clone)]
 struct Sample {
@@ -138,6 +165,65 @@ struct Voice {
 
 impl Voice {
     const FREE: Self = Self { slot: 0, cursor: 0, velocity: 0.0, stage: Stage::Free };
+
+    /// This voice's contribution to one frame, or `None` when it has none.
+    ///
+    /// **One match on the stage, not two.** It reads the envelope for this
+    /// frame and leaves the stage where the next frame needs it, in the same
+    /// arm. Reading in one place and advancing in another is how the two come
+    /// apart — and the way they come apart is a release that never reaches
+    /// zero, so the voice never leaves the pool and the pool slowly stops
+    /// answering.
+    ///
+    /// The `Releasing` ramp is computed from the frames left rather than
+    /// multiplied down from the frame before, which is what keeps it free of
+    /// both accumulated error and denormals: nothing here is fed its own
+    /// output.
+    fn next_frame(&mut self, sample: &Sample, release_frames: f32) -> Option<[f32; 2]> {
+        let envelope = match self.stage {
+            Stage::Free => return None,
+            Stage::Playing => 1.0,
+            Stage::Releasing(left) => {
+                self.stage = if left <= 1 { Stage::Free } else { Stage::Releasing(left - 1) };
+                left as f32 / release_frames
+            }
+        };
+
+        // Past the frames the slot declares lies whatever the previous tenant
+        // left in the buffer. This comparison is the whole of what keeps that
+        // unheard, and it is against the declared length and not the buffer's.
+        if self.cursor >= sample.frames {
+            self.stage = Stage::Free;
+            return None;
+        }
+
+        // In range by the check above, and `commit` never declares a length
+        // the buffer does not hold. For mono the two reads land on the same
+        // value, which is what makes one branchless expression serve both.
+        let channels = usize::from(sample.channels);
+        let base = self.cursor * channels;
+        let scale = self.velocity * envelope;
+        self.cursor += 1;
+
+        Some([sample.data[base] * scale, sample.data[base + channels - 1] * scale])
+    }
+}
+
+/// A velocity that will produce sound, or nothing at all.
+///
+/// Three refusals in one named place, because two callers reach the pool and a
+/// guard written at one of them is a guard at neither. Non-finite is refused
+/// rather than clamped — `f32::clamp` passes NaN straight through, and a NaN
+/// velocity scales a voice to a silence that never ends. Out of range is
+/// clamped rather than refused: an over-loud strike is a bug on the far side,
+/// and the loudest strike is a better answer to it than silence. Zero is
+/// refused because a step switched off should not spend a voice on silence.
+fn audible(velocity: f32) -> Option<f32> {
+    if !velocity.is_finite() {
+        return None;
+    }
+    let velocity = fz(velocity.clamp(MIN_VELOCITY, MAX_VELOCITY));
+    (velocity > 0.0).then_some(velocity)
 }
 
 pub struct Sampler {
@@ -207,9 +293,9 @@ impl Sampler {
     /// one. Keeping the old sound alive until its voices drain needs a second
     /// buffer for every slot, and buys it for the moment a kit is swapped —
     /// which is a deliberate act, not something happening under the music.
-    pub fn begin_load(&mut self, slot: usize) -> Option<&mut [f32]> {
+    pub fn begin_load(&mut self, slot: usize) -> Result<&mut [f32], Refusal> {
         if slot >= SLOTS {
-            return None;
+            return Err(Refusal::NoSuchSlot);
         }
 
         for voice in &mut self.voices {
@@ -218,17 +304,16 @@ impl Sampler {
             }
         }
 
-        let target = self.slots.get_mut(slot)?;
+        let target = self.slots.get_mut(slot).ok_or(Refusal::NoSuchSlot)?;
         target.frames = 0;
         target.channels = 0;
-        Some(&mut target.data)
+        Ok(&mut target.data)
     }
 
     /// Declare what was written into the slot, and let it sound.
     ///
-    /// `false` for a slot that does not exist, a channel count that is not
-    /// mono or stereo, an empty sample, or a length past the slot's capacity.
-    /// A refusal leaves the slot silent rather than half loaded.
+    /// A refusal leaves the slot silent rather than half loaded, and says
+    /// which of the four things was wrong — see [`Refusal`].
     ///
     /// This is the only place sample data can be looked at.
     /// [`begin_load`](Self::begin_load) hands out a region and the values are
@@ -247,28 +332,30 @@ impl Sampler {
     /// Only the declared prefix is swept. Past it lies whatever the previous
     /// tenant left, and it is cheaper to leave it than to walk four seconds of
     /// stereo for the sake of a hundred-millisecond hat.
-    pub fn commit(&mut self, slot: usize, frames: usize, channels: u8) -> bool {
+    pub fn commit(&mut self, slot: usize, frames: usize, channels: u8) -> Result<(), Refusal> {
+        let capacity = self.capacity_frames;
         if channels == 0 || channels > MAX_CHANNELS {
-            return false;
+            return Err(Refusal::Channels(channels));
         }
-        if frames == 0 || frames > self.capacity_frames {
-            return false;
+        if frames == 0 {
+            return Err(Refusal::Empty);
         }
-        let Some(target) = self.slots.get_mut(slot) else {
-            return false;
-        };
+        if frames > capacity {
+            return Err(Refusal::TooLong { frames, capacity });
+        }
+        let target = self.slots.get_mut(slot).ok_or(Refusal::NoSuchSlot)?;
 
+        // `take` rather than a slice and a length check: the length was just
+        // bounded against the capacity, so a check here would guard a state
+        // that cannot arise — and indexing without one ends the worklet.
         let len = frames * usize::from(channels);
-        let Some(declared) = target.data.get_mut(..len) else {
-            return false;
-        };
-        for value in declared {
+        for value in target.data.iter_mut().take(len) {
             *value = if value.is_finite() { fz(*value) } else { 0.0 };
         }
 
         target.frames = frames;
         target.channels = channels;
-        true
+        Ok(())
     }
 
     /// Strike a track. Silently does nothing if there is nothing to strike.
@@ -278,20 +365,10 @@ impl Sampler {
     /// preview that sounds unlike the grid — a difference heard long before it
     /// is found.
     pub fn trigger(&mut self, slot: usize, velocity: f32) {
-        if !velocity.is_finite() {
-            return;
-        }
-        let velocity = fz(velocity.clamp(MIN_VELOCITY, MAX_VELOCITY));
-        // Zero is a step that does not sound, and a voice scaled by zero is a
-        // voice spending a slot on silence.
-        if velocity == 0.0 {
-            return;
-        }
-
-        let Some(sample) = self.slots.get(slot) else {
+        let Some(velocity) = audible(velocity) else {
             return;
         };
-        if sample.frames == 0 {
+        if !self.holds_a_sample(slot) {
             return;
         }
 
@@ -299,6 +376,15 @@ impl Sampler {
         if let Some(voice) = self.voices.get_mut(index) {
             *voice = Voice { slot, cursor: 0, velocity, stage: Stage::Playing };
         }
+    }
+
+    /// Whether striking this slot would produce anything.
+    ///
+    /// False for a slot that does not exist and for one holding nothing —
+    /// including one being written into right now, which declares no frames
+    /// until [`commit`](Self::commit) says otherwise.
+    fn holds_a_sample(&self, slot: usize) -> bool {
+        self.slots.get(slot).is_some_and(|sample| sample.frames > 0)
     }
 
     /// Fade every sounding voice out. What the transport does on stop.
@@ -334,40 +420,22 @@ impl Sampler {
         let Self { slots, voices, release_frames, .. } = self;
         let release = *release_frames as f32;
 
+        // The slot of a free voice is looked up and thrown away, which is a
+        // bounds check and an address per idle voice per frame — some three
+        // thousandths of a core at 48 kHz, and spent when the pool is idle,
+        // which is precisely when there is nothing else to spend. Buying it
+        // back costs a second test of the stage out here, in the one loop that
+        // should read as a sentence.
         for voice in voices.iter_mut() {
-            let envelope = match voice.stage {
-                Stage::Free => continue,
-                Stage::Playing => 1.0,
-                Stage::Releasing(left) => left as f32 / release,
-            };
-
             let Some(sample) = slots.get(voice.slot) else {
-                voice.stage = Stage::Free;
                 continue;
             };
-            if voice.cursor >= sample.frames {
-                voice.stage = Stage::Free;
+            let Some(frame) = voice.next_frame(sample, release) else {
                 continue;
-            }
-
-            // In range by the check above: `cursor` is below the declared frame
-            // count, and `commit` only declares a length the buffer holds. Past
-            // that prefix lies the previous tenant's sound, which is exactly
-            // what this must not reach.
-            let channels = usize::from(sample.channels);
-            let base = voice.cursor * channels;
-            let scale = voice.velocity * envelope;
-            let left = sample.data[base] * scale;
-            let right = sample.data[base + channels - 1] * scale;
-
+            };
             if let Some(track) = out.get_mut(voice.slot) {
-                track[0] += left;
-                track[1] += right;
-            }
-
-            voice.cursor += 1;
-            if let Stage::Releasing(left) = voice.stage {
-                voice.stage = if left <= 1 { Stage::Free } else { Stage::Releasing(left - 1) };
+                track[0] += frame[0];
+                track[1] += frame[1];
             }
         }
     }
@@ -445,7 +513,7 @@ mod tests {
     fn write(sampler: &mut Sampler, slot: usize, frames: usize, channels: u8, value: f32) {
         let region = sampler.begin_load(slot).expect("the slot must open");
         region[..frames * usize::from(channels)].fill(value);
-        assert!(sampler.commit(slot, frames, channels), "the slot must accept this sample");
+        assert_eq!(sampler.commit(slot, frames, channels), Ok(()), "the slot refused the sample");
     }
 
     /// One frame, summed across tracks — for tests that do not care which
@@ -477,8 +545,8 @@ mod tests {
             let region = sampler.begin_load(slot).expect("every slot must open");
             assert_eq!(region.len(), capacity * usize::from(MAX_CHANNELS), "slot {slot}");
         }
-        assert!(sampler.begin_load(SLOTS).is_none());
-        assert!(sampler.begin_load(usize::MAX).is_none());
+        assert_eq!(sampler.begin_load(SLOTS).err(), Some(Refusal::NoSuchSlot));
+        assert_eq!(sampler.begin_load(usize::MAX).err(), Some(Refusal::NoSuchSlot));
     }
 
     #[test]
@@ -614,7 +682,7 @@ mod tests {
         assert_eq!(sounding(&sampler), 0, "an uncommitted slot was struck");
         assert!(silent(&mut sampler, 8));
 
-        assert!(sampler.commit(2, 4, 1));
+        assert_eq!(sampler.commit(2, 4, 1), Ok(()));
         sampler.trigger(2, 1.0);
         assert_eq!(frame(&mut sampler), (1.0, 1.0), "a committed slot must sound");
     }
@@ -630,7 +698,7 @@ mod tests {
         let region = sampler.begin_load(1).expect("the slot must open");
         region[..6]
             .copy_from_slice(&[f32::NAN, f32::INFINITY, f32::NEG_INFINITY, 1e-40, -1e-40, 0.5]);
-        assert!(sampler.commit(1, 6, 1));
+        assert_eq!(sampler.commit(1, 6, 1), Ok(()));
 
         sampler.trigger(1, 1.0);
         let played: Vec<f32> = (0..6).map(|_| frame(&mut sampler).0).collect();
@@ -646,7 +714,7 @@ mod tests {
         let mut sampler = Sampler::new(SR);
         let region = sampler.begin_load(0).expect("the slot must open");
         region[..4].copy_from_slice(&[1.0, -1.0, 0.5, -0.5]);
-        assert!(sampler.commit(0, 2, 2));
+        assert_eq!(sampler.commit(0, 2, 2), Ok(()));
         sampler.trigger(0, 1.0);
 
         assert_eq!(frame(&mut sampler), (1.0, -1.0));
@@ -768,7 +836,7 @@ mod tests {
     }
 
     #[test]
-    fn a_sample_that_does_not_fit_is_refused_and_leaves_the_slot_silent() {
+    fn a_sample_that_does_not_fit_is_refused_by_name_and_leaves_the_slot_silent() {
         // The ceiling the fixed layout buys, and the failure it replaces: with
         // slots sized to their contents this argument would have been an
         // allocation, and one WASM cannot serve aborts rather than failing.
@@ -778,11 +846,17 @@ mod tests {
         let capacity = sampler.capacity_frames();
         sampler.begin_load(0).expect("the slot must open");
 
-        assert!(!sampler.commit(0, capacity + 1, 1), "an over-long sample was accepted");
-        assert!(!sampler.commit(0, 0, 1), "an empty sample is not a sample");
-        assert!(!sampler.commit(0, 8, 0));
-        assert!(!sampler.commit(0, 8, 3));
-        assert!(!sampler.commit(SLOTS, 8, 1), "a slot that does not exist was committed");
+        // Each refusal is asserted as the value it is, not as failure. Five
+        // of them checked for falsehood cannot tell which guard fired, and a
+        // mutation swapping two conditions is exactly what that misses.
+        assert_eq!(
+            sampler.commit(0, capacity + 1, 1),
+            Err(Refusal::TooLong { frames: capacity + 1, capacity })
+        );
+        assert_eq!(sampler.commit(0, 0, 1), Err(Refusal::Empty));
+        assert_eq!(sampler.commit(0, 8, 0), Err(Refusal::Channels(0)));
+        assert_eq!(sampler.commit(0, 8, 3), Err(Refusal::Channels(3)));
+        assert_eq!(sampler.commit(SLOTS, 8, 1), Err(Refusal::NoSuchSlot));
 
         sampler.trigger(0, 1.0);
         assert_eq!(sounding(&sampler), 0, "a refused slot sounded");
@@ -791,8 +865,8 @@ mod tests {
         // sample is the capacity in stereo — which fills the buffer exactly.
         // Mono at the same length uses half of it and is refused past the same
         // number of frames: four seconds is four seconds either way.
-        assert!(sampler.commit(0, capacity, 2), "the largest sample that fits was refused");
-        assert!(sampler.commit(0, capacity, 1));
+        assert_eq!(sampler.commit(0, capacity, 2), Ok(()), "the largest sample that fits");
+        assert_eq!(sampler.commit(0, capacity, 1), Ok(()));
     }
 
     #[test]
