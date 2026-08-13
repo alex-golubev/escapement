@@ -12,10 +12,8 @@
 //! it back on sends the remembered value, and nothing is lost by the one side
 //! that was never supposed to be asked.
 //!
-//! Every index here crosses the ABI, so each is checked and an out-of-range
-//! one is dropped rather than clamped into a neighbour: a step meant for track
-//! 200 is a bug on the far side, and silently writing it to track 0 would turn
-//! that bug into a wrong sound.
+//! Both indices here cross the ABI and are dropped when the grid has no room
+//! for them, for the reason [`Command`](crate::commands::Command) gives.
 
 use crate::TRACKS;
 use crate::dsp::clamped;
@@ -181,10 +179,8 @@ mod tests {
 
     #[test]
     fn indices_past_the_grid_are_dropped_not_wrapped() {
-        // Both arrive from another thread — a u8 track and a u16 step — so
-        // every value of them is reachable. Writing into a neighbour would
-        // turn a bug on the far side into a wrong sound here, and a panic
-        // would end the sound entirely under `panic = "abort"`.
+        // What would be heard: every strike in the pattern landing on one
+        // row, while an assertion about "the step" went on passing.
         let mut pattern = Pattern::new();
         for track in TRACKS as u8..=u8::MAX {
             pattern.set_step(track, 0, 1.0);

@@ -101,6 +101,15 @@ impl Op {
 /// already made safe. `Mixer::set_track_gain`, `Pattern::set_step` and
 /// `Sampler::trigger` all take the wire width and drop what the grid has no
 /// room for.
+///
+/// **Dropped, and not wrapped or panicked**, which is the same decision at
+/// every one of them. Folding an index into the grid would turn a bug on the
+/// far side into a wrong sound here — a step meant for track 200 striking track
+/// 0, a whole pattern collapsed onto one row, and every assertion about "the
+/// step" still passing. Dropping it leaves a silence somebody goes looking for.
+/// Panicking is not on offer at all: release builds set `panic = "abort"`, so a
+/// single index out of range ends the worklet and every sound with it until the
+/// page is reloaded.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Command {
     Play,

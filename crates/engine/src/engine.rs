@@ -381,13 +381,17 @@ mod tests {
         records.iter().flat_map(|r| r.encode()).collect()
     }
 
-    /// One quantum. Also checks the mono invariant: the channels match.
+    /// One quantum, returning the left channel.
+    ///
+    /// Left alone is enough only while the two channels agree, and that is
+    /// asserted by one test rather than here — see
+    /// `both_channels_carry_the_same_signal_until_there_is_pan` for why it is
+    /// not asserted on every call.
     fn quantum(engine: &mut Engine, records: &[Record]) -> Vec<f32> {
         let bytes = encode(records);
         let mut left = vec![0.0f32; Q];
         let mut right = vec![0.0f32; Q];
         engine.process(&mut left, &mut right, &bytes, records.len() as u32);
-        assert_eq!(left, right, "the engine is mono: channels must match");
         left
     }
 
@@ -448,6 +452,37 @@ mod tests {
             "the output must be silent before the Play command"
         );
         assert_eq!(engine.transport().sample_pos(), 0);
+    }
+
+    #[test]
+    fn both_channels_carry_the_same_signal_until_there_is_pan() {
+        // A test of its own, where it used to be an assertion inside `quantum`
+        // — which meant every test in this file asserted it in passing, none of
+        // them said so, and the mixer landing a pan law would turn the file red
+        // all at once with not one of those failures about what its test was
+        // for. Here exactly one fails, and its failure is the pan arriving
+        // rather than a regression: replace it then with what the two channels
+        // are meant to differ by.
+        //
+        // The second assertion is what keeps the first from being free. Two
+        // silent channels are equal, so without it this passes for an engine
+        // that renders nothing at all.
+        let mut engine = Engine::new(SR);
+        let bytes = encode(&[
+            Record::immediate(Command::SetBpm { bpm: AWKWARD_BPM }),
+            Record::immediate(Command::Play),
+        ]);
+        let mut left = vec![0.0f32; Q];
+        let mut right = vec![0.0f32; Q];
+
+        engine.process(&mut left, &mut right, &bytes, 2);
+        assert_eq!(left, right, "the channels parted on the first quantum");
+        assert!(left.iter().any(|&s| s != 0.0), "two silent channels match for nothing");
+
+        for quantum in 0..200 {
+            engine.process(&mut left, &mut right, &[], 0);
+            assert_eq!(left, right, "the channels parted on quantum {quantum}");
+        }
     }
 
     #[test]

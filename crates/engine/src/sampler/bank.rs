@@ -10,39 +10,30 @@
 //!
 //! What sizing from outside costs is an allocation, and an allocation is the
 //! one thing the render thread may never do — so it happens where the render
-//! thread is not, in the message handler, between quanta. See
-//! [`reserve`](Bank::reserve) for what makes that affordable. Two consequences
-//! reach past this module and neither is hidden:
+//! thread is not, in the message handler, between quanta.
 //!
-//! - **Reserving grows WASM linear memory, which detaches every view the
-//!   worklet holds over it.** The worklet compares `memory.buffer` against the
-//!   one it saw last and rebuilds its views when it differs. That check existed
-//!   as a safety net against growth nobody predicted; here it carries load.
-//! - **The arena moves as a whole.** A new reservation invalidates the old
-//!   pointer, and with it every voice reading through it. Cutting those voices
-//!   is not this module's to do — it holds no voices — which is why reserving
-//!   goes through [`Sampler`](super::Sampler) rather than being called here
-//!   directly.
+//! Two consequences of that escape this module, and both are argued at
+//! [`reserve`](Bank::reserve), which is what causes them: reserving **grows
+//! WASM linear memory**, detaching every view the worklet holds over it, and
+//! the arena **moves as a whole**, so a new kit invalidates every voice rather
+//! than only those reading the sample that was replaced.
 
 use crate::TRACKS;
 use crate::dsp::sanitized;
 
 /// Sample slots — one per track.
 ///
-/// The identity is a decision, and this line is where it is made: today a
-/// track plays the slot with its own index, so there is no mapping to keep,
-/// no opcode to change it, and nothing that can point a track at the wrong
-/// sound. A kit whose tracks pick their slots freely would replace this line
-/// with a table; it costs a table and an opcode, and today nothing wants one.
+/// The identity is a decision, and this line is where it is made: today a track
+/// plays the slot with its own index, so there is no mapping to keep, no opcode
+/// to change it, and nothing that can point a track at the wrong sound.
 ///
-/// **This is the one number here still measured against a drum kit**, and it is
-/// worth knowing which way it binds. The arena removed the ceiling on how long
-/// a sample may be and the price mono paid for stereo, but not how many samples
-/// there can be at once. An instrument wanting one per key range or velocity
-/// layer meets this count rather than any size — a different design, not a
-/// different number. The count itself is cheap to raise, being an array of
-/// three-number records; what it would leave unanswered is how a track then
-/// says which slot it means.
+/// **It is also the one number here still measured against a drum kit.** The
+/// arena removed the ceiling on how long a sample may be and the price mono
+/// paid for stereo, but not how many there can be at once — so an instrument
+/// wanting one per key range or velocity layer meets this count rather than any
+/// size. Raising it is free, being an array of three-number records; what it
+/// leaves unanswered is how a track would then say which slot it means, and
+/// that is a table and an opcode nothing wants yet.
 pub const SLOTS: usize = TRACKS;
 
 const MAX_CHANNELS: u8 = 2;
@@ -94,14 +85,12 @@ pub struct Region {
     /// Channels, and so the stride from one frame of the sample to the next.
     ///
     /// **Never zero, including in a slot holding nothing.** A reader takes the
-    /// last channel of a frame as `channels - 1`, and a stride of zero makes
-    /// that a subtraction below zero — a panic in debug, and in release a read
-    /// of the float lying before the sample. Neither is reachable today, and
-    /// both are reachable by rearranging two lines: the guard is the emptiness
-    /// test above happening to come first. A stride describes how the data is
-    /// laid out, and data nobody declared is still laid out some way; making
-    /// this field carry emptiness as well would be a second answer to a
-    /// question `frames` already answers.
+    /// last channel of a frame as `channels - 1`, which below zero is a panic in
+    /// debug and a read of the float before the sample in release. Today that is
+    /// unreachable only because the emptiness test happens to sit above the
+    /// arithmetic — two lines apart. Data nobody declared is still laid out some
+    /// way, so a stride has no zero to mean, and `frames` above already answers
+    /// the question this field would be answering twice.
     pub(super) channels: u8,
 }
 
@@ -120,13 +109,7 @@ pub struct Bank {
 
 impl Bank {
     pub fn new() -> Self {
-        Self {
-            // Creating the engine decides nothing about sample memory, which
-            // is why `engine_new` no longer bounds the sample rate: nothing
-            // here is proportional to it.
-            arena: Vec::new(),
-            slots: [Region::EMPTY; SLOTS],
-        }
+        Self { arena: Vec::new(), slots: [Region::EMPTY; SLOTS] }
     }
 
     /// Make room for a whole kit, and hand back the arena to write it into.
@@ -138,12 +121,17 @@ impl Bank {
     /// What it buys is that placement never becomes a question — the arena is
     /// built from empty every time, and there is nothing to fragment.
     ///
-    /// Everything previously loaded is gone. Voices reading it must be cut, and
-    /// they are cut by [`Sampler::reserve`](super::Sampler::reserve), which is
-    /// the only caller: a fade would have to keep reading the sample it is
-    /// fading, which is precisely what is being replaced, so the ramp would land
-    /// on whatever the new kit holds at that cursor — a worse artifact than the
-    /// cut, and an unbounded one.
+    /// **The arena moves as a whole**, so everything previously loaded is gone
+    /// and every voice is invalidated — not only those reading the sample that
+    /// changed. Cutting them is not this module's to do, holding no voices,
+    /// which is why the only caller is
+    /// [`Sampler::reserve`](super::Sampler::reserve).
+    ///
+    /// **Growing it grows WASM linear memory**, which detaches every view the
+    /// worklet holds over that memory. The worklet compares `memory.buffer`
+    /// against the one it saw last and rebuilds its views when they differ — a
+    /// check written as a net under growth nobody predicted, and load-bearing
+    /// here, where the growth is the point.
     ///
     /// **The refusal is the point of the whole design.** An allocation WASM
     /// cannot serve does not return an error, it aborts, and under

@@ -17,10 +17,10 @@ use crate::pattern::{MAX_VELOCITY, MIN_VELOCITY};
 /// [`Pool::next_frame`] indexes an array of `TRACKS` by a slot, and `get_mut`
 /// answers `None` past the end — so raising the slot count on its own would
 /// leave every voice above the eighth rendering into nothing at all, with no
-/// refusal, no counter and nothing to hear but a missing drum. That rise is
-/// named as debt rather than ruled out, so this is a line somebody will one day
-/// change deliberately; what it must not be is a line somebody changes without
-/// meeting the consequence.
+/// refusal, no counter and nothing to hear but a missing drum. [`SLOTS`] says
+/// why that rise is expected rather than forbidden, which is what makes this a
+/// line somebody will one day change on purpose; what it must not be is a line
+/// somebody changes without meeting the consequence.
 const _: () = assert!(SLOTS == TRACKS, "a voice's slot is its track — see Pool::next_frame");
 
 /// Voices in the pool.
@@ -172,9 +172,12 @@ impl Pool {
 
     /// Free every voice at once, sounding or not.
     ///
-    /// Cutting rather than fading, and the caller is what makes that right: the
-    /// only reason to silence the whole pool is that the samples underneath it
-    /// are being replaced, and a fade would have to keep reading them.
+    /// **Cutting rather than fading, and the caller is what makes that right.**
+    /// The only reason to silence the whole pool is that the samples underneath
+    /// it are being replaced — and a fade has to keep reading the sample it is
+    /// fading, which is precisely the thing going away. The ramp would land on
+    /// whatever the incoming kit holds at that cursor: an artifact worse than
+    /// the cut, and unlike the cut, unbounded in what it might be.
     pub fn silence(&mut self) {
         self.voices = [Voice::FREE; VOICES];
     }
@@ -467,9 +470,7 @@ mod tests {
 
     #[test]
     fn a_slot_out_of_range_is_dropped_rather_than_wrapped() {
-        // The index arrives as a byte from another thread, so 200 is as
-        // reachable as 3, and writing it into a neighbour would turn a bug on
-        // the far side into a wrong drum here.
+        // What would be heard: the wrong drum.
         let (bank, mut pool) = one(0, 1, 1);
         for slot in [SLOTS, SLOTS + 1, 200, usize::MAX] {
             pool.trigger(&bank, slot, 1.0);

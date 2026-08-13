@@ -386,13 +386,22 @@ mod tests {
 
     #[test]
     fn both_channels_are_written() {
+        // Asked of each channel separately rather than by comparing them. The
+        // comparison was the shorter way to catch a second buffer nobody wrote
+        // — it would be zeros against a sounding first — but it also asserts
+        // the two are alike, which is a fact about today's engine rather than
+        // about the ABI, and pan will end it. What this is named for outlives
+        // that.
         let owned = Owned::new(SR, Q);
         owned.write_commands(&[Record::immediate(Command::Play)]);
         unsafe { engine_process(owned.raw(), Q, 1) };
 
-        let left = owned.output(0, Q as usize);
-        assert_eq!(left, owned.output(1, Q as usize));
-        assert!(left.iter().any(|&s| s != 0.0), "sound must start after Play");
+        for channel in 0..2 {
+            assert!(
+                owned.output(channel, Q as usize).iter().any(|&s| s != 0.0),
+                "channel {channel} was left silent after Play"
+            );
+        }
     }
 
     #[test]

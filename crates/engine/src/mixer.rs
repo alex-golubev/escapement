@@ -13,10 +13,14 @@
 //! test that could tell it apart from a constant. They become [`Smoothed`] in
 //! the same commit that gives them something to multiply.
 //!
-//! Every setter here takes untrusted input — the values arrive from the UI over
-//! the command protocol — so each goes through [`dsp::clamped`](crate::dsp),
-//! which is where the reasoning about non-finite values and denormals lives.
-//! What belongs to this module is only the ranges below.
+//! Every setter here takes untrusted input — values and track numbers alike
+//! arrive from the UI over the command protocol. Values go through
+//! [`dsp::clamped`](crate::dsp) and indices are dropped when the grid has no
+//! room for them; both rules are argued elsewhere, at
+//! [`clamped`](crate::dsp::clamped) and at
+//! [`Command`](crate::commands::Command). What belongs to this module is the
+//! ranges below, and one choice about reading past the end that is genuinely
+//! its own — see [`track_gain`](Mixer::track_gain).
 
 use crate::TRACKS;
 use crate::dsp::{Smoothed, clamped};
@@ -103,9 +107,6 @@ impl Mixer {
         self.track_pan.get(track).copied().unwrap_or(DEFAULT_PAN)
     }
 
-    /// A track index out of range is dropped. It arrives as a `u8` from
-    /// another thread, so 200 is as likely as 3 if anything goes wrong, and
-    /// under `panic = "abort"` an indexing panic would end the sound entirely.
     pub fn set_track_gain(&mut self, track: u8, gain: f32) {
         if let (Some(slot), Some(gain)) = (
             self.track_gain.get_mut(usize::from(track)),
@@ -220,8 +221,7 @@ mod tests {
 
     #[test]
     fn a_track_index_out_of_range_is_dropped_not_panicked() {
-        // The index is a u8 from another thread; every value of it is
-        // reachable, and a panic here takes the whole worklet with it.
+        // What would be heard: one fader moving a track it does not name.
         let mut mixer = Mixer::new(SR);
         for track in TRACKS as u8..=u8::MAX {
             mixer.set_track_gain(track, 0.5);
