@@ -45,7 +45,6 @@ use crate::dsp::fz;
 /// says which slot it means.
 pub const SLOTS: usize = TRACKS;
 
-/// Channels a slot will accept.
 const MAX_CHANNELS: u8 = 2;
 
 /// Why the bank would not take what it was given.
@@ -68,11 +67,9 @@ pub enum Refusal {
     /// cause is not in its arguments. That it is a refusal at all is the point
     /// of [`Bank::reserve`].
     OutOfMemory { floats: usize },
-    /// No slot carries that index.
     NoSuchSlot,
     /// Neither mono nor stereo.
     Channels(u8),
-    /// A sample of no frames is not a sample.
     Empty,
     /// The declared sample runs past the end of the arena. Both numbers travel
     /// with it because the page can act on the difference — it laid the kit out
@@ -82,21 +79,16 @@ pub enum Refusal {
 
 /// Where one sample sits in the arena.
 ///
-/// Three numbers rather than a buffer: the memory belongs to the bank, and a
-/// slot only says which stretch of it this sample is and how to read it. The
-/// fields are open to the rest of the sampler because the voice that reads a
-/// sample needs all three every frame, and accessors around three `usize`s
-/// would be ceremony rather than encapsulation.
+/// Fields open to the rest of the sampler: the voice reading a sample needs all
+/// three every frame, and accessors around three `usize`s would be ceremony.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Region {
-    /// Offset into the arena, counted in floats rather than frames. In floats
-    /// because that is the unit it is checked in — a bound compared against a
-    /// length in one unit and computed in another is a bound that passes for
-    /// samples which do not fit.
+    /// In floats rather than frames, because floats is the unit it is checked
+    /// in — a bound compared against a length in one unit and computed in
+    /// another passes for samples that do not fit.
     pub(super) offset: usize,
-    /// Frames declared by the last [`Bank::commit`]. Zero means the slot holds
-    /// nothing — the state before a kit is loaded, and again for as long as one
-    /// is being written in.
+    /// Zero means the slot holds nothing: before a kit is loaded, and again for
+    /// as long as one is being written in.
     pub(super) frames: usize,
     pub(super) channels: u8,
 }
@@ -106,7 +98,8 @@ impl Region {
 }
 
 pub struct Bank {
-    /// Every sample in the kit, laid end to end by whoever loaded them.
+    /// Laid out by whoever loaded the kit; this side only reads the layout
+    /// back off the regions it was given.
     arena: Vec<f32>,
     slots: [Region; SLOTS],
 }
@@ -114,10 +107,9 @@ pub struct Bank {
 impl Bank {
     pub fn new() -> Self {
         Self {
-            // Empty, and it stays empty until a kit arrives. Creating the
-            // engine no longer decides how much sample memory the page is going
-            // to want, which is why the sample rate no longer bounds anything:
-            // nothing here is proportional to it.
+            // Creating the engine decides nothing about sample memory, which
+            // is why `engine_new` no longer bounds the sample rate: nothing
+            // here is proportional to it.
             arena: Vec::new(),
             slots: [Region::EMPTY; SLOTS],
         }
@@ -156,10 +148,9 @@ impl Bank {
             return Err(Refusal::OutOfMemory { floats });
         }
 
-        // Capacity was just secured, so this fills and cannot allocate. It is
-        // also what makes the window between here and the far side's copy
-        // silence rather than leftovers: a kit smaller than the one before it
-        // does not leave the tail of the old one lying in the arena.
+        // Fills rather than allocates, the capacity being secured above — and
+        // makes the window before the far side's copy silence rather than
+        // leftovers: a smaller kit does not leave the tail of the old one here.
         self.arena.resize(floats, 0.0);
         Ok(&mut self.arena)
     }
@@ -217,9 +208,8 @@ impl Bank {
             return Err(Refusal::DoesNotFit { end, reserved });
         }
 
-        // `offset <= end <= reserved` follows from the two lines above, so the
-        // range is in bounds without a second check — and indexing out of them
-        // here would end the worklet rather than return.
+        // Indexed without a further check: out of bounds here would not return
+        // but end the worklet.
         for value in &mut self.arena[offset..end] {
             *value = if value.is_finite() { fz(*value) } else { 0.0 };
         }
@@ -245,12 +235,10 @@ impl Bank {
         self.arena.clear();
     }
 
-    /// Every sample in the kit, end to end. Addressed through a [`Region`].
     pub(super) fn arena(&self) -> &[f32] {
         &self.arena
     }
 
-    /// Where this slot's sample sits, or nothing if the index names no slot.
     pub(super) fn region(&self, slot: usize) -> Option<&Region> {
         self.slots.get(slot)
     }
@@ -311,10 +299,9 @@ pub(in crate::sampler) mod tests {
 
     #[test]
     fn a_new_bank_asks_for_no_memory_at_all() {
-        // The property that replaced a constant. Creating the engine used to
-        // decide how much sample memory the page would be allowed, before the
-        // page had opened a single file; now it decides nothing, and the bank
-        // holds nothing until a kit names its own size.
+        // The engine must take no sample memory before a kit has named a
+        // size, and must refuse anything declared into what it has not been
+        // given.
         let mut bank = Bank::new();
         assert_eq!(bank.arena().len(), 0, "the engine took memory nobody asked for");
 
@@ -388,10 +375,8 @@ pub(in crate::sampler) mod tests {
 
     #[test]
     fn two_slots_may_share_one_sample() {
-        // Not an accident of the layout but a thing the layout allows, and the
-        // reason `commit` does not police overlap: two tracks on one sound is a
-        // legitimate kit, and a check strict enough to catch a mistaken overlap
-        // would forbid this along with it.
+        // Two tracks on one sound is a kit, not a mistake — which is what a
+        // check against overlapping regions would cost. See `commit`.
         let mut bank = Bank::new();
         bank.reserve(4).expect("the arena must be granted").fill(1.0);
 
@@ -402,9 +387,8 @@ pub(in crate::sampler) mod tests {
 
     #[test]
     fn what_does_not_fit_is_refused_by_name_and_leaves_the_slot_undeclared() {
-        // Each refusal is asserted as the value it is, not as failure. Five of
-        // them checked for falsehood cannot tell which guard fired, and a
-        // mutation swapping two conditions is exactly what that misses.
+        // Asserted as values rather than as failure, for the reason `Refusal`
+        // gives: swapping two of the conditions must not pass.
         let mut bank = Bank::new();
         bank.reserve(64).expect("the arena must be granted");
 

@@ -1,16 +1,9 @@
 //! Sounding copies of the samples, and the pool that hands them out.
 //!
-//! A slot holds one loaded sample; a voice is one sounding copy of it. They are
-//! separate counts because a sample is struck far more often than it finishes —
-//! sixteen steps to the bar against a cymbal that rings for a second — so eight
-//! slots feed a pool of thirty-two voices.
-//!
-//! Nothing here owns memory. A voice is four numbers and reads through a
-//! [`Region`] into the bank's arena, which is what lets the pool be replaced
-//! without the bank noticing and the kit be replaced without the pool being
-//! rewritten. That division is not tidiness: at M4 the allocation policy below
-//! survives into the synthesiser and [`Voice`] does not, since a struck sample
-//! and a held note have almost nothing in common past the pool.
+//! Nothing here owns memory: a voice reads through a [`Region`] into the bank's
+//! arena. That division is not tidiness — at M4 the allocation policy below
+//! survives into the synthesiser and [`Voice`] does not, a struck sample and a
+//! held note having almost nothing in common past the pool.
 
 use super::bank::{Bank, Region};
 use crate::TRACKS;
@@ -112,8 +105,8 @@ impl Voice {
             return None;
         };
 
-        // For mono the two reads land on the same value, which is what makes
-        // one branchless expression serve both.
+        // Mono lands both reads on the same value, so neither channel count
+        // needs a branch of its own.
         Some([left * scale, right * scale])
     }
 }
@@ -208,12 +201,11 @@ impl Pool {
         let arena = bank.arena();
         let release = self.release_frames as f32;
 
-        // The slot of a free voice is looked up and thrown away, which is a
-        // bounds check and an address per idle voice per frame — some three
-        // thousandths of a core at 48 kHz, and spent when the pool is idle,
-        // which is precisely when there is nothing else to spend. Buying it
-        // back costs a second test of the stage out here, in the one loop that
-        // should read as a sentence.
+        // A free voice still has its slot looked up and thrown away — some
+        // three thousandths of a core at 48 kHz, spent when the pool is idle
+        // and there is nothing else to spend it on. Buying it back costs a
+        // second test of the stage out here, in the loop that should read as a
+        // sentence.
         for voice in self.voices.iter_mut() {
             let Some(region) = bank.region(voice.slot) else {
                 continue;
@@ -340,9 +332,8 @@ mod tests {
 
     #[test]
     fn a_voice_never_reads_past_what_was_declared() {
-        // The neighbour is loaded at a different value from the sample under
-        // test, so a cursor running past its declaration shows up as a tail
-        // that should not be there rather than as silence.
+        // The neighbour holds a different value, so a cursor running past its
+        // declaration shows up as a tail rather than as silence.
         let bank = loaded(&[(0, 2, 1, 1.0), (1, 5_000, 1, 0.7)]);
         let mut pool = Pool::new(SR);
 
@@ -354,10 +345,8 @@ mod tests {
 
     #[test]
     fn a_sample_reads_from_its_own_offset() {
-        // Two samples in one arena, and only the offset tells them apart. Read
-        // from the wrong one the kit is intact and every drum is the wrong
-        // drum — which is the failure a per-slot buffer could not produce and
-        // this layout can.
+        // Only the offset tells two samples in one arena apart: read from the
+        // wrong one, the kit is intact and every drum is the wrong drum.
         let bank = loaded(&[(0, 1, 1, 0.25), (1, 1, 1, 0.75)]);
         let mut pool = Pool::new(SR);
 
@@ -553,9 +542,8 @@ mod tests {
 
     #[test]
     fn silencing_frees_every_voice_at_once() {
-        // What a new kit forces. Cutting rather than fading is argued at
-        // `silence`; what is asserted here is that nothing is left behind,
-        // including voices already on their way out.
+        // Nothing may be left behind, including voices already on their way
+        // out.
         let (bank, mut pool) = one(0, 1_000, 1);
         pool.trigger(&bank, 0, 1.0);
         pool.trigger(&bank, 0, 1.0);

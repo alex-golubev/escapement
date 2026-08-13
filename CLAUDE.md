@@ -157,6 +157,18 @@ The one place this will bite is time-stretching on M7: Rubber Band is GPL-3.0 or
 
 A comment argues for itself, in front of whoever is reading the repository. Planning for this project happens in a document that is not in git, and **a reference to it does not belong in code**: a pointer to a file the reader cannot open explains nothing, and the reasoning it stands in for is exactly what the comment was supposed to carry. Write the argument out. This has been cleaned out of the code twice already — the second time from comments written a day after the first.
 
+That rule says what to write instead of a pointer. It does not say how much, and read alone it has been taken as licence for volume — so the bar it implies is written out here too, because the density it produced was defended by pointing at the density already in the repository, which is an argument that goes in a circle.
+
+**A comment carries what the code cannot. Everything else is restatement, however well written** — and restatement is what teaches a reader to skip the comments that matter. The check is mechanical: delete it, and ask what is lost. If the answer is anything recoverable by reading the next few lines, it was restatement.
+
+Three things are not recoverable that way, and they are the whole of the licence:
+
+- **the alternative that lost.** Code shows what was chosen and never what was not, so a decision with a live alternative is invisible without a comment — one arena against eight fixed slots, a linear ramp against a one-pole.
+- **the failure that follows.** What breaks if this line changes, when the break is silent, remote or late: `f32::clamp` passing NaN straight through, a release that never quite reaches zero and holds its voice in the pool forever.
+- **a fact from outside the file.** An allocation WASM cannot serve aborting rather than returning null, linear memory never shrinking, `decodeAudioData` resampling to the device rate.
+
+**One argument, one home.** The same reasoning in two places is not emphasis, it is two copies that will disagree. Put it where the reader arrives at it — at the call, at the guard, at the declaration — and leave the other sites saying only what is theirs. A delegating method inherits the argument of what it delegates to and needs none of its own.
+
 ## Test style
 
 Tests here are documentation of *why*, not just coverage. Test names are sentences and comments explain the failure being guarded against — match that style when adding to them.

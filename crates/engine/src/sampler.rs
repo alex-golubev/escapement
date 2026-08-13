@@ -55,7 +55,6 @@ impl Sampler {
         self.bank.reserve(floats)
     }
 
-    /// Declare what was written into the arena, and let it sound.
     pub fn commit(
         &mut self,
         slot: usize,
@@ -66,27 +65,22 @@ impl Sampler {
         self.bank.commit(slot, offset, frames, channels)
     }
 
-    /// Strike a track. Silently does nothing if there is nothing to strike.
     pub fn trigger(&mut self, slot: usize, velocity: f32) {
         self.pool.trigger(&self.bank, slot, velocity);
     }
 
-    /// Fade every sounding voice out. What the transport does on stop.
     pub fn release_all(&mut self) {
         self.pool.release_all();
     }
 
-    /// One frame of every sounding voice, kept apart by track.
     pub fn next_frame(&mut self, out: &mut [[f32; 2]; TRACKS]) {
         self.pool.next_frame(&self.bank, out);
     }
 
     /// Return to the as-constructed state: no samples, no voices.
     ///
-    /// The memory the bank was given stays, for the reason [`Bank::reset`]
-    /// gives; what goes is every declaration and every voice, so that a reset
-    /// engine renders exactly as a fresh one — which is what the offline render
-    /// compares against.
+    /// Both halves together, so that a reset engine renders exactly as a fresh
+    /// one — which is what the offline render on M3 compares against.
     pub fn reset(&mut self) {
         self.bank.reset();
         self.pool.silence();
@@ -99,7 +93,6 @@ mod tests {
 
     const SR: f64 = 48_000.0;
 
-    /// Load one sample and strike it, leaving a voice sounding.
     fn sounding_sampler(frames: usize) -> Sampler {
         let mut sampler = Sampler::new(SR);
         sampler.reserve(frames).expect("the arena must be granted").fill(1.0);
@@ -130,9 +123,8 @@ mod tests {
 
     #[test]
     fn a_refused_reservation_leaves_neither_a_voice_nor_a_sample() {
-        // The refusal path through both halves at once: the pool is silenced
-        // before the bank is asked, so failing to get memory cannot leave a
-        // voice playing a kit that is no longer declared.
+        // Failing to get memory must not leave a voice playing a kit that is
+        // no longer declared.
         let mut sampler = sounding_sampler(1_000);
         let absurd = usize::MAX / 8;
         assert_eq!(sampler.reserve(absurd), Err(Refusal::OutOfMemory { floats: absurd }));
@@ -144,10 +136,9 @@ mod tests {
 
     #[test]
     fn reset_returns_to_the_as_constructed_state() {
-        // Both halves, and the reason they are reset together: the golden
-        // tests on M3 compare an engine that has been running against one just
-        // built, and any difference between them is a difference this call did
-        // not erase.
+        // The golden tests on M3 compare an engine that has been running
+        // against one just built; anything this call leaves behind is a
+        // difference between them.
         let mut sampler = sounding_sampler(4_096);
         assert_eq!(frame(&mut sampler), 1.0);
 
