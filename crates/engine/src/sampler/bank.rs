@@ -88,13 +88,27 @@ pub struct Region {
     /// another passes for samples that do not fit.
     pub(super) offset: usize,
     /// Zero means the slot holds nothing: before a kit is loaded, and again for
-    /// as long as one is being written in.
+    /// as long as one is being written in. **This is the only field that says
+    /// so**, which is what lets the other two describe a shape unconditionally.
     pub(super) frames: usize,
+    /// Channels, and so the stride from one frame of the sample to the next.
+    ///
+    /// **Never zero, including in a slot holding nothing.** A reader takes the
+    /// last channel of a frame as `channels - 1`, and a stride of zero makes
+    /// that a subtraction below zero — a panic in debug, and in release a read
+    /// of the float lying before the sample. Neither is reachable today, and
+    /// both are reachable by rearranging two lines: the guard is the emptiness
+    /// test above happening to come first. A stride describes how the data is
+    /// laid out, and data nobody declared is still laid out some way; making
+    /// this field carry emptiness as well would be a second answer to a
+    /// question `frames` already answers.
     pub(super) channels: u8,
 }
 
 impl Region {
-    const EMPTY: Self = Self { offset: 0, frames: 0, channels: 0 };
+    /// A slot holding nothing. One channel rather than none, for the reason
+    /// that field gives.
+    const EMPTY: Self = Self { offset: 0, frames: 0, channels: 1 };
 }
 
 pub struct Bank {
@@ -306,6 +320,26 @@ pub(in crate::sampler) mod tests {
         // the bounds check is against its length, which is zero.
         assert_eq!(bank.commit(0, 0, 1, 1), Err(Refusal::DoesNotFit { end: 1, reserved: 0 }));
         assert!(!bank.holds_a_sample(0));
+    }
+
+    #[test]
+    fn a_slot_holding_nothing_still_describes_a_legal_stride() {
+        // `channels` is a stride, and the voice reads the last channel of a
+        // frame at `channels - 1`. Zero there subtracts below zero. The two
+        // ways a slot comes to hold nothing are this constant and a refused
+        // reservation — `commit` cannot produce one, having refused a channel
+        // count of zero before it builds a region at all — so both are checked
+        // here, where the constant is.
+        let mut bank = loaded(&[(0, 16, 2, 1.0)]);
+        bank.reset();
+        let absurd = usize::MAX / 8;
+        assert_eq!(bank.reserve(absurd), Err(Refusal::OutOfMemory { floats: absurd }));
+
+        for slot in 0..SLOTS {
+            let region = bank.region(slot).expect("every slot has a declaration");
+            assert_eq!(region.frames, 0, "slot {slot} still declares frames");
+            assert!(region.channels >= 1, "slot {slot} has a stride of zero");
+        }
     }
 
     #[test]

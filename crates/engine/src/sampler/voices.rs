@@ -63,18 +63,26 @@ impl Voice {
     /// multiplied down from the frame before, which is what keeps it free of
     /// both accumulated error and denormals: nothing here is fed its own
     /// output.
+    ///
+    /// **`release_span` is one less than the frame count, and that off-by-one
+    /// is the ramp.** A fade of `n` frames holds `n` values and therefore `n−1`
+    /// steps between them, so dividing by the count leaves the last value at
+    /// `1/n` and the drop to silence outside the ramp: a step of −40 dB at 2 ms
+    /// and 48 kHz, which is a quieter version of the click the fade exists to
+    /// remove. Dividing by the steps puts the first value at exactly 1.0 — no
+    /// discontinuity where the fade begins — and the last at exactly 0.0.
     fn next_frame(
         &mut self,
         arena: &[f32],
         region: &Region,
-        release_frames: f32,
+        release_span: f32,
     ) -> Option<[f32; 2]> {
         let envelope = match self.stage {
             Stage::Free => return None,
             Stage::Playing => 1.0,
             Stage::Releasing(left) => {
                 self.stage = if left <= 1 { Stage::Free } else { Stage::Releasing(left - 1) };
-                left as f32 / release_frames
+                (left - 1) as f32 / release_span
             }
         };
 
@@ -130,6 +138,14 @@ fn audible(velocity: f32) -> Option<f32> {
 
 pub struct Pool {
     voices: [Voice; VOICES],
+    /// Frames in the release ramp.
+    ///
+    /// At least two, which is one more than [`frames_for`] guarantees anybody
+    /// and is asked for here rather than there: a ramp runs from full to
+    /// silence *inclusive*, and two values is the fewest that can describe a
+    /// line. At one the span below would be zero and the ramp a division by
+    /// it. Only a sample rate no device reports gets near that, and the
+    /// arithmetic still has to be defined when it does.
     release_frames: u32,
 }
 
@@ -137,7 +153,7 @@ impl Pool {
     pub fn new(sample_rate: f64) -> Self {
         Self {
             voices: [Voice::FREE; VOICES],
-            release_frames: frames_for(RELEASE_SECONDS, sample_rate),
+            release_frames: frames_for(RELEASE_SECONDS, sample_rate).max(2),
         }
     }
 
@@ -197,7 +213,9 @@ impl Pool {
     pub fn next_frame(&mut self, bank: &Bank, out: &mut [[f32; 2]; TRACKS]) {
         *out = [[0.0; 2]; TRACKS];
         let arena = bank.arena();
-        let release = self.release_frames as f32;
+        // Steps in the ramp, not frames — see `Voice::next_frame`. Computed
+        // once per frame rather than once per voice, being the same for all.
+        let release_span = (self.release_frames - 1) as f32;
 
         // A free voice still has its slot looked up and thrown away — some
         // three thousandths of a core at 48 kHz, spent when the pool is idle
@@ -208,7 +226,7 @@ impl Pool {
             let Some(region) = bank.region(voice.slot) else {
                 continue;
             };
-            let Some(frame) = voice.next_frame(arena, region, release) else {
+            let Some(frame) = voice.next_frame(arena, region, release_span) else {
                 continue;
             };
             if let Some(track) = out.get_mut(voice.slot) {
@@ -342,6 +360,30 @@ mod tests {
     }
 
     #[test]
+    fn a_voice_whose_slot_stops_being_declared_falls_silent() {
+        // The second thing the declaration check keeps out, and the one with no
+        // test until now: a voice already sounding when its slot goes empty.
+        //
+        // Set up as the window a reservation opens — an arena holding data, no
+        // slot declaring any of it — because that is the case where nothing
+        // else would catch it. Against a *cleared* arena the bounds check on
+        // the read answers just as well; here it does not, and a voice reading
+        // on would play the incoming kit at the cursor it happened to hold.
+        // That is the sound `Sampler::reserve` silences the pool to prevent,
+        // and this is the half of it the pool has to survive alone: the two
+        // halves are separate types, and only one of them knows about the
+        // ordering.
+        let (mut bank, mut pool) = one(0, 1_000, 1);
+        pool.trigger(&bank, 0, 1.0);
+        assert_eq!(frame(&mut pool, &bank), (1.0, 1.0));
+
+        bank.reserve(1_000).expect("the arena must be granted").fill(0.5);
+
+        assert!(silent(&mut pool, &bank, 8), "a voice went on reading an undeclared slot");
+        assert_eq!(sounding(&pool), 0, "the voice did not free itself");
+    }
+
+    #[test]
     fn a_sample_reads_from_its_own_offset() {
         // Only the offset tells two samples in one arena apart: read from the
         // wrong one, the kit is intact and every drum is the wrong drum.
@@ -469,11 +511,15 @@ mod tests {
 
     #[test]
     fn stopping_fades_the_voices_rather_than_cutting_them() {
-        // The fade is the whole reason `Releasing` exists. Its shape matters
-        // in two ways and both are asserted: it must not start with a step —
-        // the first frame after a stop is as loud as the last one before it —
-        // and it must reach exact silence, because a ramp that only approaches
-        // zero leaves a voice occupying the pool forever.
+        // The fade is the whole reason `Releasing` exists, and both of its ends
+        // are a discontinuity if the arithmetic is off by one — in the same
+        // direction, towards the click the fade removes.
+        //
+        // The far end is the one that hides. A ramp dividing by the frame count
+        // instead of the steps between them ends at 1/n and drops to silence
+        // from there: −40 dB at 2 ms and 48 kHz. Everything downstream still
+        // passes — the voice does leave the pool, the output does fall silent —
+        // so only asking for the ramp's own last value catches it.
         let (bank, mut pool) = one(0, 100_000, 1);
         pool.trigger(&bank, 0, 1.0);
         let before = frame(&mut pool, &bank).0;
@@ -483,11 +529,12 @@ mod tests {
         assert_eq!(first, before, "the release began with a step");
 
         let mut previous = first;
-        for _ in 1..pool.release_frames as usize {
+        for step in 1..pool.release_frames as usize {
             let value = frame(&mut pool, &bank).0;
-            assert!(value < previous, "the release stalled at {value}");
+            assert!(value < previous, "the release stalled at {value} on step {step}");
             previous = value;
         }
+        assert_eq!(previous, 0.0, "the ramp ended at {previous} and stepped to silence");
 
         assert!(silent(&mut pool, &bank, 8), "the release did not reach silence");
         assert_eq!(sounding(&pool), 0, "a faded voice stayed in the pool");
