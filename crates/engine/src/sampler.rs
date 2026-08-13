@@ -34,7 +34,6 @@ pub struct Sampler {
 
 impl Sampler {
     pub fn new(sample_rate: f64) -> Self {
-        debug_assert!(sample_rate > 0.0, "sample rate must be positive");
         Self { bank: Bank::new(), pool: Pool::new(sample_rate) }
     }
 

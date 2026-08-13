@@ -18,7 +18,7 @@
 //! that bug into a wrong sound.
 
 use crate::TRACKS;
-use crate::dsp::fz;
+use crate::dsp::clamped;
 
 /// Steps per pattern. Sixteen, i.e. one bar of sixteenths.
 pub const STEPS: usize = 16;
@@ -70,27 +70,23 @@ impl Pattern {
     }
 
     /// Set one step. Both indices arrive from another thread; an index past
-    /// the end of the grid drops the command, and a non-finite velocity is
-    /// refused outright, the way every value crossing the ABI is.
+    /// the end of the grid drops the command, and the velocity goes through
+    /// [`dsp::clamped`](crate::dsp) like every value crossing the ABI.
     ///
-    /// A denormal velocity is flushed to zero, which here means the step is
-    /// simply off. `1e-40` is finite and inside the range, so it survives both
-    /// guards, and [`is_active`](Self::is_active) asks only whether the value
-    /// is above zero — leaving a step that counts as struck and would scale a
-    /// voice by a denormal on every frame it sounds. That is the CPU-during-
-    /// silence symptom arriving through the front door instead of through
-    /// feedback, which is the case the house rule does not name. `mixer.rs`
-    /// flushes at its clamp for the same reason.
+    /// What the flush in that guard means *here* is worth knowing, because this
+    /// grid is where it stops being about arithmetic: a flushed velocity is a
+    /// step that is simply off, since [`is_active`](Self::is_active) asks only
+    /// whether the value is above zero. Without it, `1e-40` would be a step that
+    /// counts as struck and scales a voice by a denormal on every frame it
+    /// sounds.
     pub fn set_step(&mut self, track: u8, step: u16, velocity: f32) {
-        if !velocity.is_finite() {
-            return;
-        }
-        if let Some(slot) = self
-            .steps
-            .get_mut(usize::from(track))
-            .and_then(|row| row.get_mut(usize::from(step)))
-        {
-            *slot = fz(velocity.clamp(MIN_VELOCITY, MAX_VELOCITY));
+        if let (Some(slot), Some(velocity)) = (
+            self.steps
+                .get_mut(usize::from(track))
+                .and_then(|row| row.get_mut(usize::from(step))),
+            clamped(velocity, MIN_VELOCITY, MAX_VELOCITY),
+        ) {
+            *slot = velocity;
         }
     }
 }
@@ -160,31 +156,27 @@ mod tests {
 
     #[test]
     fn a_denormal_velocity_is_not_a_struck_step() {
-        // The value passes both guards — finite, inside the range — and
-        // `is_active` asks only whether it is above zero, so without the flush
-        // this is a step that counts as struck and scales its voice by a
-        // denormal on every frame it sounds. Stated as `is_active` and not just
-        // as the stored number, because being *active* is what makes it cost
-        // anything.
+        // What the flush in `dsp::clamped` amounts to on this grid, which is
+        // the pattern's own property and the reason it matters here at all:
+        // `is_active` asks only whether the value is above zero, so a flushed
+        // step is an *off* step. Stated through `is_active` and not just
+        // through the stored number, because being active is what makes it cost
+        // a voice.
         let mut pattern = Pattern::new();
-        for tiny in [1e-40f32, f32::MIN_POSITIVE / 2.0] {
-            pattern.set_step(4, 4, tiny);
-            assert_eq!(pattern.velocity(4, 4), 0.0, "kept {tiny:e}");
-            assert!(!pattern.is_active(4, 4), "{tiny:e} counted as a strike");
-        }
+        pattern.set_step(4, 4, 1e-40);
+        assert_eq!(pattern.velocity(4, 4), 0.0);
+        assert!(!pattern.is_active(4, 4), "a denormal counted as a strike");
     }
 
     #[test]
-    fn a_non_finite_velocity_is_refused_not_clamped() {
-        // `f32::clamp` passes NaN through, and a NaN velocity would scale a
-        // voice by NaN — which is silence that never ends, on a track that
-        // cannot be recovered without a reset.
+    fn a_refused_velocity_leaves_the_step_as_it_was() {
+        // The pattern's answer to a refusal, which the guard does not make: the
+        // cell keeps what it held rather than falling silent. One specimen —
+        // every dangerous input is enumerated in `dsp`.
         let mut pattern = Pattern::new();
         pattern.set_step(1, 1, 0.6);
-        for bad in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
-            pattern.set_step(1, 1, bad);
-            assert_eq!(pattern.velocity(1, 1), 0.6, "took {bad}");
-        }
+        pattern.set_step(1, 1, f32::NAN);
+        assert_eq!(pattern.velocity(1, 1), 0.6, "a NaN emptied the step");
     }
 
     #[test]

@@ -13,13 +13,13 @@
 //! test that could tell it apart from a constant. They become [`Smoothed`] in
 //! the same commit that gives them something to multiply.
 //!
-//! Every setter here takes untrusted input — the values arrive from the UI
-//! over the command protocol — so each clamps its range and each ignores a
-//! non-finite argument outright. Clamping is a guard, not a channel: a UI that
-//! sends out-of-range values is a UI with a bug, and it is not told.
+//! Every setter here takes untrusted input — the values arrive from the UI over
+//! the command protocol — so each goes through [`dsp::clamped`](crate::dsp),
+//! which is where the reasoning about non-finite values and denormals lives.
+//! What belongs to this module is only the ranges below.
 
 use crate::TRACKS;
-use crate::dsp::{Smoothed, fz};
+use crate::dsp::{Smoothed, clamped};
 
 /// Gain limits. The ceiling is above unity on purpose: summing eight tracks
 /// needs headroom above the loudest single one, and a fader that cannot go
@@ -125,31 +125,6 @@ impl Mixer {
     }
 }
 
-/// Clamp a value from across the ABI, or reject it.
-///
-/// `f32::clamp` passes NaN straight through — it is not less than the low
-/// bound nor greater than the high one — so a NaN gain would reach the output
-/// and poison it permanently. Non-finite is therefore refused rather than
-/// clamped, which is what `Transport::set_bpm` does with the tempo for the
-/// same reason.
-///
-/// Denormals are flushed here, and this is the second door they come through.
-/// The house rule names feedback state — decaying tails, filter memory — and
-/// that is where the problem is usually made; but `1e-40` is finite and inside
-/// every range this function guards, so it passes both checks above and lands
-/// in a parameter that multiplies every frame from then on. The symptom is the
-/// same one the rule exists for, CPU climbing during silence, reached without
-/// any feedback at all. A slider cannot produce such a value; a project file, a
-/// MIDI controller and an automation curve can, and everything crossing the
-/// thread boundary is input here.
-///
-/// The threshold has room to spare rather than being tuned: `f32` denormals
-/// start below 1.2e-38, so flushing below 1e-20 covers the products too — no
-/// sample times a multiplier that small is audible, whatever the sample.
-fn clamped(value: f32, low: f32, high: f32) -> Option<f32> {
-    value.is_finite().then(|| fz(value.clamp(low, high)))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -216,22 +191,31 @@ mod tests {
     }
 
     #[test]
-    fn non_finite_values_are_refused_not_clamped() {
-        // `f32::clamp` lets NaN through, and one NaN on the output poisons
-        // every feedback path downstream of it for good.
+    fn a_refused_value_leaves_the_previous_one_standing() {
+        // What a refusal *means* here, which is the mixer's own property and
+        // not the guard's: `dsp::clamped` answers `None`, and this is the
+        // module that decides a knob keeps its last setting rather than
+        // resetting to a default. Every value dangerous enough to refuse is
+        // enumerated in `dsp`, so one specimen of each answer is enough — NaN
+        // for the refusal, a denormal for the flush.
         let mut mixer = Mixer::new(SR);
         mixer.set_master_gain(0.5);
         mixer.set_track_gain(3, 0.5);
         mixer.set_track_pan(3, 0.5);
 
-        for bad in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
-            mixer.set_master_gain(bad);
-            mixer.set_track_gain(3, bad);
-            mixer.set_track_pan(3, bad);
-            assert_eq!(mixer.master_gain(), 0.5, "master took {bad}");
-            assert_eq!(mixer.track_gain(3), 0.5, "gain took {bad}");
-            assert_eq!(mixer.track_pan(3), 0.5, "pan took {bad}");
-        }
+        mixer.set_master_gain(f32::NAN);
+        mixer.set_track_gain(3, f32::NAN);
+        mixer.set_track_pan(3, f32::NAN);
+
+        assert_eq!(mixer.master_gain(), 0.5, "master took a NaN");
+        assert_eq!(mixer.track_gain(3), 0.5, "gain took a NaN");
+        assert_eq!(mixer.track_pan(3), 0.5, "pan took a NaN");
+
+        // A denormal is taken rather than refused, and becomes exact zero. The
+        // distinction matters at this end: refused would leave 0.5 multiplying
+        // every frame, where the UI asked for something inaudible.
+        mixer.set_master_gain(1e-40);
+        assert_eq!(mixer.master_gain(), 0.0, "a denormal gain was refused, not flushed");
     }
 
     #[test]
@@ -257,25 +241,6 @@ mod tests {
         // Pan has no quiet end, so there is nothing to choose here: centre is
         // the value that says least, not the safe one.
         assert_eq!(mixer.track_pan(usize::MAX), DEFAULT_PAN);
-    }
-
-    #[test]
-    fn a_denormal_gain_becomes_exact_silence() {
-        // Finite, inside the range, and past both guards — the value would
-        // reach `Smoothed` and multiply every frame from then on, producing
-        // denormal products for as long as it stood. That is the CPU-on-silence
-        // symptom without any feedback involved, which is the door the house
-        // rule does not cover.
-        let mut mixer = Mixer::new(SR);
-        for tiny in [1e-40f32, -1e-40, f32::MIN_POSITIVE / 2.0] {
-            mixer.set_master_gain(tiny);
-            mixer.set_track_gain(1, tiny);
-            mixer.set_track_pan(1, tiny);
-
-            assert_eq!(mixer.master_gain(), 0.0, "master kept {tiny:e}");
-            assert_eq!(mixer.track_gain(1), 0.0, "track gain kept {tiny:e}");
-            assert_eq!(mixer.track_pan(1), 0.0, "track pan kept {tiny:e}");
-        }
     }
 
     #[test]

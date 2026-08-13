@@ -7,7 +7,7 @@
 
 use super::bank::{Bank, Region};
 use crate::TRACKS;
-use crate::dsp::fz;
+use crate::dsp::{clamped, frames_for};
 use crate::pattern::{MAX_VELOCITY, MIN_VELOCITY};
 
 /// Voices in the pool.
@@ -113,19 +113,19 @@ impl Voice {
 
 /// A velocity that will produce sound, or nothing at all.
 ///
-/// Three refusals in one named place, because two callers reach the pool and a
-/// guard written at one of them is a guard at neither. Non-finite is refused
-/// rather than clamped — `f32::clamp` passes NaN straight through, and a NaN
-/// velocity scales a voice to a silence that never ends. Out of range is
-/// clamped rather than refused: an over-loud strike is a bug on the far side,
-/// and the loudest strike is a better answer to it than silence. Zero is
-/// refused because a step switched off should not spend a voice on silence.
+/// One named place, because two callers reach the pool — the step sequencer and
+/// the preview command — and a guard written at one of them is a guard at
+/// neither.
+///
+/// [`dsp::clamped`](crate::dsp) answers the two values that must never reach a
+/// multiplier. What this function adds is the third refusal, which is about
+/// voices rather than arithmetic: **zero does not start one.** A step switched
+/// off would otherwise take a voice out of a pool of thirty-two and spend it
+/// rendering silence, and with a full grid the pool is the scarce thing. That
+/// also settles what a flushed denormal means here — it arrives as zero, so it
+/// is a strike that never happens.
 fn audible(velocity: f32) -> Option<f32> {
-    if !velocity.is_finite() {
-        return None;
-    }
-    let velocity = fz(velocity.clamp(MIN_VELOCITY, MAX_VELOCITY));
-    (velocity > 0.0).then_some(velocity)
+    clamped(velocity, MIN_VELOCITY, MAX_VELOCITY).filter(|&velocity| velocity > 0.0)
 }
 
 pub struct Pool {
@@ -137,9 +137,7 @@ impl Pool {
     pub fn new(sample_rate: f64) -> Self {
         Self {
             voices: [Voice::FREE; VOICES],
-            // At least one frame, so a nonsensical sample rate gives an abrupt
-            // release rather than a division by zero in the ramp.
-            release_frames: ((RELEASE_SECONDS * sample_rate) as u32).max(1),
+            release_frames: frames_for(RELEASE_SECONDS, sample_rate),
         }
     }
 
@@ -383,15 +381,19 @@ mod tests {
 
     #[test]
     fn a_velocity_that_cannot_sound_starts_no_voice() {
-        // Zero is a step switched off, and the guard is against spending a
-        // voice on silence — with a full grid the pool is the scarce thing.
-        // Non-finite is refused rather than clamped: `f32::clamp` passes NaN
-        // through, and a NaN velocity scales a voice to silence that never
-        // ends and cannot be recovered.
+        // The pool's own property, and the one `dsp::clamped` does not have:
+        // what these inputs must not cost is a *voice*. A pool of thirty-two
+        // against a full grid is the scarce thing, and a strike that renders
+        // silence occupies a slot for the length of its sample.
+        //
+        // The denormal is here for the same reason and is the case that was
+        // untested: it survives the range check, arrives as zero through the
+        // flush, and must then be indistinguishable from a step switched off.
+        // Negative and non-finite come the two other ways to the same place.
         let (bank, mut pool) = one(0, 1, 1);
-        for bad in [0.0, -1.0, f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+        for bad in [0.0, -1.0, 1e-40, f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
             pool.trigger(&bank, 0, bad);
-            assert_eq!(sounding(&pool), 0, "velocity {bad} started a voice");
+            assert_eq!(sounding(&pool), 0, "velocity {bad:e} started a voice");
         }
         // And an out-of-range velocity is clamped rather than dropped: 2.0 is
         // a UI bug, silence would be a worse answer than the loudest strike.

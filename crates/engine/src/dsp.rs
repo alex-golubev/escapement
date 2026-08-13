@@ -1,24 +1,107 @@
 //! Primitives shared by everything that touches samples.
 //!
-//! Two of them so far, and both exist because of a house rule rather than
-//! because the arithmetic was hard: denormals are flushed by hand because WASM
-//! cannot be told to flush them, and a controlled parameter slides to its
-//! target because stepping it is audible.
+//! None of them exist because the arithmetic was hard. They exist because the
+//! same two dangers arrive at every door in the engine, and answering them
+//! once per door is how the answers drift apart.
+//!
+//! # The two dangers, argued here and nowhere else
+//!
+//! **A non-finite value is permanent.** One NaN multiplied into a feedback path
+//! stays there: the filter state never recovers, the track is silent until the
+//! engine is rebuilt. It cannot be clamped away either — `f32::clamp` returns
+//! NaN for a NaN input, being neither below the low bound nor above the high
+//! one — so every guard below tests for it separately, before any range is
+//! considered.
+//!
+//! **A denormal is expensive.** WASM has no FPU-level flush-to-zero: the x86
+//! MXCSR flags native plugins use are unreachable, and the spec requires IEEE
+//! 754 denormals to be handled properly, which browsers may not opt out of.
+//! Arithmetic on them costs an order of magnitude, and the symptom is
+//! distinctive and misleading — CPU climbing *during silence*, once the sound
+//! has already died away. The house rule names feedback state as the source,
+//! and that is where it is usually made; but `1e-40` is finite and inside every
+//! range anyone would check, so a value that small crossing the ABI lands in a
+//! multiplier and produces denormal products on every frame from then on, with
+//! no feedback involved at all. A slider cannot produce such a value; a project
+//! file, a MIDI controller and an automation curve can.
+//!
+//! # Two doors, because there are two answers
+//!
+//! [`clamped`] is for a parameter: it has a range, and there is somebody to
+//! refuse. [`sanitized`] is for sample data: it has no range — a value above
+//! unity is a legitimate sample — and nobody to refuse to, since the values
+//! arrive by the thousand from across the ABI. They are not one function with
+//! an argument; they are two answers, and the difference has to be visible at
+//! the call.
 
 /// Denormal flush threshold.
+///
+/// Room to spare rather than tuned: `f32` denormals begin below 1.2e-38, so
+/// cutting at 1e-20 covers the products too — no sample times a multiplier that
+/// small is audible, whatever the sample.
 const DENORMAL_THRESHOLD: f32 = 1e-20;
 
-/// Flush denormals to zero.
-///
-/// WASM has no FPU-level flush-to-zero: the x86 MXCSR flags native plugins use
-/// for this are not reachable, and the spec requires IEEE 754 denormals to be
-/// handled properly, which browsers may not opt out of. Decaying tails
-/// therefore have to be cut off by hand, and the symptom of forgetting is
-/// distinctive and misleading — CPU climbing *during silence*, once the sound
-/// has already died away.
+/// Flush denormals to zero. The narrowest of the three guards: it answers only
+/// the second danger, for callers that have already ruled out the first.
 #[inline(always)]
 pub fn fz(x: f32) -> f32 {
     if x.abs() < DENORMAL_THRESHOLD { 0.0 } else { x }
+}
+
+/// Make one sample of audio data safe to multiply.
+///
+/// Non-finite becomes silence rather than a refusal, and that is the whole
+/// difference from [`clamped`]. Sample data arrives in blocks of hundreds of
+/// thousands with no per-value channel to report on, so there is nobody to
+/// refuse to; and one zeroed frame costs a click where dropping the sample
+/// costs a track.
+#[inline(always)]
+pub fn sanitized(x: f32) -> f32 {
+    if x.is_finite() { fz(x) } else { 0.0 }
+}
+
+/// Take a parameter from across the ABI, or refuse it.
+///
+/// Refusing rather than substituting, because a parameter has a caller that can
+/// leave the previous value standing — which is the right answer to a value
+/// that means nothing. Clamping the range is a guard and not a channel: a UI
+/// sending out-of-range values has a bug, and it is not told.
+pub fn clamped(value: f32, low: f32, high: f32) -> Option<f32> {
+    value.is_finite().then(|| fz(value.clamp(low, high)))
+}
+
+/// The longest a ramp may be.
+///
+/// One second at 768 kHz, the highest rate any audio device reports. Every
+/// legitimate pairing of a duration in this crate with a rate a device could
+/// name lands orders of magnitude below it; only a rate no hardware has can
+/// reach it.
+const MAX_RAMP_FRAMES: u32 = 768_000;
+
+/// A duration in frames, bounded at both ends.
+///
+/// Every ramp in the engine is written in seconds and run in frames, and the
+/// sample rate it is converted through is whatever the audio device said — so
+/// it is input, like everything else that arrives from outside.
+///
+/// **Both bounds guard the same failure from opposite sides, and the upper one
+/// is the surprise.** A rate of zero gives a length of zero and a division by
+/// zero in the ramp. But `as` saturates upward as well as downward: an infinite
+/// rate, or merely an enormous one, arrives here as `u32::MAX`. That is not a
+/// crash and not a NaN — it is a ramp four billion frames long, which is a fader
+/// that never reaches its target and a voice that never finishes releasing and
+/// so never returns to the pool. Silent, permanent, and attributed to anything
+/// but the sample rate.
+///
+/// Neither end is hypothetical from here: [`engine_new`](crate::engine_new)
+/// deliberately places no ceiling on the rate, having nothing left that
+/// allocates by it, so an absurd rate reaches this function and is answered
+/// here rather than three layers up.
+pub fn frames_for(seconds: f64, sample_rate: f64) -> u32 {
+    // NaN converts to 0 and lands on the floor; infinity converts to u32::MAX
+    // and lands on the ceiling. Both answers are abrupt, which is the right
+    // answer to a rate that means nothing.
+    ((seconds * sample_rate) as u32).clamp(1, MAX_RAMP_FRAMES)
 }
 
 /// How long a smoothed parameter takes to travel to a new target.
@@ -62,9 +145,7 @@ pub struct Smoothed {
 
 impl Smoothed {
     pub fn new(value: f32, sample_rate: f64) -> Self {
-        // At least one frame, so that a nonsensical sample rate produces an
-        // instant parameter rather than a division by zero.
-        let frames = ((SMOOTHING_SECONDS * sample_rate) as u32).max(1);
+        let frames = frames_for(SMOOTHING_SECONDS, sample_rate);
         Self { current: value, target: value, step: 0.0, remaining: 0, frames }
     }
 
@@ -112,6 +193,21 @@ mod tests {
 
     const SR: f64 = 48_000.0;
 
+    /// Every value that has to be kept out of a multiplier, in one place.
+    ///
+    /// Enumerated here and not at the four doors that use these guards. Each of
+    /// those has its own property to state — that a refusal leaves the previous
+    /// value standing, that a flushed velocity is not a struck step — and none
+    /// of them has anything to add about the inputs themselves.
+    const DANGEROUS: &[f32] = &[
+        f32::NAN,
+        f32::INFINITY,
+        f32::NEG_INFINITY,
+        1e-40,
+        -1e-40,
+        f32::MIN_POSITIVE / 2.0,
+    ];
+
     #[test]
     fn fz_clears_denormals_and_leaves_everything_else() {
         assert_eq!(fz(1e-30), 0.0);
@@ -120,6 +216,98 @@ mod tests {
         assert_eq!(fz(1e-10), 1e-10);
         assert_eq!(fz(-0.5), -0.5);
         assert_eq!(fz(1.0), 1.0);
+    }
+
+    #[test]
+    fn sample_data_that_cannot_be_multiplied_becomes_silence() {
+        // The answer for values with no range and no caller to refuse to. Both
+        // dangers land on the same result here, and that is the point: the
+        // sweep over a loaded sample cannot branch per value.
+        for &bad in DANGEROUS {
+            assert_eq!(sanitized(bad), 0.0, "sanitized({bad:e}) still multiplies");
+        }
+    }
+
+    #[test]
+    fn sample_data_keeps_everything_it_is_allowed_to() {
+        // No range, deliberately: a sample above unity is loud, not wrong, and
+        // clamping it here would quietly reshape whatever was loaded.
+        for good in [0.0f32, 1.0, -1.0, 4.0, -4.0, 1e-10, 1e30] {
+            assert_eq!(sanitized(good), good, "sanitized({good:e}) altered a legal sample");
+        }
+    }
+
+    #[test]
+    fn a_parameter_that_cannot_be_multiplied_is_refused_or_flushed() {
+        // The two dangers get different answers here, unlike in `sanitized`,
+        // and the difference is the reason both are enumerated: non-finite has
+        // no value to stand in for it, a denormal has exactly one — zero.
+        for &bad in DANGEROUS {
+            let taken = clamped(bad, 0.0, 2.0);
+            if bad.is_finite() {
+                assert_eq!(taken, Some(0.0), "clamped({bad:e}) reached a multiplier");
+            } else {
+                assert_eq!(taken, None, "clamped({bad:e}) was let through");
+            }
+        }
+    }
+
+    #[test]
+    fn a_parameter_outside_its_range_is_clamped_rather_than_refused() {
+        // Deliberately not symmetric with the refusal above. An out-of-range
+        // value still names a direction — loudest, hard left — and answering it
+        // with the nearest legal value is closer to what was meant than
+        // answering with nothing.
+        assert_eq!(clamped(3.0, 0.0, 2.0), Some(2.0));
+        assert_eq!(clamped(-3.0, 0.0, 2.0), Some(0.0));
+        assert_eq!(clamped(-2.0, -1.0, 1.0), Some(-1.0));
+        assert_eq!(clamped(0.5, 0.0, 2.0), Some(0.5));
+        // The bounds themselves are inside the range.
+        assert_eq!(clamped(0.0, 0.0, 2.0), Some(0.0));
+        assert_eq!(clamped(2.0, 0.0, 2.0), Some(2.0));
+    }
+
+    #[test]
+    fn a_duration_is_a_whole_number_of_frames_at_the_rate_it_is_given() {
+        assert_eq!(frames_for(0.01, SR), 480);
+        assert_eq!(frames_for(0.002, SR), 96);
+        assert_eq!(frames_for(0.01, 44_100.0), 441);
+        assert_eq!(frames_for(0.01, 96_000.0), 960);
+    }
+
+    #[test]
+    fn a_rate_that_means_nothing_gives_an_abrupt_ramp_at_either_end() {
+        // Both bounds, because both are reachable and only one is obvious. Zero
+        // and negative and NaN collapse to a single frame — an instant
+        // parameter. Infinity and an absurd-but-finite rate saturate *upward*
+        // through `as`, and a ramp of `u32::MAX` frames is the failure worth
+        // naming: not a crash, but a fader that never arrives and a voice that
+        // never leaves the pool.
+        for rate in [0.0, -48_000.0, f64::NAN, f64::NEG_INFINITY] {
+            assert_eq!(frames_for(0.01, rate), 1, "sample_rate={rate}");
+        }
+        for rate in [f64::INFINITY, 1e12, f64::MAX] {
+            let frames = frames_for(0.01, rate);
+            assert!(frames <= MAX_RAMP_FRAMES, "sample_rate={rate} gave {frames} frames");
+        }
+        assert_eq!(frames_for(0.0, SR), 1, "a zero duration is still one frame");
+    }
+
+    #[test]
+    fn every_rate_a_device_could_report_passes_through_untouched() {
+        // The ceiling must not be reachable by anything real, or it would be
+        // silently shortening ramps on legitimate hardware — which is the same
+        // stuck-parameter bug, arriving from the direction of the fix.
+        for rate in [8_000.0, 44_100.0, 48_000.0, 96_000.0, 192_000.0, 768_000.0] {
+            for seconds in [0.002, 0.01, 1.0] {
+                let frames = frames_for(seconds, rate);
+                assert_eq!(
+                    frames,
+                    (seconds * rate) as u32,
+                    "{seconds}s at {rate} Hz was clamped"
+                );
+            }
+        }
     }
 
     #[test]

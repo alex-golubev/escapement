@@ -25,7 +25,7 @@
 //!   directly.
 
 use crate::TRACKS;
-use crate::dsp::fz;
+use crate::dsp::sanitized;
 
 /// Sample slots — one per track.
 ///
@@ -167,12 +167,9 @@ impl Bank {
     /// everything crossing the ABI is input would have exactly one exception,
     /// and it would be the largest buffer in the engine.
     ///
-    /// A non-finite value becomes silence rather than rejecting the whole
-    /// sample: one NaN is a bug upstream either way, and zeroing that frame
-    /// costs a click where dropping the sample costs a track. Denormals go the
-    /// same way as everywhere else — a sample decaying into the denormal range
-    /// would burn CPU on every voice that reached its tail, which is the house
-    /// symptom of CPU climbing during silence.
+    /// The pass itself is [`dsp::sanitized`](crate::dsp) per value, which is
+    /// the door for data rather than for parameters — see there for why a bad
+    /// sample becomes silence instead of a refusal.
     ///
     /// **What is deliberately not checked is whether two slots overlap.** Two
     /// tracks pointed at one sample is a legitimate kit rather than a mistake,
@@ -211,7 +208,7 @@ impl Bank {
         // Indexed without a further check: out of bounds here would not return
         // but end the worklet.
         for value in &mut self.arena[offset..end] {
-            *value = if value.is_finite() { fz(*value) } else { 0.0 };
+            *value = sanitized(*value);
         }
 
         self.slots[slot] = Region { offset, frames, channels };
