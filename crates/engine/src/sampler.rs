@@ -10,40 +10,28 @@
 //! channel count exactly. It names the total, [`Sampler::reserve`] takes it,
 //! and a slot becomes three numbers pointing into one arena rather than a
 //! buffer of its own. A constant in this module would be a guess standing in
-//! for something already known — and a guess of that kind carries the shape of
-//! whatever it was measured against. Measured against a drum kit it gives a
-//! ceiling on how long a sample may be, mono paying the price of stereo, and a
-//! number out of a drum kit sitting in an engine that is not one.
+//! for something already known, and would carry the shape of whatever it was
+//! measured against into an engine that outlives the measuring.
 //!
 //! What sizing from outside costs is an allocation, and an allocation is the
-//! one thing the render thread may never do. So it happens where the render
-//! thread is not: a reservation is made from the message handler, between
-//! quanta. Two consequences follow, and neither is hidden:
+//! one thing the render thread may never do — so it happens where the render
+//! thread is not, in the message handler, between quanta. See
+//! [`reserve`](Sampler::reserve) for what makes that affordable. Two
+//! consequences reach past this module and neither is hidden:
 //!
 //! - **Reserving grows WASM linear memory, which detaches every view the
 //!   worklet holds over it.** The worklet compares `memory.buffer` against the
-//!   one it saw last and rebuilds its views when it differs. That check already
-//!   existed as a safety net against growth nobody predicted; here it carries
-//!   load, and the sampler is the thing it carries.
+//!   one it saw last and rebuilds its views when it differs. That check existed
+//!   as a safety net against growth nobody predicted; here it carries load.
 //! - **The arena moves as a whole.** A new reservation invalidates the old
 //!   pointer, and with it every voice reading through it, so swapping a kit
 //!   cuts every voice rather than only those of the sample being replaced.
 //!   Swapping a kit is a deliberate act, not something that happens under the
 //!   music.
 //!
-//! One more thing makes sizing from outside affordable at all, and without it
-//! the argument would not hold: **an allocation WASM cannot serve does not
-//! return an error, it aborts**, and under `panic = "abort"` that is the end of
-//! sound until the page is reloaded. [`Vec::try_reserve_exact`] is the whole
-//! difference — out of memory becomes a [`Refusal`] with a name on it,
-//! travelling the same path as the other four.
-//!
 //! Everything crossing into this module is untrusted in the usual way: the
 //! velocity of a strike arrives over the command protocol, the offset, length
-//! and channel count of a sample arrive from the far side of the ABI. Each is
-//! checked here rather than at the caller, because there is more than one
-//! caller — the step sequencer and the preview command both strike a track,
-//! and a guard on one of them would be a guard on neither.
+//! and channel count of a sample arrive from the far side of the ABI.
 
 use crate::TRACKS;
 use crate::dsp::fz;
@@ -100,10 +88,9 @@ const RELEASE_SECONDS: f64 = 0.002;
 /// values, they cannot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Refusal {
-    /// The arena could not be made that large. The only refusal here whose
-    /// cause is not in its arguments, and the reason [`Vec::try_reserve_exact`]
-    /// is used rather than plain reservation: served the other way this case
-    /// does not return at all.
+    /// The arena could not be made that large — the only refusal here whose
+    /// cause is not in its arguments. That it is a refusal at all is the point
+    /// of [`Sampler::reserve`].
     OutOfMemory { floats: usize },
     /// No slot carries that index.
     NoSuchSlot,
@@ -277,17 +264,18 @@ impl Sampler {
     /// What it buys is that placement never becomes a question — the arena is
     /// built from empty every time, and there is nothing to fragment.
     ///
-    /// **Everything previously loaded is gone and every voice is cut**, not
-    /// only those of a sample being replaced. A fade would have to keep reading
-    /// the sample it is fading, and the sample is precisely what is being
-    /// replaced: the ramp would land on whatever the new kit has at that
-    /// cursor, which is a worse artifact than the cut and an unbounded one.
+    /// Everything previously loaded is gone, and the voices are cut rather than
+    /// faded: a fade has to keep reading the sample it is fading, which is
+    /// precisely what is being replaced, so the ramp would land on whatever the
+    /// new kit holds at that cursor — a worse artifact than the cut, and an
+    /// unbounded one.
     ///
-    /// The refusal is the point of the whole design. Reserving through
-    /// [`Vec::try_reserve_exact`] rather than growing the vector directly is
-    /// what turns "there is not that much memory" from an abort — which under
-    /// `panic = "abort"` is the end of sound until the page reloads — into a
-    /// value the page can read out and act on.
+    /// **The refusal is the point of the whole design.** An allocation WASM
+    /// cannot serve does not return an error, it aborts, and under
+    /// `panic = "abort"` an abort on this thread is the end of sound until the
+    /// page is reloaded. Asking through [`Vec::try_reserve_exact`] rather than
+    /// growing the vector directly is the whole of the difference: "there is
+    /// not that much memory" becomes a value the page can read and act on.
     pub fn reserve(&mut self, floats: usize) -> Result<&mut [f32], Refusal> {
         // Cleared before the allocation is attempted rather than after it
         // succeeds. A refusal then leaves a bank holding nothing, instead of
@@ -628,11 +616,9 @@ mod tests {
 
     #[test]
     fn a_kit_too_large_for_memory_is_refused_rather_than_fatal() {
-        // The refusal the whole design turns on. Asked for directly, a vector
-        // this size does not fail — it aborts, and `panic = "abort"` makes an
-        // abort here the end of sound until the page is reloaded. Reserved the
-        // fallible way it is a value with a number in it, and the page can say
-        // what it could not have.
+        // The refusal the whole design turns on — see `reserve` for why it is
+        // one at all. What this pins is that it carries the number, so the page
+        // can say what it could not have.
         let mut sampler = loaded(0, 16, 1);
         let absurd = usize::MAX / 8;
 
@@ -672,11 +658,9 @@ mod tests {
 
     #[test]
     fn a_voice_never_reads_past_what_was_declared() {
-        // Sharper with one arena than it was with a buffer per slot: what lies
-        // past the end of a sample is not the leavings of a previous tenant but
-        // the head of the next sample in the kit. A drum running on into the
-        // next drum is audible and sounds nearly plausible, which is what gets
-        // it blamed on the sample rather than on the cursor.
+        // The neighbour is loaded at a different value from the sample under
+        // test, so a cursor running past its declaration shows up as a tail
+        // that should not be there rather than as silence.
         let mut sampler = Sampler::new(SR);
         load(&mut sampler, &[(0, 2, 1, 1.0), (1, 5_000, 1, 0.7)]);
 
@@ -1016,9 +1000,8 @@ mod tests {
     fn reset_returns_to_the_as_constructed_state_and_keeps_the_memory() {
         // Both halves matter and they pull apart: the render has to be
         // identical to a fresh instance, or the golden tests compare a warmed
-        // engine against a cold one — while giving the memory back would buy
-        // nothing, since WASM never takes it back, and would cost the next kit
-        // a fresh growth.
+        // engine against a cold one — while the memory has to stay, for the
+        // reason `reset` gives.
         let mut sampler = loaded(0, 4_096, 1);
         let granted = sampler.arena.capacity();
         sampler.trigger(0, 1.0);
