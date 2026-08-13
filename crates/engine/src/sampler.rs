@@ -10,8 +10,11 @@
 //!
 //! [`Sampler`] is what the engine holds, and it is thin on purpose: the only
 //! behaviour that belongs to it rather than to either half is the ordering
-//! between them, and there is exactly one such ordering — a new kit has to
-//! silence the voices before the memory they read is replaced.
+//! between them, and there is one such ordering — **the voices are silenced
+//! before what they read is taken away.** It is written the same way at both
+//! places where that happens, [`reserve`](Sampler::reserve) and
+//! [`reset`](Sampler::reset), so there is one rule to know rather than two
+//! orders to tell apart.
 //!
 //! Everything crossing into this module is untrusted in the usual way: the
 //! velocity of a strike arrives over the command protocol, the offset, length
@@ -54,6 +57,14 @@ impl Sampler {
         self.bank.reserve(floats)
     }
 
+    /// Declare what was written into the arena.
+    ///
+    /// Sizes in `usize` rather than at a wire width, unlike [`trigger`]: these
+    /// numbers do not arrive on a command record but from the C ABI, where
+    /// `lib.rs` converts them once at the pointer boundary it has to cross
+    /// anyway. [`Bank::commit`] checks every one of them regardless.
+    ///
+    /// [`trigger`]: Self::trigger
     pub fn commit(
         &mut self,
         slot: usize,
@@ -64,8 +75,14 @@ impl Sampler {
         self.bank.commit(slot, offset, frames, channels)
     }
 
-    pub fn trigger(&mut self, slot: usize, velocity: f32) {
-        self.pool.trigger(&self.bank, slot, velocity);
+    /// Strike a track, at the width the command protocol delivers it in.
+    ///
+    /// A track and not a slot, though [`SLOTS`] makes them the same number:
+    /// what a caller has is a row of the grid or the pad somebody clicked, and
+    /// turning that into a slot is the bank's business — which is where a table
+    /// between the two would go, if one were ever wanted.
+    pub fn trigger(&mut self, track: u8, velocity: f32) {
+        self.pool.trigger(&self.bank, usize::from(track), velocity);
     }
 
     pub fn release_all(&mut self) {
@@ -80,9 +97,15 @@ impl Sampler {
     ///
     /// Both halves together, so that a reset engine renders exactly as a fresh
     /// one — which is what the offline render on M3 compares against.
+    ///
+    /// In the module's order, and honestly it is uniformity rather than need:
+    /// the other way round would survive today, because [`Bank::reset`] keeps
+    /// the arena it clears and a voice reading into an empty one is answered by
+    /// the bounds check rather than by anything here. One rule at both call
+    /// sites costs nothing and leaves no second reading to work out.
     pub fn reset(&mut self) {
-        self.bank.reset();
         self.pool.silence();
+        self.bank.reset();
     }
 }
 

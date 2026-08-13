@@ -5,10 +5,23 @@
 //! survives into the synthesiser and [`Voice`] does not, a struck sample and a
 //! held note having almost nothing in common past the pool.
 
-use super::bank::{Bank, Region};
+use super::bank::{Bank, Region, SLOTS};
 use crate::TRACKS;
 use crate::dsp::{clamped, frames_for};
 use crate::pattern::{MAX_VELOCITY, MIN_VELOCITY};
+
+/// A voice sounds on the track numbered like its slot, which means anything
+/// only while the two counts agree.
+///
+/// A build failure rather than the silence it would otherwise be.
+/// [`Pool::next_frame`] indexes an array of `TRACKS` by a slot, and `get_mut`
+/// answers `None` past the end — so raising the slot count on its own would
+/// leave every voice above the eighth rendering into nothing at all, with no
+/// refusal, no counter and nothing to hear but a missing drum. That rise is
+/// named as debt rather than ruled out, so this is a line somebody will one day
+/// change deliberately; what it must not be is a line somebody changes without
+/// meeting the consequence.
+const _: () = assert!(SLOTS == TRACKS, "a voice's slot is its track — see Pool::next_frame");
 
 /// Voices in the pool.
 ///

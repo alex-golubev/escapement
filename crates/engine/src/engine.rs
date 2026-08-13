@@ -139,6 +139,21 @@ impl Engine {
         }
     }
 
+    // Windows onto the engine's state, and that every one of them is read-only
+    // is the point rather than an accident.
+    //
+    // Nothing here hands out `&mut` and no field is public, so the only way a
+    // value inside this type changes is a command decoded out of the block —
+    // which is the property the whole design rests on: one road in, and it
+    // starts in the ring. A setter added among these would be a second road,
+    // and it would not announce itself as one; it would look like the four
+    // lines above it.
+    //
+    // Their callers are the tests, and from M3 the offline renderer, which has
+    // to read the transport to know when a render is finished. Worth saying,
+    // because a method with only tests behind it is normally one to remove, and
+    // these are not.
+
     pub fn transport(&self) -> &Transport {
         &self.transport
     }

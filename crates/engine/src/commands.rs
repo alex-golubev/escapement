@@ -92,6 +92,15 @@ impl Op {
 /// arrived, and a gain is whatever the four bytes said — validating on the
 /// merits belongs to whoever applies the command, which is the only place that
 /// knows how many tracks exist or what a sensible gain is.
+///
+/// **A receiver takes its field at the width it arrived in**, `u8` for a track
+/// and `u16` for a step, rather than widened into a `usize` index. The type is
+/// what says where the checking has not happened yet: every value of a `u8` is
+/// reachable from the wire, so a parameter typed that way is visibly obliged to
+/// be total over all of them, while a `usize` reads as an index somebody has
+/// already made safe. `Mixer::set_track_gain`, `Pattern::set_step` and
+/// `Sampler::trigger` all take the wire width and drop what the grid has no
+/// room for.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Command {
     Play,
