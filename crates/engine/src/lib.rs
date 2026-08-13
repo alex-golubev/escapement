@@ -56,16 +56,15 @@ pub const TRACKS: usize = 8;
 /// guards against allocating on a garbage argument.
 const MAX_FRAMES_LIMIT: u32 = 65_536;
 
-/// Upper bound on the sample rate.
-///
-/// Not a musical limit, and the reason is the sampler. Every slot is given a
-/// buffer holding a fixed number of *seconds*, so the memory this function asks
-/// for is proportional to this argument — and an allocation WASM cannot serve
-/// does not fail, it aborts, which would turn the one promise made here (null
-/// for arguments that make no sense) into the end of sound. 192 kHz is past
-/// every rate an `AudioContext` offers on real hardware and still bounds the
-/// engine to tens of megabytes.
-const MAX_SAMPLE_RATE: f64 = 192_000.0;
+// There is deliberately no upper bound on the sample rate, and it is worth
+// saying so where the other bound is declared: one existed, and what it
+// guarded is gone. It was there because every sample slot held a fixed number
+// of *seconds*, which made this argument decide how much memory the engine
+// asked for — and an allocation WASM cannot serve does not fail, it aborts.
+// The sample bank is now sized by the caller rather than by the rate, and
+// nothing else here is proportional to it: what the rate still decides are
+// counters and ramp lengths. A bound with nothing behind it is worse than
+// none, because the next reader has to work out what it protects.
 
 /// Owner of the memory whose addresses are handed outside.
 ///
@@ -124,7 +123,7 @@ pub extern "C" fn engine_protocol_version() -> u32 {
 /// side is required to check for that.
 #[unsafe(no_mangle)]
 pub extern "C" fn engine_new(sample_rate: f64, max_frames: u32) -> *mut Instance {
-    if !sample_rate.is_finite() || sample_rate <= 0.0 || sample_rate > MAX_SAMPLE_RATE {
+    if !sample_rate.is_finite() || sample_rate <= 0.0 {
         return core::ptr::null_mut();
     }
     if max_frames == 0 || max_frames > MAX_FRAMES_LIMIT {
@@ -281,16 +280,17 @@ mod tests {
     fn rejects_nonsense_arguments() {
         // Null rather than a panic: the call comes from JS, and there is no
         // stack to unwind into.
-        // The upper bound is not fussiness: the sampler holds a fixed number
-        // of seconds per slot, so the rate decides how much memory this call
-        // asks for, and an allocation WASM cannot serve aborts rather than
-        // returning the null this function promises.
-        for rate in [0.0, -48_000.0, f64::NAN, f64::INFINITY, MAX_SAMPLE_RATE + 1.0, 1e12] {
+        //
+        // What is refused about the rate is only what is meaningless — zero,
+        // negative, not a number. There is no upper bound, and its absence is
+        // asserted rather than left to be noticed: an absurdly high rate once
+        // allocated an absurd amount of sample memory, and now allocates
+        // nothing at all, so refusing it would be a rule with nothing behind
+        // it. Through `Owned` so the instance is freed rather than leaked.
+        for rate in [0.0, -48_000.0, f64::NAN, f64::INFINITY] {
             assert!(engine_new(rate, Q).is_null(), "sample_rate={rate}");
         }
-        // The bound itself is accepted. Through `Owned` so that the instance
-        // is freed rather than leaked past the end of the test.
-        let _at_the_bound = Owned::new(MAX_SAMPLE_RATE, Q);
+        let _absurd_but_harmless = Owned::new(1e12, Q);
         for frames in [0, MAX_FRAMES_LIMIT + 1, u32::MAX] {
             assert!(engine_new(SR, frames).is_null(), "max_frames={frames}");
         }

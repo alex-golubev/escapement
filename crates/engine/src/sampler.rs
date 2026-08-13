@@ -1,30 +1,46 @@
-//! Sample slots and the voices that play them.
+//! Sample memory and the voices that play it.
 //!
 //! A slot holds one loaded sample; a voice is one sounding copy of it. They
 //! are separate counts because a sample is struck far more often than it
 //! finishes — sixteen steps to the bar against a cymbal that rings for a
 //! second — so eight slots feed a pool of thirty-two voices.
 //!
-//! **Nothing here allocates after construction.** Every slot is given its
-//! buffer in [`Sampler::new`], at full size, and that buffer is never resized,
-//! replaced or handed back. Loading a sample writes into a region that was
-//! already there.
+//! **Nothing here decides how much memory a kit needs.** By the time a kit is
+//! loaded the far side has decoded every file in it and knows each length and
+//! channel count exactly. It names the total, [`Sampler::reserve`] takes it,
+//! and a slot becomes three numbers pointing into one arena rather than a
+//! buffer of its own. A constant in this module would be a guess standing in
+//! for something already known — and a guess of that kind carries the shape of
+//! whatever it was measured against. Measured against a drum kit it gives a
+//! ceiling on how long a sample may be, mono paying the price of stereo, and a
+//! number out of a drum kit sitting in an engine that is not one.
 //!
-//! That is a decision, and the cheaper-looking alternative is worth naming:
-//! sizing each slot to the sample put in it wastes nothing and costs three
-//! things. WASM linear memory only ever grows, so every peak is permanent;
-//! growth detaches every view the worklet holds over that memory; and an
-//! allocation WASM cannot serve does not fail but aborts, which under
-//! `panic = "abort"` ends the sound until the page is reloaded. Fixed slots
-//! remove all three at once, and with them the questions that came along —
-//! a free list, a length that has to be refused before it is attempted, a
-//! window where a slot has been sized but not filled. What is paid for that is
-//! a ceiling on how long a sample may be, and memory held whether or not
-//! anything is loaded.
+//! What sizing from outside costs is an allocation, and an allocation is the
+//! one thing the render thread may never do. So it happens where the render
+//! thread is not: a reservation is made from the message handler, between
+//! quanta. Two consequences follow, and neither is hidden:
+//!
+//! - **Reserving grows WASM linear memory, which detaches every view the
+//!   worklet holds over it.** The worklet compares `memory.buffer` against the
+//!   one it saw last and rebuilds its views when it differs. That check already
+//!   existed as a safety net against growth nobody predicted; here it carries
+//!   load, and the sampler is the thing it carries.
+//! - **The arena moves as a whole.** A new reservation invalidates the old
+//!   pointer, and with it every voice reading through it, so swapping a kit
+//!   cuts every voice rather than only those of the sample being replaced.
+//!   Swapping a kit is a deliberate act, not something that happens under the
+//!   music.
+//!
+//! One more thing makes sizing from outside affordable at all, and without it
+//! the argument would not hold: **an allocation WASM cannot serve does not
+//! return an error, it aborts**, and under `panic = "abort"` that is the end of
+//! sound until the page is reloaded. [`Vec::try_reserve_exact`] is the whole
+//! difference — out of memory becomes a [`Refusal`] with a name on it,
+//! travelling the same path as the other four.
 //!
 //! Everything crossing into this module is untrusted in the usual way: the
-//! velocity of a strike arrives over the command protocol, the length and
-//! channel count of a sample arrive from the far side of the ABI. Each is
+//! velocity of a strike arrives over the command protocol, the offset, length
+//! and channel count of a sample arrive from the far side of the ABI. Each is
 //! checked here rather than at the caller, because there is more than one
 //! caller — the step sequencer and the preview command both strike a track,
 //! and a guard on one of them would be a guard on neither.
@@ -40,6 +56,15 @@ use crate::pattern::{MAX_VELOCITY, MIN_VELOCITY};
 /// no opcode to change it, and nothing that can point a track at the wrong
 /// sound. A kit whose tracks pick their slots freely would replace this line
 /// with a table; it costs a table and an opcode, and today nothing wants one.
+///
+/// **This is the one number here still measured against a drum kit**, and it is
+/// worth knowing which way it binds. The arena removed the ceiling on how long
+/// a sample may be and the price mono paid for stereo, but not how many samples
+/// there can be at once. An instrument wanting one per key range or velocity
+/// layer meets this count rather than any size — a different design, not a
+/// different number. The count itself is cheap to raise, being an array of
+/// three-number records; what it would leave unanswered is how a track then
+/// says which slot it means.
 pub const SLOTS: usize = TRACKS;
 
 /// Voices in the pool.
@@ -50,33 +75,7 @@ pub const SLOTS: usize = TRACKS;
 /// [`Sampler::allocate`].
 pub const VOICES: usize = 32;
 
-/// How much sound a slot holds.
-///
-/// Four seconds covers a crash cymbal, which is the longest thing a drum kit
-/// has; anything longer is refused with a reason rather than truncated into a
-/// sound that ends wrong. The cost is fixed and worth stating in full: at
-/// 48 kHz a stereo second is 375 KB, so eight slots come to 12 MB held from
-/// the first quantum whether or not anything is loaded — against a tab that
-/// measured 64.6 MB at the end of the skeleton milestone.
-///
-/// In seconds rather than frames, so that the ceiling is the same musical
-/// length at any sample rate. The memory therefore scales with the rate, which
-/// is why `engine_new` refuses a rate above its own limit: without that bound
-/// this constant would turn an argument into an allocation of any size it
-/// liked, and an allocation that fails here does not return null — it aborts.
-///
-/// **What this number was measured against is a drum kit, and that is the
-/// limit of it.** A sustained sound — a pad, a vocal phrase, anything held
-/// rather than struck — passes four seconds routinely, and for that case
-/// raising this constant is the whole of the answer, at the price of the
-/// memory doubling with it. What a larger number would *not* answer is an
-/// instrument wanting many samples at once, one per key range or velocity
-/// layer: that meets the fixed count of slots rather than their size, and a
-/// fixed count is a different design rather than a different number.
-pub const SLOT_SECONDS: f64 = 4.0;
-
-/// Channels a slot will accept. Every slot is sized for the larger of the two,
-/// so the ceiling above is four seconds whether the sample is mono or stereo.
+/// Channels a slot will accept.
 const MAX_CHANNELS: u8 = 2;
 
 /// Fade applied to a voice when the transport stops.
@@ -85,59 +84,59 @@ const MAX_CHANNELS: u8 = 2;
 /// far above the one frame where a cut is heard as a click.
 const RELEASE_SECONDS: f64 = 0.002;
 
-/// Why a slot would not take a sample.
+/// Why the bank would not take what it was given.
 ///
 /// A refusal is a value with a name on it rather than a `false`, and the
 /// reason is not tidiness. Each of these is a different thing to say on the
-/// page and a different thing to do about it — a file too long is trimmed, a
-/// file with six channels is mixed down, a slot that does not exist is a bug
-/// in the caller — and a single `false` makes the page invent which. The
-/// TypeScript half already answers failure this way, with a tagged union and a
-/// `describe` whose match has no default; this is the same answer on the side
-/// that had never given it.
+/// page and a different thing to do about it — a kit too large for memory is
+/// trimmed, a file with six channels is mixed down, a slot that does not exist
+/// is a bug in the caller — and a single `false` makes the page invent which.
+/// The TypeScript half already answers failure this way, with a tagged union
+/// and a `describe` whose match has no default; this is the same answer on the
+/// side that had never given it.
 ///
-/// It also sharpens the test. Five refusals asserted as `false` cannot tell
-/// which guard fired, so a mutation that swaps two of them passes; asserted as
+/// It also sharpens the test. Refusals asserted as `false` cannot tell which
+/// guard fired, so a mutation that swaps two of them passes; asserted as
 /// values, they cannot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Refusal {
+    /// The arena could not be made that large. The only refusal here whose
+    /// cause is not in its arguments, and the reason [`Vec::try_reserve_exact`]
+    /// is used rather than plain reservation: served the other way this case
+    /// does not return at all.
+    OutOfMemory { floats: usize },
     /// No slot carries that index.
     NoSuchSlot,
     /// Neither mono nor stereo.
     Channels(u8),
     /// A sample of no frames is not a sample.
     Empty,
-    /// Longer than the slot holds. Both numbers travel with it because the
-    /// page can act on the difference and cannot guess the capacity.
-    TooLong { frames: usize, capacity: usize },
+    /// The declared sample runs past the end of the arena. Both numbers travel
+    /// with it because the page can act on the difference — it laid the kit out
+    /// and can lay it out again — and neither number alone says by how much.
+    DoesNotFit { end: usize, reserved: usize },
 }
 
-/// One slot: a buffer that never moves, and what is currently declared in it.
-#[derive(Debug, Clone)]
-struct Sample {
-    /// Interleaved: frame 0 left, frame 0 right, frame 1 left, and so on.
-    /// Interleaved and not planar because a voice reads one cursor forwards;
-    /// two planes would be two cursors and two cache lines for the same frame.
-    ///
-    /// Always the full capacity of a slot. The declared sample is a prefix of
-    /// it; what lies past that prefix is whatever the last tenant left, and is
-    /// never read.
-    data: Vec<f32>,
+/// Where one sample sits in the arena.
+///
+/// Three numbers rather than a buffer: the memory belongs to the bank, and a
+/// slot only says which stretch of it this sample is and how to read it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Region {
+    /// Offset into the arena, counted in floats rather than frames. In floats
+    /// because that is the unit it is checked in — a bound compared against a
+    /// length in one unit and computed in another is a bound that passes for
+    /// samples which do not fit.
+    offset: usize,
     /// Frames declared by the last [`Sampler::commit`]. Zero means the slot
-    /// holds nothing — the state before anything is loaded, and again for as
-    /// long as one is being written into.
+    /// holds nothing — the state before a kit is loaded, and again for as long
+    /// as one is being written in.
     frames: usize,
     channels: u8,
 }
 
-impl Sample {
-    fn new(capacity_frames: usize) -> Self {
-        Self {
-            data: vec![0.0; capacity_frames * usize::from(MAX_CHANNELS)],
-            frames: 0,
-            channels: 0,
-        }
-    }
+impl Region {
+    const EMPTY: Self = Self { offset: 0, frames: 0, channels: 0 };
 }
 
 /// What a voice is doing.
@@ -179,7 +178,12 @@ impl Voice {
     /// multiplied down from the frame before, which is what keeps it free of
     /// both accumulated error and denormals: nothing here is fed its own
     /// output.
-    fn next_frame(&mut self, sample: &Sample, release_frames: f32) -> Option<[f32; 2]> {
+    fn next_frame(
+        &mut self,
+        arena: &[f32],
+        region: &Region,
+        release_frames: f32,
+    ) -> Option<[f32; 2]> {
         let envelope = match self.stage {
             Stage::Free => return None,
             Stage::Playing => 1.0,
@@ -189,23 +193,36 @@ impl Voice {
             }
         };
 
-        // Past the frames the slot declares lies whatever the previous tenant
-        // left in the buffer. This comparison is the whole of what keeps that
-        // unheard, and it is against the declared length and not the buffer's.
-        if self.cursor >= sample.frames {
+        // Past the frames this slot declares lies the *next sample in the
+        // arena* — not silence, and not the leavings of a previous tenant.
+        // This comparison is the whole of what keeps that unheard, and it is
+        // against the declared length rather than against how far the data
+        // happens to run. A drum given the head of the next drum as its tail
+        // is audible and sounds nearly plausible, which is exactly what makes
+        // it get blamed on the sample.
+        if self.cursor >= region.frames {
             self.stage = Stage::Free;
             return None;
         }
 
-        // In range by the check above, and `commit` never declares a length
-        // the buffer does not hold. For mono the two reads land on the same
-        // value, which is what makes one branchless expression serve both.
-        let channels = usize::from(sample.channels);
-        let base = self.cursor * channels;
+        let channels = usize::from(region.channels);
+        let base = region.offset + self.cursor * channels;
         let scale = self.velocity * envelope;
         self.cursor += 1;
 
-        Some([sample.data[base] * scale, sample.data[base + channels - 1] * scale])
+        // In range by the check above, by what `commit` validated against the
+        // arena, and by a reservation clearing every region along with every
+        // voice. A branch rather than an index all the same: the alternative
+        // to a wrong answer here would be a panic, and a panic on this thread
+        // ends the sound until the page is reloaded.
+        let (Some(&left), Some(&right)) = (arena.get(base), arena.get(base + channels - 1)) else {
+            self.stage = Stage::Free;
+            return None;
+        };
+
+        // For mono the two reads land on the same value, which is what makes
+        // one branchless expression serve both.
+        Some([left * scale, right * scale])
     }
 }
 
@@ -227,98 +244,79 @@ fn audible(velocity: f32) -> Option<f32> {
 }
 
 pub struct Sampler {
-    slots: [Sample; SLOTS],
+    /// Every sample in the bank, laid end to end by whoever loaded them.
+    arena: Vec<f32>,
+    slots: [Region; SLOTS],
     voices: [Voice; VOICES],
-    capacity_frames: usize,
     release_frames: u32,
 }
 
 impl Sampler {
     pub fn new(sample_rate: f64) -> Self {
         debug_assert!(sample_rate > 0.0, "sample rate must be positive");
-        let capacity_frames = (SLOT_SECONDS * sample_rate) as usize;
         Self {
-            slots: core::array::from_fn(|_| Sample::new(capacity_frames)),
+            // Empty, and it stays empty until a kit arrives. Creating the
+            // engine no longer decides how much sample memory the page is
+            // going to want, which is why the sample rate no longer bounds
+            // anything: nothing here is proportional to it any more.
+            arena: Vec::new(),
+            slots: [Region::EMPTY; SLOTS],
             voices: [Voice::FREE; VOICES],
-            capacity_frames,
             // At least one frame, so a nonsensical sample rate gives an abrupt
             // release rather than a division by zero in the ramp.
             release_frames: ((RELEASE_SECONDS * sample_rate) as u32).max(1),
         }
     }
 
-    /// Longest sample a slot will take, in frames.
+    /// Make room for a whole kit, and hand back the arena to write it into.
     ///
-    /// Exposed because the page has to refuse an over-long file before it
-    /// writes one: the region handed out by [`begin_load`](Self::begin_load) is
-    /// this many frames of stereo, and there is nothing past it to spill into.
-    pub fn capacity_frames(&self) -> usize {
-        self.capacity_frames
-    }
-
-    /// Return to the as-constructed state: no samples, no voices.
+    /// `floats` is the caller's sum of `frames × channels` over every sample it
+    /// is about to load. The bank is loaded as a whole rather than a slot at a
+    /// time, and that is forced rather than chosen: this call replaces the
+    /// arena, so laying out eight samples needs all eight lengths at once.
+    /// What it buys is that placement never becomes a question — the arena is
+    /// built from empty every time, and there is nothing to fragment.
     ///
-    /// The buffers are left alone, and their contents are not cleared either.
-    /// That is not laziness: a slot with no frames declared cannot be read, so
-    /// a reset instance renders exactly as a fresh one does — which is what the
-    /// offline render needs — while nobody pays to zero twelve megabytes that
-    /// nothing will look at.
-    pub fn reset(&mut self) {
-        for slot in &mut self.slots {
-            slot.frames = 0;
-            slot.channels = 0;
-        }
+    /// **Everything previously loaded is gone and every voice is cut**, not
+    /// only those of a sample being replaced. A fade would have to keep reading
+    /// the sample it is fading, and the sample is precisely what is being
+    /// replaced: the ramp would land on whatever the new kit has at that
+    /// cursor, which is a worse artifact than the cut and an unbounded one.
+    ///
+    /// The refusal is the point of the whole design. Reserving through
+    /// [`Vec::try_reserve_exact`] rather than growing the vector directly is
+    /// what turns "there is not that much memory" from an abort — which under
+    /// `panic = "abort"` is the end of sound until the page reloads — into a
+    /// value the page can read out and act on.
+    pub fn reserve(&mut self, floats: usize) -> Result<&mut [f32], Refusal> {
+        // Cleared before the allocation is attempted rather than after it
+        // succeeds. A refusal then leaves a bank holding nothing, instead of
+        // one whose slots point into an arena of the wrong size.
+        self.slots = [Region::EMPTY; SLOTS];
         self.voices = [Voice::FREE; VOICES];
-    }
+        self.arena.clear();
 
-    /// Open a slot for writing and hand back the region to write into.
-    ///
-    /// The region is [`capacity_frames`](Self::capacity_frames) frames of
-    /// stereo, and its address never changes — for this slot or any other,
-    /// from construction to the end of the engine. That is the point of the
-    /// fixed layout: the far side may keep the pointer, and nothing here can
-    /// invalidate it.
-    ///
-    /// The slot is silenced before the region is handed over, and this is not
-    /// bookkeeping — it is the only thing between a voice and a buffer being
-    /// overwritten underneath it. What the far side writes arrives after this
-    /// call returns, so until [`commit`](Self::commit) the slot holds a mixture
-    /// of two samples and must not be read.
-    ///
-    /// **Voices on this slot are cut, not faded**, and that is the one
-    /// discontinuity this module accepts deliberately. A fade has to keep
-    /// reading the sample it is fading, and the sample is precisely what is
-    /// being replaced: the ramp would be applied to whatever the new sound has
-    /// at that cursor, which is a worse artifact than the cut and an unbounded
-    /// one. Keeping the old sound alive until its voices drain needs a second
-    /// buffer for every slot, and buys it for the moment a kit is swapped —
-    /// which is a deliberate act, not something happening under the music.
-    pub fn begin_load(&mut self, slot: usize) -> Result<&mut [f32], Refusal> {
-        if slot >= SLOTS {
-            return Err(Refusal::NoSuchSlot);
+        if self.arena.try_reserve_exact(floats).is_err() {
+            return Err(Refusal::OutOfMemory { floats });
         }
 
-        for voice in &mut self.voices {
-            if voice.slot == slot {
-                voice.stage = Stage::Free;
-            }
-        }
-
-        let target = self.slots.get_mut(slot).ok_or(Refusal::NoSuchSlot)?;
-        target.frames = 0;
-        target.channels = 0;
-        Ok(&mut target.data)
+        // Capacity was just secured, so this fills and cannot allocate. It is
+        // also what makes the window between here and the far side's copy
+        // silence rather than leftovers: a kit smaller than the one before it
+        // does not leave the tail of the old one lying in the arena.
+        self.arena.resize(floats, 0.0);
+        Ok(&mut self.arena)
     }
 
-    /// Declare what was written into the slot, and let it sound.
+    /// Declare what was written into the arena, and let it sound.
     ///
-    /// A refusal leaves the slot silent rather than half loaded, and says
+    /// A refusal leaves the slot silent rather than half declared, and says
     /// which of the four things was wrong — see [`Refusal`].
     ///
     /// This is the only place sample data can be looked at.
-    /// [`begin_load`](Self::begin_load) hands out a region and the values are
-    /// written by the other side of the ABI, so there is no return path through
-    /// Rust for them to be checked on — without this call the house rule that
+    /// [`reserve`](Self::reserve) hands out a region and the values are written
+    /// by the other side of the ABI, so there is no return path through Rust
+    /// for them to be checked on — without this call the house rule that
     /// everything crossing the ABI is input would have exactly one exception,
     /// and it would be the largest buffer in the engine.
     ///
@@ -329,33 +327,67 @@ impl Sampler {
     /// would burn CPU on every voice that reached its tail, which is the house
     /// symptom of CPU climbing during silence.
     ///
-    /// Only the declared prefix is swept. Past it lies whatever the previous
-    /// tenant left, and it is cheaper to leave it than to walk four seconds of
-    /// stereo for the sake of a hundred-millisecond hat.
-    pub fn commit(&mut self, slot: usize, frames: usize, channels: u8) -> Result<(), Refusal> {
-        let capacity = self.capacity_frames;
+    /// **What is deliberately not checked is whether two slots overlap.** Two
+    /// tracks pointed at one sample is a legitimate kit rather than a mistake,
+    /// and forbidding it would cost that for the sake of a check that buys
+    /// nothing: an overlap made in error produces a wrong sound, not a read
+    /// out of bounds, and the side that laid the kit out is the side that can
+    /// tell the two apart.
+    pub fn commit(
+        &mut self,
+        slot: usize,
+        offset: usize,
+        frames: usize,
+        channels: u8,
+    ) -> Result<(), Refusal> {
+        if slot >= SLOTS {
+            return Err(Refusal::NoSuchSlot);
+        }
         if channels == 0 || channels > MAX_CHANNELS {
             return Err(Refusal::Channels(channels));
         }
         if frames == 0 {
             return Err(Refusal::Empty);
         }
-        if frames > capacity {
-            return Err(Refusal::TooLong { frames, capacity });
-        }
-        let target = self.slots.get_mut(slot).ok_or(Refusal::NoSuchSlot)?;
 
-        // `take` rather than a slice and a length check: the length was just
-        // bounded against the capacity, so a check here would guard a state
-        // that cannot arise — and indexing without one ends the worklet.
-        let len = frames * usize::from(channels);
-        for value in target.data.iter_mut().take(len) {
+        // Saturating, because all three numbers come from the far side and
+        // `offset + frames × channels` overflows as readily as an index leaves
+        // the grid. Wrapped, it would compute an end inside the arena for a
+        // sample that runs far past it — a bounds check that passes on exactly
+        // the input it exists to stop.
+        let reserved = self.arena.len();
+        let end = offset.saturating_add(frames.saturating_mul(usize::from(channels)));
+        if end > reserved {
+            return Err(Refusal::DoesNotFit { end, reserved });
+        }
+
+        // `offset <= end <= reserved` follows from the two lines above, so the
+        // range is in bounds without a second check — and indexing out of them
+        // here would end the worklet rather than return.
+        for value in &mut self.arena[offset..end] {
             *value = if value.is_finite() { fz(*value) } else { 0.0 };
         }
 
-        target.frames = frames;
-        target.channels = channels;
+        self.slots[slot] = Region { offset, frames, channels };
         Ok(())
+    }
+
+    /// Return to the as-constructed state: no samples, no voices.
+    ///
+    /// The arena's length goes with the declarations, because a bank that has
+    /// been reset holds nothing — which is what "as constructed" means, and
+    /// what the offline render needs before it can compare two runs. Its
+    /// capacity stays: WASM linear memory never comes back once taken, so
+    /// handing it over would cost the next kit a fresh growth and buy nothing
+    /// at all.
+    ///
+    /// The consequence for the offline render is worth stating where it can be
+    /// read: after a reset the kit has to be loaded again, exactly as the
+    /// tempo and the pattern have to be set again.
+    pub fn reset(&mut self) {
+        self.slots = [Region::EMPTY; SLOTS];
+        self.voices = [Voice::FREE; VOICES];
+        self.arena.clear();
     }
 
     /// Strike a track. Silently does nothing if there is nothing to strike.
@@ -381,10 +413,10 @@ impl Sampler {
     /// Whether striking this slot would produce anything.
     ///
     /// False for a slot that does not exist and for one holding nothing —
-    /// including one being written into right now, which declares no frames
-    /// until [`commit`](Self::commit) says otherwise.
+    /// including one whose sample is being written into the arena right now,
+    /// which declares no frames until [`commit`](Self::commit) says otherwise.
     fn holds_a_sample(&self, slot: usize) -> bool {
-        self.slots.get(slot).is_some_and(|sample| sample.frames > 0)
+        self.slots.get(slot).is_some_and(|region| region.frames > 0)
     }
 
     /// Fade every sounding voice out. What the transport does on stop.
@@ -414,10 +446,10 @@ impl Sampler {
     pub fn next_frame(&mut self, out: &mut [[f32; 2]; TRACKS]) {
         *out = [[0.0; 2]; TRACKS];
 
-        // Split so that voices can be advanced while the slots they read are
+        // Split so that voices can be advanced while the arena they read is
         // borrowed: the two are disjoint fields, which the compiler will only
         // believe if it is told directly.
-        let Self { slots, voices, release_frames, .. } = self;
+        let Self { arena, slots, voices, release_frames } = self;
         let release = *release_frames as f32;
 
         // The slot of a free voice is looked up and thrown away, which is a
@@ -427,10 +459,10 @@ impl Sampler {
         // back costs a second test of the stage out here, in the one loop that
         // should read as a sentence.
         for voice in voices.iter_mut() {
-            let Some(sample) = slots.get(voice.slot) else {
+            let Some(region) = slots.get(voice.slot) else {
                 continue;
             };
-            let Some(frame) = voice.next_frame(sample, release) else {
+            let Some(frame) = voice.next_frame(arena, region, release) else {
                 continue;
             };
             if let Some(track) = out.get_mut(voice.slot) {
@@ -485,7 +517,7 @@ impl Sampler {
     /// Frames of its sample a voice has left.
     fn remaining(&self, voice: &Voice) -> usize {
         match self.slots.get(voice.slot) {
-            Some(sample) => sample.frames.saturating_sub(voice.cursor),
+            Some(region) => region.frames.saturating_sub(voice.cursor),
             None => 0,
         }
     }
@@ -497,7 +529,7 @@ mod tests {
 
     const SR: f64 = 48_000.0;
 
-    /// A sampler with one slot holding `frames` frames of the value 1.0.
+    /// One sample of the value 1.0, alone in the bank.
     ///
     /// One frame of it is the impulse the tests are built on: a struck voice
     /// then writes exactly one non-zero frame, so the output buffer can be
@@ -505,15 +537,41 @@ mod tests {
     /// product of everything that scaled it.
     fn loaded(slot: usize, frames: usize, channels: u8) -> Sampler {
         let mut sampler = Sampler::new(SR);
-        write(&mut sampler, slot, frames, channels, 1.0);
+        load(&mut sampler, &[(slot, frames, channels, 1.0)]);
         sampler
     }
 
-    /// Fill the head of a slot with one value and declare it.
-    fn write(sampler: &mut Sampler, slot: usize, frames: usize, channels: u8, value: f32) {
-        let region = sampler.begin_load(slot).expect("the slot must open");
-        region[..frames * usize::from(channels)].fill(value);
-        assert_eq!(sampler.commit(slot, frames, channels), Ok(()), "the slot refused the sample");
+    /// Load a whole kit: reserve for the sum, lay the samples out end to end,
+    /// then declare each where it was written.
+    ///
+    /// Two passes and not one, and it is not the test being tidy — it is the
+    /// protocol. The arena is borrowed for writing, so nothing can be declared
+    /// until the writing is done, which is exactly the order the worklet works
+    /// in.
+    fn load(sampler: &mut Sampler, kit: &[(usize, usize, u8, f32)]) {
+        let floats = |(_, frames, channels, _): &(usize, usize, u8, f32)| {
+            frames * usize::from(*channels)
+        };
+        let total: usize = kit.iter().map(floats).sum();
+
+        let arena = sampler.reserve(total).expect("the arena must be granted");
+        let mut offset = 0;
+        for sample in kit {
+            let len = floats(sample);
+            arena[offset..offset + len].fill(sample.3);
+            offset += len;
+        }
+
+        let mut offset = 0;
+        for sample in kit {
+            let (slot, frames, channels, _) = *sample;
+            assert_eq!(
+                sampler.commit(slot, offset, frames, channels),
+                Ok(()),
+                "the bank refused slot {slot}"
+            );
+            offset += floats(sample);
+        }
     }
 
     /// One frame, summed across tracks — for tests that do not care which
@@ -533,42 +591,58 @@ mod tests {
     }
 
     #[test]
-    fn every_slot_has_its_memory_from_the_start() {
-        // The invariant the ABI rests on. Each slot is writable before
-        // anything has been loaded and holds four seconds of stereo, so
-        // loading a sample is a copy and never a request for memory.
+    fn a_new_sampler_asks_for_no_memory_at_all() {
+        // The property that replaced a constant. Creating the engine used to
+        // decide how much sample memory the page would be allowed, before the
+        // page had opened a single file; now it decides nothing, and the bank
+        // holds nothing until a kit names its own size.
         let mut sampler = Sampler::new(SR);
-        assert_eq!(sampler.capacity_frames(), (SLOT_SECONDS * SR) as usize);
+        assert_eq!(sampler.arena.capacity(), 0, "the engine took memory nobody asked for");
 
-        let capacity = sampler.capacity_frames();
-        for slot in 0..SLOTS {
-            let region = sampler.begin_load(slot).expect("every slot must open");
-            assert_eq!(region.len(), capacity * usize::from(MAX_CHANNELS), "slot {slot}");
-        }
-        assert_eq!(sampler.begin_load(SLOTS).err(), Some(Refusal::NoSuchSlot));
-        assert_eq!(sampler.begin_load(usize::MAX).err(), Some(Refusal::NoSuchSlot));
+        // And nothing can be declared into an arena that was never reserved:
+        // the bounds check is against its length, which is zero.
+        assert_eq!(
+            sampler.commit(0, 0, 1, 1),
+            Err(Refusal::DoesNotFit { end: 1, reserved: 0 })
+        );
+        assert!(silent(&mut sampler, 16));
     }
 
     #[test]
-    fn a_slot_keeps_its_address_through_every_load() {
-        // What replaces the free list, and a stronger promise than one: the
-        // buffer is not reused but never given up. A region that moved would
-        // leave the worklet writing a sample into memory the engine no longer
-        // reads — nothing to report, and silence to show for it.
+    fn reloading_a_kit_no_larger_than_the_last_asks_for_no_new_memory() {
+        // What replaces the free list. WASM linear memory only ever grows, so
+        // a bank that reserved afresh on every load would climb for as long as
+        // the session lasted — half an hour of swapping kits and the tab is
+        // measurably heavier, with nothing to show where it went.
         let mut sampler = Sampler::new(SR);
-        let addresses: Vec<*const f32> =
-            (0..SLOTS).map(|slot| sampler.slots[slot].data.as_ptr()).collect();
+        load(&mut sampler, &[(0, 48_000, 2, 1.0)]);
+        let granted = sampler.arena.capacity();
+        assert!(granted >= 96_000);
 
         for round in 0..64 {
-            for slot in 0..SLOTS {
-                let frames = 1 + (round * 37 + slot) % 5_000;
-                write(&mut sampler, slot, frames, 1 + (slot % 2) as u8, 1.0);
-            }
+            let frames = 1 + (round * 971) % 40_000;
+            load(&mut sampler, &[(round % SLOTS, frames, 1 + (round % 2) as u8, 1.0)]);
+            assert_eq!(sampler.arena.capacity(), granted, "round {round} grew the arena");
         }
+    }
 
-        for (slot, address) in addresses.iter().enumerate() {
-            assert_eq!(sampler.slots[slot].data.as_ptr(), *address, "slot {slot} moved");
-        }
+    #[test]
+    fn a_kit_too_large_for_memory_is_refused_rather_than_fatal() {
+        // The refusal the whole design turns on. Asked for directly, a vector
+        // this size does not fail — it aborts, and `panic = "abort"` makes an
+        // abort here the end of sound until the page is reloaded. Reserved the
+        // fallible way it is a value with a number in it, and the page can say
+        // what it could not have.
+        let mut sampler = loaded(0, 16, 1);
+        let absurd = usize::MAX / 8;
+
+        assert_eq!(sampler.reserve(absurd), Err(Refusal::OutOfMemory { floats: absurd }));
+
+        // And a refused reservation leaves a bank holding nothing, rather than
+        // slots still pointing into an arena that is no longer the right size.
+        sampler.trigger(0, 1.0);
+        assert_eq!(sounding(&sampler), 0, "a slot survived a refused reservation");
+        assert!(silent(&mut sampler, 8));
     }
 
     #[test]
@@ -598,19 +672,39 @@ mod tests {
 
     #[test]
     fn a_voice_never_reads_past_what_was_declared() {
-        // The buffer outlives its tenants, so the frames past a short sample
-        // hold the sound that was there before. Reading one of them is a drum
-        // with a tail from the wrong kit — audible, and impossible to
-        // attribute. This is the case the fixed layout adds and the sized-to-
-        // fit one could not have.
+        // Sharper with one arena than it was with a buffer per slot: what lies
+        // past the end of a sample is not the leavings of a previous tenant but
+        // the head of the next sample in the kit. A drum running on into the
+        // next drum is audible and sounds nearly plausible, which is what gets
+        // it blamed on the sample rather than on the cursor.
         let mut sampler = Sampler::new(SR);
-        write(&mut sampler, 0, 5_000, 1, 0.7);
-        write(&mut sampler, 0, 2, 1, 1.0);
+        load(&mut sampler, &[(0, 2, 1, 1.0), (1, 5_000, 1, 0.7)]);
 
         sampler.trigger(0, 1.0);
         assert_eq!(frame(&mut sampler), (1.0, 1.0));
         assert_eq!(frame(&mut sampler), (1.0, 1.0));
-        assert!(silent(&mut sampler, 32), "the voice ran on into the previous sample");
+        assert!(silent(&mut sampler, 32), "the voice ran on into its neighbour");
+    }
+
+    #[test]
+    fn two_slots_may_share_one_sample() {
+        // Not an accident of the layout but a thing the layout allows, and the
+        // reason `commit` does not police overlap: two tracks on one sound is a
+        // legitimate kit, and a check strict enough to catch a mistaken overlap
+        // would forbid this along with it.
+        let mut sampler = Sampler::new(SR);
+        let arena = sampler.reserve(4).expect("the arena must be granted");
+        arena.fill(1.0);
+        assert_eq!(sampler.commit(2, 0, 4, 1), Ok(()));
+        assert_eq!(sampler.commit(5, 0, 4, 1), Ok(()));
+
+        sampler.trigger(2, 1.0);
+        sampler.trigger(5, 1.0);
+
+        let mut out = [[0.0f32; 2]; TRACKS];
+        sampler.next_frame(&mut out);
+        assert_eq!(out[2][0], 1.0);
+        assert_eq!(out[5][0], 1.0);
     }
 
     #[test]
@@ -670,21 +764,20 @@ mod tests {
 
     #[test]
     fn a_slot_that_was_not_committed_does_not_sound() {
-        // The window this guards is invisible in Rust: `begin_load` returns a
-        // region the other side of the ABI has not written yet, and the region
-        // still holds the sample being replaced. A voice started there would
-        // play half of each.
+        // The window this guards is invisible in Rust: `reserve` returns an
+        // arena the other side of the ABI has not written yet, and a voice
+        // started in it would play whatever the copy has managed so far.
         let mut sampler = loaded(2, 4, 1);
-        let region = sampler.begin_load(2).expect("the slot must open");
-        region[..4].fill(1.0);
+        let arena = sampler.reserve(4).expect("the arena must be granted");
+        arena.fill(1.0);
 
         sampler.trigger(2, 1.0);
-        assert_eq!(sounding(&sampler), 0, "an uncommitted slot was struck");
+        assert_eq!(sounding(&sampler), 0, "an undeclared slot was struck");
         assert!(silent(&mut sampler, 8));
 
-        assert_eq!(sampler.commit(2, 4, 1), Ok(()));
+        assert_eq!(sampler.commit(2, 0, 4, 1), Ok(()));
         sampler.trigger(2, 1.0);
-        assert_eq!(frame(&mut sampler), (1.0, 1.0), "a committed slot must sound");
+        assert_eq!(frame(&mut sampler), (1.0, 1.0), "a declared slot must sound");
     }
 
     #[test]
@@ -695,14 +788,28 @@ mod tests {
         // tail that holds it, which is the house symptom of CPU climbing while
         // nothing is audible.
         let mut sampler = Sampler::new(SR);
-        let region = sampler.begin_load(1).expect("the slot must open");
-        region[..6]
-            .copy_from_slice(&[f32::NAN, f32::INFINITY, f32::NEG_INFINITY, 1e-40, -1e-40, 0.5]);
-        assert_eq!(sampler.commit(1, 6, 1), Ok(()));
+        let arena = sampler.reserve(6).expect("the arena must be granted");
+        arena.copy_from_slice(&[f32::NAN, f32::INFINITY, f32::NEG_INFINITY, 1e-40, -1e-40, 0.5]);
+        assert_eq!(sampler.commit(1, 0, 6, 1), Ok(()));
 
         sampler.trigger(1, 1.0);
         let played: Vec<f32> = (0..6).map(|_| frame(&mut sampler).0).collect();
         assert_eq!(played, vec![0.0, 0.0, 0.0, 0.0, 0.0, 0.5]);
+    }
+
+    #[test]
+    fn commit_cleans_only_what_it_was_given() {
+        // The sweep is bounded by the declaration, not by the arena, and with
+        // one arena that matters in a way it did not before: a pass that ran
+        // past the end would rewrite the neighbouring sample, and rewrite it
+        // with values that look entirely reasonable.
+        let mut sampler = Sampler::new(SR);
+        let arena = sampler.reserve(4).expect("the arena must be granted");
+        arena.copy_from_slice(&[f32::NAN, 0.5, 1e-40, 0.25]);
+        assert_eq!(sampler.commit(0, 0, 2, 1), Ok(()));
+
+        assert_eq!(sampler.arena[0], 0.0, "the declared frame was not cleaned");
+        assert_eq!(sampler.arena[2], 1e-40, "the sweep ran past the declaration");
     }
 
     #[test]
@@ -712,9 +819,9 @@ mod tests {
         // speed, and a stereo one read as mono would play the left channel
         // twice at half speed. Both still sound like a drum.
         let mut sampler = Sampler::new(SR);
-        let region = sampler.begin_load(0).expect("the slot must open");
-        region[..4].copy_from_slice(&[1.0, -1.0, 0.5, -0.5]);
-        assert_eq!(sampler.commit(0, 2, 2), Ok(()));
+        let arena = sampler.reserve(4).expect("the arena must be granted");
+        arena.copy_from_slice(&[1.0, -1.0, 0.5, -0.5]);
+        assert_eq!(sampler.commit(0, 0, 2, 2), Ok(()));
         sampler.trigger(0, 1.0);
 
         assert_eq!(frame(&mut sampler), (1.0, -1.0));
@@ -725,6 +832,21 @@ mod tests {
         mono.trigger(0, 1.0);
         let (left, right) = frame(&mut mono);
         assert_eq!(left, right, "a mono sample must reach both channels alike");
+    }
+
+    #[test]
+    fn a_sample_reads_from_its_own_offset() {
+        // Two samples in one arena, and only the offset tells them apart. Read
+        // from the wrong one the kit is intact and every drum is the wrong
+        // drum — which is the failure a per-slot buffer could not produce and
+        // this layout can.
+        let mut sampler = Sampler::new(SR);
+        load(&mut sampler, &[(0, 1, 1, 0.25), (1, 1, 1, 0.75)]);
+
+        sampler.trigger(1, 1.0);
+        let mut out = [[0.0f32; 2]; TRACKS];
+        sampler.next_frame(&mut out);
+        assert_eq!(out[1][0], 0.75, "the voice read from the wrong offset");
     }
 
     #[test]
@@ -818,66 +940,87 @@ mod tests {
     }
 
     #[test]
-    fn opening_a_slot_cuts_only_its_own_voices() {
+    fn reserving_cuts_every_voice_in_the_bank() {
         // The deliberate discontinuity, kept as a test so that it stays
-        // deliberate. What it must not do is reach the other tracks, and what
-        // it must not leave is a voice reading a buffer being written into.
-        let mut sampler = loaded(0, 1_000, 1);
-        write(&mut sampler, 1, 1_000, 1, 1.0);
+        // deliberate — and it is wider than it was: the arena is replaced
+        // whole, so a kit change takes the voices of every track and not only
+        // those of the sample being replaced. What must not be left behind is
+        // a voice reading through a pointer into the arena that was.
+        let mut sampler = Sampler::new(SR);
+        load(&mut sampler, &[(0, 1_000, 1, 1.0), (1, 1_000, 1, 1.0)]);
 
         sampler.trigger(0, 1.0);
         sampler.trigger(1, 1.0);
         assert_eq!(frame(&mut sampler), (2.0, 2.0));
 
-        write(&mut sampler, 0, 4, 1, 1.0);
+        load(&mut sampler, &[(0, 4, 1, 1.0)]);
 
-        assert_eq!(frame(&mut sampler), (1.0, 1.0), "the reload took the wrong voices");
-        assert_eq!(sounding(&sampler), 1);
+        assert_eq!(sounding(&sampler), 0, "a voice survived the new kit");
+        assert!(silent(&mut sampler, 8));
     }
 
     #[test]
-    fn a_sample_that_does_not_fit_is_refused_by_name_and_leaves_the_slot_silent() {
-        // The ceiling the fixed layout buys, and the failure it replaces: with
-        // slots sized to their contents this argument would have been an
-        // allocation, and one WASM cannot serve aborts rather than failing.
-        // Refusing must leave nothing half loaded — a slot sounding a
-        // truncated sample would be worse than one that says no.
-        let mut sampler = loaded(0, 64, 1);
-        let capacity = sampler.capacity_frames();
-        sampler.begin_load(0).expect("the slot must open");
-
-        // Each refusal is asserted as the value it is, not as failure. Five
-        // of them checked for falsehood cannot tell which guard fired, and a
+    fn what_does_not_fit_is_refused_by_name_and_leaves_the_slot_silent() {
+        // Each refusal is asserted as the value it is, not as failure. Five of
+        // them checked for falsehood cannot tell which guard fired, and a
         // mutation swapping two conditions is exactly what that misses.
-        assert_eq!(
-            sampler.commit(0, capacity + 1, 1),
-            Err(Refusal::TooLong { frames: capacity + 1, capacity })
-        );
-        assert_eq!(sampler.commit(0, 0, 1), Err(Refusal::Empty));
-        assert_eq!(sampler.commit(0, 8, 0), Err(Refusal::Channels(0)));
-        assert_eq!(sampler.commit(0, 8, 3), Err(Refusal::Channels(3)));
-        assert_eq!(sampler.commit(SLOTS, 8, 1), Err(Refusal::NoSuchSlot));
+        //
+        // Refusing must leave nothing half declared: a slot sounding a
+        // truncated sample would be worse than one that says no.
+        let mut sampler = Sampler::new(SR);
+        sampler.reserve(64).expect("the arena must be granted");
+
+        assert_eq!(sampler.commit(0, 0, 65, 1), Err(Refusal::DoesNotFit { end: 65, reserved: 64 }));
+        assert_eq!(sampler.commit(0, 60, 8, 1), Err(Refusal::DoesNotFit { end: 68, reserved: 64 }));
+        assert_eq!(sampler.commit(0, 0, 33, 2), Err(Refusal::DoesNotFit { end: 66, reserved: 64 }));
+        assert_eq!(sampler.commit(0, 0, 0, 1), Err(Refusal::Empty));
+        assert_eq!(sampler.commit(0, 0, 8, 0), Err(Refusal::Channels(0)));
+        assert_eq!(sampler.commit(0, 0, 8, 3), Err(Refusal::Channels(3)));
+        assert_eq!(sampler.commit(SLOTS, 0, 8, 1), Err(Refusal::NoSuchSlot));
 
         sampler.trigger(0, 1.0);
         assert_eq!(sounding(&sampler), 0, "a refused slot sounded");
 
-        // The ceiling is a duration and not a float count, so the largest
-        // sample is the capacity in stereo — which fills the buffer exactly.
-        // Mono at the same length uses half of it and is refused past the same
-        // number of frames: four seconds is four seconds either way.
-        assert_eq!(sampler.commit(0, capacity, 2), Ok(()), "the largest sample that fits");
-        assert_eq!(sampler.commit(0, capacity, 1), Ok(()));
+        // The exact fit is accepted, in either channel count: the bound is the
+        // arena's length in floats, and nothing about it prefers a shape.
+        assert_eq!(sampler.commit(0, 0, 64, 1), Ok(()));
+        assert_eq!(sampler.commit(0, 0, 32, 2), Ok(()));
+    }
+
+    #[test]
+    fn an_end_that_would_overflow_is_refused_rather_than_wrapped() {
+        // All three numbers come from the far side. Computed with wrapping
+        // arithmetic, an offset near the top of the address space plus a
+        // plausible length lands back inside the arena, and the bounds check
+        // passes on exactly the input it exists to stop.
+        let mut sampler = Sampler::new(SR);
+        sampler.reserve(64).expect("the arena must be granted");
+
+        for (offset, frames, channels) in [
+            (usize::MAX, 8, 1),
+            (usize::MAX - 4, 8, 2),
+            (0, usize::MAX, 2),
+            (32, usize::MAX / 2 + 1, 2),
+        ] {
+            let refusal = sampler.commit(0, offset, frames, channels);
+            assert!(
+                matches!(refusal, Err(Refusal::DoesNotFit { .. })),
+                "offset {offset} frames {frames} channels {channels} gave {refusal:?}"
+            );
+        }
+        sampler.trigger(0, 1.0);
+        assert_eq!(sounding(&sampler), 0);
     }
 
     #[test]
     fn reset_returns_to_the_as_constructed_state_and_keeps_the_memory() {
         // Both halves matter and they pull apart: the render has to be
         // identical to a fresh instance, or the golden tests compare a warmed
-        // engine against a cold one — while handing the buffers back would put
-        // the allocation this module exists to avoid into the offline
-        // renderer, once per run.
+        // engine against a cold one — while giving the memory back would buy
+        // nothing, since WASM never takes it back, and would cost the next kit
+        // a fresh growth.
         let mut sampler = loaded(0, 4_096, 1);
-        let address = sampler.slots[0].data.as_ptr();
+        let granted = sampler.arena.capacity();
         sampler.trigger(0, 1.0);
         frame(&mut sampler);
 
@@ -887,6 +1030,6 @@ mod tests {
         assert!(silent(&mut sampler, 16));
         sampler.trigger(0, 1.0);
         assert_eq!(sounding(&sampler), 0, "a reset slot still held its sample");
-        assert_eq!(sampler.slots[0].data.as_ptr(), address, "the buffer was handed back");
+        assert_eq!(sampler.arena.capacity(), granted, "the arena was handed back");
     }
 }
