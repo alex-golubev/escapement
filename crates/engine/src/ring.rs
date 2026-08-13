@@ -29,15 +29,10 @@ pub struct Entry {
     pub record: Record,
     /// The frame within the quantum at which the command must be applied.
     ///
-    /// `None` — the instant has not arrived yet, so this record is not for
-    /// this quantum. What to do about it is the engine's call: no such records
-    /// occur yet, since the UI only sends immediate commands.
-    ///
-    /// The call it makes today is to **drop** the record, and that is worth
-    /// knowing from here: `None` reads like "later" and means nothing of the
-    /// sort, because nothing downstream keeps a record across quanta. The
-    /// reasoning, and what has to be settled before it changes, is at that
-    /// branch in `Engine::process`.
+    /// `None` means the instant is not in this quantum. It reads like "later"
+    /// and means nothing of the sort: nothing downstream keeps a record across
+    /// quanta, so the engine drops it. That decision, and what would have to be
+    /// settled before it could change, is at that branch in `Engine::process`.
     pub offset: Option<u32>,
 }
 
@@ -50,8 +45,20 @@ pub struct CommandBlock<'a> {
 
 impl<'a> CommandBlock<'a> {
     /// `count` is however many records the worklet claimed. The value is
-    /// untrusted, so it is clamped to the actual slice length: a claim of
-    /// 10 000 records in a buffer holding 256 must not read past the end.
+    /// untrusted, so it is clamped to the actual slice length.
+    ///
+    /// **The clamp bounds a loop, and only incidentally a read.** [`entry`] is
+    /// already total — it answers `None` past the end of the slice — so an
+    /// unclamped claim reads nothing it should not. What it does instead is
+    /// make `Engine::process` walk to the number claimed regardless, one index
+    /// at a time, because that is how the engine learns there is nothing there.
+    /// A claim of `u32::MAX` is four billion laps inside one quantum on the one
+    /// thread that must return in under three milliseconds. The symptom is not
+    /// a wrong sample; it is a render thread that never comes back — measured
+    /// by taking this `min` out, at which point the suite stops responding
+    /// rather than failing.
+    ///
+    /// [`entry`]: Self::entry
     pub fn new(bytes: &'a [u8], count: u32) -> Self {
         let available = bytes.len() / COMMAND_SIZE;
         Self { bytes, count: (count as usize).min(available) }
@@ -63,6 +70,10 @@ impl<'a> CommandBlock<'a> {
         self.count
     }
 
+    /// Here because `clippy::len_without_is_empty` requires it of any public
+    /// `len`, not because the engine asks: it reads `len` and indexes. Worth
+    /// saying, since the surrounding rule is that a method with only tests
+    /// behind it comes out.
     pub fn is_empty(&self) -> bool {
         self.count == 0
     }
@@ -73,9 +84,12 @@ impl<'a> CommandBlock<'a> {
     /// record — to the engine these are the same case: it simply moves to the
     /// next index, and knows the bound from [`len`](Self::len).
     ///
-    /// Indexed access, rather than an iterator alone, is what the engine
-    /// needs: rendering proceeds in segments between commands, and holding a
-    /// borrow of the block across state changes would not be allowed.
+    /// **By index and not by iterator, and there is no iterator beside it.**
+    /// Rendering proceeds in segments between commands, so the engine mutates
+    /// its own state between one record and the next and cannot hold a borrow
+    /// of the block across that. An iterator would therefore have no caller but
+    /// the tests here — a second way through the same bytes, staying green
+    /// while the one that ships broke.
     pub fn entry(&self, index: usize, quantum_start: u64, frames: u32) -> Option<Entry> {
         if index >= self.count {
             return None;
@@ -90,33 +104,33 @@ impl<'a> CommandBlock<'a> {
         })
     }
 
-    /// The block's records in submission order, each with its frame of
-    /// application.
-    ///
-    /// Empty and unrecognized records are skipped silently; there should be
-    /// none under normal operation, and one showing up means we are out of
-    /// sync with `protocol.ts`.
-    pub fn entries(
-        &self,
-        quantum_start: u64,
-        frames: u32,
-    ) -> impl Iterator<Item = Entry> + use<'a> {
-        let block = *self;
-        (0..block.count).filter_map(move |index| block.entry(index, quantum_start, frames))
-    }
 }
 
-/// The frame of the quantum that the instant `at_sample` falls on.
+/// The frame of the quantum that the instant `at_sample` falls on, or `None`
+/// when the instant lies past the end of it.
 ///
-/// Returns `None` if the instant lies past the end of the quantum.
+/// **An instant behind the quantum and one ahead of it are not answered alike,
+/// and that asymmetry is the whole of what this function decides.** Late is
+/// answered with the first frame, so the command still happens. Early is
+/// answered with nothing.
+///
+/// What makes that the right way round is that the two errors are bounded
+/// differently. A late command applied at the top of the quantum is wrong by
+/// less than a quantum — a fraction of a millisecond, inaudible — while losing
+/// it is not bounded at all: a `Stop` that never arrives leaves the transport
+/// running forever. Being late is reachable, too, and not by anything exotic:
+/// the UI stamps a deadline off a telemetry reading that is already a frame or
+/// two old.
+///
+/// Early has no such ceiling in either direction, which is why it is reported
+/// rather than clamped. Pulling an instant stamped an hour ahead back to the
+/// end of this quantum would fire it an hour early — worse than not firing it —
+/// so the answer is left to the caller. `Engine::process` is where `None`
+/// becomes a decision.
 pub fn offset_in_quantum(at_sample: u64, quantum_start: u64, frames: u32) -> Option<u32> {
     if at_sample <= quantum_start {
-        // Zero means "immediately". A value below the start of the quantum
-        // means the command is late: that happens when the UI stamps a
-        // deadline from a stale telemetry reading. A late command is applied
-        // at the top of the quantum rather than dropped — a lost Stop would
-        // leave the transport running forever, whereas a delay of a fraction
-        // of a millisecond is inaudible.
+        // Zero is the protocol's "immediately", and lands here by being at or
+        // behind every possible quantum start.
         return Some(0);
     }
 
@@ -140,8 +154,30 @@ mod tests {
         records.iter().flat_map(|r| r.encode()).collect()
     }
 
-    fn commands_of(entries: impl Iterator<Item = Entry>) -> Vec<Command> {
-        entries.map(|e| e.record.command).collect()
+    /// Every entry in the block, walked exactly the way `Engine::process`
+    /// walks it — by index, through [`CommandBlock::entry`].
+    ///
+    /// A helper here rather than a method on the block, for the reason `entry`
+    /// gives: nothing that ships wants the whole block at once, so an iterator
+    /// on the type would be a second path through the same bytes with only
+    /// these tests behind it. Records the engine skips are skipped here, since
+    /// what it does with them is to move to the next index.
+    fn entries(block: &CommandBlock, quantum_start: u64, frames: u32) -> Vec<Entry> {
+        (0..block.len())
+            .filter_map(|index| block.entry(index, quantum_start, frames))
+            .collect()
+    }
+
+    /// The single entry a one-record block decodes to.
+    fn only_entry(bytes: &[u8], quantum_start: u64, frames: u32) -> Entry {
+        let block = CommandBlock::new(bytes, 1);
+        let found = entries(&block, quantum_start, frames);
+        assert_eq!(found.len(), 1, "the record went missing");
+        found[0]
+    }
+
+    fn commands_of(entries: &[Entry]) -> Vec<Command> {
+        entries.iter().map(|e| e.record.command).collect()
     }
 
     #[test]
@@ -150,10 +186,10 @@ mod tests {
 
         let block = CommandBlock::new(&bytes, 0);
         assert!(block.is_empty());
-        assert_eq!(block.entries(0, FRAMES).count(), 0, "count=0 must hide the bytes");
+        assert_eq!(entries(&block, 0, FRAMES).len(), 0, "count=0 must hide the bytes");
 
         let empty = CommandBlock::new(&[], 0);
-        assert_eq!(empty.entries(0, FRAMES).count(), 0);
+        assert_eq!(entries(&empty, 0, FRAMES).len(), 0);
     }
 
     #[test]
@@ -166,7 +202,7 @@ mod tests {
         for claimed in [2, 3, 1_000, u32::MAX] {
             let block = CommandBlock::new(&bytes, claimed);
             assert_eq!(block.len(), 2, "a claim of {claimed} records ran past the slice");
-            assert_eq!(block.entries(0, FRAMES).count(), 2);
+            assert_eq!(entries(&block, 0, FRAMES).len(), 2);
         }
     }
 
@@ -180,10 +216,7 @@ mod tests {
 
         let block = CommandBlock::new(&bytes, 2);
         assert_eq!(block.len(), 1, "a partial record is not a record");
-        assert_eq!(
-            commands_of(block.entries(0, FRAMES)),
-            vec![Command::Play]
-        );
+        assert_eq!(commands_of(&entries(&block, 0, FRAMES)), vec![Command::Play]);
     }
 
     #[test]
@@ -197,7 +230,7 @@ mod tests {
         let bytes = block_of(&sent);
 
         assert_eq!(
-            commands_of(CommandBlock::new(&bytes, 4).entries(0, FRAMES)),
+            commands_of(&entries(&CommandBlock::new(&bytes, 4), 0, FRAMES)),
             sent.iter().map(|r| r.command).collect::<Vec<_>>()
         );
     }
@@ -214,7 +247,7 @@ mod tests {
         bytes[2 * COMMAND_SIZE] = 200;
 
         assert_eq!(
-            commands_of(CommandBlock::new(&bytes, 4).entries(0, FRAMES)),
+            commands_of(&entries(&CommandBlock::new(&bytes, 4), 0, FRAMES)),
             vec![Command::Play, Command::SetBpm { bpm: 140.0 }],
             "a corrupt record must not drag its neighbors down with it"
         );
@@ -224,11 +257,7 @@ mod tests {
     fn immediate_commands_land_on_the_first_frame() {
         let bytes = block_of(&[Record::immediate(Command::Play)]);
         // A quantum far from zero — "immediately" must not depend on position.
-        let entry = CommandBlock::new(&bytes, 1)
-            .entries(9_999_999, FRAMES)
-            .next()
-            .expect("the record went missing");
-        assert_eq!(entry.offset, Some(0));
+        assert_eq!(only_entry(&bytes, 9_999_999, FRAMES).offset, Some(0));
     }
 
     #[test]
@@ -236,11 +265,7 @@ mod tests {
         for at_sample in [1, 100, 9_999] {
             let record = Record { command: Command::Stop, at_sample };
             let bytes = block_of(&[record]);
-            let entry = CommandBlock::new(&bytes, 1)
-                .entries(10_000, FRAMES)
-                .next()
-                .expect("the late record went missing");
-            assert_eq!(entry.offset, Some(0), "at_sample={at_sample}");
+            assert_eq!(only_entry(&bytes, 10_000, FRAMES).offset, Some(0), "at_sample={at_sample}");
         }
     }
 
@@ -253,11 +278,7 @@ mod tests {
                 at_sample: start + u64::from(offset),
             };
             let bytes = block_of(&[record]);
-            let entry = CommandBlock::new(&bytes, 1)
-                .entries(start, FRAMES)
-                .next()
-                .expect("the record went missing");
-            assert_eq!(entry.offset, Some(offset));
+            assert_eq!(only_entry(&bytes, start, FRAMES).offset, Some(offset));
         }
     }
 
@@ -277,11 +298,7 @@ mod tests {
                 at_sample: start + u64::from(FRAMES) + ahead,
             };
             let bytes = block_of(&[record]);
-            let entry = CommandBlock::new(&bytes, 1)
-                .entries(start, FRAMES)
-                .next()
-                .expect("the record went missing");
-            assert_eq!(entry.offset, None, "ahead={ahead}");
+            assert_eq!(only_entry(&bytes, start, FRAMES).offset, None, "ahead={ahead}");
         }
     }
 
@@ -308,11 +325,7 @@ mod tests {
             let at = start + u64::from(offset);
             let record = Record { command: Command::Play, at_sample: at };
             let bytes = block_of(&[record]);
-            let entry = CommandBlock::new(&bytes, 1)
-                .entries(start, FRAMES)
-                .next()
-                .expect("the record went missing");
-            assert_eq!(entry.offset, Some(offset), "at_sample={at}");
+            assert_eq!(only_entry(&bytes, start, FRAMES).offset, Some(offset), "at_sample={at}");
         }
     }
 
@@ -358,7 +371,7 @@ mod tests {
                 *byte = state as u8;
             }
             let block = CommandBlock::new(&bytes, u32::MAX);
-            for entry in block.entries(state, FRAMES) {
+            for entry in entries(&block, state, FRAMES) {
                 if let Some(offset) = entry.offset {
                     assert!(offset < FRAMES);
                 }

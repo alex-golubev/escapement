@@ -211,23 +211,14 @@ impl Engine {
                     // — not held back. There is nowhere to hold it: the block
                     // lives for one quantum and the worklet has already taken
                     // these bytes out of the ring, so a record passed over here
-                    // is gone. `CommandBlock` leaves the choice to this branch,
-                    // and this is the branch making it.
+                    // is gone. `ring::offset_in_quantum` reports the case and
+                    // argues why it is reported rather than clamped; this is
+                    // the branch that decides what to do about it.
                     //
                     // Unreachable today: the UI stamps every command 0, meaning
                     // "immediately". `tests::a_command_stamped_for_a_later_quantum_is_dropped`
                     // is what states it, since a comment about what cannot
                     // happen yet is not a description of what does.
-                    //
-                    // The asymmetry with `ring::offset_in_quantum` is deliberate
-                    // and reads as an oversight otherwise: a command that
-                    // arrives *late* is applied at the top of the quantum
-                    // rather than dropped, because a lost Stop leaves the
-                    // transport running forever while the error it costs is
-                    // bounded by one quantum. Early is not bounded by anything.
-                    // Clamping a command stamped an hour ahead to the end of
-                    // this quantum would fire it an hour early, which is worse
-                    // than losing it.
                     //
                     // Before anything schedules ahead, two things have to be
                     // settled, and they are one feature rather than two:
