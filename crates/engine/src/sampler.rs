@@ -100,7 +100,12 @@ mod tests {
         sampler
     }
 
-    fn frame(sampler: &mut Sampler) -> f32 {
+    /// Render one frame and sum its left channel across tracks.
+    ///
+    /// Left alone is enough for everything here: these tests ask whether a
+    /// voice is sounding at all, and nothing in this type can make one channel
+    /// sound without the other.
+    fn summed_left(sampler: &mut Sampler) -> f32 {
         let mut out = [[0.0f32; 2]; TRACKS];
         sampler.next_frame(&mut out);
         out.iter().map(|track| track[0]).sum()
@@ -113,11 +118,11 @@ mod tests {
         // audible, plausible, and impossible to attribute to the reservation
         // that caused it.
         let mut sampler = sounding_sampler(1_000);
-        assert_eq!(frame(&mut sampler), 1.0, "the fixture did not leave a voice sounding");
+        assert_eq!(summed_left(&mut sampler), 1.0, "the fixture did not leave a voice sounding");
 
         sampler.reserve(4).expect("the arena must be granted").fill(1.0);
 
-        assert_eq!(frame(&mut sampler), 0.0, "a voice survived the new kit");
+        assert_eq!(summed_left(&mut sampler), 0.0, "a voice survived the new kit");
     }
 
     #[test]
@@ -128,9 +133,9 @@ mod tests {
         let absurd = usize::MAX / 8;
         assert_eq!(sampler.reserve(absurd), Err(Refusal::OutOfMemory { floats: absurd }));
 
-        assert_eq!(frame(&mut sampler), 0.0, "a voice survived a refused reservation");
+        assert_eq!(summed_left(&mut sampler), 0.0, "a voice survived a refused reservation");
         sampler.trigger(0, 1.0);
-        assert_eq!(frame(&mut sampler), 0.0, "a slot survived a refused reservation");
+        assert_eq!(summed_left(&mut sampler), 0.0, "a slot survived a refused reservation");
     }
 
     #[test]
@@ -139,12 +144,12 @@ mod tests {
         // against one just built; anything this call leaves behind is a
         // difference between them.
         let mut sampler = sounding_sampler(4_096);
-        assert_eq!(frame(&mut sampler), 1.0);
+        assert_eq!(summed_left(&mut sampler), 1.0);
 
         sampler.reset();
 
-        assert_eq!(frame(&mut sampler), 0.0, "a voice survived the reset");
+        assert_eq!(summed_left(&mut sampler), 0.0, "a voice survived the reset");
         sampler.trigger(0, 1.0);
-        assert_eq!(frame(&mut sampler), 0.0, "a reset slot still held its sample");
+        assert_eq!(summed_left(&mut sampler), 0.0, "a reset slot still held its sample");
     }
 }

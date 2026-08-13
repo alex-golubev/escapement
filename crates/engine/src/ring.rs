@@ -147,6 +147,7 @@ pub fn offset_in_quantum(at_sample: u64, quantum_start: u64, frames: u32) -> Opt
 mod tests {
     use super::*;
     use crate::commands::Command;
+    use crate::testing::Xorshift64;
 
     const FRAMES: u32 = 128;
 
@@ -361,17 +362,16 @@ mod tests {
     fn arbitrary_bytes_never_panic() {
         // The contents of the exchange area are whatever another thread wrote
         // there. Decoding must be total on any input.
-        let mut state = 0x2545_F491_4F6C_DD1Du64;
+        let mut rng = Xorshift64::new(0x2545_F491_4F6C_DD1D);
         let mut bytes = vec![0u8; CMD_CAPACITY * COMMAND_SIZE];
         for _ in 0..200 {
-            for byte in bytes.iter_mut() {
-                state ^= state << 13;
-                state ^= state >> 7;
-                state ^= state << 17;
-                *byte = state as u8;
-            }
+            rng.fill(&mut bytes);
+            // The quantum start is drawn too, so the arithmetic against it is
+            // exercised across the whole `u64` range rather than near zero —
+            // which is where a session actually spends its first day.
+            let quantum_start = rng.next_u64();
             let block = CommandBlock::new(&bytes, u32::MAX);
-            for entry in entries(&block, state, FRAMES) {
+            for entry in entries(&block, quantum_start, FRAMES) {
                 if let Some(offset) = entry.offset {
                     assert!(offset < FRAMES);
                 }

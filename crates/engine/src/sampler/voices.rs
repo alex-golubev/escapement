@@ -291,7 +291,7 @@ fn remaining(bank: &Bank, voice: &Voice) -> usize {
 mod tests {
     use super::*;
     use crate::sampler::SLOTS;
-    use crate::sampler::bank::tests::loaded;
+    use crate::sampler::bank::tests::{Sample, loaded};
 
     const SR: f64 = 48_000.0;
 
@@ -302,19 +302,22 @@ mod tests {
     /// be read directly — where the frame sits is the onset, how big it is is
     /// the product of everything that scaled it.
     fn one(slot: usize, frames: usize, channels: u8) -> (Bank, Pool) {
-        (loaded(&[(slot, frames, channels, 1.0)]), Pool::new(SR))
+        (loaded(&[Sample { slot, frames, channels, value: 1.0 }]), Pool::new(SR))
     }
 
-    /// One frame, summed across tracks — for tests that do not care which
-    /// track sounded.
-    fn frame(pool: &mut Pool, bank: &Bank) -> (f32, f32) {
+    /// Render one frame and sum it across tracks, left and right.
+    ///
+    /// Summed because most tests here ask what the pool produced, not which row
+    /// it landed on — the two tests that do care read `out` directly, and are
+    /// the only ones that should.
+    fn summed_frame(pool: &mut Pool, bank: &Bank) -> (f32, f32) {
         let mut out = [[0.0f32; 2]; TRACKS];
         pool.next_frame(bank, &mut out);
         out.iter().fold((0.0, 0.0), |(l, r), track| (l + track[0], r + track[1]))
     }
 
     fn silent(pool: &mut Pool, bank: &Bank, frames: usize) -> bool {
-        (0..frames).all(|_| frame(pool, bank) == (0.0, 0.0))
+        (0..frames).all(|_| summed_frame(pool, bank) == (0.0, 0.0))
     }
 
     fn sounding(pool: &Pool) -> usize {
@@ -341,7 +344,7 @@ mod tests {
         let (bank, mut pool) = one(3, 1, 1);
         pool.trigger(&bank, 3, 1.0);
 
-        assert_eq!(frame(&mut pool, &bank), (1.0, 1.0));
+        assert_eq!(summed_frame(&mut pool, &bank), (1.0, 1.0));
         assert!(silent(&mut pool, &bank, 16), "the voice outlived its one frame");
         assert_eq!(sounding(&pool), 0, "the voice did not free itself");
     }
@@ -350,12 +353,15 @@ mod tests {
     fn a_voice_never_reads_past_what_was_declared() {
         // The neighbour holds a different value, so a cursor running past its
         // declaration shows up as a tail rather than as silence.
-        let bank = loaded(&[(0, 2, 1, 1.0), (1, 5_000, 1, 0.7)]);
+        let bank = loaded(&[
+            Sample { slot: 0, frames: 2, channels: 1, value: 1.0 },
+            Sample { slot: 1, frames: 5_000, channels: 1, value: 0.7 },
+        ]);
         let mut pool = Pool::new(SR);
 
         pool.trigger(&bank, 0, 1.0);
-        assert_eq!(frame(&mut pool, &bank), (1.0, 1.0));
-        assert_eq!(frame(&mut pool, &bank), (1.0, 1.0));
+        assert_eq!(summed_frame(&mut pool, &bank), (1.0, 1.0));
+        assert_eq!(summed_frame(&mut pool, &bank), (1.0, 1.0));
         assert!(silent(&mut pool, &bank, 32), "the voice ran on into its neighbour");
     }
 
@@ -375,7 +381,7 @@ mod tests {
         // ordering.
         let (mut bank, mut pool) = one(0, 1_000, 1);
         pool.trigger(&bank, 0, 1.0);
-        assert_eq!(frame(&mut pool, &bank), (1.0, 1.0));
+        assert_eq!(summed_frame(&mut pool, &bank), (1.0, 1.0));
 
         bank.reserve(1_000).expect("the arena must be granted").fill(0.5);
 
@@ -387,7 +393,10 @@ mod tests {
     fn a_sample_reads_from_its_own_offset() {
         // Only the offset tells two samples in one arena apart: read from the
         // wrong one, the kit is intact and every drum is the wrong drum.
-        let bank = loaded(&[(0, 1, 1, 0.25), (1, 1, 1, 0.75)]);
+        let bank = loaded(&[
+            Sample { slot: 0, frames: 1, channels: 1, value: 0.25 },
+            Sample { slot: 1, frames: 1, channels: 1, value: 0.75 },
+        ]);
         let mut pool = Pool::new(SR);
 
         pool.trigger(&bank, 1, 1.0);
@@ -417,7 +426,7 @@ mod tests {
         for velocity in [1.0f32, 0.5, 0.25, MAX_VELOCITY] {
             let (bank, mut pool) = one(0, 1, 1);
             pool.trigger(&bank, 0, velocity);
-            assert_eq!(frame(&mut pool, &bank), (velocity, velocity), "velocity {velocity}");
+            assert_eq!(summed_frame(&mut pool, &bank), (velocity, velocity), "velocity {velocity}");
         }
     }
 
@@ -440,7 +449,7 @@ mod tests {
         // And an out-of-range velocity is clamped rather than dropped: 2.0 is
         // a UI bug, silence would be a worse answer than the loudest strike.
         pool.trigger(&bank, 0, 2.0);
-        assert_eq!(frame(&mut pool, &bank), (MAX_VELOCITY, MAX_VELOCITY));
+        assert_eq!(summed_frame(&mut pool, &bank), (MAX_VELOCITY, MAX_VELOCITY));
     }
 
     #[test]
@@ -469,7 +478,7 @@ mod tests {
 
         assert_eq!(bank.commit(2, 0, 4, 1), Ok(()));
         pool.trigger(&bank, 2, 1.0);
-        assert_eq!(frame(&mut pool, &bank), (1.0, 1.0), "a declared slot must sound");
+        assert_eq!(summed_frame(&mut pool, &bank), (1.0, 1.0), "a declared slot must sound");
     }
 
     #[test]
@@ -485,13 +494,13 @@ mod tests {
         assert_eq!(bank.commit(0, 0, 2, 2), Ok(()));
         pool.trigger(&bank, 0, 1.0);
 
-        assert_eq!(frame(&mut pool, &bank), (1.0, -1.0));
-        assert_eq!(frame(&mut pool, &bank), (0.5, -0.5));
+        assert_eq!(summed_frame(&mut pool, &bank), (1.0, -1.0));
+        assert_eq!(summed_frame(&mut pool, &bank), (0.5, -0.5));
         assert!(silent(&mut pool, &bank, 4), "a two-frame stereo sample lasted longer");
 
         let (mono, mut pool) = one(0, 1, 1);
         pool.trigger(&mono, 0, 1.0);
-        let (left, right) = frame(&mut pool, &mono);
+        let (left, right) = summed_frame(&mut pool, &mono);
         assert_eq!(left, right, "a mono sample must reach both channels alike");
     }
 
@@ -503,9 +512,9 @@ mod tests {
         // other. Nothing in the pool ties a voice to a track.
         let (bank, mut pool) = one(0, 8, 1);
         pool.trigger(&bank, 0, 1.0);
-        assert_eq!(frame(&mut pool, &bank), (1.0, 1.0));
+        assert_eq!(summed_frame(&mut pool, &bank), (1.0, 1.0));
         pool.trigger(&bank, 0, 1.0);
-        assert_eq!(frame(&mut pool, &bank), (2.0, 2.0), "the second strike replaced the first");
+        assert_eq!(summed_frame(&mut pool, &bank), (2.0, 2.0), "the second strike replaced the first");
         assert_eq!(sounding(&pool), 2);
     }
 
@@ -522,15 +531,15 @@ mod tests {
         // so only asking for the ramp's own last value catches it.
         let (bank, mut pool) = one(0, 100_000, 1);
         pool.trigger(&bank, 0, 1.0);
-        let before = frame(&mut pool, &bank).0;
+        let before = summed_frame(&mut pool, &bank).0;
 
         pool.release_all();
-        let first = frame(&mut pool, &bank).0;
+        let first = summed_frame(&mut pool, &bank).0;
         assert_eq!(first, before, "the release began with a step");
 
         let mut previous = first;
         for step in 1..pool.release_frames as usize {
-            let value = frame(&mut pool, &bank).0;
+            let value = summed_frame(&mut pool, &bank).0;
             assert!(value < previous, "the release stalled at {value} on step {step}");
             previous = value;
         }
@@ -585,7 +594,7 @@ mod tests {
         }
         assert_eq!(sounding(&pool), VOICES, "the pool lost voices or grew");
 
-        let (left, _) = frame(&mut pool, &bank);
+        let (left, _) = summed_frame(&mut pool, &bank);
         assert_eq!(left, VOICES as f32, "not every voice in the pool was sounding");
     }
 

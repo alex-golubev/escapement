@@ -268,6 +268,32 @@ impl Bank {
 pub(in crate::sampler) mod tests {
     use super::*;
 
+    /// One sample of a test kit.
+    ///
+    /// A named record rather than the tuple this was, because three of the four
+    /// fields are bare numbers and nothing at a call site said which. Two of
+    /// them are `usize` and adjacent, so swapping slot and length is a mistake
+    /// the compiler cannot see and a reader has no reason to suspect — and
+    /// `sample.3` for the level said least of all.
+    #[derive(Debug, Clone, Copy)]
+    pub(in crate::sampler) struct Sample {
+        pub slot: usize,
+        pub frames: usize,
+        pub channels: u8,
+        /// The value every frame of it holds. Constant on purpose: one height,
+        /// known in advance, is what turns a rendered buffer into a direct
+        /// reading — where a non-zero frame sits is the onset, and how big it
+        /// is is the product of everything that scaled it.
+        pub value: f32,
+    }
+
+    impl Sample {
+        /// Its length in the unit the arena is measured in.
+        fn floats(&self) -> usize {
+            self.frames * usize::from(self.channels)
+        }
+    }
+
     /// Load a whole kit: reserve for the sum, lay the samples out end to end,
     /// then declare each where it was written.
     ///
@@ -277,34 +303,31 @@ pub(in crate::sampler) mod tests {
     /// in. Shared with the voice tests, which need a loaded bank to read from:
     /// one builder, so a change to the load protocol cannot be made in one
     /// place and missed in the other.
-    pub(in crate::sampler) fn loaded(kit: &[(usize, usize, u8, f32)]) -> Bank {
+    pub(in crate::sampler) fn loaded(kit: &[Sample]) -> Bank {
         let mut bank = Bank::new();
         load(&mut bank, kit);
         bank
     }
 
-    pub(in crate::sampler) fn load(bank: &mut Bank, kit: &[(usize, usize, u8, f32)]) {
-        let floats =
-            |(_, frames, channels, _): &(usize, usize, u8, f32)| frames * usize::from(*channels);
-        let total: usize = kit.iter().map(floats).sum();
+    pub(in crate::sampler) fn load(bank: &mut Bank, kit: &[Sample]) {
+        let total: usize = kit.iter().map(Sample::floats).sum();
 
         let arena = bank.reserve(total).expect("the arena must be granted");
         let mut offset = 0;
         for sample in kit {
-            let len = floats(sample);
-            arena[offset..offset + len].fill(sample.3);
-            offset += len;
+            arena[offset..offset + sample.floats()].fill(sample.value);
+            offset += sample.floats();
         }
 
         let mut offset = 0;
         for sample in kit {
-            let (slot, frames, channels, _) = *sample;
             assert_eq!(
-                bank.commit(slot, offset, frames, channels),
+                bank.commit(sample.slot, offset, sample.frames, sample.channels),
                 Ok(()),
-                "the bank refused slot {slot}"
+                "the bank refused slot {}",
+                sample.slot
             );
-            offset += floats(sample);
+            offset += sample.floats();
         }
     }
 
@@ -330,7 +353,7 @@ pub(in crate::sampler) mod tests {
         // reservation — `commit` cannot produce one, having refused a channel
         // count of zero before it builds a region at all — so both are checked
         // here, where the constant is.
-        let mut bank = loaded(&[(0, 16, 2, 1.0)]);
+        let mut bank = loaded(&[Sample { slot: 0, frames: 16, channels: 2, value: 1.0 }]);
         bank.reset();
         let absurd = usize::MAX / 8;
         assert_eq!(bank.reserve(absurd), Err(Refusal::OutOfMemory { floats: absurd }));
@@ -348,13 +371,21 @@ pub(in crate::sampler) mod tests {
         // a bank that reserved afresh on every load would climb for as long as
         // the session lasted — half an hour of swapping kits and the tab is
         // measurably heavier, with nothing to show where it went.
-        let mut bank = loaded(&[(0, 48_000, 2, 1.0)]);
+        let mut bank = loaded(&[Sample { slot: 0, frames: 48_000, channels: 2, value: 1.0 }]);
         let granted = bank.arena.capacity();
         assert!(granted >= 96_000);
 
         for round in 0..64 {
             let frames = 1 + (round * 971) % 40_000;
-            load(&mut bank, &[(round % SLOTS, frames, 1 + (round % 2) as u8, 1.0)]);
+            load(
+                &mut bank,
+                &[Sample {
+                    slot: round % SLOTS,
+                    frames,
+                    channels: 1 + (round % 2) as u8,
+                    value: 1.0,
+                }],
+            );
             assert_eq!(bank.arena.capacity(), granted, "round {round} grew the arena");
         }
     }
@@ -364,7 +395,7 @@ pub(in crate::sampler) mod tests {
         // The refusal the whole design turns on — see `reserve` for why it is
         // one at all. What this pins is that it carries the number, so the page
         // can say what it could not have.
-        let mut bank = loaded(&[(0, 16, 1, 1.0)]);
+        let mut bank = loaded(&[Sample { slot: 0, frames: 16, channels: 1, value: 1.0 }]);
         let absurd = usize::MAX / 8;
 
         assert_eq!(bank.reserve(absurd), Err(Refusal::OutOfMemory { floats: absurd }));
@@ -468,7 +499,7 @@ pub(in crate::sampler) mod tests {
         // Both halves matter and they pull apart: a reset bank has to read as a
         // fresh one, or the golden tests compare a warmed engine against a cold
         // one — while the memory has to stay, for the reason `reset` gives.
-        let mut bank = loaded(&[(0, 4_096, 1, 1.0)]);
+        let mut bank = loaded(&[Sample { slot: 0, frames: 4_096, channels: 1, value: 1.0 }]);
         let granted = bank.arena.capacity();
 
         bank.reset();

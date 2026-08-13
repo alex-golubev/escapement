@@ -354,6 +354,7 @@ impl Engine {
 mod tests {
     use super::*;
     use crate::commands::Record;
+    use crate::testing::Xorshift64;
 
     const SR: f64 = 48_000.0;
     /// The Web Audio render quantum.
@@ -797,17 +798,12 @@ mod tests {
     #[test]
     fn garbage_commands_do_not_break_rendering() {
         let mut engine = Engine::new(SR);
-        let mut state = 0x9E37_79B9_7F4A_7C15u64;
+        let mut rng = Xorshift64::new(0x9E37_79B9_7F4A_7C15);
         let mut bytes = vec![0u8; 64 * 16];
         let mut left = [0.0f32; Q];
         let mut right = [0.0f32; Q];
         for _ in 0..200 {
-            for byte in bytes.iter_mut() {
-                state ^= state << 13;
-                state ^= state >> 7;
-                state ^= state << 17;
-                *byte = state as u8;
-            }
+            rng.fill(&mut bytes);
             engine.process(&mut left, &mut right, &bytes, u32::MAX);
             assert!(left.iter().all(|s| s.is_finite()));
         }

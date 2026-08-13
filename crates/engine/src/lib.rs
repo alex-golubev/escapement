@@ -38,6 +38,11 @@ pub mod ring;
 pub mod sampler;
 pub mod transport;
 
+/// Support shared by tests across the crate. Gated here rather than kept out of
+/// `src/`, for the reason the module itself gives.
+#[cfg(test)]
+mod testing;
+
 use commands::{COMMAND_SIZE, PROTOCOL_VERSION};
 use engine::{Engine, TELEMETRY_WORDS};
 use ring::CMD_CAPACITY;
@@ -230,6 +235,7 @@ pub unsafe extern "C" fn engine_process(instance: *mut Instance, frames: u32, cm
 mod tests {
     use super::*;
     use crate::commands::{Command, Record};
+    use crate::testing::Xorshift64;
 
     const SR: f64 = 48_000.0;
     const Q: u32 = 128;
@@ -465,16 +471,11 @@ mod tests {
     fn garbage_in_the_exchange_area_does_not_break_rendering() {
         let owned = Owned::new(SR, Q);
         let capacity = unsafe { engine_cmd_capacity(owned.raw()) } as usize * COMMAND_SIZE;
-        let mut state = 0xD1B5_4A32_D192_ED03u64;
+        let mut rng = Xorshift64::new(0xD1B5_4A32_D192_ED03);
         let mut bytes = vec![0u8; capacity];
 
         for _ in 0..100 {
-            for byte in bytes.iter_mut() {
-                state ^= state << 13;
-                state ^= state >> 7;
-                state ^= state << 17;
-                *byte = state as u8;
-            }
+            rng.fill(&mut bytes);
             unsafe {
                 core::ptr::copy_nonoverlapping(
                     bytes.as_ptr(),
