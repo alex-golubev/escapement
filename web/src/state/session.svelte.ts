@@ -65,6 +65,13 @@ export interface Session {
   readonly sampleRate: number | null
   readonly protocolVersion: number | null
   readonly position: number
+  /**
+   * Commands the ring had no room for. Non-zero is a bug rather than a load
+   * condition — 1024 records is some three seconds of gestures — and it is a
+   * reading rather than a failure precisely so that it can be seen instead of
+   * ending the session.
+   */
+  readonly dropped: number
   readonly peakL: number
   readonly peakR: number
   readonly playing: boolean
@@ -109,6 +116,11 @@ export function createSession(deps: SessionDeps = {}): Session {
   let playing = $state(false)
   let bpm = $state(ENGINE_DEFAULT_BPM)
 
+  // What the ring's own counter says, sampled where it can have changed. A tally
+  // kept here beside it would be a second answer to one question, and the ring's
+  // is the one the count actually lives in.
+  let dropped = $state(0)
+
   let stopFrames: (() => void) | null = null
 
   function readTelemetry(): void {
@@ -145,6 +157,9 @@ export function createSession(deps: SessionDeps = {}): Session {
     // tempo on screen that no engine is playing at.
     playing = false
     bpm = ENGINE_DEFAULT_BPM
+    // Including the drops: the next engine comes with a ring of its own, whose
+    // counter starts at zero.
+    dropped = 0
 
     // Not awaited, and the rejection is dropped: the context is already
     // unreachable from this file, so there is nothing a failed close leaves for
@@ -187,23 +202,31 @@ export function createSession(deps: SessionDeps = {}): Session {
   }
 
   /**
-   * Every gesture goes through here, so the ring being full is diagnosed in one
-   * place. It cannot happen while the worklet is draining — 1024 records against
-   * one click — so when it does, the audio thread has stopped, and the fix is
-   * nowhere near the control that reported it.
+   * Hand one command to the audio thread. The answer is whether it reached the
+   * ring, and every caller below gates its own belief on it — which is what keeps
+   * a refusal from leaving the page claiming a setting the engine never got.
+   *
+   * A refusal is not the engine failing and is not treated as one. The ring being
+   * full says a command did not fit and nothing whatever about why: today the only
+   * way to fill it is the far end having stopped draining — 1024 records against
+   * one gesture — but that stops being true with the first caller that sends in
+   * bulk, and a page that tore the engine down over it would be tearing it down
+   * over a busy buffer. What the drop gets instead is the counter, which is the
+   * one thing a drop must never do quietly.
    */
   function send(command: Command): boolean {
     const live = handle
-    // Two failures, and they are worth telling apart: no handle at all means this
-    // ran while the page was not driving anything — unreachable through a
-    // template that hides the controls, and a different fault with a different fix
-    // from the ring being full.
+    // Not the same fault: no handle at all means a control was used while the page
+    // was driving nothing. Unreachable through a template that hides them, but
+    // reachable through this module's own surface, and it is a bug here rather
+    // than a full buffer over there.
     if (live === null) {
       discard('No engine to send to: the transport was used before the page had one')
       return false
     }
     if (live.commands.send(command)) return true
-    discard('The command ring is full: the audio thread has stopped draining it')
+    // Read back rather than counted here — see the declaration.
+    dropped = live.commands.dropped()
     return false
   }
 
@@ -245,6 +268,9 @@ export function createSession(deps: SessionDeps = {}): Session {
     get position(): number {
       return position
     },
+    get dropped(): number {
+      return dropped
+    },
     get peakL(): number {
       return peakL
     },
@@ -265,8 +291,7 @@ export function createSession(deps: SessionDeps = {}): Session {
       if (send({ op: playing ? 'stop' : 'play' })) playing = !playing
     },
     setBpm(next: number): void {
-      bpm = next
-      send({ op: 'set-bpm', bpm: next })
+      if (send({ op: 'set-bpm', bpm: next })) bpm = next
     },
   }
 }

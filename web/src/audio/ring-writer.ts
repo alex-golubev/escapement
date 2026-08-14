@@ -30,16 +30,12 @@ export interface RingWriter {
    * bug, not a load condition: 1024 records is some three seconds of gestures,
    * and nothing here sends in bulk yet.
    *
-   * Nothing calls this outside its own spec, and that is the honest state of it
-   * rather than an oversight. What the counter exists for is that drops must
-   * never pile up unseen — and today they cannot, because `send` returns
-   * `false` in the same breath as the increment, and the page turns the first
-   * one into a failure on screen. The counter says nothing the caller was not
-   * just told.
-   *
-   * It stops being redundant with the first caller that sends in bulk — opening
-   * a project pushes hundreds of parameters through here — and at that point
-   * the useful question is how many were lost, not whether one was.
+   * Read by the page after a refusal, and kept here rather than tallied there,
+   * because this is where the count is made: a second counter on the other side
+   * of `send` would be a second answer to one question. It is also the answer
+   * that outlasts a single call — `send` says whether *this* command fitted,
+   * while opening a project will push hundreds through here at once, and then
+   * the useful question is how many were lost rather than whether one was.
    */
   dropped(): number
 }

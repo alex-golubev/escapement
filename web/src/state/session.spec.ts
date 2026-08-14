@@ -196,19 +196,49 @@ describe('createSession', () => {
     expect(harness.session.playing).toBe(false)
   })
 
-  it('gives up the engine when the ring refuses a command', async () => {
-    // Today a refusal means the far end stopped draining — 1024 records against
-    // one gesture — so it is treated as the engine being gone. That stops being
-    // true with the first caller that sends in bulk.
+  it('keeps driving the engine when the ring refuses a command', async () => {
+    // A full ring says a command did not fit and nothing about why. Treating it
+    // as the engine being gone was right only while the sole way to fill the
+    // ring was the far end having stopped — and it would tear down a working
+    // engine the first time a project pushes hundreds of parameters at once.
     const harness = rig()
     await harness.session.start()
     harness.refuse()
 
     harness.session.toggle()
 
-    expect(harness.session.status).toBe('failed')
-    expect(harness.session.failure).toContain('ring is full')
-    expect(harness.closes()).toBe(1)
+    expect(harness.session.status).toBe('running')
+    expect(harness.session.failure).toBeNull()
+    expect(harness.closes()).toBe(0)
+  })
+
+  it('counts every command the ring refused, and says so out loud', async () => {
+    // The one thing a drop must never do is pile up quietly. The count comes
+    // back from the ring rather than being tallied here, so it is one number
+    // and not two that agree today.
+    const harness = rig()
+    await harness.session.start()
+    expect(harness.session.dropped).toBe(0)
+
+    harness.refuse()
+    harness.session.toggle()
+    harness.session.setBpm(174)
+
+    expect(harness.session.dropped).toBe(2)
+  })
+
+  it('does not adopt a tempo the ring refused', async () => {
+    // The same rule the transport follows, and for the same reason: a readout
+    // showing 174 against an engine playing 120 is a divergence with nothing on
+    // screen to explain it, and the two would never come back together.
+    const harness = rig()
+    await harness.session.start()
+    harness.session.setBpm(174)
+    harness.refuse()
+
+    harness.session.setBpm(200)
+
+    expect(harness.session.bpm).toBe(174)
   })
 
   it('forgets what it believed once the engine is gone', async () => {
@@ -220,13 +250,19 @@ describe('createSession', () => {
     await harness.session.start()
     harness.session.toggle()
     harness.session.setBpm(174)
+    harness.refuse()
+    harness.session.toggle()
     expect(harness.session.playing).toBe(true)
+    expect(harness.session.dropped).toBe(1)
 
     harness.session.stop()
+    harness.accept()
     await harness.session.start()
 
     expect(harness.session.playing).toBe(false)
     expect(harness.session.bpm).toBe(120)
+    // The next engine brings a ring of its own, and its counter starts at zero.
+    expect(harness.session.dropped).toBe(0)
   })
 
   it('reports the size of the first block the processor rendered', async () => {
@@ -250,6 +286,7 @@ describe('createSession', () => {
 function rig(options: { hold?: boolean } = {}) {
   let closes = 0
   let starts = 0
+  let refusals = 0
   let accept = true
   let reading: Telemetry | null = { position: 0, peakL: 0, peakR: 0 }
   let failure: StartFailure | null = null
@@ -275,12 +312,19 @@ function rig(options: { hold?: boolean } = {}) {
     sampleRate: SAMPLE_RATE,
     protocolVersion: PROTOCOL_VERSION,
     commands: {
+      // Counting its own refusals, the way `createWriter` does: the number the
+      // session reads back has to come from the same place that made it, or the
+      // test would be agreeing with the session about a count neither took from
+      // the ring.
       send: (command: Command) => {
-        if (!accept) return false
+        if (!accept) {
+          refusals += 1
+          return false
+        }
         sent.push(command)
         return true
       },
-      dropped: () => 0,
+      dropped: () => refusals,
     },
     telemetry: { read: () => reading },
   }
@@ -325,6 +369,9 @@ function rig(options: { hold?: boolean } = {}) {
     },
     refuse: (): void => {
       accept = false
+    },
+    accept: (): void => {
+      accept = true
     },
     failNext: (next: StartFailure): void => {
       failure = next

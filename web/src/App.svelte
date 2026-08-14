@@ -124,12 +124,20 @@
           {session.peakL.toFixed(3)} / {session.peakR.toFixed(3)}
         </span>
       </li>
+      <!-- Shown while running rather than only when it moves. A counter that
+           appears on its first drop is a line nobody has ever seen, and the
+           question it answers — was anything lost — is one you want answered
+           before you have a reason to ask it. -->
+      <li class:fail={session.dropped > 0}>
+        <code>commands dropped</code>
+        <span>{session.dropped}</span>
+      </li>
     </ul>
 
     <p class="verdict ok">
       The metronome is computed in Rust on the audio thread. Commands reach it through the ring
-      in shared memory, and the two numbers above came back the same way — read under a seqlock,
-      once per frame.
+      in shared memory, and the position and the meters came back the same way — read under a
+      seqlock, once per frame.
     </p>
 
     <!-- The only way to hand the device back. Without it the context outlives
