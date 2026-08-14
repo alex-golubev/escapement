@@ -163,7 +163,11 @@ describe('createSession', () => {
     harness.session.toggle()
     expect(harness.session.playing).toBe(false)
 
-    expect(harness.sent()).toEqual([{ op: 'play' }, { op: 'stop' }])
+    expect(harness.sent()).toEqual([
+      { op: 'set-bpm', bpm: 120 }, // the settings, installed by the start above
+      { op: 'play' },
+      { op: 'stop' },
+    ])
   })
 
   it('sends the tempo of every step of a drag', async () => {
@@ -177,10 +181,41 @@ describe('createSession', () => {
 
     expect(harness.session.bpm).toBe(123)
     expect(harness.sent()).toEqual([
+      { op: 'set-bpm', bpm: 120 },
       { op: 'set-bpm', bpm: 121 },
       { op: 'set-bpm', bpm: 122 },
       { op: 'set-bpm', bpm: 123 },
     ])
+  })
+
+  it('tells a new engine the settings the page is already showing', async () => {
+    // The engine comes up at defaults of its own, and the page comes up showing
+    // a number. Leaving those to agree is leaving the display to be wrong in
+    // silence: nothing reads the tempo back, so a divergence here would show up
+    // as a metronome that does not match the readout and nowhere else.
+    const harness = rig()
+
+    await harness.session.start()
+
+    expect(harness.sent()).toEqual([{ op: 'set-bpm', bpm: 120 }])
+  })
+
+  it('carries the tempo across a restart, and tells the second engine about it', async () => {
+    // The page holds the setting and hands it to whatever engine it has, which
+    // is the whole reason it no longer has to reset the tempo when one goes
+    // away. The transport is the other kind and does not survive: an engine that
+    // has never been told to play is not playing.
+    const harness = rig()
+    await harness.session.start()
+    harness.session.setBpm(174)
+    harness.session.toggle()
+
+    harness.session.stop()
+    await harness.session.start()
+
+    expect(harness.session.bpm).toBe(174)
+    expect(harness.session.playing).toBe(false)
+    expect(harness.sent().at(-1)).toEqual({ op: 'set-bpm', bpm: 174 })
   })
 
   it('does not move the transport it failed to send', async () => {
@@ -241,15 +276,13 @@ describe('createSession', () => {
     expect(harness.session.bpm).toBe(174)
   })
 
-  it('forgets what it believed once the engine is gone', async () => {
-    // The next engine starts stopped and at its own default tempo, having heard
-    // none of this. Carried over, the belief would offer to stop a transport
-    // that never ran and would put a tempo on screen that nothing is playing at
-    // — visible only to someone who compares the number against their ears.
+  it('forgets what belonged to the engine it gave up', async () => {
+    // Two beliefs about a thread that no longer exists. Carried over, the first
+    // would offer to stop a transport that never ran, and the second would show
+    // drops against a ring that has not lost anything.
     const harness = rig()
     await harness.session.start()
     harness.session.toggle()
-    harness.session.setBpm(174)
     harness.refuse()
     harness.session.toggle()
     expect(harness.session.playing).toBe(true)
@@ -260,8 +293,6 @@ describe('createSession', () => {
     await harness.session.start()
 
     expect(harness.session.playing).toBe(false)
-    expect(harness.session.bpm).toBe(120)
-    // The next engine brings a ring of its own, and its counter starts at zero.
     expect(harness.session.dropped).toBe(0)
   })
 

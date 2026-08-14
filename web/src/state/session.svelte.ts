@@ -22,8 +22,16 @@ import type { WorkletMessage } from '../audio/worklet-messages'
 
 export type Status = 'idle' | 'starting' | 'running' | 'failed'
 
-/** Where a fresh engine starts, mirroring `DEFAULT_BPM` in transport.rs. */
-const ENGINE_DEFAULT_BPM = 120
+/**
+ * The tempo a page opens at, and nothing more than that.
+ *
+ * It was a mirror of `DEFAULT_BPM` in transport.rs while the engine was left to
+ * start wherever it starts and the page merely displayed the same number. Two
+ * defaults agreeing is not agreement — it is two answers that have not been
+ * compared — and the number on screen was the one that could be wrong in
+ * silence. The engine is told this now, so it is the page's own choice.
+ */
+const INITIAL_BPM = 120
 
 /**
  * Run `tick` on every frame, and hand back the way to stop it.
@@ -114,7 +122,7 @@ export function createSession(deps: SessionDeps = {}): Session {
   // engine holds the truth and nothing reads it back, so this is an open loop. It
   // is honest for controls that only ever move on a gesture.
   let playing = $state(false)
-  let bpm = $state(ENGINE_DEFAULT_BPM)
+  let bpm = $state(INITIAL_BPM)
 
   // What the ring's own counter says, sampled where it can have changed. A tally
   // kept here beside it would be a second answer to one question, and the ring's
@@ -151,14 +159,14 @@ export function createSession(deps: SessionDeps = {}): Session {
     const live = handle
     handle = null
     failure = reason
-    // Both are beliefs about a thread that no longer exists, and nothing carries
-    // a belief across: whatever comes back from here is a new engine at its own
-    // defaults, which never heard any of this. Left standing, they would put a
-    // tempo on screen that no engine is playing at.
+    // A belief about a thread that no longer exists. The tempo beside it is not
+    // dropped and this one is, and the difference is what each is about: a tempo
+    // is a setting the page holds and hands to whatever engine it has, while a
+    // transport that has never been told to play is not playing — not by default
+    // but by definition, so there is nothing here to carry over.
     playing = false
-    bpm = ENGINE_DEFAULT_BPM
-    // Including the drops: the next engine comes with a ring of its own, whose
-    // counter starts at zero.
+    // Same for the drops: the next engine comes with a ring of its own, and that
+    // ring's counter starts at zero.
     dropped = 0
 
     // Not awaited, and the rejection is dropped: the context is already
@@ -191,6 +199,18 @@ export function createSession(deps: SessionDeps = {}): Session {
     }
 
     handle = started.value
+
+    // The engine comes up holding defaults of its own, and what it plays has to
+    // be what this page says rather than what those defaults happen to be. So
+    // the settings go over before anything else does: with them sent, no number
+    // on screen is a number the engine was never told, and the page stops being
+    // able to display a tempo nothing is playing at.
+    //
+    // One command today and a list of them by the time there is a pattern to
+    // send — this is the same path a project being opened will take, which is
+    // why it is the ordinary write path and not something start does specially.
+    send({ op: 'set-bpm', bpm })
+
     // Started here rather than woken by an effect that watches the handle. The
     // loop's life is exactly the handle's, and both are decided in this function
     // and in `discard`, so there is no dependency set left to get wrong. What
