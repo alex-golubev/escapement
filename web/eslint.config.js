@@ -86,6 +86,32 @@ export default defineConfig(
   },
 
   {
+    // What ships is what sits under `src/`, minus the specs beside it — and
+    // that is meant to be readable from the path rather than worked out. Half
+    // of it already is: a support file that reaches for `node:` fails
+    // `pnpm check`, because the specs pull it into the app project and that
+    // project is told about no Node types at all. This is the other half, which
+    // nothing checked. An import of `tests/` from a module that ships compiles,
+    // lints, and bundles the fake into the page.
+    files: ['src/**'],
+    ignores: ['**/*.spec.ts'],
+    rules: {
+      '@typescript-eslint/no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: ['**/tests/**'],
+              message:
+                'tests/ holds fakes and helpers. Only a spec may import them; nothing that ships may.',
+            },
+          ],
+        },
+      ],
+    },
+  },
+
+  {
     // The audio thread. The rules here are the two from CLAUDE.md that a
     // linter can actually check. Specs sit in this directory too but do not
     // run there, and both rules are justified by where the code executes.
