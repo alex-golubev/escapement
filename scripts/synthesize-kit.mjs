@@ -44,6 +44,67 @@ function noise(seed) {
 const seconds = (value) => Math.round(value * RATE)
 const decay = (t, tau) => Math.exp(-t / tau)
 
+/**
+ * One biquad section, in place — the RBJ cookbook coefficients.
+ *
+ * Two poles rather than the one-pole that was here, and it is the difference
+ * between a filter and a tilt: at six decibels an octave the band being asked
+ * for is still mostly everything else. Sections are cascaded by calling this
+ * twice, which is what the sounds below do.
+ *
+ * Every caller filters before it envelopes. The other order works and sounds
+ * different: the filter would then be ringing at an amplitude that is already
+ * falling, which smears the attack — the one part of a drum that nothing
+ * downstream can put back.
+ */
+function biquad(samples, { type, hz, q }) {
+  const w = (2 * Math.PI * hz) / RATE
+  const cosine = Math.cos(w)
+  const alpha = Math.sin(w) / (2 * q)
+
+  const [b0, b1, b2] =
+    type === 'bandpass'
+      ? [alpha, 0, -alpha]
+      : [(1 + cosine) / 2, -(1 + cosine), (1 + cosine) / 2]
+  const a0 = 1 + alpha
+  const a1 = -2 * cosine
+  const a2 = 1 - alpha
+
+  let x1 = 0
+  let x2 = 0
+  let y1 = 0
+  let y2 = 0
+  for (let i = 0; i < samples.length; i += 1) {
+    const x0 = samples[i]
+    const y0 = (b0 * x0 + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2) / a0
+    x2 = x1
+    x1 = x0
+    y2 = y1
+    y1 = y0
+    samples[i] = y0
+  }
+}
+
+/**
+ * Scale to unit RMS, in place.
+ *
+ * For noise about to be mixed with something else, and **RMS rather than peak
+ * for exactly that reason.** A band-pass passes a fraction of what white noise
+ * carries, and how large a fraction depends on where the band sits and how
+ * wide — so a mix written before any filter existed stops meaning what it says
+ * the moment one arrives, and drifts again with every tuning of it. Peak would
+ * not fix that: noise at unit peak carries a third of the energy a sine at unit
+ * peak does, so a half-and-half mix by peak is a tone with hiss on it, which is
+ * what the first attempt here measured as.
+ */
+function levelled(samples) {
+  let sum = 0
+  for (const value of samples) sum += value * value
+  const rms = Math.sqrt(sum / samples.length)
+  if (rms > 0) for (let i = 0; i < samples.length; i += 1) samples[i] /= rms
+  return samples
+}
+
 function kick() {
   const out = new Float32Array(seconds(0.3))
   let phase = 0
@@ -57,12 +118,26 @@ function kick() {
 }
 
 function snare() {
-  const out = new Float32Array(seconds(0.18))
+  const frames = seconds(0.18)
+  const hiss = new Float32Array(frames)
   const random = noise(0x9e37_79b9)
-  for (let i = 0; i < out.length; i += 1) {
+  for (let i = 0; i < frames; i += 1) hiss[i] = random()
+
+  // **Noise gets a band, and it is bounded above as well as below.** The rule
+  // holds for every noise sound here and was learned by measuring one: white
+  // noise reaches Nyquist, so a good half of what is normalised to full scale
+  // sits where it is barely audible — and `decodeAudioData` resamples to the
+  // device, which on a 44.1 kHz machine throws that half away and leaves the
+  // sound both quieter and duller than on a 48 kHz one. Where the band sits is
+  // per sound; that there is one at all is not.
+  biquad(hiss, { type: 'bandpass', hz: 3_200, q: 0.5 })
+  levelled(hiss)
+
+  const out = new Float32Array(frames)
+  for (let i = 0; i < frames; i += 1) {
     const t = i / RATE
     out[i] =
-      random() * decay(t, 0.045) * 0.8 + Math.sin(2 * Math.PI * 190 * t) * decay(t, 0.07) * 0.5
+      hiss[i] * decay(t, 0.045) * 0.7 + Math.sin(2 * Math.PI * 190 * t) * decay(t, 0.06) * 0.5
   }
   return out
 }
@@ -71,33 +146,42 @@ function snare() {
 function hat(tau, length, seed) {
   const out = new Float32Array(seconds(length))
   const random = noise(seed)
-  let previous = 0
-  let highpass = 0
-  for (let i = 0; i < out.length; i += 1) {
-    const value = random()
-    // One pole of high-pass, enough to take the body out of white noise and
-    // leave the hiss. A cymbal is inharmonic partials; this is the cheap
-    // version of that and sounds like one at this length.
-    highpass = 0.85 * (highpass + value - previous)
-    previous = value
-    out[i] = highpass * decay(i / RATE, tau)
-  }
+  for (let i = 0; i < out.length; i += 1) out[i] = random()
+
+  // High, because a cymbal is; a band rather than a slope, for the reason at
+  // the snare. That reason was found here: two high-passes at 7 kHz were
+  // written first and measured 78% of the sound above 12 kHz. Twice the poles
+  // in the right shape is not the same as twice the filter.
+  biquad(out, { type: 'bandpass', hz: 9_000, q: 0.8 })
+  biquad(out, { type: 'bandpass', hz: 9_000, q: 0.8 })
+
+  for (let i = 0; i < out.length; i += 1) out[i] *= decay(i / RATE, tau)
   return out
 }
 
 function clap() {
-  const out = new Float32Array(seconds(0.2))
+  const frames = seconds(0.2)
+  const hiss = new Float32Array(frames)
   const random = noise(0x1234_5678)
+  for (let i = 0; i < frames; i += 1) hiss[i] = random()
+
+  // Lower and narrower than the hat: what a clap is made of is a room and two
+  // hands, neither of which is bright. Same rule as the snare's, and the band
+  // is the difference between a clap and an escape of steam.
+  biquad(hiss, { type: 'bandpass', hz: 1_500, q: 0.55 })
+  biquad(hiss, { type: 'bandpass', hz: 1_500, q: 0.55 })
+
   // Three bursts and a tail: one burst is a snare, and the gap between hands is
   // what a clap is.
   const bursts = [0, 0.009, 0.018]
-  for (let i = 0; i < out.length; i += 1) {
+  const out = new Float32Array(frames)
+  for (let i = 0; i < frames; i += 1) {
     const t = i / RATE
     let envelope = decay(Math.max(0, t - 0.026), 0.06) * 0.35
     for (const start of bursts) {
       if (t >= start) envelope = Math.max(envelope, decay(t - start, 0.006))
     }
-    out[i] = random() * envelope
+    out[i] = hiss[i] * envelope
   }
   return out
 }
@@ -114,24 +198,43 @@ function tom() {
 }
 
 function rim() {
-  const out = new Float32Array(seconds(0.06))
+  const frames = seconds(0.06)
+  const hiss = new Float32Array(frames)
   const random = noise(0xcafe_babe)
-  for (let i = 0; i < out.length; i += 1) {
+  for (let i = 0; i < frames; i += 1) hiss[i] = random()
+
+  // Around the tone it is mixed with, so the two read as one strike on one
+  // piece of wood rather than as a click with hiss over it.
+  biquad(hiss, { type: 'bandpass', hz: 2_200, q: 0.7 })
+  levelled(hiss)
+
+  const out = new Float32Array(frames)
+  for (let i = 0; i < frames; i += 1) {
     const t = i / RATE
-    out[i] =
-      (random() * 0.5 + Math.sin(2 * Math.PI * 1_700 * t) * 0.5) * decay(t, 0.009)
+    out[i] = (hiss[i] * 0.5 + Math.sin(2 * Math.PI * 1_700 * t) * 0.5) * decay(t, 0.009)
   }
   return out
 }
 
 function cowbell() {
   const out = new Float32Array(seconds(0.2))
-  // Two detuned square-ish tones, which is the whole trick behind the 808's.
+  // Two square tones, 540 and 800 Hz — the 808's pair, and its interval.
   const square = (hz, t) => Math.sign(Math.sin(2 * Math.PI * hz * t))
   for (let i = 0; i < out.length; i += 1) {
     const t = i / RATE
-    out[i] = (square(540, t) * 0.5 + square(800, t) * 0.5) * decay(t, 0.09) * 0.6
+    out[i] = square(540, t) * 0.5 + square(800, t) * 0.5
   }
+
+  // **And the filter, which is the part that makes it a bell.** The pair alone
+  // was written first and measured: two fundamentals at equal level with their
+  // odd harmonics trailing off, which is a doorbell rather than a cowbell. What
+  // is wanted is the hollow middle — so the fundamentals are pushed down and
+  // the band around them is what is left, in two sections because one leaves
+  // them where they were.
+  biquad(out, { type: 'bandpass', hz: 2_600, q: 1.4 })
+  biquad(out, { type: 'bandpass', hz: 2_600, q: 1.4 })
+
+  for (let i = 0; i < out.length; i += 1) out[i] *= decay(i / RATE, 0.09)
   return out
 }
 
