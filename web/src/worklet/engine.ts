@@ -36,13 +36,13 @@ export interface EngineExports {
    * ends it, and linear memory dies with the worklet global scope when the page
    * closes the context. A free issued from this side would have to prove that no
    * `process` call is in flight, which the worklet cannot know — so the pairing
-   * is kept by not allocating twice rather than by freeing.
+   * is kept by not allocating twice rather than by freeing. That turns on when a
+   * free could be issued and not on what would be freed, so an instance that
+   * comes to hold more — sample data, when there is some — does not reopen it.
    *
-   * It is not dead ABI. Reloading a sample slot frees the previous contents
-   * inside `engine_sample_alloc` itself, so M1 needs no teardown either; the
-   * caller that needs this one is the offline renderer on M3, which builds and
-   * drops instances off the audio thread entirely, and `engine-abi.spec.ts`,
-   * which does exactly that today.
+   * It is not dead ABI. The caller that needs it is the offline renderer on M3,
+   * which builds and drops instances off the audio thread entirely, and
+   * `engine-abi.spec.ts`, which does exactly that today.
    */
   engine_free(instance: number): void
   engine_out_ptr(instance: number, channel: number): number
