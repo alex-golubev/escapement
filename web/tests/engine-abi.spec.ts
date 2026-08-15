@@ -13,6 +13,10 @@ import { fileURLToPath } from 'node:url'
 import { beforeAll, describe, expect, it } from 'vitest'
 
 import { COMMAND_SIZE, PROTOCOL_VERSION, writeCommand } from '../src/audio/protocol'
+// The block size the worklet allocates the engine for, from the module both
+// threads read it out of.
+import { QUANTUM } from '../src/audio/worklet-messages'
+import { CMD_CAPACITY } from './support/engine-fake'
 // The interface the worklet itself declares, not a copy of the parts used
 // here: a second description of the ABI would drift from the first, and this
 // file exists to catch drift. The telemetry indices arrive the same way, and
@@ -28,9 +32,6 @@ import {
 } from '../src/worklet/telemetry-block'
 
 const WASM_PATH = fileURLToPath(new URL('../public/engine.wasm', import.meta.url))
-
-/** Same block size the worklet allocates for; Web Audio offers no other. */
-const QUANTUM = 128
 
 /** A rate the engine accepts. Not 48000 — nothing may assume that one. */
 const SAMPLE_RATE = 44100
@@ -69,6 +70,26 @@ describe('the compiled engine', () => {
     // byte layout with `wire_format_is_pinned`; this compares the number that
     // came out of the compiled module against the number JS will encode with.
     expect(instantiate().engine_protocol_version()).toBe(PROTOCOL_VERSION)
+  })
+
+  it('holds the exchange area the rest of the suite stands in for', () => {
+    // Three test-side stand-ins render or drain against a 256-record exchange
+    // area and call it what the engine reports. Until this line nothing asked
+    // the engine, and the claim was free.
+    //
+    // Nothing that ships depends on it — the worklet reads
+    // `engine_cmd_capacity` and sizes its view from the answer, which is the
+    // whole reason a mismatch here is quiet. What it would spoil is the tests'
+    // account of the engine: `drainCommands` overflowing at 256 is what the
+    // exchange-area tests are about, and against a 512-record engine they would
+    // describe an overflow that never happens and pass every time.
+    const engine = instantiate()
+    const instance = engine.engine_new(SAMPLE_RATE, QUANTUM)
+    expect(instance).not.toBe(0)
+
+    expect(engine.engine_cmd_capacity(instance)).toBe(CMD_CAPACITY)
+
+    engine.engine_free(instance)
   })
 
   it('renders a silent quantum through the ABI as JS sees it', () => {

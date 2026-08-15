@@ -21,11 +21,9 @@ import {
 } from '../audio/ring'
 import { createWriter } from '../audio/ring-writer'
 import { readRecord, telemetryBlock } from '../../tests/support/abi'
+import { CMD_CAPACITY } from '../../tests/support/engine-fake'
 import { probe, probeMismatch } from '../../tests/support/ring-harness'
 import { drainCommands, publishTelemetry } from './exchange'
-
-/** What the engine reports through `engine_cmd_capacity`. */
-const CMD_CAPACITY = 256
 
 /**
  * Records in the long run below, and the number §6.2 names. It laps the

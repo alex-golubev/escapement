@@ -11,6 +11,20 @@
 // thread through structured clone, so they are readings of what happened there
 // and there is nothing here for anyone to write back into.
 
+/**
+ * Frames in a render quantum. Web Audio renders blocks of exactly this size and
+ * offers no way to ask for another.
+ *
+ * Here, beside the message that reports the real one, because the two ends of
+ * that check are what the number is for: the worklet allocates the engine for
+ * it, the page holds the reported count against it, and a page comparing the
+ * report against a literal of its own would be comparing it against a number
+ * nothing was built with. A spec that gives itself the right to change this —
+ * or a host that already has — then shows up as a failed check rather than as
+ * an engine rendering into buffers of the wrong length.
+ */
+export const QUANTUM = 128
+
 /** The processor constructed and instantiated the engine. */
 export interface ReadyMessage {
   readonly type: 'ready'
@@ -31,9 +45,9 @@ export interface FailedMessage {
 }
 
 /**
- * The frame count of the first rendered quantum. Web Audio specifies 128 and
- * nothing else, but the native test suite cannot observe the real value, so it
- * is reported once and checked here.
+ * The frame count of the first rendered quantum, as the host actually rendered
+ * it. Reported because no test in either suite can observe it: what the browser
+ * hands `process` is visible from inside a worklet and nowhere else.
  */
 export interface FirstQuantumMessage {
   readonly type: 'first-quantum'

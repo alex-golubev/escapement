@@ -61,6 +61,7 @@ import { RING_CAPACITY, createRing, openRing } from '../src/audio/ring'
 import { createWriter } from '../src/audio/ring-writer'
 import { createReader } from '../src/audio/telemetry'
 import type { Telemetry } from '../src/audio/telemetry'
+import { CMD_CAPACITY } from './support/engine-fake'
 import {
   PROGRESS_DRAINED,
   PROGRESS_RUNNING,
@@ -77,9 +78,6 @@ import type { RingWorkerData, RingWorkerMessage } from './support/ring-harness'
  * again and again rather than once.
  */
 const COMMANDS = 100_000
-
-/** What the engine reports through `engine_cmd_capacity`. */
-const CMD_CAPACITY = 256
 
 /**
  * How the audio thread takes its records. Both shapes assert the same things —

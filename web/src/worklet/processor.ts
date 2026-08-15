@@ -10,14 +10,8 @@
 import { describeInitError, initEngine } from './engine'
 import type { EngineState } from './engine'
 import { refreshViews, renderQuantum } from './render'
+import { QUANTUM } from '../audio/worklet-messages'
 import type { WorkletMessage } from '../audio/worklet-messages'
-
-/**
- * Web Audio renders in blocks of exactly this size and offers no way to change
- * it. The engine is allocated for it, and the first observed quantum is
- * reported back so the assumption stops being an assumption.
- */
-const QUANTUM = 128
 
 // AudioWorklet globals are absent from lib.dom, and @types/audioworklet
 // redefines enough of it to collide when both are in one program. The surface

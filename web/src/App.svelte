@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { QUANTUM } from './audio/worklet-messages'
   import { createSession } from './state/session.svelte'
 
   // The readiness criterion for this milestone, checked on the page instead of
@@ -63,9 +64,12 @@
         <code>AudioContext.sampleRate</code>
         <span>{session.sampleRate} Hz</span>
       </li>
+      <!-- Against the constant the worklet allocated the engine for, so that
+           this row says the host rendered what was built for it rather than
+           that it rendered a number this file happens to name. -->
       <li
-        class:ok={session.quantum === 128}
-        class:fail={session.quantum !== null && session.quantum !== 128}
+        class:ok={session.quantum === QUANTUM}
+        class:fail={session.quantum !== null && session.quantum !== QUANTUM}
       >
         <code>render quantum</code>
         <span>{session.quantum ?? 'awaiting first block'}</span>
