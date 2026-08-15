@@ -70,6 +70,81 @@ pub fn clamped(value: f32, low: f32, high: f32) -> Option<f32> {
     value.is_finite().then(|| fz(value.clamp(low, high)))
 }
 
+/// Where the limiter stops being transparent.
+///
+/// **Its own number, not a reference to the pan law's centre gain**, which
+/// today happens to be the same value. Nothing derives one from the other:
+/// the centre gain falls out of constant power, this is a level chosen for
+/// what it lets through. Written as a reference they would drift together on
+/// a change to either, silently and in the wrong direction.
+///
+/// Chosen so that one voice at unity, panned centre, passes untouched — below
+/// this lies "a single hit or quieter" and above it "something summed". The
+/// same voice panned hard reaches unity and does cross it; that asymmetry is
+/// the pan law's, not the threshold's.
+///
+/// **Provisional.** It is the one number in the mixer that ears settle rather
+/// than a test, and there is nothing to listen with until samples can be
+/// loaded from the page.
+const LIMIT_THRESHOLD: f32 = std::f32::consts::FRAC_1_SQRT_2;
+
+/// Bound a stereo frame without a hard corner.
+///
+/// The sum is deliberately hot — eight tracks at unity reach 5.66, so this
+/// runs on any full pattern rather than waiting for a peak — which makes the
+/// curve part of how the instrument sounds and not an emergency brake.
+///
+/// **Exactly transparent below the threshold, and that is structural rather
+/// than arithmetic:** below it the samples are not touched at all. It has to
+/// be, because every amplitude test in the engine reads the output as a
+/// product of velocity, gain and pan law, and a curve that bends everywhere —
+/// `tanh` bends at 0.7071 by a fifth — turns all of them into approximations
+/// at once. Above the threshold the excess is compressed towards unity, and
+/// the output never passes it.
+///
+/// It does *reach* it, which the arithmetic does not predict and `f32` does:
+/// the curve's asymptote is approached but never attained in real numbers, and
+/// the remaining distance drops below half an ulp of 1.0 somewhere past a
+/// level of a million. Full scale is a legal sample, so this costs nothing —
+/// but "strictly under unity" would be a false thing to promise downstream.
+///
+/// **The channels are linked**, one coefficient from the louder of the two.
+/// Limiting them apart costs one line less and moves the stereo image: a hard
+/// panned hit pushes its own channel down further than the other, so the image
+/// drifts towards the quiet side, and only while loud. An artefact that comes
+/// and goes with level is one that gets blamed on the sample.
+///
+/// Feedback there is none, so no flush; a finite input is a precondition, held
+/// by [`sanitized`] over sample data and [`clamped`] over every parameter that
+/// reaches a multiplier. Linking does mean a non-finite on one channel would
+/// take both — worth knowing, not worth a branch in the per-frame path for a
+/// value that cannot arrive.
+pub fn soft_limit(left: f32, right: f32) -> (f32, f32) {
+    let magnitude = left.abs().max(right.abs());
+    if magnitude <= LIMIT_THRESHOLD {
+        return (left, right);
+    }
+
+    let headroom = 1.0 - LIMIT_THRESHOLD;
+    let over = magnitude - LIMIT_THRESHOLD;
+    // `over / (over + headroom)` climbs from 0 to 1 with a slope of `1 /
+    // headroom` where it starts, so the curve leaves the threshold at exactly
+    // the slope of the line feeding into it. No corner.
+    //
+    // **Written to divide before multiplying, and normalised by nothing.** The
+    // same curve reads more naturally as `headroom × u / (1 + u)` over a
+    // normalised `u = over / headroom` — and that form answers `f32::MAX` with
+    // a NaN on **both** channels, because `over / headroom` overflows to
+    // infinity and `inf / (1 + inf)` is not a number. This form divides two
+    // quantities of the same size, so its ratio lands in `[0, 1)` for every
+    // finite input and the multiplication after it cannot overflow either.
+    // Sample data is where such a level comes from: `sanitized` passes `1e30`
+    // deliberately, a sample above unity being loud rather than wrong.
+    let limited = LIMIT_THRESHOLD + headroom * (over / (over + headroom));
+    let scale = limited / magnitude;
+    (left * scale, right * scale)
+}
+
 /// The longest a ramp may be.
 ///
 /// One second at 768 kHz, the highest rate any audio device reports. Every
@@ -265,6 +340,96 @@ mod tests {
         // The bounds themselves are inside the range.
         assert_eq!(clamped(0.0, 0.0, 2.0), Some(0.0));
         assert_eq!(clamped(2.0, 0.0, 2.0), Some(2.0));
+    }
+
+    #[test]
+    fn the_limiter_is_exactly_transparent_up_to_its_threshold() {
+        // The property the rest of the engine's tests stand on. Every
+        // assertion about an onset's amplitude reads the output as a product,
+        // and it stays a product only while this is an equality — so this is
+        // an equality too, and the threshold itself is included because `<=`
+        // and `<` differ by exactly the case a single centred voice lands on.
+        //
+        // **Which is not to say this pins the comparison, and mutation says so:
+        // `<` here survives.** At the threshold exactly, the curve is the
+        // identity — the excess is zero, so the coefficient works out to one —
+        // and both branches answer the same thing. What the branch is load
+        // bearing for is everything *below* the threshold, where the curve's
+        // denominator turns negative and it stops being a limiter at all.
+        for level in [0.0f32, 1e-9, 0.25, 0.5, LIMIT_THRESHOLD] {
+            assert_eq!(soft_limit(level, level), (level, level), "at {level}");
+            assert_eq!(soft_limit(-level, level), (-level, level), "at -{level}");
+            assert_eq!(soft_limit(level, 0.0), (level, 0.0), "at {level} on one side");
+        }
+    }
+
+    #[test]
+    fn the_limiter_bounds_anything_however_loud() {
+        // The ceiling is unity and it is reachable: past a million the
+        // remaining distance to the asymptote is under half an ulp, so `f32`
+        // arrives where the arithmetic says it only approaches. Full scale is
+        // a legal sample; what must never happen is a level above it, which is
+        // what this states.
+        for level in [1.0f32, 5.657, 100.0, 1e9, f32::MAX] {
+            let (left, right) = soft_limit(level, -level);
+            assert!(left > LIMIT_THRESHOLD && left <= 1.0, "{level} gave {left}");
+            assert_eq!(right, -left, "the curve is not odd at {level}");
+        }
+    }
+
+    #[test]
+    fn the_limiter_leaves_no_corner_where_it_takes_over() {
+        // A soft limiter with a corner in its slope is one that still clicks,
+        // just more quietly: the discontinuity moves out of the value and into
+        // its derivative, where it is heard as a timbre that changes exactly at
+        // the threshold instead of as a snap.
+        //
+        // Only the slope above is measured. Below, the function returns its
+        // argument, so the slope is one by construction rather than by
+        // arithmetic — and a finite difference taken across the threshold would
+        // be measuring the rounding of `T - step` instead of the curve.
+        let slope = |step: f32| (soft_limit(LIMIT_THRESHOLD + step, 0.0).0 - LIMIT_THRESHOLD) / step;
+
+        assert!(slope(1e-2) < 1.0, "the curve rises faster than the line into it");
+        assert!(slope(1e-3) > 0.99, "the curve starts at a slope of {}", slope(1e-3));
+        assert!(
+            slope(1e-3) > slope(1e-2),
+            "the slope does not approach the line's as the step shrinks"
+        );
+    }
+
+    #[test]
+    fn the_limiter_never_turns_a_louder_input_into_a_quieter_output() {
+        let mut previous = 0.0;
+        for step in 0..2_000 {
+            let level = step as f32 * 0.01;
+            let (limited, _) = soft_limit(level, 0.0);
+            assert!(limited >= previous, "{level} came out below the sample before it");
+            previous = limited;
+        }
+    }
+
+    #[test]
+    fn the_limiter_holds_the_stereo_image_still() {
+        // What linking buys, stated as the thing a listener would notice. Held
+        // apart, the loud channel is pushed down and the quiet one — below the
+        // threshold — is not touched at all, so the image slides towards the
+        // quiet side and slides back as the level falls.
+        // **Both orders, and the second is not symmetry for its own sake.** A
+        // coefficient taken from one named channel rather than from the louder
+        // of the two passes every assertion here while the loud side happens to
+        // be that channel — and lets the other one through unbounded. Checked
+        // by mutation: keyed to the left, only the pair below goes red.
+        for (loud, quiet) in [(2.0f32, 0.5f32), (0.5, 2.0)] {
+            let (left, right) = soft_limit(loud, quiet);
+            assert!(left.abs() <= 1.0 && right.abs() <= 1.0, "{loud}/{quiet} left {left}/{right}");
+            assert!(left < loud, "the loud channel was not limited at all");
+            assert!(right < quiet, "the quiet channel was left where it was");
+            assert!(
+                (left / right - loud / quiet).abs() < 1e-4,
+                "the image moved: {left} / {right} is not {loud} / {quiet}"
+            );
+        }
     }
 
     #[test]

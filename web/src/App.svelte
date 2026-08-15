@@ -118,7 +118,12 @@
       </li>
       <li>
         <code>peak L / R</code>
-        <span class="peaks">
+        <!-- The reading is of the bus before the limiter, so it runs past 1
+             on any busy pattern — see `Telemetry.peakL`. The bars are clamped
+             because a bar has an end; the overload is what the colour says,
+             since a clamp alone would turn the one thing worth knowing into a
+             bar that looks merely full. -->
+        <span class="peaks" class:fail={session.peakL > 1 || session.peakR > 1}>
           <span class="meter"
             ><span style="width: {Math.min(1, session.peakL) * 100}%"></span></span
           >

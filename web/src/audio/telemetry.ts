@@ -18,6 +18,18 @@ import type { RingViews } from './ring'
 export interface Telemetry {
   /** Transport position in samples. A plain number, exact past any session. */
   readonly position: number
+  /**
+   * Peak level of the mix bus, per channel, with the engine's own ballistics
+   * already applied.
+   *
+   * **Not bounded by 1.** It is read before the engine's limiter, which is
+   * where the only useful reading is: the sum is deliberately hot, so a level
+   * taken after the limiter sits against the ceiling and reports the same
+   * number for a full pattern as for a third of one. Nothing is lost by
+   * reading early — the limiter is a pure monotonic curve, so the level after
+   * it follows from this one and not the other way round — but a reader that
+   * assumes a 0…1 range will draw past its box.
+   */
   readonly peakL: number
   readonly peakR: number
 }

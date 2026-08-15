@@ -13,7 +13,7 @@
 
 use crate::TRACKS;
 use crate::commands::Command;
-use crate::dsp::fz;
+use crate::dsp::{fz, soft_limit};
 use crate::mixer::Mixer;
 use crate::pattern::Pattern;
 use crate::ring::CommandBlock;
@@ -401,6 +401,11 @@ impl Engine {
         // One frame of the pool, kept apart by track. The pool fills every
         // element before anything reads it, so one array serves the segment.
         let mut tracks = [[0.0f32; 2]; TRACKS];
+        // Collected as the segment is written rather than swept out of the
+        // buffer afterward, because what the meter wants is no longer in the
+        // buffer: the limiter stands between them. See the two lines that
+        // fill it.
+        let mut block_peak = [0.0f32; 2];
 
         for frame in 0..frames {
             // Both triggers stand before the frame is rendered, which is what
@@ -424,15 +429,14 @@ impl Engine {
             debug_assert!(click.is_finite(), "non-finite sample out of the metronome");
 
             self.sampler.next_frame(&mut tracks);
-            // Summed with nothing applied to it. What a track's level and pan
-            // do to its voices belongs to the mixer, which keeps both and
-            // multiplies neither yet — `mixer.rs` argues why at the fields
-            // themselves — and this line is where they will land.
-            let (mut left, mut right) = (click, click);
-            for track in &tracks {
-                left += track[0];
-                right += track[1];
-            }
+            // Each track through its own two gains, then summed. The metronome
+            // joins the bus after that rather than through a track of its own:
+            // it has no level, no pan and no place in the pattern, and giving
+            // it one would put a ninth track in the mixer that the UI could
+            // never show.
+            let [mut left, mut right] = self.mixer.mix_tracks(&tracks);
+            left += click;
+            right += click;
             debug_assert!(left.is_finite() && right.is_finite(), "non-finite sample out of the sampler");
 
             // Per frame, not per segment or per quantum: a gain that stepped
@@ -443,6 +447,26 @@ impl Engine {
             let (left, right) = (left * gain, right * gain);
             debug_assert!(left.is_finite() && right.is_finite(), "non-finite sample out of the mixer");
 
+            // **The meter reads here, before the limiter**, and the position of
+            // these two lines is the whole decision. The sum is deliberately
+            // hot — eight tracks at unity reach 5.66 — so a reading taken after
+            // the limiter sits against the ceiling and stays there, reporting
+            // the same number for eight tracks, seven and three. Taken before,
+            // it says how far into the limiter the mix is, which is the one
+            // thing a fader can act on.
+            //
+            // Nothing is lost by reading early: the limiter is a pure
+            // monotonic function, so the peak after it is the peak before it
+            // put through the same curve, and the page can have both from this
+            // one number. The converse does not hold.
+            //
+            // `max` and not a comparison, because `f32::max` returns the other
+            // argument for a NaN and so cannot leave the meter stuck.
+            block_peak[0] = block_peak[0].max(left.abs());
+            block_peak[1] = block_peak[1].max(right.abs());
+
+            let (left, right) = soft_limit(left, right);
+
             out_l[frame] = left;
             out_r[frame] = right;
 
@@ -452,19 +476,22 @@ impl Engine {
         }
 
         self.transport.advance(frames as u32);
-        self.update_peaks(out_l, out_r);
+        self.update_peaks(block_peak, frames);
     }
 
-    fn update_peaks(&mut self, out_l: &[f32], out_r: &[f32]) {
-        let seconds = out_l.len() as f32 / self.transport.sample_rate() as f32;
+    /// Fold one segment's peaks into the falling reading.
+    ///
+    /// Takes the peaks rather than the buffers: they are of the bus before the
+    /// limiter, which is not what the buffers hold. Reading them off the
+    /// output would be a second pass over it and would measure the wrong
+    /// signal.
+    fn update_peaks(&mut self, block_peak: [f32; 2], frames: usize) {
+        let seconds = frames as f32 / self.transport.sample_rate() as f32;
         let decay = PEAK_FALL_PER_SECOND.powf(seconds);
 
-        for (channel, out) in [out_l, out_r].into_iter().enumerate() {
-            // f32::max returns the non-NaN argument, so a stray NaN on the
-            // input will not poison the meter reading permanently.
-            let block_peak = out.iter().fold(0.0f32, |peak, s| peak.max(s.abs()));
+        for (channel, peak) in block_peak.into_iter().enumerate() {
             // The falling reading is feedback state.
-            self.peak[channel] = fz(self.peak[channel] * decay).max(block_peak);
+            self.peak[channel] = fz(self.peak[channel] * decay).max(peak);
         }
     }
 }
@@ -473,6 +500,7 @@ impl Engine {
 mod tests {
     use super::*;
     use crate::commands::Record;
+    use crate::mixer::{DEFAULT_PAN, channel_gains};
     use crate::pattern::STEPS;
     use crate::testing::Xorshift64;
 
@@ -486,18 +514,58 @@ mod tests {
         records.iter().flat_map(|r| r.encode()).collect()
     }
 
-    /// One quantum, returning the left channel.
-    ///
-    /// Left alone is enough only while the two channels agree, and that is
-    /// asserted by one test rather than here — see
-    /// `both_channels_carry_the_same_signal_until_there_is_pan` for why it is
-    /// not asserted on every call.
-    fn quantum(engine: &mut Engine, records: &[Record]) -> Vec<f32> {
+    /// One quantum, both channels.
+    fn stereo_quantum(engine: &mut Engine, records: &[Record]) -> (Vec<f32>, Vec<f32>) {
         let bytes = encode(records);
         let mut left = vec![0.0f32; Q];
         let mut right = vec![0.0f32; Q];
         engine.process(&mut left, &mut right, &bytes, records.len() as u32);
-        left
+        (left, right)
+    }
+
+    /// One quantum, returning the left channel.
+    ///
+    /// Left alone is enough only while the two channels agree, and that is
+    /// asserted by one test rather than here — see
+    /// `the_channels_stay_together_while_every_track_is_centred` for why it is
+    /// not asserted on every call.
+    fn quantum(engine: &mut Engine, records: &[Record]) -> Vec<f32> {
+        stereo_quantum(engine, records).0
+    }
+
+    /// What one voice at `velocity` comes to on either channel, on a track left
+    /// at unity gain and centre pan.
+    ///
+    /// Through the law rather than as `0.707`, because a literal here would
+    /// agree with itself and these tests are checking against whatever the law
+    /// says. Constant power puts a centred track 3 dB down on each side, which
+    /// is why no amplitude below is its velocity.
+    fn centred(velocity: f32) -> f32 {
+        channel_gains(velocity, DEFAULT_PAN)[0]
+    }
+
+    /// One strike on track 0 at full velocity, with its gain and pan settled.
+    ///
+    /// **The two stages are the point.** A level command starts a ramp, so a
+    /// strike in the same quantum is multiplied by the ramp's first frame
+    /// rather than by the value asked for. The stopped transport settles it:
+    /// the per-frame loop runs whether or not the transport does, so ten
+    /// milliseconds pass for the mixer while nothing sounds.
+    fn strike_with(gain: f32, pan: f32) -> (f32, f32) {
+        let mut engine = Engine::new(SR);
+        load_kit(&mut engine, 1);
+        stereo_quantum(
+            &mut engine,
+            &[
+                Record::immediate(Command::SetMetronome { enabled: false }),
+                Record::immediate(Command::SetTrackGain { track: 0, gain }),
+                Record::immediate(Command::SetTrackPan { track: 0, pan }),
+                Record::immediate(Command::SetStep { track: 0, step: 0, velocity: 1.0 }),
+            ],
+        );
+        skip(&mut engine, 8); // past the 480-frame glide, with room to spare
+        let (left, right) = stereo_quantum(&mut engine, &[Record::immediate(Command::Play)]);
+        (left[0], right[0])
     }
 
     fn render(engine: &mut Engine, quanta: usize) -> Vec<f32> {
@@ -639,14 +707,20 @@ mod tests {
     }
 
     #[test]
-    fn both_channels_carry_the_same_signal_until_there_is_pan() {
+    fn the_channels_stay_together_while_every_track_is_centred() {
         // A test of its own, where it used to be an assertion inside `quantum`
         // — which meant every test in this file asserted it in passing, none of
-        // them said so, and the mixer landing a pan law would turn the file red
-        // all at once with not one of those failures about what its test was
-        // for. Here exactly one fails, and its failure is the pan arriving
-        // rather than a regression: replace it then with what the two channels
-        // are meant to differ by.
+        // them said so, and the mixer landing a pan law would have turned the
+        // file red all at once with not one of those failures about what its
+        // test was for.
+        //
+        // **The pan law arrived and this did not go red**, which the split was
+        // written expecting. Worth keeping rather than explaining away: centre
+        // is the default, so what holds the channels together is no longer that
+        // the engine has one of them — it is a value, and a value can change.
+        // That makes this the statement that the two channel paths are
+        // symmetric, and it is now the only thing standing between a defect in
+        // one of them and every test in this file that reads the left alone.
         //
         // The second assertion is what keeps the first from being free. Two
         // silent channels are equal, so without it this passes for an engine
@@ -772,11 +846,12 @@ mod tests {
         );
         assert_eq!(struck_frames(&sounding), Q, "the fixture left no voice sounding");
         let before = render(&mut engine, 5_120 / Q - 1);
-        assert_eq!(before[before.len() - 1], 1.0, "the metronome was still sounding at the stop");
+        let sustained = centred(1.0);
+        assert_eq!(before[before.len() - 1], sustained, "the metronome was still sounding at the stop");
 
         let tail = quantum(&mut engine, &[Record::immediate(Command::Stop)]);
 
-        assert_eq!(tail[0], 1.0, "the fade opened with a step of its own");
+        assert_eq!(tail[0], sustained, "the fade opened with a step of its own");
         assert!(
             tail.windows(2).all(|pair| pair[1] <= pair[0]),
             "the fade rose somewhere on its way down"
@@ -1044,13 +1119,45 @@ mod tests {
 
         let struck: Vec<usize> = sounding_frames(&signal).into_iter().map(|(at, _)| at).collect();
         assert_eq!(struck, expected, "the grid did not strike where the transport says it should");
-        // Every cell of every track, so a strike is eight voices on a sample of
-        // 1.0. Said here because the positions above would be equally true of a
+        // What a strike is *worth* was asserted here too, and is not any more:
+        // it is `a_strike_carries_every_track_of_its_step`, one test down. The
+        // amplitude of a strike now depends on the pan law and on the limiter,
+        // so it moves for reasons this test is not about, and every one of
+        // those moves would have turned this red with a message about onsets.
+        // The same split the mono assertion needed, made before the second
+        // reason to make it arrived rather than after.
+    }
+
+    #[test]
+    fn a_strike_carries_every_track_of_its_step() {
+        // What the positions above cannot say: they would be equally true of a
         // grid striking one track and dropping seven.
-        assert!(
-            sounding_frames(&signal).iter().all(|&(_, sample)| sample == TRACKS as f32),
-            "a strike did not carry every track of its step"
-        );
+        //
+        // **Struck at an eighth of full velocity, deliberately.** At full it
+        // sums to 5.66 and the limiter answers 0.98 — and answers within a
+        // thousandth of that for seven tracks, or for three, so the reading
+        // stops distinguishing exactly what this test is here to distinguish.
+        // Below the threshold the output is a product again.
+        const VELOCITY: f32 = 0.125;
+
+        let mut engine = Engine::new(SR);
+        load_kit(&mut engine, 1);
+        let mut setup = vec![
+            Record::immediate(Command::SetBpm { bpm: AWKWARD_BPM }),
+            Record::immediate(Command::SetMetronome { enabled: false }),
+        ];
+        for track in 0..TRACKS as u8 {
+            setup.push(Record::immediate(Command::SetStep { track, step: 0, velocity: VELOCITY }));
+        }
+        setup.push(Record::immediate(Command::Play));
+
+        let signal = quantum(&mut engine, &setup);
+
+        // Summed the way the mixer sums it, one track at a time: eight
+        // identical additions do not land where one multiplication by eight
+        // does, and the difference is larger than the equality below allows.
+        let expected = (0..TRACKS).fold(0.0f32, |sum, _| sum + centred(VELOCITY));
+        assert_eq!(sounding_frames(&signal), vec![(0, expected)]);
     }
 
     #[test]
@@ -1059,7 +1166,9 @@ mod tests {
         // a step number read one column over — or never wrapped at the end of
         // the pattern — produces exactly the right output; here four cells hold
         // four velocities, and on a unit impulse the value of a frame is the
-        // velocity of the cell that put it there.
+        // velocity of the cell that put it there, through the pan law. Each
+        // cell strikes alone and the loudest reaches the limiter's threshold
+        // without passing it, so these stay equalities.
         const CELLS: [(u8, u16, f32); 4] = [(0, 0, 0.25), (3, 3, 0.5), (7, 7, 1.0), (2, 15, 0.75)];
 
         let mut engine = Engine::new(SR);
@@ -1082,7 +1191,7 @@ mod tests {
                 CELLS.map(|(_, step, velocity)| {
                     let division = bar * STEPS as i64 + i64::from(step);
                     let at = grid.sample_of_division(division as f64, sequencer::STEPS_PER_BEAT);
-                    (at as usize, velocity)
+                    (at as usize, centred(velocity))
                 })
             })
             .take_while(|&(frame, _)| frame < signal.len())
@@ -1184,6 +1293,157 @@ mod tests {
             muted.iter().any(|&s| s != 0.0),
             "the gain reached zero within a single quantum"
         );
+    }
+
+    /// Below the limiter's threshold at full velocity, so that everything read
+    /// in the level tests is a product rather than a point on a curve.
+    const QUIET: f32 = 0.5;
+
+    #[test]
+    fn panning_a_track_keeps_it_as_loud_as_it_was() {
+        // What constant power means where it can be heard: sweeping a track
+        // across the image changes where it is, not how loud it is. A law that
+        // merely faded one side down would leave the centre 3 dB below either
+        // edge, and a track panned during a take would dip as it crossed.
+        for pan in [-1.0f32, -0.5, 0.0, 0.5, 1.0] {
+            let (left, right) = strike_with(QUIET, pan);
+            let power = left * left + right * right;
+            assert!(
+                (power - QUIET * QUIET).abs() < 1e-6,
+                "pan {pan} rendered at power {power}, not {}",
+                QUIET * QUIET
+            );
+        }
+    }
+
+    #[test]
+    fn a_hard_panned_track_is_exactly_silent_on_the_far_side() {
+        // Exactly, and at both ends — the second half is the whole reason the
+        // law is in its root form. `cos θ` / `sin θ`, the textbook way to write
+        // the same law, is exact at one end only: `cos` of a quarter turn in
+        // `f32` is -4.4e-8 rather than zero, so this assertion would hold on
+        // the left and fail on the right, for no reason a reader could find in
+        // the design.
+        assert_eq!(strike_with(QUIET, -1.0), (QUIET, 0.0));
+        assert_eq!(strike_with(QUIET, 1.0), (0.0, QUIET));
+    }
+
+    #[test]
+    fn a_track_gain_scales_its_own_track_and_no_other() {
+        // The two tracks are pushed to opposite edges so that each channel
+        // carries exactly one of them. Summed together they would not
+        // distinguish a fader that moved the wrong track from one that moved
+        // both — the total would be the same.
+        fn struck(gain_of_track_0: f32) -> (f32, f32) {
+            let mut engine = Engine::new(SR);
+            load_kit(&mut engine, 1);
+            stereo_quantum(
+                &mut engine,
+                &[
+                    Record::immediate(Command::SetMetronome { enabled: false }),
+                    Record::immediate(Command::SetTrackPan { track: 0, pan: -1.0 }),
+                    Record::immediate(Command::SetTrackPan { track: 1, pan: 1.0 }),
+                    Record::immediate(Command::SetTrackGain { track: 0, gain: gain_of_track_0 }),
+                    Record::immediate(Command::SetTrackGain { track: 1, gain: QUIET }),
+                    Record::immediate(Command::SetStep { track: 0, step: 0, velocity: 1.0 }),
+                    Record::immediate(Command::SetStep { track: 1, step: 0, velocity: 1.0 }),
+                ],
+            );
+            skip(&mut engine, 8);
+            let (left, right) = stereo_quantum(&mut engine, &[Record::immediate(Command::Play)]);
+            (left[0], right[0])
+        }
+
+        assert_eq!(struck(QUIET), (QUIET, QUIET), "the fixture did not separate the tracks");
+        assert_eq!(struck(QUIET / 2.0), (QUIET / 2.0, QUIET), "the fader moved more than its track");
+    }
+
+    #[test]
+    fn a_fader_moved_while_its_track_is_silent_has_arrived_by_the_next_strike() {
+        // What advancing only the tracks that sound would cost, and it is not
+        // paid in the silence. The glide would then measure ten milliseconds of
+        // *sounding* rather than of time, so a fader moved during a rest would
+        // still be halfway when the next strike opened — a step at the head of
+        // the sample, which is the zipper the smoothing exists to remove, moved
+        // to where nothing is listening for it.
+        let mut engine = Engine::new(SR);
+        load_kit(&mut engine, 1);
+        stereo_quantum(
+            &mut engine,
+            &[
+                Record::immediate(Command::SetMetronome { enabled: false }),
+                Record::immediate(Command::SetTrackGain { track: 0, gain: QUIET }),
+                Record::immediate(Command::SetStep { track: 0, step: 0, velocity: 1.0 }),
+            ],
+        );
+        // Nothing sounds through any of this: no voice has been struck yet, so
+        // every track's frame is zero and a mixer that skipped them would not
+        // advance at all.
+        skip(&mut engine, 8);
+
+        let struck = quantum(&mut engine, &[Record::immediate(Command::Play)])[0];
+        assert_eq!(struck, centred(QUIET), "the fader had not arrived when the strike did");
+    }
+
+    #[test]
+    fn a_stereo_sample_is_balanced_rather_than_collapsed() {
+        // A sample with an image of its own must keep it. What the pan law does
+        // to a mono voice is pan it; the same two gains over a voice that
+        // already has two different channels is balance, and the two need no
+        // branch between them because the voice hands over a pair either way.
+        //
+        // The rule is written down before anything loads a stereo loop, since
+        // the natural mistake — the law applied to the sum — sounds fine on the
+        // mono material a drum machine is full of and folds the image flat on
+        // the first thing that has one.
+        fn struck(pan: f32) -> (f32, f32) {
+            let mut engine = Engine::new(SR);
+            engine.reserve_bank(2).expect("the arena must be granted").copy_from_slice(&[0.5, 0.25]);
+            assert_eq!(engine.commit_sample(0, 0, 1, 2), Ok(()));
+            stereo_quantum(
+                &mut engine,
+                &[
+                    Record::immediate(Command::SetMetronome { enabled: false }),
+                    Record::immediate(Command::SetTrackPan { track: 0, pan }),
+                    Record::immediate(Command::SetStep { track: 0, step: 0, velocity: 1.0 }),
+                ],
+            );
+            skip(&mut engine, 8);
+            let (left, right) = stereo_quantum(&mut engine, &[Record::immediate(Command::Play)]);
+            (left[0], right[0])
+        }
+
+        let (left, right) = struck(DEFAULT_PAN);
+        assert_eq!((left, right), (centred(0.5), centred(0.25)), "the image was not kept");
+
+        // Hard left leaves the source's left channel alone and drops its right
+        // entirely — a balance control, not a collapse into one signal.
+        assert_eq!(struck(-1.0), (0.5, 0.0));
+        assert_eq!(struck(1.0), (0.0, 0.25));
+    }
+
+    #[test]
+    fn the_meter_reads_the_bus_before_the_limiter() {
+        // A full grid sums to 5.66 and leaves the limiter just under unity —
+        // and leaves it within a thousandth of that for seven tracks, or three.
+        // A meter reading the output would therefore report the same healthy
+        // number for every one of those, which is a meter that cannot report
+        // the one condition a fader answers.
+        let mut engine = Engine::new(SR);
+        load_kit(&mut engine, 1);
+        let mut setup = vec![Record::immediate(Command::SetMetronome { enabled: false })];
+        setup.extend(every_cell_struck());
+
+        let signal = quantum(&mut engine, &setup);
+        let summed = (0..TRACKS).fold(0.0f32, |sum, _| sum + centred(1.0));
+
+        assert!(summed > 1.0, "the fixture did not reach the limiter at all");
+        assert_eq!(engine.peak(0), summed, "the meter read something other than the bus");
+        // And the output is that same reading put through the curve, which is
+        // what makes reading early lossless: the page can compute this from the
+        // meter, and could not compute the meter from this.
+        assert_eq!(signal[0], soft_limit(summed, summed).0);
+        assert!(signal.iter().all(|&s| s.abs() <= 1.0), "the output passed full scale");
     }
 
     #[test]
