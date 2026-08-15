@@ -9,6 +9,7 @@
 
 import { describeInitError, initEngine } from './engine'
 import type { EngineState } from './engine'
+import { answerKitMessage } from './kit'
 import { refreshViews, renderQuantum } from './render'
 import { QUANTUM } from '../audio/worklet-messages'
 import type { WorkletMessage } from '../audio/worklet-messages'
@@ -31,6 +32,20 @@ class EngineProcessor extends AudioWorkletProcessor {
 
   constructor(options: AudioWorkletNodeOptions) {
     super()
+
+    // Installed before the engine is built, so that a kit sent to a processor
+    // that failed to come up is answered rather than swallowed. Everything the
+    // handler does is in kit.ts; what is here is the port, which is the part no
+    // test can reach.
+    //
+    // Growing linear memory happens in here, between two `process` calls, and
+    // that is the whole reason the render path revalidates its views instead of
+    // trusting them.
+    this.port.onmessage = (event: MessageEvent<unknown>): void => {
+      const answer = answerKitMessage(this.#state, event.data)
+      if (answer !== null) this.#post(answer)
+    }
+
     const started = initEngine(options.processorOptions, sampleRate, QUANTUM)
 
     if (!started.ok) {

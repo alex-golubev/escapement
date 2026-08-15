@@ -23,13 +23,16 @@ import { TELEMETRY_WORDS } from './telemetry-block'
  * of their own. A second module on *this* side of the boundary does not get a
  * fourth: it takes the one already here, and if that means moving the
  * declaration out to a file of its own on this side, that is a move rather
- * than a copy. The sampler brings the first such module, on the page's side.
+ * than a copy. `kit.ts` is the first such module and imports these — along with
+ * `describeValue` and `messageOf` below, which are the same question about the
+ * same boundary. No file of their own was needed; one becomes worth making when
+ * bring-up is no longer the natural place to look for them.
  */
-type Result<T, E> =
+export type Result<T, E> =
   { readonly ok: true; readonly value: T } | { readonly ok: false; readonly error: E }
 
-const ok = <T>(value: T): Result<T, never> => ({ ok: true, value })
-const err = <E>(error: E): Result<never, E> => ({ ok: false, error })
+export const ok = <T>(value: T): Result<T, never> => ({ ok: true, value })
+export const err = <E>(error: E): Result<never, E> => ({ ok: false, error })
 
 /** The C ABI of the compiled engine. Pointers are offsets into linear memory. */
 export interface EngineExports {
@@ -345,11 +348,12 @@ export function initEngine(
 }
 
 /** The twin of the one in audio/host.ts, which is where the reason is written. */
-function messageOf(error: unknown): string {
+export function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
-function describeValue(value: unknown): string {
+/** What arrived, when what arrived is not what was wanted. */
+export function describeValue(value: unknown): string {
   if (value === null) return 'null'
   if (value === undefined) return 'undefined'
   return typeof value

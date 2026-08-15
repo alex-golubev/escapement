@@ -1,7 +1,12 @@
-// Diagnostics posted from the worklet to the main thread. This is not the
-// command protocol — commands travel through shared memory and are a separate,
-// versioned contract. These messages only carry what the audio thread learns
-// about its environment and cannot report any other way.
+// What the two threads say to each other outside the command protocol.
+//
+// Commands travel through shared memory and are a separate, versioned
+// contract; these are not that. Back from the worklet come the things the audio
+// thread learns about its environment and can report no other way. Forward to
+// it goes one thing, and only one: a kit. A command record is sixteen bytes and
+// a kit is megabytes, so sample data was never going to fit down that road —
+// and why taking this one is not a second way into the engine is argued at
+// `Engine::reserve_bank`, which is the pair of calls it ends in.
 //
 // The file is imported by both sides on purpose: the worklet is bundled
 // standalone, so a shared type is the only thing keeping the two ends from
@@ -58,4 +63,64 @@ export interface FirstQuantumMessage {
   readonly frames: number
 }
 
-export type WorkletMessage = ReadyMessage | FailedMessage | FirstQuantumMessage
+/** The kit went in. Both numbers are readings, not a promise anything sounds. */
+export interface KitLoadedMessage {
+  readonly type: 'kit-loaded'
+  readonly slots: number
+  readonly floats: number
+}
+
+/**
+ * The kit did not go in, and the engine holds none.
+ *
+ * A sentence rather than a case, unlike every other failure that crosses here.
+ * The reasons live on the audio side as a tagged union and are turned into text
+ * there — see `describeKitError`. What decides it is that the page has one thing
+ * to do with any of them, which is show it: the kit it loads is one it built
+ * itself, so every refusal but memory is a bug on this side rather than a
+ * condition to recover from.
+ */
+export interface KitRefusedMessage {
+  readonly type: 'kit-refused'
+  readonly message: string
+}
+
+export type WorkletMessage =
+  | ReadyMessage
+  | FailedMessage
+  | FirstQuantumMessage
+  | KitLoadedMessage
+  | KitRefusedMessage
+
+/**
+ * One sample, interleaved, as the page decoded it.
+ *
+ * Interleaved on the main thread and not here, though `AudioBuffer` is planar
+ * and the arena is not: the page is the cold side and has already copied the
+ * data once, while the worklet's whole job with it is then one `set` per sample
+ * — no loop and no arithmetic on the thread that must not stall.
+ *
+ * The frame count is absent because it is `data.length / channels`, and a
+ * number sent alongside is a number that can disagree.
+ */
+export interface KitSample {
+  readonly data: Float32Array
+  /** One or two. Anything else is refused by the engine, which is the guard. */
+  readonly channels: number
+}
+
+/**
+ * Load a whole kit, replacing whatever is loaded now.
+ *
+ * A kit and not a sample: the reservation replaces the arena, so laying eight
+ * samples out takes all eight lengths at once. The position in this list is the
+ * slot, and the slot is the track — the identity is argued in `sampler/bank.rs`
+ * and there is nothing here to carry it.
+ */
+export interface LoadKitMessage {
+  readonly type: 'load-kit'
+  readonly samples: readonly KitSample[]
+}
+
+/** Everything the page sends the other way. */
+export type PageMessage = LoadKitMessage
