@@ -10,15 +10,29 @@
 import { describe, expect, it } from 'vitest'
 
 import { createSession } from './session.svelte'
-import type { FrameLoop } from './session.svelte'
+import type { FrameLoop, KitFetch } from './session.svelte'
 import type { EngineEvents, EngineHandle, StartFailure } from '../audio/host'
+import { describeKitFailure } from '../audio/kit'
+import type { KitFailure } from '../audio/kit'
 import type { Command } from '../audio/protocol'
+import type { Result } from '../audio/result'
 import type { Telemetry } from '../audio/telemetry'
-import type { WorkletMessage } from '../audio/worklet-messages'
+import type { KitSample, WorkletMessage } from '../audio/worklet-messages'
 
 /** Not 48000, and not 3: numbers the engine reports are not numbers the page knows. */
 const SAMPLE_RATE = 44_100
 const PROTOCOL_VERSION = 7
+
+/**
+ * What a start installs before anything else, in order.
+ *
+ * Written out here because more than one test is about what follows it, and a
+ * list repeated at each of them is a list that will be updated at some of them.
+ */
+const SETTINGS: readonly Command[] = [
+  { op: 'set-bpm', bpm: 120 },
+  { op: 'set-metronome', enabled: true },
+]
 
 describe('createSession', () => {
   it('starts idle, driving nothing', () => {
@@ -166,7 +180,7 @@ describe('createSession', () => {
     expect(harness.session.playing).toBe(false)
 
     expect(harness.sent()).toEqual([
-      { op: 'set-bpm', bpm: 120 }, // the settings, installed by the start above
+      ...SETTINGS, // installed by the start above
       { op: 'play' },
       { op: 'stop' },
     ])
@@ -183,7 +197,7 @@ describe('createSession', () => {
 
     expect(harness.session.bpm).toBe(123)
     expect(harness.sent()).toEqual([
-      { op: 'set-bpm', bpm: 120 },
+      ...SETTINGS,
       { op: 'set-bpm', bpm: 121 },
       { op: 'set-bpm', bpm: 122 },
       { op: 'set-bpm', bpm: 123 },
@@ -192,14 +206,18 @@ describe('createSession', () => {
 
   it('tells a new engine the settings the page is already showing', async () => {
     // The engine comes up at defaults of its own, and the page comes up showing
-    // a number. Leaving those to agree is leaving the display to be wrong in
-    // silence: nothing reads the tempo back, so a divergence here would show up
-    // as a metronome that does not match the readout and nowhere else.
+    // them. Leaving those to agree is leaving the display to be wrong in
+    // silence: nothing reads either back, so a divergence would show up as a
+    // metronome that does not match the readout and nowhere else.
+    //
+    // Every setting, not the tempo alone — which is what makes this assertion an
+    // equality rather than a `toContainEqual`. A control added to the page and
+    // left out of this list is one the engine is never told about.
     const harness = rig()
 
     await harness.session.start()
 
-    expect(harness.sent()).toEqual([{ op: 'set-bpm', bpm: 120 }])
+    expect(harness.sent()).toEqual(SETTINGS)
   })
 
   it('carries the tempo across a restart, and tells the second engine about it', async () => {
@@ -217,7 +235,10 @@ describe('createSession', () => {
 
     expect(harness.session.bpm).toBe(174)
     expect(harness.session.playing).toBe(false)
-    expect(harness.sent().at(-1)).toEqual({ op: 'set-bpm', bpm: 174 })
+    expect(harness.sent().slice(-SETTINGS.length)).toEqual([
+      { op: 'set-bpm', bpm: 174 },
+      { op: 'set-metronome', enabled: true },
+    ])
   })
 
   it('does not move the transport it failed to send', async () => {
@@ -308,6 +329,122 @@ describe('createSession', () => {
 
     expect(harness.session.quantum).toBe(128)
   })
+
+  it('tells the engine what the metronome is set to, rather than assuming', async () => {
+    // The same rule the tempo follows: two defaults agreeing is not agreement,
+    // and the one on screen is the one that can be wrong in silence.
+    const harness = rig()
+
+    await harness.start()
+
+    expect(harness.sent()).toContainEqual({ op: 'set-metronome', enabled: true })
+  })
+
+  it('keeps the switch on screen in step with the command that moved it', async () => {
+    const harness = rig()
+    await harness.start()
+
+    harness.session.setMetronome(false)
+    expect(harness.session.metronome).toBe(false)
+
+    // A command the ring had no room for leaves the belief where it was, or the
+    // page would show a click it never turned off.
+    harness.refuse()
+    harness.session.setMetronome(true)
+    expect(harness.session.metronome).toBe(false)
+  })
+
+  it('strikes a pad without remembering anything about it', async () => {
+    const harness = rig()
+    await harness.start()
+
+    harness.session.trigger(3)
+
+    expect(harness.sent()).toContainEqual({ op: 'trigger-track', track: 3, velocity: 1 })
+  })
+
+  it('hands the kit over as soon as there is an engine to hand it to', async () => {
+    const harness = rig()
+
+    await harness.start()
+
+    expect(harness.handed()).toHaveLength(1)
+    // Still loading: the page has parted with the samples, which is not the same
+    // as the engine having taken them.
+    expect(harness.session.kit).toBe('loading')
+  })
+
+  it('is loaded when the audio thread says it is', async () => {
+    const harness = rig()
+    await harness.start()
+
+    harness.post({ type: 'kit-loaded', slots: 8, floats: 1_024 })
+
+    expect(harness.session.kit).toBe('loaded')
+    expect(harness.session.kitFailure).toBeNull()
+  })
+
+  it('shows what the audio thread refused a kit for', async () => {
+    const harness = rig()
+    await harness.start()
+
+    harness.post({ type: 'kit-refused', message: 'the engine would not reserve 12 values' })
+
+    expect(harness.session.kit).toBe('failed')
+    expect(harness.session.kitFailure).toBe('the engine would not reserve 12 values')
+  })
+
+  it('shows a kit that never got as far as the audio thread', async () => {
+    const harness = rig()
+    const failure: KitFailure = { kind: 'unreachable', url: '/kit/kick.wav', detail: '404' }
+    harness.refuseKit(failure)
+
+    await harness.start()
+
+    expect(harness.session.kit).toBe('failed')
+    expect(harness.session.kitFailure).toBe(describeKitFailure(failure))
+    expect(harness.handed(), 'a kit that never loaded was sent anyway').toHaveLength(0)
+  })
+
+  it('keeps the engine when the kit will not load', async () => {
+    // A kit is a reading, not the session: the transport still moves and the
+    // metronome still sounds, so tearing the engine down over it would take away
+    // more than was lost.
+    const harness = rig()
+    harness.refuseKit({ kind: 'unreachable', url: '/kit/kick.wav', detail: '404' })
+
+    await harness.start()
+
+    expect(harness.session.status).toBe('running')
+    expect(harness.session.failure).toBeNull()
+  })
+
+  it('does not report a kit that outlived the engine it was fetched for', async () => {
+    // The window is real: a fetch and a decode take long enough for the stop
+    // button to be pressed inside them, and what comes back then is a reading
+    // about an engine that no longer exists — over fields `discard` has cleared.
+    const harness = rig({ holdKit: true })
+    await harness.session.start()
+    expect(harness.session.kit).toBe('loading')
+
+    harness.session.stop()
+    harness.releaseKit()
+    await harness.settle()
+
+    expect(harness.session.kit).toBe('none')
+    expect(harness.handed(), 'a kit reached an engine that was given back').toHaveLength(0)
+  })
+
+  it('forgets the kit when the engine is given back', async () => {
+    const harness = rig()
+    await harness.start()
+    harness.post({ type: 'kit-loaded', slots: 8, floats: 1_024 })
+
+    harness.session.stop()
+
+    expect(harness.session.kit).toBe('none')
+    expect(harness.session.kitFailure).toBeNull()
+  })
 })
 
 /**
@@ -316,7 +453,7 @@ describe('createSession', () => {
  * `hold` keeps the start pending until `release`, which is the only way to
  * observe the window a second click can arrive in.
  */
-function rig(options: { hold?: boolean } = {}) {
+function rig(options: { hold?: boolean; holdKit?: boolean } = {}) {
   let closes = 0
   let starts = 0
   let refusals = 0
@@ -360,6 +497,26 @@ function rig(options: { hold?: boolean } = {}) {
       dropped: () => refusals,
     },
     telemetry: { read: () => reading },
+    loadKit: (samples) => {
+      handed.push(samples)
+    },
+  }
+
+  /** One sample, standing in for a decoded file. Its contents are never read. */
+  const KIT: readonly KitSample[] = [{ data: new Float32Array([1, 0]), channels: 1 }]
+  const handed: (readonly KitSample[])[] = []
+  let kitResult: Result<readonly KitSample[], KitFailure> = { ok: true, value: KIT }
+
+  let releaseKit = (): void => undefined
+  const heldKit = new Promise<void>((resolve) => {
+    releaseKit = () => {
+      resolve()
+    }
+  })
+
+  const kit: KitFetch = async () => {
+    if (options.holdKit === true) await heldKit
+    return kitResult
   }
 
   const frames: FrameLoop = (run) => {
@@ -371,6 +528,7 @@ function rig(options: { hold?: boolean } = {}) {
 
   const session = createSession({
     frames,
+    kit,
     start: async (given: EngineEvents = {}) => {
       starts += 1
       events = given
@@ -411,5 +569,35 @@ function rig(options: { hold?: boolean } = {}) {
     },
     crash: (): void => events.onCrash?.(),
     post: (message: WorkletMessage): void => events.onMessage?.(message),
+    /** What was handed to the audio thread, in the order it was handed over. */
+    handed: () => handed,
+    releaseKit: (): void => {
+      releaseKit()
+    },
+    refuseKit: (failure: KitFailure): void => {
+      kitResult = { ok: false, error: failure }
+    },
+    settle,
+    /**
+     * Start, and let the kit that follows catch up — which is what a test wants
+     * unless the point of it is the window between the two.
+     */
+    start: async (): Promise<void> => {
+      await session.start()
+      await settle()
+    },
   }
+}
+
+/**
+ * Let the kit's promise chain run out.
+ *
+ * `start` deliberately does not await the load — the engine runs before the kit
+ * arrives — so from a test the load is a couple of microtasks behind the call
+ * that began it. Two turns is what the chain takes; counting them is grim, and
+ * the alternative is a timer, which is a race written as a delay.
+ */
+async function settle(): Promise<void> {
+  await Promise.resolve()
+  await Promise.resolve()
 }

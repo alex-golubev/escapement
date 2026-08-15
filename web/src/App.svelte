@@ -1,6 +1,12 @@
 <script lang="ts">
+  import { KIT_URLS } from './audio/kit'
   import { QUANTUM } from './audio/worklet-messages'
   import { createSession } from './state/session.svelte'
+
+  // Derived from the list that decides which sound is on which row, rather than
+  // written out again beside it: two lists in the same order is one list and a
+  // way for them to stop being in the same order.
+  const pads = KIT_URLS.map((url) => url.slice('/kit/'.length, -'.wav'.length))
 
   // The readiness criterion for this milestone, checked on the page instead of
   // in devtools. Without cross-origin isolation there is no
@@ -47,7 +53,7 @@
 
 <main>
   <h1>DAW</h1>
-  <p class="subtitle">Milestone 0 — skeleton</p>
+  <p class="subtitle">Milestone 1 — drum machine</p>
 
   <ul class="checks">
     <li class:ok={isolated} class:fail={!isolated}>
@@ -105,6 +111,32 @@
         />
         <output>{session.bpm} BPM</output>
       </label>
+      <!-- The engine comes up with the click on, and it is in the way of hearing
+           anything else. Off is a command like any other, which is why the box
+           follows what was accepted rather than what was clicked. -->
+      <label class="switch">
+        <input
+          type="checkbox"
+          checked={session.metronome}
+          onchange={(event) => session.setMetronome(event.currentTarget.checked)}
+        />
+        click
+      </label>
+    </div>
+
+    <!-- Eight pads, which is what `TriggerTrack` is for and the only way to hear
+         the kit before there is a grid. They strike on a stopped transport,
+         which is the whole difference between a pad and a cell. -->
+    <div class="pads">
+      {#each pads as pad, track (pad)}
+        <button
+          class="pad"
+          disabled={session.kit !== 'loaded'}
+          onclick={() => session.trigger(track)}
+        >
+          {pad}
+        </button>
+      {/each}
     </div>
     <ul class="checks">
       <li>
@@ -148,12 +180,23 @@
         <code>commands dropped</code>
         <span>{session.dropped}</span>
       </li>
+      <!-- The kit is a reading rather than part of the engine's status: without
+           one the transport still runs and the metronome still sounds, and only
+           the pads have nothing to play. -->
+      <li class:ok={session.kit === 'loaded'} class:fail={session.kit === 'failed'}>
+        <code>kit</code>
+        <span>{session.kit}</span>
+      </li>
     </ul>
 
+    {#if session.kitFailure !== null}
+      <p class="verdict fail">{session.kitFailure}</p>
+    {/if}
+
     <p class="verdict ok">
-      The metronome is computed in Rust on the audio thread. Commands reach it through the ring
-      in shared memory, and the position and the meters came back the same way — read under a
-      seqlock, once per frame.
+      Every sample is computed in Rust on the audio thread. The kit crossed once, by the port, and
+      lives in memory the engine owns; the pads reach it through the ring in shared memory, and the
+      position and the meters came back the same way — read under a seqlock, once per frame.
     </p>
 
     <!-- The only way to hand the device back. Without it the context outlives
@@ -244,6 +287,22 @@
     min-width: 5.5rem;
     color: var(--dim);
     font-variant-numeric: tabular-nums;
+  }
+
+  .switch {
+    color: var(--dim);
+  }
+
+  .pads {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 0.5rem;
+    margin-top: 1rem;
+  }
+
+  .pad {
+    margin-top: 0;
+    padding: 0.9rem 0.5rem;
   }
 
   .peaks {

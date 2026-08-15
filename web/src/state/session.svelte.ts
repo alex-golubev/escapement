@@ -17,10 +17,22 @@
 
 import { describeStartFailure, startEngine } from '../audio/host'
 import type { EngineHandle } from '../audio/host'
+import { browserKitSource, describeKitFailure, fetchKit } from '../audio/kit'
+import type { KitFailure } from '../audio/kit'
 import type { Command } from '../audio/protocol'
-import type { WorkletMessage } from '../audio/worklet-messages'
+import type { Result } from '../audio/result'
+import type { KitSample, WorkletMessage } from '../audio/worklet-messages'
 
 export type Status = 'idle' | 'starting' | 'running' | 'failed'
+
+/**
+ * How far the kit has got.
+ *
+ * Beside `status` rather than folded into it, because the engine runs without
+ * one: the metronome sounds, the transport moves, and only the pads are silent.
+ * A kit that would not load is a reading, not the end of the session.
+ */
+export type KitStatus = 'none' | 'loading' | 'loaded' | 'failed'
 
 /**
  * The tempo a page opens at, and nothing more than that.
@@ -53,10 +65,16 @@ const browserFrames: FrameLoop = (tick) => {
   }
 }
 
+/** Where a kit comes from. A parameter for the same reason `start` is. */
+export type KitFetch = (
+  context: BaseAudioContext,
+) => Promise<Result<readonly KitSample[], KitFailure>>
+
 /** What a session is driven by, so that a test can drive it by something else. */
 export interface SessionDeps {
   readonly start?: typeof startEngine
   readonly frames?: FrameLoop
+  readonly kit?: KitFetch
 }
 
 /**
@@ -90,16 +108,31 @@ export interface Session {
   readonly step: number
   readonly playing: boolean
   readonly bpm: number
+  readonly metronome: boolean
+  readonly kit: KitStatus
+  /** Why the kit is not loaded, when that is known. */
+  readonly kitFailure: string | null
   start(): Promise<void>
   /** Give the device back. The counterpart of `start`, and what every failure path uses. */
   stop(): void
   toggle(): void
   setBpm(bpm: number): void
+  setMetronome(enabled: boolean): void
+  /**
+   * Strike a track outside the grid. Nothing is remembered afterwards, which is
+   * what makes this the one verb here with no belief to keep in step: a pad
+   * leaves no state behind, so there is nothing for the engine and this module
+   * to disagree about.
+   */
+  trigger(track: number): void
 }
 
 export function createSession(deps: SessionDeps = {}): Session {
   const bringUp = deps.start ?? startEngine
   const frames = deps.frames ?? browserFrames
+  // Built from the context that will play them, because that is what decides
+  // the rate `decodeAudioData` resamples to.
+  const collectKit = deps.kit ?? ((context) => fetchKit(browserKitSource(context)))
 
   /**
    * Everything a successful start produced, in one holder. Non-null exactly
@@ -130,6 +163,15 @@ export function createSession(deps: SessionDeps = {}): Session {
   // is honest for controls that only ever move on a gesture.
   let playing = $state(false)
   let bpm = $state(INITIAL_BPM)
+  // The engine comes up with the click on, and this page says so rather than
+  // agreeing with it by coincidence — the argument is at `INITIAL_BPM`.
+  let metronome = $state(true)
+
+  // How the kit is getting on. `loading` covers both halves of the journey — the
+  // fetch here and the load over there — because from the page they are one
+  // wait, and only its end has two shapes.
+  let kit = $state<KitStatus>('none')
+  let kitFailure = $state<string | null>(null)
 
   // What the ring's own counter says, sampled where it can have changed. A tally
   // kept here beside it would be a second answer to one question, and the ring's
@@ -176,6 +218,11 @@ export function createSession(deps: SessionDeps = {}): Session {
     // Same for the drops: the next engine comes with a ring of its own, and that
     // ring's counter starts at zero.
     dropped = 0
+    // And the kit: it lived in an arena that goes with the engine. The tempo is
+    // kept and this is not, by the same rule — a setting the page holds against
+    // a reading of what the engine has.
+    kit = 'none'
+    kitFailure = null
 
     // Not awaited, and the rejection is dropped: the context is already
     // unreachable from this file, so there is nothing a failed close leaves for
@@ -218,6 +265,7 @@ export function createSession(deps: SessionDeps = {}): Session {
     // send — this is the same path a project being opened will take, which is
     // why it is the ordinary write path and not something start does specially.
     send({ op: 'set-bpm', bpm })
+    send({ op: 'set-metronome', enabled: metronome })
 
     // Started here rather than woken by an effect that watches the handle. The
     // loop's life is exactly the handle's, and both are decided in this function
@@ -227,6 +275,39 @@ export function createSession(deps: SessionDeps = {}): Session {
     // particular order — swapping two lines would have stopped it for good, with
     // the numbers frozen and nothing to notice.
     stopFrames = frames(readTelemetry)
+
+    // Not awaited, and `start` resolves without it. The engine is running — the
+    // transport moves and the metronome sounds — and holding the button on
+    // "Starting…" through a fetch and a decode would report a device that is
+    // already open as not yet open.
+    void collect(started.value)
+  }
+
+  /**
+   * Fetch a kit and hand it over. The answer to the second half comes back as a
+   * message, so this ends while the load is still in flight.
+   */
+  async function collect(live: EngineHandle): Promise<void> {
+    kit = 'loading'
+    kitFailure = null
+
+    const fetched = await collectKit(live.context)
+
+    // The engine can be given back while a kit is in the air — a failed start
+    // retried, or the stop button. Writing the outcome then would put a reading
+    // about a dead engine on screen, and `kit` is one of the fields `discard`
+    // has already cleared.
+    if (handle !== live) return
+
+    if (!fetched.ok) {
+      kit = 'failed'
+      kitFailure = describeKitFailure(fetched.error)
+      return
+    }
+
+    // Stays `loading` until the worklet answers: what has happened so far is
+    // that the page has the samples, which is not what the word is about.
+    live.loadKit(fetched.value)
   }
 
   /**
@@ -260,6 +341,15 @@ export function createSession(deps: SessionDeps = {}): Session {
 
   function receive(message: WorkletMessage): void {
     if (message.type === 'first-quantum') quantum = message.frames
+    else if (message.type === 'kit-loaded') {
+      kit = 'loaded'
+      kitFailure = null
+    } else if (message.type === 'kit-refused') {
+      // The engine holds no kit after a refusal — it throws away the whole one
+      // rather than half of it, which is why this can be a single word here.
+      kit = 'failed'
+      kitFailure = message.message
+    }
   }
 
   function crashed(): void {
@@ -314,6 +404,15 @@ export function createSession(deps: SessionDeps = {}): Session {
     get bpm(): number {
       return bpm
     },
+    get metronome(): boolean {
+      return metronome
+    },
+    get kit(): KitStatus {
+      return kit
+    },
+    get kitFailure(): string | null {
+      return kitFailure
+    },
     start,
     stop(): void {
       discard(null)
@@ -323,6 +422,14 @@ export function createSession(deps: SessionDeps = {}): Session {
     },
     setBpm(next: number): void {
       if (send({ op: 'set-bpm', bpm: next })) bpm = next
+    },
+    setMetronome(enabled: boolean): void {
+      if (send({ op: 'set-metronome', enabled })) metronome = enabled
+    },
+    trigger(track: number): void {
+      // Full velocity: a pad is the sound as loud as the kit makes it, and what
+      // scales it after that is the track's own fader.
+      send({ op: 'trigger-track', track, velocity: 1 })
     },
   }
 }

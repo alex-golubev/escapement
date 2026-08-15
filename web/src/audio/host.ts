@@ -8,28 +8,11 @@
 import { createRing, openRing } from './ring'
 import { createWriter } from './ring-writer'
 import type { RingWriter } from './ring-writer'
+import { err, messageOf, ok } from './result'
+import type { Result } from './result'
 import { createReader } from './telemetry'
 import type { TelemetryReader } from './telemetry'
-import type { ReadyMessage, WorkletMessage } from './worklet-messages'
-
-/** A failure that is a value. The twin of the one in worklet/engine.ts. */
-type Result<T, E> =
-  { readonly ok: true; readonly value: T } | { readonly ok: false; readonly error: E }
-
-const ok = <T>(value: T): Result<T, never> => ({ ok: true, value })
-const err = <E>(error: E): Result<never, E> => ({ ok: false, error })
-
-/**
- * Written out again in worklet/engine.ts, for the same reason `Result` is: one
- * line of the canonical `instanceof Error` check, and sharing it would need a
- * module of its own — this file cannot be that module, because importing from
- * here would pull an `AudioContext` and the whole page-side bring-up into the
- * worklet bundle. Two copies that can only ever be this one expression are
- * cheaper than a third directory. If either grows a rule, the other gets it too.
- */
-function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
-}
+import type { KitSample, ReadyMessage, WorkletMessage } from './worklet-messages'
 
 const WASM_URL = '/engine.wasm'
 const WORKLET_URL = '/worklet/processor.js'
@@ -73,6 +56,26 @@ export interface EngineHandle {
   readonly commands: RingWriter
   /** The one way to hear back from it. Read from `requestAnimationFrame`. */
   readonly telemetry: TelemetryReader
+  /**
+   * Put a kit into the engine. Everything loaded before it is replaced, and
+   * every voice sounding from it stops.
+   *
+   * Not a command and not a second road into the engine: sixteen bytes is the
+   * size of a record and megabytes is the size of a kit, so this is the port
+   * rather than the ring — argued where the pair of calls it ends in is, at
+   * `Engine::reserve_bank`.
+   *
+   * **The arrays are transferred, not copied**, so they are gone from this side
+   * the moment this returns. That is what makes a kit cost one copy instead of
+   * two, and it is why the caller must hand over arrays it has no further use
+   * for — anything the page wants to keep, such as a waveform to draw, has to
+   * be taken before the load rather than read back after it.
+   *
+   * The answer comes back through `EngineEvents.onMessage`, as `kit-loaded` or
+   * `kit-refused`. Nothing is returned here: the audio thread is not asked
+   * anything synchronously, ever.
+   */
+  loadKit(samples: readonly KitSample[]): void
 }
 
 export type StartFailure =
@@ -227,6 +230,12 @@ async function bringUp(
     protocolVersion: ready.value.protocolVersion,
     commands: createWriter(views),
     telemetry: createReader(views),
+    loadKit: (samples) => {
+      node.port.postMessage(
+        { type: 'load-kit', samples },
+        samples.map((sample) => sample.data.buffer),
+      )
+    },
   })
 }
 
