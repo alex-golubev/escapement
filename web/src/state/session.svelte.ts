@@ -22,6 +22,7 @@ import type { KitFailure } from '../audio/kit'
 import { STEPS, TRACKS } from '../audio/protocol'
 import type { Command } from '../audio/protocol'
 import type { Result } from '../audio/result'
+import type { Telemetry } from '../audio/telemetry'
 import type { KitSample, WorkletMessage } from '../audio/worklet-messages'
 
 export type Status = 'idle' | 'starting' | 'running' | 'failed'
@@ -103,18 +104,44 @@ function inGrid(track: number, step: number): boolean {
 }
 
 /**
+ * How long a readout on screen must hold still, in milliseconds.
+ *
+ * Not the frame rate, and the gap between the two was measured rather than
+ * guessed. Milestone 0 found a page updating 68 times a second costing 21.8% of
+ * a core, and the obvious culprit was not it: the main thread with style and
+ * layout came to 1.26%, and hiding the meters moved no number at all. What the
+ * cost is linear in is updates per second — near 0.2% of a core each — because
+ * every one of them runs paint, rasterisation and compositing in threads no
+ * in-page profiler can see. At fifteen a second that term is under 4%, and
+ * nobody reads a clock faster than that anyway.
+ *
+ * The playhead is deliberately not on this clock. It is drawn from `onFrame`,
+ * where a frame is worth having, onto a canvas that never touches a component.
+ *
+ * Exported for its spec, which asserts that its fixtures fall on both sides of
+ * this number — a threshold test whose fixture never reaches the threshold
+ * passes with the guard removed, and passes quietly.
+ */
+export const READOUT_INTERVAL_MS = 66
+
+/**
  * Run `tick` on every frame, and hand back the way to stop it.
  *
  * A parameter rather than `requestAnimationFrame` reached for directly, for the
  * same reason `openEngine` takes `EngineExports` rather than a module: under
  * Node there are no frames and no `AudioContext`, so every path in this file
  * would be a path no test could take.
+ *
+ * The timestamp is the one `requestAnimationFrame` already hands its callback.
+ * Taken from there rather than read off a clock inside the loop, because the
+ * throttle above then has a time a test can state, instead of one it would have
+ * to wait for.
  */
-export type FrameLoop = (tick: () => void) => () => void
+export type FrameLoop = (tick: (now: number) => void) => () => void
 
 const browserFrames: FrameLoop = (tick) => {
-  let frame = requestAnimationFrame(function next() {
-    tick()
+  let frame = requestAnimationFrame(function next(now) {
+    tick(now)
     frame = requestAnimationFrame(next)
   })
   return () => {
@@ -170,6 +197,21 @@ export interface Session {
   readonly kit: KitStatus
   /** Why the kit is not loaded, when that is known. */
   readonly kitFailure: string | null
+  /**
+   * Take every telemetry reading as it arrives, and hand back the way to stop.
+   *
+   * The one road out of here that is not a rune, and it exists because the
+   * playhead has to move on every frame while nothing on the page may. A field
+   * written sixty times a second would wake the reactive graph sixty times a
+   * second, and past it a paint of everything downstream — which is the cost
+   * `READOUT_INTERVAL_MS` was measured against. A listener drawing on a canvas
+   * costs the reactive graph nothing at all.
+   *
+   * Never called with a reading that came back null: a frame the seqlock refused
+   * is a frame with nothing new, and the canvas keeps what it already drew for
+   * the same reason the numbers do.
+   */
+  onFrame(listener: (reading: Telemetry) => void): () => void
   start(): Promise<void>
   /** Give the device back. The counterpart of `start`, and what every failure path uses. */
   stop(): void
@@ -278,7 +320,20 @@ export function createSession(deps: SessionDeps = {}): Session {
 
   let stopFrames: (() => void) | null = null
 
-  function readTelemetry(): void {
+  /**
+   * Who is drawing from the readings, and when the last one reached the screen.
+   *
+   * Plain, not runes: a listener is called by the frame loop and a timestamp is
+   * compared by it, and neither is ever read from a reactive scope — which is
+   * the whole point of them. Not cleared when the engine is given back, either:
+   * a subscription belongs to whatever mounted it, and the loop stopping is
+   * already the only thing that could reach it.
+   */
+  // eslint-disable-next-line svelte/prefer-svelte-reactivity -- reactive is what this deliberately is not; see above
+  const listeners = new Set<(reading: Telemetry) => void>()
+  let publishedAt = Number.NEGATIVE_INFINITY
+
+  function readTelemetry(now: number): void {
     const live = handle
     if (live === null) return
     const reading = live.telemetry.read()
@@ -286,6 +341,15 @@ export function createSession(deps: SessionDeps = {}): Session {
     // not an error: the previous frame's numbers stand and the next frame is 16 ms
     // away.
     if (reading === null) return
+
+    // Every frame, and ahead of the throttle. This is the half that has to be
+    // smooth, and it goes to a canvas rather than into the reactive graph — one
+    // reading serving both, so the playhead and the numbers can never be looking
+    // at different quanta.
+    for (const listener of listeners) listener(reading)
+
+    if (now - publishedAt < READOUT_INTERVAL_MS) return
+    publishedAt = now
     position = reading.position
     peakL = reading.peakL
     peakR = reading.peakR
@@ -545,6 +609,12 @@ export function createSession(deps: SessionDeps = {}): Session {
     },
     get kitFailure(): string | null {
       return kitFailure
+    },
+    onFrame(listener: (reading: Telemetry) => void): () => void {
+      listeners.add(listener)
+      return () => {
+        listeners.delete(listener)
+      }
     },
     start,
     stop(): void {

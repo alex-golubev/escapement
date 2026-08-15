@@ -9,7 +9,7 @@
 
 import { describe, expect, it } from 'vitest'
 
-import { createSession } from './session.svelte'
+import { READOUT_INTERVAL_MS, createSession } from './session.svelte'
 import type { FrameLoop, KitFetch } from './session.svelte'
 import type { EngineEvents, EngineHandle, StartFailure } from '../audio/host'
 import { describeKitFailure } from '../audio/kit'
@@ -119,6 +119,67 @@ describe('createSession', () => {
     expect(harness.session.position).toBe(4096)
     expect(harness.session.peakL).toBe(0.5)
     expect(harness.session.step).toBe(2.75)
+  })
+
+  it('hands every reading to whoever is drawing, whatever the readouts are doing', async () => {
+    // The whole reason `onFrame` exists. The playhead has to move on every frame
+    // and nothing on the page may: a field written sixty times a second wakes
+    // the reactive graph sixty times a second, and behind it a paint of
+    // everything downstream — which is the cost `READOUT_INTERVAL_MS` was
+    // measured against.
+    const harness = rig()
+    await harness.start()
+    const drawn: number[] = []
+    harness.session.onFrame((reading) => drawn.push(reading.step))
+
+    for (const [at, step] of [
+      [0, 1],
+      [16, 2],
+      [32, 3],
+    ]) {
+      harness.publish({ position: 0, peakL: 0, peakR: 0, step })
+      harness.frame(at)
+    }
+
+    expect(drawn).toEqual([1, 2, 3])
+    // Three frames inside one interval, and the readout moved once — for the
+    // first of them, because a page that showed nothing until the interval had
+    // passed would open blank.
+    expect(harness.session.step).toBe(1)
+  })
+
+  it('stops handing readings to a listener that let go', async () => {
+    const harness = rig()
+    await harness.start()
+    const drawn: number[] = []
+    const stop = harness.session.onFrame((reading) => drawn.push(reading.step))
+
+    harness.frame()
+    stop()
+    harness.frame()
+
+    expect(drawn).toHaveLength(1)
+  })
+
+  it('lets the readouts move again once the interval has passed', async () => {
+    // A threshold guard, so the fixtures have to straddle the threshold: one
+    // that only ever sat on the far side of it would pass with the throttle
+    // removed and pass exactly as green.
+    expect(50).toBeLessThan(READOUT_INTERVAL_MS)
+    expect(100).toBeGreaterThanOrEqual(READOUT_INTERVAL_MS)
+
+    const harness = rig()
+    await harness.start()
+
+    harness.publish({ position: 1, peakL: 0, peakR: 0, step: 0 })
+    harness.frame(0)
+    harness.publish({ position: 2, peakL: 0, peakR: 0, step: 0 })
+    harness.frame(50)
+    expect(harness.session.position).toBe(1)
+
+    harness.publish({ position: 3, peakL: 0, peakR: 0, step: 0 })
+    harness.frame(100)
+    expect(harness.session.position).toBe(3)
   })
 
   it('gives the device back on stop, and stops reading with it', async () => {
@@ -580,7 +641,7 @@ function rig(options: { hold?: boolean; holdKit?: boolean } = {}) {
   let reading: Telemetry | null = { position: 0, peakL: 0, peakR: 0, step: 0 }
   let failure: StartFailure | null = null
   let events: EngineEvents = {}
-  let tick: (() => void) | null = null
+  let tick: ((now: number) => void) | null = null
   const sent: Command[] = []
 
   let release = (): void => undefined
@@ -645,6 +706,11 @@ function rig(options: { hold?: boolean; holdKit?: boolean } = {}) {
     }
   }
 
+  // What `requestAnimationFrame` would be handing the loop. Advanced by a
+  // second whenever a test does not care, so that `frame()` keeps meaning what
+  // it meant before there was a throttle: a frame late enough to matter.
+  let clock = 0
+
   const session = createSession({
     frames,
     kit,
@@ -670,9 +736,9 @@ function rig(options: { hold?: boolean; holdKit?: boolean } = {}) {
     sent: () => sent,
     /** Whether the frame loop is running. */
     reading: () => tick !== null,
-    frame: (): void => {
+    frame: (now?: number): void => {
       if (tick === null) throw new Error('no frame loop is running')
-      tick()
+      tick(now ?? (clock += 1_000))
     },
     publish: (next: Telemetry | null): void => {
       reading = next

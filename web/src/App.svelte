@@ -2,6 +2,7 @@
   import { KIT_NAMES } from './audio/kit'
   import { QUANTUM } from './audio/worklet-messages'
   import { createSession } from './state/session.svelte'
+  import Meters from './ui/Meters.svelte'
   import StepGrid from './ui/StepGrid.svelte'
 
   // The readiness criterion for this milestone, checked on the page instead of
@@ -173,18 +174,12 @@
       </li>
       <li>
         <code>peak L / R</code>
-        <!-- The reading is of the bus before the limiter, so it runs past 1
-             on any busy pattern — see `Telemetry.peakL`. The bars are clamped
-             because a bar has an end; the overload is what the colour says,
-             since a clamp alone would turn the one thing worth knowing into a
-             bar that looks merely full. -->
+        <!-- The bars run every frame off the canvas; the numbers beside them are
+             a readout like the rest of this list and change at the rate the
+             others do. Both from the same reading, so they can only ever
+             disagree about how recent they are. -->
         <span class="peaks" class:fail={session.peakL > 1 || session.peakR > 1}>
-          <span class="meter"
-            ><span style="width: {Math.min(1, session.peakL) * 100}%"></span></span
-          >
-          <span class="meter"
-            ><span style="width: {Math.min(1, session.peakR) * 100}%"></span></span
-          >
+          <Meters {session} />
           {session.peakL.toFixed(3)} / {session.peakR.toFixed(3)}
         </span>
       </li>
@@ -325,23 +320,6 @@
     display: flex;
     align-items: center;
     gap: 0.5rem;
-  }
-
-  /* The engine's meter has ballistics — a peak falls at a fixed rate rather
-     than snapping back — precisely so that a reader running once a frame has
-     something to see. A bare number would hide that. */
-  .meter {
-    width: 3rem;
-    height: 0.4rem;
-    background: var(--line);
-    border-radius: 0.2rem;
-    overflow: hidden;
-  }
-
-  .meter span {
-    display: block;
-    height: 100%;
-    background: var(--ok);
   }
 
   button {
