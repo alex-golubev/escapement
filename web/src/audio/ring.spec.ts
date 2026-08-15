@@ -16,6 +16,7 @@ import {
   RING_CAPACITY,
   WORD_PEAK_L,
   WORD_PROTOCOL_VERSION,
+  WORD_STEP,
   createRing,
   headerWords,
   openRing,
@@ -26,7 +27,7 @@ describe('openRing', () => {
     const buffer = createRing()
     const views = openRing(buffer)
 
-    for (const view of [views.words, views.peaks, views.records, views.recordFields]) {
+    for (const view of [views.words, views.floats, views.records, views.recordFields]) {
       expect(view.buffer).toBe(buffer)
     }
   })
@@ -43,14 +44,22 @@ describe('openRing', () => {
     expect(COMMANDS_BYTE_OFFSET + records.byteLength).toBe(RING_BYTES)
   })
 
-  it('addresses the peaks by the same index in either view', () => {
+  it('addresses an f32 field by the same index in either view', () => {
     // One index into two views, which holds only while both count in units of
-    // four bytes. Get it wrong and the meters read a neighbouring field, and
-    // read it silently: any word at all comes back as some number.
-    const { words, peaks } = openRing(createRing())
+    // four bytes. Get it wrong and a meter reads a neighbouring field, and
+    // reads it silently: any word at all comes back as some number.
+    //
+    // Both fields, and with values that would not give each other away: the
+    // step is the second kind of float to travel here, so an index space that
+    // only worked for the peaks would have been found by nothing else.
+    const { words, floats } = openRing(createRing())
+    const bitsOf = (value: number) => new Uint32Array(new Float32Array([value]).buffer)[0]
 
-    words[WORD_PEAK_L] = new Uint32Array(new Float32Array([0.25]).buffer)[0]
-    expect(peaks[WORD_PEAK_L]).toBe(0.25)
+    words[WORD_PEAK_L] = bitsOf(0.25)
+    words[WORD_STEP] = bitsOf(11.5)
+
+    expect(floats[WORD_PEAK_L]).toBe(0.25)
+    expect(floats[WORD_STEP]).toBe(11.5)
   })
 
   it('shows the same record bytes through both views over them', () => {

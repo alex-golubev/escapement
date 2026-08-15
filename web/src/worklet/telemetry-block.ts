@@ -20,14 +20,20 @@
 // `engine::tests::telemetry_layout_is_pinned` on the other.
 
 /** Mirror of `TELEMETRY_WORDS` in engine.rs. */
-export const TELEMETRY_WORDS = 4
+export const TELEMETRY_WORDS = 5
 
 export const TELEMETRY_TRANSPORT_LO = 0
 export const TELEMETRY_TRANSPORT_HI = 1
 /**
  * Peaks travel as `f32` bits, put there by `f32::to_bits`. Nothing on this side
  * of the ring turns them back into numbers — the worklet copies the word as it
- * found it, and the page reads the ring's own `peaks` view over it.
+ * found it, and the page reads the ring's own `floats` view over it.
  */
 export const TELEMETRY_PEAK_L = 2
 export const TELEMETRY_PEAK_R = 3
+/**
+ * Position within the pattern, in steps — `f32` bits like the peaks, copied
+ * across as the bits they are and read through that same view. What the number
+ * means is argued in the engine, at `sequencer::position_in_steps`.
+ */
+export const TELEMETRY_STEP = 4

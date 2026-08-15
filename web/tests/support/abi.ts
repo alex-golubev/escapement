@@ -22,6 +22,7 @@ import { COMMAND_SIZE } from '../../src/audio/protocol'
 import {
   TELEMETRY_PEAK_L,
   TELEMETRY_PEAK_R,
+  TELEMETRY_STEP,
   TELEMETRY_TRANSPORT_HI,
   TELEMETRY_TRANSPORT_LO,
   TELEMETRY_WORDS,
@@ -57,6 +58,7 @@ export interface TelemetryFields {
   readonly position?: number
   readonly peakL?: number
   readonly peakR?: number
+  readonly step?: number
 }
 
 /** A block of readings, as the engine would have left it in linear memory. */
@@ -73,11 +75,12 @@ export function telemetryBlock(fields: TelemetryFields = {}): Uint32Array {
  * making garbage.
  */
 export function writeTelemetryBlock(words: Uint32Array, fields: TelemetryFields): void {
-  const { position = 0, peakL = 0, peakR = 0 } = fields
+  const { position = 0, peakL = 0, peakR = 0, step = 0 } = fields
   words[TELEMETRY_TRANSPORT_LO] = position >>> 0
   words[TELEMETRY_TRANSPORT_HI] = Math.floor(position / 2 ** 32)
   words[TELEMETRY_PEAK_L] = bitsOf(peakL)
   words[TELEMETRY_PEAK_R] = bitsOf(peakR)
+  words[TELEMETRY_STEP] = bitsOf(step)
 }
 
 // One float and the same four bytes read as an integer — `f32::to_bits` on

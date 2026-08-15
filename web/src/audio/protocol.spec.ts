@@ -42,6 +42,7 @@ const OPCODES: Record<Command['op'], readonly [command: Command, opcode: number]
   'set-step': [{ op: 'set-step', track: 3, step: 513, velocity: 0.6 }, 7],
   'clear-pattern': [{ op: 'clear-pattern' }, 8],
   'set-metronome': [{ op: 'set-metronome', enabled: true }, 9],
+  'trigger-track': [{ op: 'trigger-track', track: 6, velocity: 0.4 }, 10],
 }
 
 describe('writeCommand', () => {

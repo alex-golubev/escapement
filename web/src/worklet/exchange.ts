@@ -12,6 +12,7 @@ import { COMMAND_SIZE } from '../audio/protocol'
 import {
   TELEMETRY_PEAK_L,
   TELEMETRY_PEAK_R,
+  TELEMETRY_STEP,
   TELEMETRY_TRANSPORT_HI,
   TELEMETRY_TRANSPORT_LO,
 } from './telemetry-block'
@@ -22,6 +23,7 @@ import {
   WORD_CMD_WRITE,
   WORD_PEAK_L,
   WORD_PEAK_R,
+  WORD_STEP,
   WORD_TELEMETRY_SEQ,
   WORD_TRANSPORT_HI,
   WORD_TRANSPORT_LO,
@@ -115,6 +117,11 @@ export function publishTelemetry(ring: RingViews, telemetry: Uint32Array): void 
   // reason; the page has a Float32Array over these very bytes.
   Atomics.store(words, WORD_PEAK_L, telemetry[TELEMETRY_PEAK_L])
   Atomics.store(words, WORD_PEAK_R, telemetry[TELEMETRY_PEAK_R])
+  // Inside the seqlock with the position rather than beside it: the two are
+  // read together and drawn together, and a playhead taken from one quantum
+  // over a grid position taken from the next is the tear this counter exists
+  // to make impossible.
+  Atomics.store(words, WORD_STEP, telemetry[TELEMETRY_STEP])
 
   Atomics.store(words, WORD_TELEMETRY_SEQ, (start + 2) >>> 0)
 }

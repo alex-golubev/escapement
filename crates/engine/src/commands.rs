@@ -45,9 +45,9 @@
 /// `tests::grid_dimensions_are_pinned` is what fails first.
 ///
 /// Bumped on any change to any of the three. One number rather than three: the
-/// others would themselves need reconciling with this one, and four telemetry
+/// others would themselves need reconciling with this one, and five telemetry
 /// words and two dimensions do not earn that.
-pub const PROTOCOL_VERSION: u32 = 4;
+pub const PROTOCOL_VERSION: u32 = 5;
 
 /// Size of a single record, in bytes.
 pub const COMMAND_SIZE: usize = 16;
@@ -69,6 +69,7 @@ pub enum Op {
     SetStep = 7,
     ClearPattern = 8,
     SetMetronome = 9,
+    TriggerTrack = 10,
 }
 
 impl Op {
@@ -83,6 +84,7 @@ impl Op {
             7 => Some(Op::SetStep),
             8 => Some(Op::ClearPattern),
             9 => Some(Op::SetMetronome),
+            10 => Some(Op::TriggerTrack),
             _ => None,
         }
     }
@@ -139,6 +141,17 @@ pub enum Command {
     /// In `value` rather than `arg_a`, which would have been the cheaper byte:
     /// the address fields address, and a switch has nothing to address.
     SetMetronome { enabled: bool },
+    /// Strike a track outside the grid — a pad, or the preview of a cell being
+    /// edited.
+    ///
+    /// **It sounds with the transport stopped**, which is what makes it a
+    /// different thing from a step rather than a shortcut to one: a step is read
+    /// by the walk over frames, and there is no walk while nothing is playing.
+    ///
+    /// Velocity rides in `value`, the field a cell already uses for the same
+    /// number, so a preview is as hard as the cell it previews and nothing new
+    /// goes on the wire for it.
+    TriggerTrack { track: u8, velocity: f32 },
 }
 
 /// A command together with the instant it applies at.
@@ -178,6 +191,7 @@ impl Record {
             Op::SetStep => Command::SetStep { track: arg_a, step: arg_b, velocity: value },
             Op::ClearPattern => Command::ClearPattern,
             Op::SetMetronome => Command::SetMetronome { enabled: value != 0.0 },
+            Op::TriggerTrack => Command::TriggerTrack { track: arg_a, velocity: value },
         };
 
         Some(Self {
@@ -201,6 +215,7 @@ impl Record {
             Command::SetMetronome { enabled } => {
                 (Op::SetMetronome, 0, 0, if enabled { 1.0 } else { 0.0 })
             }
+            Command::TriggerTrack { track, velocity } => (Op::TriggerTrack, track, 0, velocity),
         };
 
         let mut out = [0u8; COMMAND_SIZE];
@@ -264,6 +279,7 @@ mod tests {
         (7, Op::SetStep, Command::SetStep { track: 3, step: 513, velocity: 0.6 }),
         (8, Op::ClearPattern, Command::ClearPattern),
         (9, Op::SetMetronome, Command::SetMetronome { enabled: true }),
+        (10, Op::TriggerTrack, Command::TriggerTrack { track: 6, velocity: 0.4 }),
     ];
 
     fn round_trip(record: Record) -> Option<Record> {

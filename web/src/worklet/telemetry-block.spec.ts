@@ -18,6 +18,7 @@ import { describe, expect, it } from 'vitest'
 import {
   TELEMETRY_PEAK_L,
   TELEMETRY_PEAK_R,
+  TELEMETRY_STEP,
   TELEMETRY_TRANSPORT_HI,
   TELEMETRY_TRANSPORT_LO,
   TELEMETRY_WORDS,
@@ -25,13 +26,14 @@ import {
 
 describe('the telemetry block', () => {
   it('numbers its words the way engine.rs numbers them', () => {
-    expect(TELEMETRY_WORDS).toBe(4)
+    expect(TELEMETRY_WORDS).toBe(5)
     expect([
       TELEMETRY_TRANSPORT_LO,
       TELEMETRY_TRANSPORT_HI,
       TELEMETRY_PEAK_L,
       TELEMETRY_PEAK_R,
-    ]).toEqual([0, 1, 2, 3])
+      TELEMETRY_STEP,
+    ]).toEqual([0, 1, 2, 3, 4])
   })
 
   it('gives every field a word of its own, inside the block', () => {
@@ -45,6 +47,7 @@ describe('the telemetry block', () => {
       TELEMETRY_TRANSPORT_HI,
       TELEMETRY_PEAK_L,
       TELEMETRY_PEAK_R,
+      TELEMETRY_STEP,
     ]
 
     expect(new Set(indices).size, 'two fields share a word').toBe(indices.length)

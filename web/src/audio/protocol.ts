@@ -42,7 +42,7 @@
  *
  * Bump on any change to any of the three.
  */
-export const PROTOCOL_VERSION = 4
+export const PROTOCOL_VERSION = 5
 
 /** Mirror of `COMMAND_SIZE` in commands.rs. */
 export const COMMAND_SIZE = 16
@@ -91,6 +91,7 @@ const OP_SET_TRACK_PAN = 5
 const OP_SET_MASTER_GAIN = 6
 const OP_CLEAR_PATTERN = 8
 const OP_SET_METRONOME = 9
+const OP_TRIGGER_TRACK = 10
 
 /**
  * A command as the page states it. This mirrors the `Command` enum rather than
@@ -129,6 +130,12 @@ export type Command =
    * nothing gained by letting one pass a number.
    */
   | { readonly op: 'set-metronome'; readonly enabled: boolean }
+  /**
+   * Strike a track outside the grid — a pad, or the preview of a cell being
+   * edited. It sounds with the transport stopped, which is what makes it its own
+   * command rather than a shortcut to a step.
+   */
+  | { readonly op: 'trigger-track'; readonly track: number; readonly velocity: number }
 
 /**
  * Write one record at `byteOffset`.
@@ -201,6 +208,11 @@ export function writeCommand(
     case 'set-metronome':
       op = OP_SET_METRONOME
       value = command.enabled ? 1 : 0
+      break
+    case 'trigger-track':
+      op = OP_TRIGGER_TRACK
+      argA = command.track
+      value = command.velocity
       break
   }
 

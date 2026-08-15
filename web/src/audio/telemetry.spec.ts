@@ -19,9 +19,12 @@ import { telemetryBlock } from '../../tests/support/abi'
 describe('createReader', () => {
   it('reads back what the worklet published', () => {
     const { views, reader } = setup()
-    publishTelemetry(views, telemetryBlock({ position: 48_000, peakL: 0.5, peakR: 0.25 }))
+    publishTelemetry(
+      views,
+      telemetryBlock({ position: 48_000, peakL: 0.5, peakR: 0.25, step: 6.5 }),
+    )
 
-    expect(reader.read()).toEqual({ position: 48_000, peakL: 0.5, peakR: 0.25 })
+    expect(reader.read()).toEqual({ position: 48_000, peakL: 0.5, peakR: 0.25, step: 6.5 })
     expect(
       Atomics.load(views.words, WORD_TELEMETRY_SEQ) % 2,
       'the sequence must be left even for the next reader',

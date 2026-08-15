@@ -89,14 +89,16 @@ describe('createSession', () => {
     const harness = rig()
     await harness.session.start()
 
-    harness.publish({ position: 4096, peakL: 0.5, peakR: 0.25 })
+    harness.publish({ position: 4096, peakL: 0.5, peakR: 0.25, step: 2.75 })
     harness.frame()
     expect(harness.session.position).toBe(4096)
+    expect(harness.session.step).toBe(2.75)
 
     harness.publish(null)
     harness.frame()
     expect(harness.session.position).toBe(4096)
     expect(harness.session.peakL).toBe(0.5)
+    expect(harness.session.step).toBe(2.75)
   })
 
   it('gives the device back on stop, and stops reading with it', async () => {
@@ -319,7 +321,7 @@ function rig(options: { hold?: boolean } = {}) {
   let starts = 0
   let refusals = 0
   let accept = true
-  let reading: Telemetry | null = { position: 0, peakL: 0, peakR: 0 }
+  let reading: Telemetry | null = { position: 0, peakL: 0, peakR: 0, step: 0 }
   let failure: StartFailure | null = null
   let events: EngineEvents = {}
   let tick: (() => void) | null = null

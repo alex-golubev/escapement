@@ -18,12 +18,13 @@
 //   19  transport_hi
 //   20  peak_l             f32 bits, as `f32::to_bits` left them
 //   21  peak_r             f32 bits
+//   22  step               f32 bits — position within the pattern, in steps
 //   32  commands           RING_CAPACITY records of COMMAND_SIZE bytes
 //
 // The two directions start 64 bytes apart so that writers going opposite ways
 // do not contend on one cache line. Everything is 4-aligned, which is what
 // lets a single Uint32Array address the header, the telemetry and the atomics
-// alike, and a Float32Array over the same bytes read the peaks as numbers.
+// alike, and a Float32Array over the same bytes read the f32 fields as numbers.
 
 import { COMMAND_SIZE, PROTOCOL_VERSION } from './protocol'
 
@@ -48,6 +49,7 @@ export const WORD_TRANSPORT_LO = 18
 export const WORD_TRANSPORT_HI = 19
 export const WORD_PEAK_L = 20
 export const WORD_PEAK_R = 21
+export const WORD_STEP = 22
 
 /** Base of the command area. A multiple of 16, so every record is aligned. */
 export const COMMANDS_BYTE_OFFSET = 128
@@ -69,19 +71,19 @@ export interface RingViews {
   /** Header, telemetry and both atomic index words. */
   readonly words: Uint32Array
   /**
-   * The same bytes as `words`, read as the floats the peaks are. One index
+   * The same bytes as `words`, read as the floats some of them are. One index
    * space serves both because a `u32` and an `f32` are four bytes alike, which
-   * is why `WORD_PEAK_L` addresses this view as well.
+   * is why `WORD_PEAK_L` and `WORD_STEP` address this view as well.
    *
-   * This view is the whole reason the peaks arrive intact, and the only decode
-   * of them anywhere: Rust wrote the bits with `f32::to_bits`, and reading the
-   * same memory as an f32 is the one reading that cannot disagree with what put
-   * them there. Assembling the number from the integer instead — sign, exponent
-   * and mantissa by hand — would be a second definition of an f32 sitting
-   * beside the platform's, and the two would part company at the first
-   * denormal.
+   * This view is the whole reason those values arrive intact, and the only
+   * decode of them anywhere: Rust wrote the bits with `f32::to_bits`, and
+   * reading the same memory as an f32 is the one reading that cannot disagree
+   * with what put them there. Assembling the number from the integer instead —
+   * sign, exponent and mantissa by hand — would be a second definition of an
+   * f32 sitting beside the platform's, and the two would part company at the
+   * first denormal.
    */
-  readonly peaks: Float32Array
+  readonly floats: Float32Array
   /** The command area alone, so a slot offset is not also a base offset. */
   readonly records: Uint8Array
   /**
@@ -108,7 +110,7 @@ export function openRing(ring: SharedArrayBuffer): RingViews {
   const recordBytes = RING_CAPACITY * COMMAND_SIZE
   return {
     words: headerWords(ring),
-    peaks: new Float32Array(ring, 0, COMMANDS_BYTE_OFFSET / Float32Array.BYTES_PER_ELEMENT),
+    floats: new Float32Array(ring, 0, COMMANDS_BYTE_OFFSET / Float32Array.BYTES_PER_ELEMENT),
     records: new Uint8Array(ring, COMMANDS_BYTE_OFFSET, recordBytes),
     recordFields: new DataView(ring, COMMANDS_BYTE_OFFSET, recordBytes),
   }

@@ -116,6 +116,13 @@
           )}</span
         >
       </li>
+      <!-- A number until there is a grid to move over. It is the same reading
+           the playhead will be drawn from, and seeing it run 0 → 16 and wrap is
+           the only check on the wire that exists before the grid does. -->
+      <li>
+        <code>step</code>
+        <span>{session.step.toFixed(2)} · cell {Math.floor(session.step)}</span>
+      </li>
       <li>
         <code>peak L / R</code>
         <!-- The reading is of the bus before the limiter, so it runs past 1

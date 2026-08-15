@@ -12,7 +12,7 @@ import { readFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import { beforeAll, describe, expect, it } from 'vitest'
 
-import { COMMAND_SIZE, PROTOCOL_VERSION, writeCommand } from '../src/audio/protocol'
+import { COMMAND_SIZE, PROTOCOL_VERSION, STEPS, writeCommand } from '../src/audio/protocol'
 // The block size the worklet allocates the engine for, from the module both
 // threads read it out of.
 import { QUANTUM } from '../src/audio/worklet-messages'
@@ -26,6 +26,7 @@ import type { EngineExports } from '../src/worklet/engine'
 import {
   TELEMETRY_PEAK_L,
   TELEMETRY_PEAK_R,
+  TELEMETRY_STEP,
   TELEMETRY_TRANSPORT_HI,
   TELEMETRY_TRANSPORT_LO,
   TELEMETRY_WORDS,
@@ -158,7 +159,7 @@ describe('the compiled engine', () => {
   })
 
   it('stops sounding the metronome when told to across the wire', () => {
-    // The second opcode of the nine whose effect is observable from this side,
+    // The second opcode of the ten whose effect is observable from this side,
     // and the first that needs nothing loaded to show it: what it does is
     // silence, and silence needs no samples. Everything addressing a track
     // still cannot be checked here — a strike needs a kit, and there is no way
@@ -195,14 +196,15 @@ describe('the compiled engine', () => {
   })
 
   it('scales its output by a master gain that crossed the wire', () => {
-    // One of the two commands whose effect is observable from this side. Track
-    // gain, pan and the pattern are stored in the engine and reach no sample
-    // that this side can produce — striking one needs a kit, and loading a kit
-    // needs an ABI that does not exist yet — so no assertion here could tell a
-    // working decode from a discarded one, and the native tests hold those
-    // instead. Worth knowing precisely because of the mutation this file
-    // exists to catch: an opcode numbered differently in the two languages is
-    // caught here for two opcodes and by nothing at all for the rest.
+    // One of the two commands whose effect is observable from this side. The
+    // others all address a track — its gain, its pan, its cells, and the pad
+    // that strikes it outside the grid — and every one of them reaches a sample
+    // only through a kit, which this side has no ABI to load. So no assertion
+    // here could tell a working decode from a discarded one, and the native
+    // tests hold those instead. Worth knowing precisely because of the mutation
+    // this file exists to catch: an opcode numbered differently in the two
+    // languages is caught here for two opcodes out of ten and by nothing at all
+    // for the rest.
     //
     // This one goes further than the tempo test above, which shows a number
     // surviving the crossing. A gain that arrived as an integer, or landed in
@@ -245,12 +247,13 @@ describe('the compiled engine', () => {
 
   it('lays its telemetry block out where protocol.ts says it does', () => {
     // The half of the contract going the other way, and the one nothing used
-    // to hold against the compiled engine. The record format is pinned in both
-    // languages and crossed end to end above; the telemetry block is mirrored
-    // in protocol.ts by hand, and no version word covers it — `PROTOCOL_VERSION`
-    // is about the record layout and the opcode set. Reorder two words in
-    // engine.rs and every other test in this repository stays green while the
-    // page shows a position that is a peak.
+    // to hold against the compiled engine. `PROTOCOL_VERSION` does cover this
+    // block — its scope is everything crossing the ABI in either direction —
+    // but the version only refuses a *mismatched* build, and a renumbering
+    // shipped with both halves rebuilt is not a mismatch. Reorder two words in
+    // engine.rs, mirror the reorder in telemetry-block.ts, and every other test
+    // in this repository stays green while the page shows a position that is a
+    // peak. This is the one that does not.
     const engine = instantiate()
     const instance = engine.engine_new(SAMPLE_RATE, QUANTUM)
     expect(instance).not.toBe(0)
@@ -272,10 +275,13 @@ describe('the compiled engine', () => {
 
     // Before the first block, so that everything below is a change this test
     // caused rather than whatever happened to be at that address.
-    expect(Array.from(words), 'the block is not zeroed at construction').toEqual([0, 0, 0, 0])
+    expect(Array.from(words), 'the block is not zeroed at construction').toEqual([
+      0, 0, 0, 0, 0,
+    ])
 
     render(engine, instance, 1, 2)
     const struck = floats[TELEMETRY_PEAK_L]
+    const firstStep = floats[TELEMETRY_STEP]
 
     expect(words[TELEMETRY_TRANSPORT_LO]).toBe(QUANTUM)
     expect(words[TELEMETRY_TRANSPORT_HI], 'the high word is not the position').toBe(0)
@@ -294,10 +300,30 @@ describe('the compiled engine', () => {
     // would be claiming more than it checks.
     expect(floats[TELEMETRY_PEAK_R]).toBe(struck)
 
+    // The grid's own position, and the one word here whose scale this side
+    // cannot recompute: turning samples into steps takes the divisions per beat,
+    // which is an engine constant and deliberately not mirrored — the page is
+    // given the answer precisely so that it never needs the question. So what
+    // is asserted is what crossing the wire can show: an `f32` inside the
+    // pattern, moving with the transport, and not a copy of either neighbour.
+    expect(firstStep).toBeGreaterThan(0)
+    expect(firstStep).toBeLessThan(STEPS)
+    expect(firstStep).not.toBe(struck)
+    // The same reinterpretation check the peak gets: a step count in the bits
+    // of an f32 is an enormous u32, and a word holding the number itself
+    // would be a small one.
+    expect(words[TELEMETRY_STEP], 'the step word is not f32 bits').toBeGreaterThan(1)
+
     const QUIET = 20
     render(engine, instance, QUIET, 0)
 
     expect(words[TELEMETRY_TRANSPORT_LO]).toBe((QUIET + 1) * QUANTUM)
+    // Linear in the transport from zero, which pins the unit as far as this
+    // side can: twenty-one blocks of it is twenty-one times one block of it.
+    // A word carrying beats, or samples, or a step index would fail the
+    // bounds above; one carrying a position that did not start at zero fails
+    // here.
+    expect(floats[TELEMETRY_STEP]).toBeCloseTo(firstStep * (QUIET + 1), 5)
     // Falling, and still sounding. The click is over within some 8 ms while
     // the meter falls by `PEAK_FALL_PER_SECOND` — so a word that held still
     // here would be something other than the meter, and one that dropped to

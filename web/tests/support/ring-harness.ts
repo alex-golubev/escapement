@@ -96,6 +96,7 @@ export interface TelemetryProbe {
   readonly position: number
   readonly peakL: number
   readonly peakR: number
+  readonly step: number
 }
 
 /**
@@ -112,14 +113,16 @@ export interface TelemetryProbe {
  * seqlock does not know what the number means, and a realistic position would
  * cross the boundary once in a hundred thousand records instead of every time.
  *
- * The peaks differ too, and are exact in `f32`, so the check covers the whole
- * block rather than the position alone: a reading is compared against these
- * three fields together, and all four ways of mixing the two probes produce a
- * combination that appears in neither.
+ * The peaks and the step differ too, and every one of them is exact in `f32`,
+ * so the check covers the whole block rather than the position alone: a reading
+ * is compared against all four fields together, and every way of mixing the two
+ * probes produces a combination that appears in neither. A field left the same
+ * in both probes would be a field the seqlock could tear without this run
+ * noticing.
  */
 export const TELEMETRY_PROBES: readonly TelemetryProbe[] = [
-  { position: 2 ** 32, peakL: 0.25, peakR: 0.75 },
-  { position: 3 * 2 ** 32 - 1, peakL: 1.5, peakR: 0.5 },
+  { position: 2 ** 32, peakL: 0.25, peakR: 0.75, step: 3.25 },
+  { position: 3 * 2 ** 32 - 1, peakL: 1.5, peakR: 0.5, step: 12.5 },
 ]
 
 /**

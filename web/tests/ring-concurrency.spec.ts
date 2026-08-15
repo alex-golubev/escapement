@@ -262,7 +262,10 @@ async function runSession(shape: (typeof SHAPES)[number]): Promise<Session> {
         // Capped: a run that tore on every frame would otherwise build a
         // hundred thousand strings, and the first few say the same thing.
         if (torn.length < 8) {
-          torn.push(`position ${reading.position}, peaks ${reading.peakL} / ${reading.peakR}`)
+          torn.push(
+            `position ${reading.position}, peaks ${reading.peakL} / ${reading.peakR}, ` +
+              `step ${reading.step}`,
+          )
         }
       } else {
         published += 1
@@ -297,12 +300,14 @@ async function runSession(shape: (typeof SHAPES)[number]): Promise<Session> {
 }
 
 function matches(state: (typeof TELEMETRY_PROBES)[number], reading: Telemetry): boolean {
-  // All three fields together. A tear that took the position from one publish
-  // and the peaks from the other leaves the position matching on its own.
+  // Every field together. A tear that took the position from one publish and
+  // the peaks from the other leaves the position matching on its own, and a
+  // field left out here is a field this run cannot see torn at all.
   return (
     state.position === reading.position &&
     state.peakL === reading.peakL &&
-    state.peakR === reading.peakR
+    state.peakR === reading.peakR &&
+    state.step === reading.step
   )
 }
 

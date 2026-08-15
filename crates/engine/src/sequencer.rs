@@ -11,9 +11,9 @@
 //!
 //! Which is why this is a handful of functions and not a type: there is no state
 //! to own. The walk over frames stays in the engine, threaded between the
-//! metronome and the sum; what lives here is the arithmetic that walk asks for
-//! where it can be checked against the grid rather than against a rendered
-//! buffer.
+//! metronome and the sum; what lives here is the arithmetic it asks for — and
+//! the arithmetic the telemetry asks for on its way out — where it can be
+//! checked against the grid rather than against a rendered buffer.
 
 use crate::TRACKS;
 use crate::pattern::{Pattern, STEPS};
@@ -44,6 +44,49 @@ pub const STEPS_PER_BEAT: u32 = 4;
 pub fn step_at(transport: &Transport, pos: u64) -> usize {
     let division = transport.division_at(pos, STEPS_PER_BEAT).round() as i64;
     division.rem_euclid(STEPS as i64) as usize
+}
+
+/// Where the grid stands at `pos`, in steps, wrapped into the pattern.
+///
+/// The telemetry word a playhead is drawn from, and it exists because this sum
+/// cannot be done on the far side: samples become musical position only through
+/// the tempo anchor, and the anchor is here. A page counting from the BPM it
+/// last sent would be right until the first tempo change and wrong after it —
+/// a second representation of musical time, which is the one thing
+/// [`Transport`] exists to keep from happening.
+///
+/// **Fractional**, where [`step_at`] answers with a step number. The two are
+/// different questions: which cell strikes, and where between the cells the
+/// playhead is. An integer would leave the page interpolating, and interpolating
+/// needs the tempo — the very thing this word is carrying instead.
+///
+/// **Wrapped**, rather than counted from the start of the session and reduced by
+/// the page. That reads cleaner and keeps [`STEPS`] off the wire, and it decays:
+/// an unwrapped count grows without bound and the spacing of an `f32` grows with
+/// it, so by the eighth hour of a session the word is quantized to milliseconds.
+/// Wrapped, it is also the sequencer's own state — which step is playing —
+/// rather than a number the page has to reduce to that.
+///
+/// **`floor` of this and [`step_at`] can disagree by one, and only ever on a
+/// boundary sample.** A boundary is a musical position rounded to a whole
+/// sample, so asking one for its musical position lands a hair to either side of
+/// the integer — [`step_at`] rounds for that reason, and this does not, a
+/// position being neither the step before nor the step after. The two are asked
+/// of the same instant only when a quantum ends exactly on a boundary, which is
+/// regular rather than rare; what it costs is a cell lit one displayed frame
+/// early or late, a tenth of a sample of disagreement. Named here because the
+/// place it shows is the page, and the place it would be searched for is this
+/// module.
+pub fn position_in_steps(transport: &Transport, pos: u64) -> f32 {
+    let wrapped = transport.division_at(pos, STEPS_PER_BEAT).rem_euclid(STEPS as f64);
+    // Wrapped a second time after the narrowing, which is not the first wrap
+    // repeated. Just below sixteen an `f32` steps by 1.9e-6, so a position
+    // inside half of that rounds *up* to the modulus — and the wrap that exists
+    // to keep the value inside the pattern would hand out the one index the grid
+    // does not have. The reading is right against the position either way: a
+    // hair short of the end of the last step is a hair short of the start of the
+    // first.
+    (wrapped as f32).rem_euclid(STEPS as f32)
 }
 
 /// The nearest step boundary at or after `pos`.
@@ -155,6 +198,95 @@ mod tests {
         let fourth = next_boundary(&transport, transport.sample_pos());
         assert_eq!(step_at(&transport, fourth), 4, "the step after a tempo change");
         assert!(fourth > third, "the grid stepped backwards");
+    }
+
+    #[test]
+    fn the_word_is_measured_in_steps() {
+        // The unit, checked against something other than the function that
+        // computes it. At 120 BPM and 48 kHz a step is 6000 samples, so a
+        // quarter of the way into step 3 is 3.25 and nothing else: the same
+        // instant reads 0.8125 in beats and 19 500 in samples, and a word
+        // carrying either would pass every other test here.
+        let transport = at(120.0);
+        assert_eq!(position_in_steps(&transport, 0), 0.0);
+        assert_eq!(position_in_steps(&transport, 6_000 * 3 + 1_500), 3.25);
+        assert_eq!(position_in_steps(&transport, 6_000 * 15 + 3_000), 15.5);
+    }
+
+    #[test]
+    fn the_word_wraps_with_the_pattern() {
+        // The wrap is the whole difference between this word and a count of
+        // steps since the transport started, and the two agree for the first
+        // bar — which is exactly as far as a test that renders a little way
+        // would ever look.
+        let transport = at(120.0);
+        let bar = 6_000 * STEPS as u64;
+        assert_eq!(position_in_steps(&transport, bar), 0.0);
+        assert_eq!(position_in_steps(&transport, bar + 6_000), 1.0);
+        assert_eq!(position_in_steps(&transport, 4 * bar + 3_000), 0.5);
+    }
+
+    #[test]
+    fn the_word_never_leaves_the_pattern() {
+        // A stride that shares no factor with the grid, so the samples looked
+        // at are not the ones a boundary lands on.
+        let transport = at(AWKWARD_BPM);
+        let span = transport.sample_of_division((STEPS * BARS) as f64, STEPS_PER_BEAT);
+        for pos in (0..span).step_by(97) {
+            let word = position_in_steps(&transport, pos);
+            assert!((0.0..STEPS as f32).contains(&word), "{word} is outside the pattern at {pos}");
+        }
+    }
+
+    #[test]
+    fn a_position_a_hair_short_of_the_pattern_wraps_rather_than_landing_past_it() {
+        // The second wrap in `position_in_steps`, and the value that makes it
+        // more than the first one written twice. The middle assertion is the
+        // defect itself: a position genuinely inside the pattern comes out of
+        // the narrowing sitting on the modulus, which floors to an index the
+        // grid does not have.
+        //
+        // The rate is absurd on purpose — `engine_new` takes what it is given,
+        // and the guard is about the narrowing rather than about the rate. What
+        // it needs is a step long enough that a sample lands within half an
+        // `f32` ulp of the end of the pattern: just under sixteen that ulp is
+        // 9.54e-7, so the fixture sits 2.5e-7 short of the wrap and a fixture
+        // twice as far away would round the other way and prove nothing.
+        let mut transport = Transport::new(1e12);
+        transport.set_bpm(120.0);
+        let pos = 1_999_999_968_750;
+
+        let wide = transport.division_at(pos, STEPS_PER_BEAT).rem_euclid(STEPS as f64);
+        assert!(wide < STEPS as f64, "the fixture must sit inside the pattern");
+        assert_eq!(wide as f32, STEPS as f32, "the fixture must round up when narrowed");
+
+        assert_eq!(position_in_steps(&transport, pos), 0.0);
+    }
+
+    #[test]
+    fn the_word_floors_to_the_step_the_grid_is_striking() {
+        // What the page does with the word is take its floor, so that is what
+        // has to agree with the strike. Inside a step it agrees exactly; on the
+        // boundary sample the two are asked of the same instant, and the
+        // tolerance below is the one `position_in_steps` argues for — asserting
+        // equality there would be asserting that a rounded boundary lands on
+        // the high side of its integer, which is true of some tempi and not of
+        // others.
+        let transport = at(AWKWARD_BPM);
+        for (index, boundary) in boundaries(&transport, STEPS * BARS).into_iter().enumerate() {
+            let step = index % STEPS;
+            let next = next_boundary(&transport, boundary + 1);
+            for pos in [boundary + 1, (boundary + next) / 2, next - 1] {
+                let lit = position_in_steps(&transport, pos).floor() as usize;
+                assert_eq!(lit, step, "sample {pos} lit the wrong cell");
+            }
+
+            let lit = position_in_steps(&transport, boundary).floor() as usize;
+            assert!(
+                lit == step || lit == (step + STEPS - 1) % STEPS,
+                "boundary {index} is step {step} and lit {lit}"
+            );
+        }
     }
 
     /// A kit of one-frame impulses, one per track: a struck voice then writes

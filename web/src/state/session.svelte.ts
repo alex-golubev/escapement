@@ -82,6 +82,12 @@ export interface Session {
   readonly dropped: number
   readonly peakL: number
   readonly peakR: number
+  /**
+   * Where the sequencer stands in the pattern, in steps and fractional — see
+   * `Telemetry.step`. A number on screen for now: it is the grid that will draw
+   * it, and the grid is not built yet.
+   */
+  readonly step: number
   readonly playing: boolean
   readonly bpm: number
   start(): Promise<void>
@@ -117,6 +123,7 @@ export function createSession(deps: SessionDeps = {}): Session {
   let position = $state(0)
   let peakL = $state(0)
   let peakR = $state(0)
+  let step = $state(0)
 
   // What the page believes about the transport. Believes, and does not know: the
   // engine holds the truth and nothing reads it back, so this is an open loop. It
@@ -142,6 +149,7 @@ export function createSession(deps: SessionDeps = {}): Session {
     position = reading.position
     peakL = reading.peakL
     peakR = reading.peakR
+    step = reading.step
   }
 
   /**
@@ -296,6 +304,9 @@ export function createSession(deps: SessionDeps = {}): Session {
     },
     get peakR(): number {
       return peakR
+    },
+    get step(): number {
+      return step
     },
     get playing(): boolean {
       return playing

@@ -8,6 +8,7 @@
 import {
   WORD_PEAK_L,
   WORD_PEAK_R,
+  WORD_STEP,
   WORD_TELEMETRY_SEQ,
   WORD_TRANSPORT_HI,
   WORD_TRANSPORT_LO,
@@ -32,6 +33,21 @@ export interface Telemetry {
    */
   readonly peakL: number
   readonly peakR: number
+  /**
+   * Where the sequencer stands within the pattern, in steps, wrapped into
+   * `[0, STEPS)`. Fractional: the playhead is drawn at this position and the
+   * cell to light is `Math.floor` of it.
+   *
+   * The page cannot work this out for itself, which is why it travels — turning
+   * samples into a musical position takes the tempo anchor, and that lives in
+   * the engine. A page counting from the BPM it last sent would be right until
+   * the first tempo change.
+   *
+   * The floor can name the cell before or after the striking one by a fraction
+   * of a sample, on a boundary and nowhere else; `sequencer::position_in_steps`
+   * is where that is argued, and it is the only place it should be.
+   */
+  readonly step: number
 }
 
 export interface TelemetryReader {
@@ -46,12 +62,12 @@ export interface TelemetryReader {
 /**
  * How many times to look before giving up for this frame.
  *
- * Not four chances at four moments: four loads with nothing between them take
- * about as long as the four stores they are racing, so the whole loop sits
- * inside the window it is trying to outlast and this is nearer one look than
- * four. Widening it would not help either — waiting out a publish means
- * spinning the main thread on a value only the audio thread can change, which
- * is the one thing a reader here must never do.
+ * Not four chances at four moments: a handful of loads with nothing between
+ * them take about as long as the handful of stores they are racing, so the
+ * whole loop sits inside the window it is trying to outlast and this is nearer
+ * one look than four. Widening it would not help either — waiting out a publish
+ * means spinning the main thread on a value only the audio thread can change,
+ * which is the one thing a reader here must never do.
  *
  * What makes that acceptable is the caller: a frame that reads nothing keeps
  * the numbers it already has, and the next frame is 16 ms and six publishes
@@ -63,7 +79,7 @@ export interface TelemetryReader {
 const ATTEMPTS = 4
 
 export function createReader(ring: RingViews): TelemetryReader {
-  const { words, peaks } = ring
+  const { words, floats } = ring
 
   return {
     read(): Telemetry | null {
@@ -78,15 +94,16 @@ export function createReader(ring: RingViews): TelemetryReader {
         // not add anything the check below does not already give.
         const lo = words[WORD_TRANSPORT_LO]
         const hi = words[WORD_TRANSPORT_HI]
-        const peakL = peaks[WORD_PEAK_L]
-        const peakR = peaks[WORD_PEAK_R]
+        const peakL = floats[WORD_PEAK_L]
+        const peakR = floats[WORD_PEAK_R]
+        const step = floats[WORD_STEP]
 
-        // A write started and finished while the four reads above were in
-        // flight. Nothing above can be trusted — in particular `lo` and `hi`
-        // may now be from either side of a quantum boundary.
+        // A write started and finished while the reads above were in flight.
+        // Nothing above can be trusted — in particular `lo` and `hi` may now be
+        // from either side of a quantum boundary.
         if (Atomics.load(words, WORD_TELEMETRY_SEQ) !== before) continue
 
-        return { position: hi * 2 ** 32 + lo, peakL, peakR }
+        return { position: hi * 2 ** 32 + lo, peakL, peakR, step }
       }
       return null
     },

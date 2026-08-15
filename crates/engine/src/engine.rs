@@ -35,13 +35,18 @@ use crate::transport::Transport;
 /// `underrun_count` is deliberately absent: the engine cannot notice a missed
 /// `process` call at all — only the worklet observes that, and it writes that
 /// counter into the SAB directly.
-pub const TELEMETRY_WORDS: usize = 4;
+pub const TELEMETRY_WORDS: usize = 5;
 pub const TELEMETRY_TRANSPORT_LO: usize = 0;
 pub const TELEMETRY_TRANSPORT_HI: usize = 1;
 /// Peak levels sit in these words as `f32` bits (`f32::to_bits`).
 /// On the JS side the same bytes are read through a `Float32Array` view.
 pub const TELEMETRY_PEAK_L: usize = 2;
 pub const TELEMETRY_PEAK_R: usize = 3;
+/// Position within the pattern, in steps — `f32` bits like the peaks above, and
+/// read on the far side through the same view over the same bytes. What the
+/// value is and why it has that shape is argued where it is computed, at
+/// [`sequencer::position_in_steps`].
+pub const TELEMETRY_STEP: usize = 4;
 
 /// Click frequency on a beat and on the first beat of a bar.
 const CLICK_HZ: f32 = 1000.0;
@@ -349,6 +354,7 @@ impl Engine {
         words[TELEMETRY_TRANSPORT_HI] = (pos >> 32) as u32;
         words[TELEMETRY_PEAK_L] = self.peak[0].to_bits();
         words[TELEMETRY_PEAK_R] = self.peak[1].to_bits();
+        words[TELEMETRY_STEP] = sequencer::position_in_steps(&self.transport, pos).to_bits();
     }
 
     fn apply(&mut self, command: Command) {
@@ -373,6 +379,7 @@ impl Engine {
             }
             Command::ClearPattern => self.pattern.clear(),
             Command::SetMetronome { enabled } => self.click.set_enabled(enabled),
+            Command::TriggerTrack { track, velocity } => self.sampler.trigger(track, velocity),
         }
     }
 
@@ -1244,6 +1251,70 @@ mod tests {
     }
 
     #[test]
+    fn a_preview_sounds_while_the_transport_is_stopped() {
+        // The property that makes a pad a command of its own rather than a
+        // shortcut to a step: the grid is read by the walk over frames, and a
+        // stopped transport crosses no boundary at all. So a filled pattern is
+        // exactly the silence the preview is heard against, and no metronome
+        // has to be switched off to hear it — a click needs a beat to land on,
+        // and there are none either.
+        let mut engine = Engine::new(SR);
+        load_kit(&mut engine, 1);
+
+        let silent = quantum(
+            &mut engine,
+            &[Record::immediate(Command::SetStep { track: 0, step: 0, velocity: 1.0 })],
+        );
+        // Exact zeros rather than `struck_frames`, whose threshold would also
+        // report nothing for a strike that merely came out quiet.
+        assert!(
+            silent.iter().all(|&sample| sample == 0.0),
+            "the grid sounded with the transport stopped"
+        );
+
+        let previewed = quantum(
+            &mut engine,
+            &[Record::immediate(Command::TriggerTrack { track: 0, velocity: 1.0 })],
+        );
+        assert_eq!(previewed[0], centred(1.0), "the pad did not strike");
+    }
+
+    #[test]
+    fn a_preview_and_a_cell_strike_through_one_door() {
+        // Two callers of `Sampler::trigger`, and this says they are two callers
+        // rather than two implementations. Nothing else would: each of them has
+        // its own tests, both would pass over a second door, and what a second
+        // door produces is a pad that sounds unlike the grid it is editing —
+        // heard long before anyone thinks to go looking for it.
+        //
+        // A velocity that is neither zero nor one, because the two paths agree
+        // trivially at both.
+        const VELOCITY: f32 = 0.6;
+
+        fn engine_with_a_kit() -> Engine {
+            let mut engine = Engine::new(SR);
+            load_kit(&mut engine, 1);
+            engine
+        }
+
+        let pad = quantum(
+            &mut engine_with_a_kit(),
+            &[Record::immediate(Command::TriggerTrack { track: 3, velocity: VELOCITY })],
+        );
+        let grid = quantum(
+            &mut engine_with_a_kit(),
+            &[
+                Record::immediate(Command::SetMetronome { enabled: false }),
+                Record::immediate(Command::SetStep { track: 3, step: 0, velocity: VELOCITY }),
+                Record::immediate(Command::Play),
+            ],
+        );
+
+        assert_eq!(pad[0], grid[0], "the pad and the cell came out at different levels");
+        assert_eq!(pad[0], centred(VELOCITY));
+    }
+
+    #[test]
     fn the_master_gain_scales_the_output() {
         fn peak_at(gain: f32) -> f32 {
             let mut engine = Engine::new(SR);
@@ -1504,15 +1575,16 @@ mod tests {
         // failure is the signal to update `telemetry-block.ts` alongside it and
         // to bump PROTOCOL_VERSION — the number that makes a worklet built
         // against the old block refuse to start rather than misreport.
-        assert_eq!(TELEMETRY_WORDS, 4);
+        assert_eq!(TELEMETRY_WORDS, 5);
         assert_eq!(
             [
                 TELEMETRY_TRANSPORT_LO,
                 TELEMETRY_TRANSPORT_HI,
                 TELEMETRY_PEAK_L,
                 TELEMETRY_PEAK_R,
+                TELEMETRY_STEP,
             ],
-            [0, 1, 2, 3],
+            [0, 1, 2, 3, 4],
         );
     }
 
@@ -1531,6 +1603,29 @@ mod tests {
         assert_eq!(f32::from_bits(words[TELEMETRY_PEAK_L]), engine.peak(0));
         assert_eq!(f32::from_bits(words[TELEMETRY_PEAK_R]), engine.peak(1));
         assert!(engine.peak(0) > 0.0, "the click must show up on the meter");
+    }
+
+    #[test]
+    fn telemetry_reports_where_the_grid_stands() {
+        // Both readings are equalities rather than neighbourhoods, because 120
+        // BPM at 48 kHz makes a step 6000 whole samples: half a bar is exactly
+        // eight steps and a whole one is exactly the pattern. Eight is also what
+        // tells the unit apart from its neighbours — the same instant is two
+        // beats and 48 000 samples.
+        //
+        // `started` has already rendered one quantum, which is why each stretch
+        // below is one short of the half bar it lands on.
+        let (mut engine, _) = started(120.0);
+        let mut words = [0u32; TELEMETRY_WORDS];
+
+        skip(&mut engine, BAR_QUANTA / 2 - 1);
+        engine.write_telemetry(&mut words);
+        assert_eq!(words[TELEMETRY_TRANSPORT_LO], (BAR_FRAMES / 2) as u32);
+        assert_eq!(f32::from_bits(words[TELEMETRY_STEP]), 8.0);
+
+        skip(&mut engine, BAR_QUANTA / 2);
+        engine.write_telemetry(&mut words);
+        assert_eq!(f32::from_bits(words[TELEMETRY_STEP]), 0.0, "the word did not wrap");
     }
 
     #[test]
