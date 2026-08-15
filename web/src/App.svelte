@@ -111,6 +111,23 @@
         />
         <output>{session.bpm} BPM</output>
       </label>
+      <!-- Attenuation is the whole of what this is for. The sum is hot by
+           decision — eight tracks at unity reach 5.66 — so a full grid sits on
+           the limiter and the useful travel is downward. The engine accepts up
+           to 2 and this stops at unity: above it there is nothing to reach that
+           the limiter is not already holding, and a range the UI keeps itself
+           inside is the UI's own business. -->
+      <label>
+        <input
+          type="range"
+          min="0"
+          max="1"
+          step="0.01"
+          value={session.masterGain}
+          oninput={(event) => session.setMasterGain(event.currentTarget.valueAsNumber)}
+        />
+        <output>{session.masterGain.toFixed(2)} master</output>
+      </label>
       <!-- The engine comes up with the click on, and it is in the way of hearing
            anything else. Off is a command like any other, which is why the box
            follows what was accepted rather than what was clicked. -->

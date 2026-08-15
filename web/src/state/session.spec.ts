@@ -14,6 +14,7 @@ import type { FrameLoop, KitFetch } from './session.svelte'
 import type { EngineEvents, EngineHandle, StartFailure } from '../audio/host'
 import { describeKitFailure } from '../audio/kit'
 import type { KitFailure } from '../audio/kit'
+import { STEPS, TRACKS } from '../audio/protocol'
 import type { Command } from '../audio/protocol'
 import type { Result } from '../audio/result'
 import type { Telemetry } from '../audio/telemetry'
@@ -24,14 +25,19 @@ const SAMPLE_RATE = 44_100
 const PROTOCOL_VERSION = 7
 
 /**
- * What a start installs before anything else, in order.
+ * What a start installs before anything else, in order, with the page holding
+ * nothing but its defaults.
  *
  * Written out here because more than one test is about what follows it, and a
  * list repeated at each of them is a list that will be updated at some of them.
+ * `clear-pattern` is the head of the pattern rather than a fourth setting: the
+ * pattern goes over on every start, and an empty one is exactly that one record.
  */
 const SETTINGS: readonly Command[] = [
   { op: 'set-bpm', bpm: 120 },
   { op: 'set-metronome', enabled: true },
+  { op: 'set-master-gain', gain: 1 },
+  { op: 'clear-pattern' },
 ]
 
 describe('createSession', () => {
@@ -238,6 +244,8 @@ describe('createSession', () => {
     expect(harness.sent().slice(-SETTINGS.length)).toEqual([
       { op: 'set-bpm', bpm: 174 },
       { op: 'set-metronome', enabled: true },
+      { op: 'set-master-gain', gain: 1 },
+      { op: 'clear-pattern' },
     ])
   })
 
@@ -352,6 +360,89 @@ describe('createSession', () => {
     harness.refuse()
     harness.session.setMetronome(true)
     expect(harness.session.metronome).toBe(false)
+  })
+
+  it('keeps the master level in step with the command that moved it', async () => {
+    const harness = rig()
+    await harness.start()
+
+    harness.session.setMasterGain(0.25)
+    expect(harness.session.masterGain).toBe(0.25)
+    expect(harness.sent()).toContainEqual({ op: 'set-master-gain', gain: 0.25 })
+
+    // The same rule the tempo follows: a readout showing a level the engine was
+    // never told is a divergence with nothing on screen to explain it.
+    harness.refuse()
+    harness.session.setMasterGain(1)
+    expect(harness.session.masterGain).toBe(0.25)
+  })
+
+  it('strikes a cell at full velocity and clears it with none', async () => {
+    // A cell is its velocity and zero is off, which is what makes these two the
+    // same command twice rather than a command and its opposite.
+    const harness = rig()
+    await harness.start()
+
+    harness.session.setStep(3, 5, true)
+    expect(harness.session.isStepOn(3, 5)).toBe(true)
+    harness.session.setStep(3, 5, false)
+    expect(harness.session.isStepOn(3, 5)).toBe(false)
+
+    expect(harness.sent().slice(SETTINGS.length)).toEqual([
+      { op: 'set-step', track: 3, step: 5, velocity: 1 },
+      { op: 'set-step', track: 3, step: 5, velocity: 0 },
+    ])
+  })
+
+  it('does not light a cell the ring refused', async () => {
+    // The same gesture-and-belief rule the transport follows. A grid showing a
+    // cell the engine never took would go on showing it, silently, for as long
+    // as the pattern lived.
+    const harness = rig()
+    await harness.start()
+    harness.refuse()
+
+    harness.session.setStep(0, 0, true)
+
+    expect(harness.session.isStepOn(0, 0)).toBe(false)
+  })
+
+  it('keeps a cell outside the grid out of both the engine and the page', async () => {
+    // Unreachable from a grid built on TRACKS and STEPS, and guarded anyway
+    // because the two ways out of range fail differently on this side and
+    // neither failure is the engine's to catch — see `inGrid`.
+    const harness = rig()
+    await harness.start()
+    const settled = harness.sent().length
+
+    harness.session.setStep(TRACKS, 0, true)
+    harness.session.setStep(0, STEPS, true)
+    harness.session.setStep(-1, 0, true)
+    harness.session.setStep(0.5, 0, true)
+
+    expect(harness.sent()).toHaveLength(settled)
+    expect(harness.session.isStepOn(TRACKS, 0)).toBe(false)
+  })
+
+  it('tells a new engine the pattern the page is already showing', async () => {
+    // The pattern is a setting the page holds, like the tempo, so it outlives
+    // the engine it was set on. Worth its own test because the sending is bulk —
+    // the first here — and because until a project can be opened, restarting is
+    // the only way this path is ever taken with something in it.
+    const harness = rig()
+    await harness.start()
+    harness.session.setStep(1, 2, true)
+    harness.session.setStep(6, 15, true)
+
+    harness.session.stop()
+    await harness.start()
+
+    expect(harness.session.isStepOn(1, 2)).toBe(true)
+    expect(harness.sent().slice(-SETTINGS.length - 2)).toEqual([
+      ...SETTINGS,
+      { op: 'set-step', track: 1, step: 2, velocity: 1 },
+      { op: 'set-step', track: 6, step: 15, velocity: 1 },
+    ])
   })
 
   it('strikes a pad without remembering anything about it', async () => {

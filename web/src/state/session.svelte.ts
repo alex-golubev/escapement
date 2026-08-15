@@ -19,6 +19,7 @@ import { describeStartFailure, startEngine } from '../audio/host'
 import type { EngineHandle } from '../audio/host'
 import { browserKitSource, describeKitFailure, fetchKit } from '../audio/kit'
 import type { KitFailure } from '../audio/kit'
+import { STEPS, TRACKS } from '../audio/protocol'
 import type { Command } from '../audio/protocol'
 import type { Result } from '../audio/result'
 import type { KitSample, WorkletMessage } from '../audio/worklet-messages'
@@ -44,6 +45,62 @@ export type KitStatus = 'none' | 'loading' | 'loaded' | 'failed'
  * silence. The engine is told this now, so it is the page's own choice.
  */
 const INITIAL_BPM = 120
+
+/**
+ * The master level a page opens at, told to the engine for the reason above.
+ *
+ * Unity, and not something lower to keep a full grid off the limiter. Eight
+ * tracks at their own unity sum to 5.66 by decision — that is what the limiter
+ * is there for and what the fader is there to answer — so a page that opened
+ * quieter would be settling a question about the mix with a number nobody
+ * chose, and settling it where it could never be seen.
+ */
+const INITIAL_MASTER_GAIN = 1
+
+/**
+ * How hard a struck cell hits.
+ *
+ * Its own constant rather than a reference to the pad's, which holds the same
+ * number today: a pad is as loud as the kit makes it, a cell is as loud as the
+ * page has any way to say, and neither follows from the other. Tied by a
+ * reference they would move together the first time one of them was meant to
+ * move alone.
+ *
+ * One number at all, and not a range, because this milestone has no velocity
+ * editor. The engine keeps a velocity per cell and the wire carries it; what
+ * the page lacks is anywhere to set one, so a cell is on or off and `0` is what
+ * off is. Remembering that a struck-out cell was at 0.7 is the document's job,
+ * and the document arrives on M2.
+ */
+const CELL_VELOCITY = 1
+
+/** A grid with nothing in it. The shape every pattern here has. */
+function emptyPattern(): boolean[][] {
+  return Array.from({ length: TRACKS }, () => new Array<boolean>(STEPS).fill(false))
+}
+
+/**
+ * Whether a cell exists.
+ *
+ * Unreachable from a grid built on `TRACKS` and `STEPS`, which is where those
+ * two are kept so that nobody draws a grid of their own size. So this is not
+ * about the sound: the engine drops an index past the end of its own grid
+ * already, and drops it correctly. It is about this side's array, where the two
+ * ways out of range fail differently and neither is the engine's to catch — a
+ * track past the end assigns through `undefined` and throws inside an event
+ * handler, while a step past the end quietly lengthens one row, leaving the
+ * grid ragged with no loop that walks it any the wiser.
+ */
+function inGrid(track: number, step: number): boolean {
+  return (
+    Number.isInteger(track) &&
+    Number.isInteger(step) &&
+    track >= 0 &&
+    track < TRACKS &&
+    step >= 0 &&
+    step < STEPS
+  )
+}
 
 /**
  * Run `tick` on every frame, and hand back the way to stop it.
@@ -109,6 +166,7 @@ export interface Session {
   readonly playing: boolean
   readonly bpm: number
   readonly metronome: boolean
+  readonly masterGain: number
   readonly kit: KitStatus
   /** Why the kit is not loaded, when that is known. */
   readonly kitFailure: string | null
@@ -118,6 +176,21 @@ export interface Session {
   toggle(): void
   setBpm(bpm: number): void
   setMetronome(enabled: boolean): void
+  setMasterGain(gain: number): void
+  /**
+   * Whether a cell is struck.
+   *
+   * A question rather than the array itself, and for the reason at the top of
+   * this file: an array handed out is an array a component can write to, and
+   * writing to it would be a road into the page's belief that reaches no
+   * engine — the one divergence nothing here could detect. Reactivity is
+   * unaffected either way, because the read happens inside whatever scope
+   * called this, so a template depends on the single cell it asked about and
+   * not on the grid.
+   */
+  isStepOn(track: number, step: number): boolean
+  /** Strike a cell or clear it. Off travels as velocity `0`; there is no flag. */
+  setStep(track: number, step: number, on: boolean): void
   /**
    * Strike a track outside the grid. Nothing is remembered afterwards, which is
    * what makes this the one verb here with no belief to keep in step: a pad
@@ -166,6 +239,23 @@ export function createSession(deps: SessionDeps = {}): Session {
   // The engine comes up with the click on, and this page says so rather than
   // agreeing with it by coincidence — the argument is at `INITIAL_BPM`.
   let metronome = $state(true)
+  let masterGain = $state(INITIAL_MASTER_GAIN)
+
+  /**
+   * The pattern the page holds, one boolean a cell.
+   *
+   * Deep `$state`, and deliberately not the `$state.raw` the handle above is:
+   * there the proxy costs a hop on every send and buys nothing, here it is the
+   * whole point. A click writes one cell, and only what reads that cell hears
+   * about it. Made raw — or kept as a value replaced whole on each click — all
+   * 128 cells would invalidate together on every edit, which is the cost the
+   * framework was chosen to avoid rather than pay in a different place.
+   *
+   * `const`, because nothing ever replaces it: `discard` leaves it alone. It is
+   * a setting the page holds and hands to whatever engine it has, exactly like
+   * the tempo, and the argument for that is in `discard`.
+   */
+  const pattern = $state(emptyPattern())
 
   // How the kit is getting on. `loading` covers both halves of the journey — the
   // fetch here and the load over there — because from the page they are one
@@ -261,11 +351,13 @@ export function createSession(deps: SessionDeps = {}): Session {
     // on screen is a number the engine was never told, and the page stops being
     // able to display a tempo nothing is playing at.
     //
-    // One command today and a list of them by the time there is a pattern to
-    // send — this is the same path a project being opened will take, which is
-    // why it is the ordinary write path and not something start does specially.
+    // Through the ordinary write path and not something start does specially,
+    // because this is in miniature the path a project being opened will take:
+    // a settled belief on this side, poured into an engine that holds none.
     send({ op: 'set-bpm', bpm })
     send({ op: 'set-metronome', enabled: metronome })
+    send({ op: 'set-master-gain', gain: masterGain })
+    installPattern()
 
     // Started here rather than woken by an effect that watches the handle. The
     // loop's life is exactly the handle's, and both are decided in this function
@@ -308,6 +400,36 @@ export function createSession(deps: SessionDeps = {}): Session {
     // Stays `loading` until the worklet answers: what has happened so far is
     // that the page has the samples, which is not what the word is about.
     live.loadKit(fetched.value)
+  }
+
+  /**
+   * Put the page's pattern into an engine that is holding none.
+   *
+   * Sent on every start, not only when there is something in it to send. A path
+   * taken once in a while is a path taken almost never — until a project can be
+   * opened, the only way to reach this with a pattern in hand is the restart
+   * button after a failure — and a path that rots is worse than one that costs a
+   * record. `ClearPattern` ahead of the cells is what makes the call independent
+   * of whatever the engine came up holding, so the same three lines serve a
+   * fresh engine and a reused one.
+   *
+   * This is the page's first bulk send, and the rule the single-command callers
+   * follow does not carry over: they gate a belief on the command being
+   * accepted, while these carry a belief that is already settled and merely
+   * unheard. So there is nothing here to leave unchanged on a refusal, and
+   * nothing is resent. At 129 records against a ring of 1024 the only way to be
+   * refused is the far end having stopped draining, which ends the session with
+   * a message of its own; short of that, the drop counter is on screen and says
+   * it. What this shape is really for is M2, where the same call arrives with
+   * hundreds of records and the answer stops being obvious.
+   */
+  function installPattern(): void {
+    send({ op: 'clear-pattern' })
+    for (let track = 0; track < TRACKS; track += 1) {
+      for (let step = 0; step < STEPS; step += 1) {
+        if (pattern[track][step]) send({ op: 'set-step', track, step, velocity: CELL_VELOCITY })
+      }
+    }
   }
 
   /**
@@ -407,6 +529,9 @@ export function createSession(deps: SessionDeps = {}): Session {
     get metronome(): boolean {
       return metronome
     },
+    get masterGain(): number {
+      return masterGain
+    },
     get kit(): KitStatus {
       return kit
     },
@@ -425,6 +550,21 @@ export function createSession(deps: SessionDeps = {}): Session {
     },
     setMetronome(enabled: boolean): void {
       if (send({ op: 'set-metronome', enabled })) metronome = enabled
+    },
+    setMasterGain(gain: number): void {
+      if (send({ op: 'set-master-gain', gain })) masterGain = gain
+    },
+    isStepOn(track: number, step: number): boolean {
+      return inGrid(track, step) && pattern[track][step]
+    },
+    setStep(track: number, step: number, on: boolean): void {
+      // Nothing sent and nothing believed: see `inGrid`. Silent because the only
+      // way to arrive here is a caller that made up its own grid size, and a
+      // channel back for that would be a channel for a bug this file cannot have.
+      if (!inGrid(track, step)) return
+      if (send({ op: 'set-step', track, step, velocity: on ? CELL_VELOCITY : 0 })) {
+        pattern[track][step] = on
+      }
     },
     trigger(track: number): void {
       // Full velocity: a pad is the sound as loud as the kit makes it, and what
