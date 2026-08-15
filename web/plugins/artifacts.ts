@@ -82,6 +82,23 @@ export function workletBundle(): Plugin {
     return changed
   }
 
+  // One at a time. Two saves inside twelve milliseconds is an ordinary thing to
+  // do — a formatter writing several files, a branch checked out under the
+  // watcher — and unserialized it runs a second esbuild over the file the first
+  // is writing and reads the result mid-write. The comparison against
+  // `previous` is what actually breaks: a half-written bundle differs from the
+  // last one, so the page reloads onto whichever build finishes second.
+  //
+  // Queued rather than dropped. The edit that arrives during a build is
+  // precisely the one not in it, so skipping it would leave the newest source
+  // unbuilt until something else was saved.
+  let running: Promise<unknown> = Promise.resolve()
+  const buildInTurn = (): Promise<boolean> => {
+    const next = running.then(build, build)
+    running = next.catch(() => undefined)
+    return next
+  }
+
   return {
     name: 'daw:worklet-bundle',
 
@@ -90,7 +107,7 @@ export function workletBundle(): Plugin {
     // which is the right outcome for both.
     async buildStart() {
       if (underTest) return
-      await build()
+      await buildInTurn()
     },
 
     configureServer(server) {
@@ -99,7 +116,7 @@ export function workletBundle(): Plugin {
         if (!file.endsWith('.ts') || file.endsWith('.spec.ts')) return
 
         try {
-          if (!(await build())) return
+          if (!(await buildInTurn())) return
         } catch (error) {
           const detail = failureText(error)
           server.config.logger.error(detail, { timestamp: true })
