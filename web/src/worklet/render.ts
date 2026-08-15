@@ -76,9 +76,12 @@ export function renderQuantum(state: EngineState, outputs: Float32Array[][]): nu
 }
 
 /**
- * `subarray` allocates a view object, so the equal-length branch — the only one
- * Web Audio takes today — keeps the block that is actually rendered off that
- * path. The other two stay because "always 128 frames" is the host's property,
+ * `subarray` allocates a view object — 375 of them a second at 48 kHz, thrown
+ * away immediately, on the one thread that must not stop to collect them. So
+ * the equal-length branch, the only one Web Audio takes today, keeps the block
+ * that is actually rendered off that path: skipped rather than made cheap.
+ *
+ * The other two stay because "always 128 frames" is the host's property,
  * not this code's, and they fail in opposite directions: a shorter block is
  * trimmed, a longer one is filled as far as the engine rendered and zeroed the
  * rest. Zeroed rather than left alone, because a buffer the host reuses would

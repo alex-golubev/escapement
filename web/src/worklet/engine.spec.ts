@@ -77,10 +77,9 @@ describe('readRing', () => {
   })
 
   it('refuses a ring stamped by a page that speaks another version', () => {
-    // The everyday version of this is not a protocol change at all: the
-    // worklet bundle is built by its own script, outside Vite's module graph,
-    // and one left unrebuilt is a stale program with a live page in front of
-    // it. The symptom without this check is silence.
+    // Not a protocol change, in practice, but a stale bundle in front of a
+    // live page — which is the case `REBUILD_WORKLET` is written for and the
+    // one this refusal exists to catch.
     const stale = createRing()
     // Through `Atomics`, the way `createRing` stamps it: this stands in for a
     // page, so it should write the way a page writes.
@@ -139,9 +138,8 @@ describe('openEngine', () => {
     // The same lost #[unsafe(no_mangle)], on one of the five functions called
     // while the views are built rather than one of the three called before.
     // Those five used to sit outside the catch, so this threw out of the
-    // processor constructor instead — and a throw there reaches the page as a
-    // `processorerror` carrying no reason, which is the one outcome every
-    // failure in this file is shaped to avoid.
+    // processor constructor instead — describable here, and on the page a
+    // silence with nothing attached to it.
     for (const absent of [
       'engine_out_ptr',
       'engine_cmd_ptr',

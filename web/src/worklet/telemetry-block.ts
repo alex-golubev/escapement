@@ -25,9 +25,9 @@ export const TELEMETRY_WORDS = 4
 export const TELEMETRY_TRANSPORT_LO = 0
 export const TELEMETRY_TRANSPORT_HI = 1
 /**
- * Peaks travel as `f32` bits, put there by `f32::to_bits`. Reading them as
- * numbers means reading the same bytes through a `Float32Array` — converting
- * by hand would be a second, disagreeing definition of what an f32 is.
+ * Peaks travel as `f32` bits, put there by `f32::to_bits`. Nothing on this side
+ * of the ring turns them back into numbers — the worklet copies the word as it
+ * found it, and the page reads the ring's own `peaks` view over it.
  */
 export const TELEMETRY_PEAK_L = 2
 export const TELEMETRY_PEAK_R = 3

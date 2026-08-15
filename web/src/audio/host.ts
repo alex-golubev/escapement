@@ -281,13 +281,12 @@ export function awaitReady(
     }
 
     // Before the verdict: whatever escaped before the processor could describe
-    // its own failure. The event carries no reason, which is why the processor
-    // reports by message instead of throwing.
+    // its own failure, and all this end ever learns about it.
     //
-    // After it: the engine ran and is now gone — a panic under
-    // `panic = "abort"`, most likely. Reported as a value would be wrong, the
-    // start having already succeeded; unreported it is a page that goes on
-    // showing a transport nobody is rendering.
+    // After it: the engine ran and is now gone, which is the crash `onCrash`
+    // is declared for. Reported as a value would be wrong, the start having
+    // already succeeded; unreported it is a page that goes on showing a
+    // transport nobody is rendering.
     node.onprocessorerror = () => {
       if (settled) events.onCrash?.()
       else settle(err({ kind: 'processor-crashed' }))

@@ -112,11 +112,10 @@ describe('renderQuantum', () => {
   })
 
   it('allocates nothing on the block size Web Audio actually uses', () => {
-    // `subarray` builds a new view object on every call. At 48 kHz that is 375
-    // of them a second, thrown away immediately, on the one thread that must
-    // not collect garbage. The block is always 128 frames and the engine was
-    // allocated for exactly that, so the trimming call has to be skipped
-    // rather than merely made cheap.
+    // The branch `copyChannel` is shaped around, held to by a test because
+    // nothing else would notice it going: the two trimming branches are
+    // correct, so a block routed through one of them renders identically and
+    // allocates on every quantum.
     const { state } = openedEngine()
     const subarray = vi.spyOn(Float32Array.prototype, 'subarray')
     try {

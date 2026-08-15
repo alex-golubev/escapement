@@ -96,11 +96,10 @@ describe('awaitReady', () => {
   })
 
   it('reports a processor that dies after it had already started', async () => {
-    // The same event as `processor-crashed`, meaning the opposite thing. Before
-    // the verdict it is a start that failed; after it, the engine ran, rendered
-    // and is now gone — `panic = "abort"` leaves no other trace. Nothing else
-    // on the page moves when this happens: the last telemetry frame stays put
-    // and the transport button goes on accepting clicks.
+    // The same event as `processor-crashed`, meaning the opposite thing:
+    // before the verdict it is a start that failed, after it a start that
+    // succeeded and an engine that has since died. One listener, told apart by
+    // nothing but whether the verdict has been reached.
     const endpoint = fakeEndpoint()
     let crashes = 0
     const pending = awaitReady(endpoint.node, { onCrash: () => (crashes += 1) }, TIMEOUT_MS)

@@ -44,10 +44,9 @@ describe('openRing', () => {
   })
 
   it('addresses the peaks by the same index in either view', () => {
-    // A `u32` and an `f32` are four bytes alike, which is the whole reason
-    // `WORD_PEAK_L` can address both — the worklet stores the bits Rust made
-    // with `f32::to_bits` and the page reads a number out of the same word. Get
-    // this wrong and the meters read a neighbouring field instead.
+    // One index into two views, which holds only while both count in units of
+    // four bytes. Get it wrong and the meters read a neighbouring field, and
+    // read it silently: any word at all comes back as some number.
     const { words, peaks } = openRing(createRing())
 
     words[WORD_PEAK_L] = new Uint32Array(new Float32Array([0.25]).buffer)[0]

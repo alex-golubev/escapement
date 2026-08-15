@@ -190,9 +190,8 @@ describe('drainCommands', () => {
   })
 
   it('allocates nothing', () => {
-    // Same rule as renderQuantum, and the same reason: this runs 375 times a
-    // second on the thread that must not collect garbage. `subarray` is the
-    // easy way to write this copy and it builds a view object per call.
+    // Same rule as renderQuantum, and the same trap: `subarray` is the easy
+    // way to write this copy, and `set` needs one to size the source.
     const { writer, views, destination } = ring()
     writer.send({ op: 'play' })
 
@@ -258,8 +257,8 @@ describe('publishTelemetry', () => {
   })
 
   it('recovers a sequence left odd by a writer that died mid-publish', () => {
-    // `panic = "abort"` kills the worklet outright, and a page that then
-    // builds a new processor over the same ring inherits the odd counter.
+    // A worklet killed mid-publish leaves the count odd, and a page that then
+    // builds a new processor over the same ring inherits it.
     // Carried on as-is the parity stays inverted, and the reader — which has
     // no way to tell that from a write in progress — refuses every frame from
     // then on. Silent, permanent, and nowhere near its cause.

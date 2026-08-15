@@ -72,6 +72,14 @@ export interface RingViews {
    * The same bytes as `words`, read as the floats the peaks are. One index
    * space serves both because a `u32` and an `f32` are four bytes alike, which
    * is why `WORD_PEAK_L` addresses this view as well.
+   *
+   * This view is the whole reason the peaks arrive intact, and the only decode
+   * of them anywhere: Rust wrote the bits with `f32::to_bits`, and reading the
+   * same memory as an f32 is the one reading that cannot disagree with what put
+   * them there. Assembling the number from the integer instead — sign, exponent
+   * and mantissa by hand — would be a second definition of an f32 sitting
+   * beside the platform's, and the two would part company at the first
+   * denormal.
    */
   readonly peaks: Float32Array
   /** The command area alone, so a slot offset is not also a base offset. */
@@ -111,10 +119,8 @@ export function openRing(ring: SharedArrayBuffer): RingViews {
  * is any page without cross-origin isolation, so the caller has to answer for
  * it rather than assume.
  *
- * The version word is stamped here and checked by the worklet. Comparing it
- * against `protocol.ts` proves nothing about Rust, both being the same side of
- * that contract — but the page and the worklet are two separately built
- * artifacts, and this catches the one that was not rebuilt.
+ * The version word is stamped here and read by `readRing` on the other side,
+ * where what the comparison is worth is written out.
  */
 export function createRing(): SharedArrayBuffer {
   const ring = new SharedArrayBuffer(RING_BYTES)

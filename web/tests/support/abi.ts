@@ -80,9 +80,9 @@ export function writeTelemetryBlock(words: Uint32Array, fields: TelemetryFields)
   words[TELEMETRY_PEAK_R] = bitsOf(peakR)
 }
 
-// One float and the same four bytes read as an integer, which is what Rust's
-// `f32::to_bits` leaves behind. A `Float32Array` over the caller's own block
-// would say it just as well and build a view per call; this pair is made once.
+// One float and the same four bytes read as an integer — `f32::to_bits` on
+// this side. A `Float32Array` over the caller's own block would do it just as
+// well and build a view per call; this pair is made once.
 const asFloat = new Float32Array(1)
 const asBits = new Uint32Array(asFloat.buffer)
 

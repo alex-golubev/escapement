@@ -227,8 +227,8 @@ describe('the compiled engine', () => {
     writeCommand(exchange, COMMAND_SIZE, { op: 'play' }, 0)
 
     // The same bytes twice, exactly as the worklet and the page see them: the
-    // block is copied word by word into the ring, and the peaks are read back
-    // through a Float32Array because Rust put them there with `f32::to_bits`.
+    // block is copied word by word into the ring and the peaks are read back
+    // through a float view over it.
     const telemetry = engine.engine_telemetry_ptr(instance)
     const words = new Uint32Array(engine.memory.buffer, telemetry, TELEMETRY_WORDS)
     const floats = new Float32Array(engine.memory.buffer, telemetry, TELEMETRY_WORDS)
@@ -247,10 +247,9 @@ describe('the compiled engine', () => {
     // metronome struck a beat in it.
     expect(struck).toBeGreaterThan(0)
     expect(struck).toBeLessThanOrEqual(1)
-    // The same word read as the integer it is not. This is what "f32 bits"
-    // means concretely — anything that decoded to a small number here would be
-    // a second definition of an f32, which is the arrangement these two views
-    // exist to avoid.
+    // The same word read as the integer it is not, which is what makes the
+    // float above a reinterpretation rather than a number Rust wrote out: any
+    // meter reading in the bits of an f32 is an enormous u32.
     expect(words[TELEMETRY_PEAK_L], 'the peak word is not f32 bits').toBeGreaterThan(1)
     // Both channels carry the same metronome at this milestone, so this pins
     // that the second peak is a peak — not that L and R are the right way

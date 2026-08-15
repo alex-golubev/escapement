@@ -41,9 +41,10 @@ describe('createReader', () => {
   })
 
   it('reads the peaks as the floats Rust turned into bits', () => {
-    // Rust writes `f32::to_bits`; this side reads the same bytes through a
-    // Float32Array. Neither end converts anything, and that is the point —
-    // a hand-rolled decoding would be a second definition of an f32.
+    // `Math.fround` on the expectation, not a tolerance: the trip through the
+    // block narrows a double to an f32 and nothing else touches it, so every
+    // one of these comes back exactly or the reading is not a reinterpretation
+    // at all.
     const { views, reader } = setup()
 
     for (const peak of [0, 1, 0.25, 1e-20, 0.1]) {

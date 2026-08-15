@@ -6,8 +6,7 @@
 // them.
 //
 // Hot path, so the rules from render.ts apply here too: no allocation, no
-// locking, nothing thrown. In particular no `subarray` — it builds a view
-// object per call, and this runs 375 times a second.
+// locking, nothing thrown — `subarray` included, for the reason given there.
 
 import { COMMAND_SIZE } from '../audio/protocol'
 import {

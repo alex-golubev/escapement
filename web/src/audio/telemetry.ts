@@ -42,9 +42,6 @@ export interface TelemetryReader {
 const ATTEMPTS = 4
 
 export function createReader(ring: RingViews): TelemetryReader {
-  // `peaks` is the same bytes as `words`, read as what they are. Rust put them
-  // there with `f32::to_bits`, and this is the reading that cannot disagree
-  // with it — an f32 decoded by hand would be a second definition.
   const { words, peaks } = ring
 
   return {

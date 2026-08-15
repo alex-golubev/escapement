@@ -116,9 +116,9 @@ describe('createSession', () => {
   })
 
   it('closes the context when the audio thread dies under it', async () => {
-    // `panic = "abort"` leaves the worklet gone and the context open. Nothing
-    // else on the page moves when this happens, so the report and the teardown
-    // both have to come from here.
+    // A crash takes the worklet and leaves the device open, so the teardown
+    // has to come from this side — a dead engine still holding an output is
+    // the one failure the page can neither hear nor see.
     const harness = rig()
     await harness.session.start()
 

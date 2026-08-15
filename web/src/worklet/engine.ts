@@ -4,9 +4,9 @@
 // and a failure path that has never run is a guess.
 //
 // Errors are returned, not thrown, and that is forced rather than preferred:
-// the constructor cannot let an exception escape — it would reach the page as
-// a bare `processorerror` carrying no reason — so every throw would have to be
-// caught and converted anyway.
+// nothing thrown from the processor constructor can explain itself to the page
+// — the reason is written beside `FailedMessage` — so every throw would have
+// to be caught and converted anyway.
 
 import { COMMAND_SIZE, PROTOCOL_VERSION } from '../audio/protocol'
 import { RING_BYTES, WORD_PROTOCOL_VERSION, headerWords, openRing } from '../audio/ring'
@@ -91,7 +91,14 @@ export type EngineInitError =
   | { readonly kind: 'protocol-mismatch'; readonly engine: number; readonly expected: number }
   | { readonly kind: 'engine-refused'; readonly sampleRate: number; readonly maxFrames: number }
 
-/** Both ring failures have one fix, and it is not a fix anyone guesses. */
+/**
+ * Both ring failures have one fix, and it is not a fix anyone guesses.
+ *
+ * `public/worklet/processor.js` is built by a script of its own and sits
+ * outside Vite's module graph, so it is the half that stays behind: an edit
+ * reloads the page and leaves the bundle where it was. Everything else can be
+ * right and the worklet still be last week's program in front of today's page.
+ */
 const REBUILD_WORKLET =
   'The page and the worklet are separate build artifacts; rebuild with pnpm build:worklet.'
 
@@ -150,9 +157,8 @@ export function readModule(
  *
  * The version word cannot prove anything about Rust — the page stamped it from
  * the same `protocol.ts` this file reads. What it does prove is that the two
- * JavaScript artifacts came from one edit: `public/worklet/processor.js` is
- * built by its own script and is outside Vite's module graph, so a worklet
- * left unrebuilt is the everyday mistake here, and its symptom is silence.
+ * JavaScript artifacts came from one edit, which is the everyday mistake
+ * `REBUILD_WORKLET` above is written for, and whose symptom is silence.
  */
 export function readRing(
   processorOptions: unknown,
@@ -223,8 +229,8 @@ export function openEngine(
     // the pointers they return are first believed. Left outside, a module
     // missing `engine_out_ptr` — or handing back an address that does not fit
     // the memory behind it — threw straight out of the processor constructor,
-    // and the page saw a bare `processorerror` with no reason: the exact
-    // failure the whole error union exists to prevent.
+    // which is the one place a reason cannot survive and the exact failure this
+    // union exists to prevent.
     views = buildViews(exports, instance, maxFrames, cmdCapacity)
   } catch (error) {
     // A missing or non-function export lands here, and so does a RangeError

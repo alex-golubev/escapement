@@ -35,9 +35,13 @@ export interface ReadyMessage {
 }
 
 /**
- * Construction failed. The processor cannot render and will end itself; without
- * this message the failure would reach the page as a bare `processorerror`
- * event carrying no reason at all.
+ * Construction failed. The processor cannot render and will end itself.
+ *
+ * This message is the only way the reason crosses, and that is what shapes the
+ * whole of the worklet's bring-up: an exception escaping the processor
+ * constructor arrives on the page as a bare `processorerror` event, which
+ * carries no message, no stack and no field to put either in. So nothing over
+ * there throws — every failure is a value, and it comes back here.
  */
 export interface FailedMessage {
   readonly type: 'failed'

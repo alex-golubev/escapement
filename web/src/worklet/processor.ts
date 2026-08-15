@@ -34,9 +34,9 @@ class EngineProcessor extends AudioWorkletProcessor {
     const started = initEngine(options.processorOptions, sampleRate, QUANTUM)
 
     if (!started.ok) {
-      // Reported, not thrown, and deliberately so. A throw here reaches the
-      // page as a bare `processorerror` event with no reason attached; this
-      // message is the only way the cause crosses the thread boundary.
+      // Reported, not thrown; the reason is written where `FailedMessage` is
+      // declared. Returning afterwards leaves `#state` null, and `process`
+      // below ends the processor on its first call.
       this.#post({ type: 'failed', message: describeInitError(started.error) })
       return
     }
