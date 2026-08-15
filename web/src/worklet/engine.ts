@@ -57,6 +57,36 @@ export interface EngineExports {
   engine_cmd_capacity(instance: number): number
   engine_telemetry_ptr(instance: number): number
   engine_process(instance: number, frames: number, cmdCount: number): void
+  /**
+   * Make room for a whole kit, and hand back where to write it. Zero is a
+   * refusal, exactly as it is from `engine_new`.
+   *
+   * **The address it returns is valid until the next reservation**, which
+   * replaces the arena rather than adding to it — so a view built over it
+   * belongs to the load that asked for it and is dropped when that load ends.
+   * It must never join `EngineViews`: those are rebuilt from stored pointers
+   * whenever the buffer changes, and rebuilding this one would aim a fresh view
+   * at an address the engine has already given up.
+   *
+   * Growing the arena is what makes `buildViews` above load-bearing rather than
+   * precautionary — see there.
+   */
+  engine_bank_reserve(instance: number, floats: number): number
+  /**
+   * Declare what was written into the arena. Zero is acceptance; anything else
+   * is a refusal, and **this side does not name which.** The reason is argued
+   * beside the codes in `lib.rs`: a table of names here would be a second
+   * description of that list, disagreeing silently. What the caller reports
+   * instead is the number together with the arguments it just passed, which it
+   * has and the engine does not.
+   */
+  engine_sample_commit(
+    instance: number,
+    slot: number,
+    offset: number,
+    frames: number,
+    channels: number,
+  ): number
 }
 
 /** Every view over linear memory the worklet holds. Replaced as a set. */

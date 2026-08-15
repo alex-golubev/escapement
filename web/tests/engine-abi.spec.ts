@@ -7,12 +7,21 @@
 // never compares it against the TypeScript half. Both gaps close only in a
 // browser today, and both present as a worklet that fails to construct with no
 // reason attached.
+//
+// **Every opcode is checked here, and that is new.** For as long as no kit
+// could be put into the engine from this side, eight of the ten reached a
+// sample only through one and no assertion could tell a working decode from a
+// discarded one — so an opcode numbered differently in the two languages was
+// caught for two of them and by nothing anywhere for the rest. Loading a kit is
+// what closed it; `withKit` below is that load, and the impulse it puts in is
+// what makes a rendered block readable as arithmetic.
 
 import { readFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import { beforeAll, describe, expect, it } from 'vitest'
 
 import { COMMAND_SIZE, PROTOCOL_VERSION, STEPS, writeCommand } from '../src/audio/protocol'
+import type { Command } from '../src/audio/protocol'
 // The block size the worklet allocates the engine for, from the module both
 // threads read it out of.
 import { QUANTUM } from '../src/audio/worklet-messages'
@@ -141,10 +150,9 @@ describe('the compiled engine', () => {
       engine.engine_cmd_ptr(instance),
       engine.engine_cmd_capacity(instance) * COMMAND_SIZE,
     )
-    writeCommand(exchange, 0, { op: 'set-bpm', bpm: BPM }, 0)
-    writeCommand(exchange, COMMAND_SIZE, { op: 'play' }, 0)
+    const count = write(exchange, { op: 'set-bpm', bpm: BPM }, { op: 'play' })
 
-    const onsets = clickOnsets(render(engine, instance, 200, 2))
+    const onsets = clickOnsets(render(engine, instance, 200, count).left)
 
     expect(onsets, 'expected exactly two clicks in the rendered window').toHaveLength(2)
     expect(onsets[0], 'Play did not take effect in the quantum it arrived in').toBeLessThan(
@@ -159,11 +167,9 @@ describe('the compiled engine', () => {
   })
 
   it('stops sounding the metronome when told to across the wire', () => {
-    // The second opcode of the ten whose effect is observable from this side,
-    // and the first that needs nothing loaded to show it: what it does is
-    // silence, and silence needs no samples. Everything addressing a track
-    // still cannot be checked here — a strike needs a kit, and there is no way
-    // to load one across this ABI yet.
+    // The one opcode here whose whole effect is silence, which is why it needs
+    // no kit and why it was the second to become checkable, long before there
+    // was one to load.
     //
     // The negative alone would be worthless: an opcode misnumbered into
     // nothing, or a `value` read from the wrong offset, produces the same
@@ -178,33 +184,26 @@ describe('the compiled engine', () => {
       engine.engine_cmd_ptr(instance),
       engine.engine_cmd_capacity(instance) * COMMAND_SIZE,
     )
-    writeCommand(exchange, 0, { op: 'set-bpm', bpm: 600 }, 0)
-    writeCommand(exchange, COMMAND_SIZE, { op: 'play' }, 0)
+    const started = write(exchange, { op: 'set-bpm', bpm: 600 }, { op: 'play' })
 
-    const sounding = render(engine, instance, 20, 2)
+    const sounding = render(engine, instance, 20, started).left
     expect(sounding.some((sample) => sample !== 0)).toBe(true)
 
-    writeCommand(exchange, 0, { op: 'set-metronome', enabled: false }, 0)
+    const off = write(exchange, { op: 'set-metronome', enabled: false })
     // Past the tail of the click that was already sounding when the switch
     // arrived: switching off silences the next beat, not this one.
-    render(engine, instance, 20, 1)
+    render(engine, instance, 20, off)
 
-    const silent = render(engine, instance, 20, 0)
+    const silent = render(engine, instance, 20, 0).left
     expect(Array.from(silent).filter((sample) => sample !== 0)).toEqual([])
 
     engine.engine_free(instance)
   })
 
   it('scales its output by a master gain that crossed the wire', () => {
-    // One of the two commands whose effect is observable from this side. The
-    // others all address a track — its gain, its pan, its cells, and the pad
-    // that strikes it outside the grid — and every one of them reaches a sample
-    // only through a kit, which this side has no ABI to load. So no assertion
-    // here could tell a working decode from a discarded one, and the native
-    // tests hold those instead. Worth knowing precisely because of the mutation
-    // this file exists to catch: an opcode numbered differently in the two
-    // languages is caught here for two opcodes out of ten and by nothing at all
-    // for the rest.
+    // The only knob that scales everything at once, and so the only one
+    // measurable without a kit. Everything below it addresses a track and waits
+    // on `withKit`.
     //
     // This one goes further than the tempo test above, which shows a number
     // surviving the crossing. A gain that arrived as an integer, or landed in
@@ -224,11 +223,14 @@ describe('the compiled engine', () => {
         engine.engine_cmd_ptr(instance),
         engine.engine_cmd_capacity(instance) * COMMAND_SIZE,
       )
-      writeCommand(exchange, 0, { op: 'set-master-gain', gain }, 0)
-      writeCommand(exchange, COMMAND_SIZE, { op: 'set-bpm', bpm: BPM }, 0)
-      writeCommand(exchange, 2 * COMMAND_SIZE, { op: 'play' }, 0)
+      const count = write(
+        exchange,
+        { op: 'set-master-gain', gain },
+        { op: 'set-bpm', bpm: BPM },
+        { op: 'play' },
+      )
 
-      const samples = render(engine, instance, 100, 3).subarray(SETTLED)
+      const samples = render(engine, instance, 100, count).left.subarray(SETTLED)
       engine.engine_free(instance)
       return samples.reduce((peak, sample) => Math.max(peak, Math.abs(sample)), 0)
     }
@@ -243,6 +245,212 @@ describe('the compiled engine', () => {
     // leave an inaudible residue here, and every "is it silent" check
     // downstream would have to become a tolerance.
     expect(peakAt(0)).toBe(0)
+  })
+
+  it('grows linear memory to hold a kit, and leaves the addresses where they were', () => {
+    // Both halves of what `refreshViews` is written against, and until now
+    // neither had been seen outside a browser session. A reservation replaces
+    // the buffer every view sits on, so the views die; the pointers behind them
+    // do not move, which is why rebuilding from the stored addresses is enough
+    // and why nothing has to be re-asked of the engine.
+    const engine = instantiate()
+    const instance = engine.engine_new(SAMPLE_RATE, QUANTUM)
+    expect(instance).not.toBe(0)
+
+    const before = engine.memory.buffer
+    const out = engine.engine_out_ptr(instance, 0)
+    const view = new Float32Array(before, out, QUANTUM)
+
+    // Eight megabytes: more than any module starts with, so the growth is not
+    // left to whatever slack the allocator happened to have.
+    expect(engine.engine_bank_reserve(instance, 2_000_000)).not.toBe(0)
+
+    expect(engine.memory.buffer, 'the arena fitted without growing').not.toBe(before)
+    expect(view.byteLength, 'a view built before the growth still reads').toBe(0)
+    expect(engine.engine_out_ptr(instance, 0), 'a hot-path buffer moved').toBe(out)
+
+    engine.engine_free(instance)
+  })
+
+  it('strikes the slot the pad addressed, with what was written into the arena', () => {
+    // The first opcode here that reaches a sample, and it needs no transport: a
+    // pad sounds against a stopped one, which is what makes it a thing of its
+    // own rather than a shortcut to a step.
+    //
+    // Which slot it reached is read off the height rather than asserted as a
+    // level. Slot 3 holds an eighth of what slot 0 holds, so a track number
+    // that arrived as zero — the value a dropped `arg_a` takes — comes back
+    // eight times too loud, while nothing here has to know what a strike is
+    // worth in the first place.
+    const { engine, instance, exchange } = withKit()
+
+    const pad = (track: number): number => {
+      const count = write(exchange, { op: 'trigger-track', track, velocity: 0.5 })
+      const { left } = render(engine, instance, 1, count)
+      expect(strikes(left), `track ${track} did not strike exactly once`).toEqual([0])
+      return left[0]
+    }
+
+    const loudest = pad(0)
+    expect(loudest, 'the kit was loaded but nothing sounded').toBeGreaterThan(0)
+    expect(pad(3), 'the track did not survive the crossing').toBe(loudest / 8)
+
+    engine.engine_free(instance)
+  })
+
+  it('strikes the cells the grid was given, at the steps and velocities they carry', () => {
+    // `SetStep` is the only command addressing through both `arg_a` and
+    // `arg_b`, and each of its four fields can be wrong on its own. One render
+    // reads all four: where the strikes fall is the step, how they compare is
+    // the velocity, and how tall they are is the track — through the slot
+    // heights, as above.
+    //
+    // Positions are asserted in steps and not in samples, which is not
+    // shorthand: turning one into the other takes the divisions per beat, an
+    // engine constant deliberately never mirrored on this side. So the spacing
+    // the engine itself produced is the unit, and every onset is held against
+    // it — including the last, which is the first cell coming round again and
+    // is the only thing here that says how long the pattern is.
+    const { engine, instance, exchange } = withKit()
+
+    const count = write(
+      exchange,
+      { op: 'set-metronome', enabled: false },
+      { op: 'set-bpm', bpm: 588 },
+      { op: 'set-step', track: 3, step: 2, velocity: 0.5 },
+      { op: 'set-step', track: 3, step: 6, velocity: 0.25 },
+      { op: 'set-step', track: 1, step: 10, velocity: 0.5 },
+      { op: 'play' },
+    )
+
+    const { left } = render(engine, instance, 200, count)
+    const at = strikes(left)
+    // Three cells, and the window is long enough for the first two of them to
+    // come round again.
+    expect(at, 'the grid did not strike five times in this window').toHaveLength(5)
+
+    const step = (at[1] - at[0]) / 4
+    expect(at[0], 'the first cell is not on step 2').toBe(2 * step)
+    expect(at[2], 'the third cell is not on step 10').toBe(10 * step)
+    expect(at[3], `the pattern did not come round after ${STEPS} steps`).toBe((STEPS + 2) * step)
+    expect(at[4], 'the second lap does not match the first').toBe((STEPS + 6) * step)
+
+    // Exact ratios of powers of two, so these are equalities: the velocities
+    // differ by two and the slots by eight in level, four apart in the pair
+    // asked about here.
+    expect(left[at[0]] / left[at[1]], 'the velocity did not survive').toBe(2)
+    expect(left[at[2]] / left[at[0]], 'the track did not survive').toBe(4)
+
+    engine.engine_free(instance)
+  })
+
+  it('empties the grid when told to across the wire', () => {
+    const { engine, instance, exchange } = withKit()
+    const count = write(
+      exchange,
+      { op: 'set-metronome', enabled: false },
+      { op: 'set-bpm', bpm: 588 },
+      { op: 'set-step', track: 3, step: 2, velocity: 0.5 },
+      { op: 'set-step', track: 1, step: 10, velocity: 0.5 },
+      { op: 'play' },
+    )
+
+    // Rendered as far as the first cell and no further, so that the window
+    // after the command is one the pattern was still due to strike in. Silence
+    // over a window that was empty anyway would pass with the opcode dropped.
+    const before = render(engine, instance, 60, count).left
+    expect(strikes(before), 'the fixture never struck').toHaveLength(1)
+
+    const cleared = write(exchange, { op: 'clear-pattern' })
+    expect(strikes(render(engine, instance, 140, cleared).left)).toEqual([])
+
+    engine.engine_free(instance)
+  })
+
+  it('scales a track by a gain that crossed the wire', () => {
+    const { engine, instance, exchange } = withKit()
+
+    const pad = (): number => {
+      const count = write(exchange, { op: 'trigger-track', track: 2, velocity: 0.5 })
+      return render(engine, instance, 1, count).left[0]
+    }
+
+    const unity = pad()
+    expect(unity).toBeGreaterThan(0)
+
+    // Sent, and then given room: a track's knobs are ramped over ten
+    // milliseconds, so a strike in the block the command arrives in would
+    // measure the ramp rather than the value. The track is not zero for the
+    // same reason the pad test uses three — an `arg_a` lost on the way leaves
+    // this one at unity.
+    const count = write(exchange, { op: 'set-track-gain', track: 2, gain: 0.5 })
+    render(engine, instance, 20, count)
+
+    expect(pad(), 'the gain did not survive the crossing').toBe(unity / 2)
+
+    engine.engine_free(instance)
+  })
+
+  it('pans a track to the side the wire named, and to the far edge exactly', () => {
+    // The sign is what this is for. A pan that arrived negated is a defect
+    // nobody hears and every mix has, and no other test here would see it: the
+    // level is unchanged, both channels still sound, and only which one is
+    // louder is wrong.
+    //
+    // The far edge is an exact zero by the pan law's own promise — the root
+    // form is exact and mirrored at both ends, which is why it was chosen over
+    // the trigonometric one — so these are equalities rather than thresholds.
+    const { engine, instance, exchange } = withKit()
+
+    const padded = (pan: number): Rendered => {
+      const set = write(exchange, { op: 'set-track-pan', track: 4, pan })
+      render(engine, instance, 20, set)
+      const count = write(exchange, { op: 'trigger-track', track: 4, velocity: 0.5 })
+      return render(engine, instance, 1, count)
+    }
+
+    const hardLeft = padded(-1)
+    expect(hardLeft.left[0]).toBeGreaterThan(0)
+    expect(hardLeft.right[0], 'a hard left leaked into the right channel').toBe(0)
+
+    const hardRight = padded(1)
+    expect(hardRight.right[0]).toBeGreaterThan(0)
+    expect(hardRight.left[0], 'a hard right leaked into the left channel').toBe(0)
+
+    // The same strike, mirrored: what moved is the channel, not the level, so
+    // a channel merely muted somewhere would not produce this.
+    expect(hardRight.right[0], 'the two edges are not one law').toBe(hardLeft.left[0])
+
+    engine.engine_free(instance)
+  })
+
+  it('rewinds the transport when stopped across the wire', () => {
+    // The effect nothing else here has, and the only thing that tells a stop
+    // from a pattern that has gone quiet: the position goes back to zero.
+    const { engine, instance, exchange } = withKit()
+    const words = new Uint32Array(
+      engine.memory.buffer,
+      engine.engine_telemetry_ptr(instance),
+      TELEMETRY_WORDS,
+    )
+
+    const count = write(
+      exchange,
+      { op: 'set-metronome', enabled: false },
+      { op: 'set-bpm', bpm: 588 },
+      { op: 'set-step', track: 3, step: 2, velocity: 0.5 },
+      { op: 'play' },
+    )
+    render(engine, instance, 60, count)
+    expect(words[TELEMETRY_TRANSPORT_LO], 'the transport never started').toBe(60 * QUANTUM)
+
+    const stopped = write(exchange, { op: 'stop' })
+    const after = render(engine, instance, 200, stopped).left
+
+    expect(words[TELEMETRY_TRANSPORT_LO], 'the transport did not rewind').toBe(0)
+    expect(strikes(after), 'the grid struck with the transport stopped').toEqual([])
+
+    engine.engine_free(instance)
   })
 
   it('lays its telemetry block out where protocol.ts says it does', () => {
@@ -263,8 +471,7 @@ describe('the compiled engine', () => {
       engine.engine_cmd_ptr(instance),
       engine.engine_cmd_capacity(instance) * COMMAND_SIZE,
     )
-    writeCommand(exchange, 0, { op: 'set-bpm', bpm: 120 }, 0)
-    writeCommand(exchange, COMMAND_SIZE, { op: 'play' }, 0)
+    const count = write(exchange, { op: 'set-bpm', bpm: 120 }, { op: 'play' })
 
     // The same bytes twice, exactly as the worklet and the page see them: the
     // block is copied word by word into the ring and the peaks are read back
@@ -279,7 +486,7 @@ describe('the compiled engine', () => {
       0, 0, 0, 0, 0,
     ])
 
-    render(engine, instance, 1, 2)
+    render(engine, instance, 1, count)
     const struck = floats[TELEMETRY_PEAK_L]
     const firstStep = floats[TELEMETRY_STEP]
 
@@ -340,25 +547,114 @@ function instantiate(): EngineExports {
   return instance.exports as unknown as EngineExports
 }
 
+/**
+ * One frame per slot, and a different height in each.
+ *
+ * A one-frame sample turns the output into a direct reading: where a non-zero
+ * frame sits is the onset, and how tall it is is everything that scaled it. The
+ * heights are halving powers of two so that any two of them divide exactly —
+ * which is what lets a strike say *which slot* it came from without any test
+ * here naming a level. Levels belong to the mixer, and a test asserting one
+ * would go red the next time the gain chain changes, over something that is not
+ * its subject.
+ */
+const KIT = [1, 1 / 2, 1 / 4, 1 / 8, 1 / 16, 1 / 32, 1 / 64, 1 / 128]
+
+/**
+ * An instance with that kit in it, and the exchange area to command it through.
+ *
+ * The order is the rule this file now has to keep: **the kit goes in before any
+ * view is built.** Reserving grows linear memory, growth detaches every view
+ * over it, and a `DataView` on the exchange area is such a view — built first,
+ * it would be dead by the time the first command was written into it, and the
+ * engine would render on in silence.
+ */
+function withKit(): { engine: EngineExports; instance: number; exchange: DataView } {
+  const engine = instantiate()
+  const instance = engine.engine_new(SAMPLE_RATE, QUANTUM)
+  expect(instance, 'engine_new refused arguments the worklet also passes').not.toBe(0)
+
+  const arena = engine.engine_bank_reserve(instance, KIT.length)
+  expect(arena, 'the engine would not give an arena for eight floats').not.toBe(0)
+  new Float32Array(engine.memory.buffer, arena, KIT.length).set(KIT)
+
+  KIT.forEach((_, slot) => {
+    // Slot `n` at offset `n`: one frame, one channel, laid out end to end. Zero
+    // is acceptance and the only thing this side reads — a refusal here is the
+    // test's own bug and the number in it names which, in `lib.rs`.
+    expect(
+      engine.engine_sample_commit(instance, slot, slot, 1, 1),
+      `the engine refused slot ${slot}`,
+    ).toBe(0)
+  })
+
+  const exchange = new DataView(
+    engine.memory.buffer,
+    engine.engine_cmd_ptr(instance),
+    engine.engine_cmd_capacity(instance) * COMMAND_SIZE,
+  )
+  return { engine, instance, exchange }
+}
+
+/**
+ * Write commands into the exchange area and answer with the count to hand
+ * `render`.
+ *
+ * The count comes back from the call that wrote them, so a command added to a
+ * list cannot be left out of the number the engine is told to read — which
+ * silently drops the last one and is invisible in a diff. Every record is
+ * immediate: nothing here schedules ahead, and the first test that does will
+ * want the instant as an argument rather than as this constant.
+ */
+function write(exchange: DataView, ...commands: Command[]): number {
+  commands.forEach((command, index) => {
+    writeCommand(exchange, index * COMMAND_SIZE, command, 0)
+  })
+  return commands.length
+}
+
+interface Rendered {
+  readonly left: Float32Array
+  readonly right: Float32Array
+}
+
 /** Render `quanta` blocks, passing the command count on the first one only. */
 function render(
   engine: EngineExports,
   instance: number,
   quanta: number,
   cmdCount: number,
-): Float32Array {
-  const out = new Float32Array(quanta * QUANTUM)
-  const left = new Float32Array(
-    engine.memory.buffer,
-    engine.engine_out_ptr(instance, 0),
-    QUANTUM,
-  )
+): Rendered {
+  const left = new Float32Array(quanta * QUANTUM)
+  const right = new Float32Array(quanta * QUANTUM)
+  // Built per call rather than kept: a reservation between two renders replaces
+  // the buffer these sit on, and a view held across one is a view that reads
+  // nothing.
+  const outL = new Float32Array(engine.memory.buffer, engine.engine_out_ptr(instance, 0), QUANTUM)
+  const outR = new Float32Array(engine.memory.buffer, engine.engine_out_ptr(instance, 1), QUANTUM)
 
   for (let block = 0; block < quanta; block += 1) {
     engine.engine_process(instance, QUANTUM, block === 0 ? cmdCount : 0)
-    out.set(left, block * QUANTUM)
+    left.set(outL, block * QUANTUM)
+    right.set(outR, block * QUANTUM)
   }
-  return out
+  return { left, right }
+}
+
+/**
+ * Where the non-zero frames are.
+ *
+ * Exact, and it can be: every sample in `KIT` is one frame long, so a strike is
+ * a single non-zero value with silence on both sides of it. `clickOnsets`
+ * exists beside this for the metronome, which is a decaying sine and needs the
+ * block-by-block reading instead.
+ */
+function strikes(samples: Float32Array): number[] {
+  const at: number[] = []
+  samples.forEach((sample, frame) => {
+    if (sample !== 0) at.push(frame)
+  })
+  return at
 }
 
 /**

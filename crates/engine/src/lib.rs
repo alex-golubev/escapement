@@ -689,6 +689,41 @@ mod tests {
     }
 
     #[test]
+    fn a_slot_sounds_from_the_offset_it_was_declared_at() {
+        // The one argument of `engine_sample_commit` that a single-sample kit
+        // cannot pin: with everything written at the start of the arena, an
+        // offset dropped on the way through reads exactly the same. Two samples
+        // in one arena is the smallest fixture that tells them apart — found by
+        // mutating the argument away, which left every test here green and only
+        // the compiled-engine suite red.
+        const ARENA: [f32; 4] = [1.0, 1.0, 0.25, 0.25];
+
+        let owned = Owned::new(SR, Q);
+        let arena = unsafe { engine_bank_reserve(owned.raw(), ARENA.len() as u32) };
+        assert!(!arena.is_null(), "the arena was refused");
+        unsafe { core::slice::from_raw_parts_mut(arena, ARENA.len()) }.copy_from_slice(&ARENA);
+        unsafe {
+            assert_eq!(engine_sample_commit(owned.raw(), 0, 0, 2, 1), COMMIT_ACCEPTED);
+            assert_eq!(engine_sample_commit(owned.raw(), 1, 2, 2, 1), COMMIT_ACCEPTED);
+        }
+
+        // Half velocity, so the product stays under the limiter's threshold and
+        // the ratio below is arithmetic rather than a reading off a curve.
+        let struck = |track: u8| {
+            owned.write_commands(&[Record::immediate(Command::TriggerTrack {
+                track,
+                velocity: 0.5,
+            })]);
+            unsafe { engine_process(owned.raw(), Q, 1) };
+            owned.output(0, Q as usize)[0]
+        };
+
+        let first = struck(0);
+        assert!(first > 0.0, "the first slot did not sound at all");
+        assert_eq!(struck(1), first / 4.0, "the second slot did not sound from its own offset");
+    }
+
+    #[test]
     fn refusals_are_the_numbers_the_page_prints() {
         // Literals, not the constants the code returns: a test reading those
         // agrees with any renumbering, and the number is exactly what a reader

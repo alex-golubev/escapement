@@ -29,6 +29,13 @@ export const FAKE_LAYOUT = {
   outL: 0,
   outR: QUANTUM * Float32Array.BYTES_PER_ELEMENT,
   telemetry: 8192,
+  /**
+   * Past the exchange area, which ends at 8192. The real arena is allocated
+   * rather than placed, so this address stands for nothing in particular — what
+   * it has to be is somewhere a view can be built, so that a caller writing a
+   * kit through it is doing what it would really do.
+   */
+  arena: 16384,
 } as const
 
 /** An engine that behaves, with one page of memory — 64 KiB — behind it. */
@@ -45,6 +52,14 @@ export function fakeEngine(overrides: Partial<EngineExports> = {}): EngineExport
     engine_cmd_capacity: () => CMD_CAPACITY,
     engine_telemetry_ptr: () => FAKE_LAYOUT.telemetry,
     engine_process: () => undefined,
+    // An engine that grants and accepts, which is what "behaves" means for
+    // these two. Neither grows memory and neither looks at what was written —
+    // a fake that did would be a second sampler. The tests that need a refusal,
+    // or a reservation that detaches the views, pass their own through
+    // `overrides`, which is the shape those cases want anyway: one behaviour
+    // per test rather than a switchboard here.
+    engine_bank_reserve: () => FAKE_LAYOUT.arena,
+    engine_sample_commit: () => 0,
     ...overrides,
   }
 }
