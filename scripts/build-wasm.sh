@@ -44,6 +44,8 @@ expected=(
     engine_cmd_capacity
     engine_telemetry_ptr
     engine_process
+    engine_bank_reserve
+    engine_sample_commit
 )
 
 if command -v node >/dev/null 2>&1; then

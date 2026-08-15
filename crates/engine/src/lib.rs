@@ -47,6 +47,7 @@ mod testing;
 use commands::{COMMAND_SIZE, PROTOCOL_VERSION};
 use engine::{Engine, TELEMETRY_WORDS};
 use ring::CMD_CAPACITY;
+use sampler::Refusal;
 
 /// Tracks in the drum machine.
 ///
@@ -232,10 +233,126 @@ pub unsafe extern "C" fn engine_process(instance: *mut Instance, frames: u32, cm
     engine.write_telemetry(telemetry);
 }
 
+/// Make room for a whole kit, and hand back where to write it.
+///
+/// `null` on refusal, which the caller is required to check. Two things produce
+/// it and they are the same answer: a null instance, and memory the host would
+/// not give. Nothing else can — [`Bank::reserve`](sampler) has exactly one
+/// refusal — so `null` here means "there is not that much memory" without a
+/// number beside it, and the number it would carry is the one the caller just
+/// passed in.
+///
+/// **The address is valid for `floats` values, until the next call to this
+/// function or to [`engine_free`].** A second reservation is what invalidates
+/// the first: there is one arena, it is built from empty each time, and no two
+/// of them exist at once. Why the size comes from out here, why the refusal
+/// exists at all, and what growing this does to the views the worklet holds are
+/// argued at `Bank::reserve`, which is what does all three.
+///
+/// A reservation of zero is granted and is not a refusal: it declares the kit
+/// gone, which is a thing a caller may want and which `null` must not be
+/// confused with.
+///
+/// # Safety
+///
+/// See the module contract. Exactly `floats` values may be written through the
+/// returned pointer, and nothing beyond them.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn engine_bank_reserve(instance: *mut Instance, floats: u32) -> *mut f32 {
+    let Some(instance) = (unsafe { as_instance(instance) }) else {
+        return core::ptr::null_mut();
+    };
+    match instance.engine.reserve_bank(floats as usize) {
+        Ok(arena) => arena.as_mut_ptr(),
+        Err(_) => core::ptr::null_mut(),
+    }
+}
+
+/// Declare what was written into the arena, and let it sound.
+///
+/// Answers with [`COMMIT_ACCEPTED`] or with the code of the refusal — see
+/// there for why a code and not a name.
+///
+/// # Safety
+///
+/// See the module contract. Every argument is checked; none of them is trusted
+/// to describe anything that was actually written.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn engine_sample_commit(
+    instance: *mut Instance,
+    slot: u32,
+    offset: u32,
+    frames: u32,
+    channels: u32,
+) -> u32 {
+    let Some(instance) = (unsafe { as_instance(instance) }) else {
+        return COMMIT_NO_INSTANCE;
+    };
+
+    // Narrowed by a check, where every other argument here widens. `as u8`
+    // would turn 257 into 1, and the slot would then declare a mono sample over
+    // data laid out for 257 channels — accepted, because the bounds check reads
+    // the declaration rather than the data, and audible as a sound at a
+    // fraction of its rate. It is refused for the reason 3 is refused.
+    let Ok(channels) = u8::try_from(channels) else {
+        return COMMIT_CHANNELS;
+    };
+
+    let refusal =
+        instance.engine.commit_sample(slot as usize, offset as usize, frames as usize, channels);
+    match refusal {
+        Ok(()) => COMMIT_ACCEPTED,
+        Err(refusal) => refusal_code(refusal),
+    }
+}
+
+/// [`engine_sample_commit`] took the sample.
+pub const COMMIT_ACCEPTED: u32 = 0;
+
+// The refusal codes, and the decision they carry: **the far side does not
+// interpret them.** The worklet reports the number together with the context it
+// already holds — which slot, at what offset, how many frames, how much it
+// reserved — and the name of the cause stays on this side.
+//
+// That is a decision rather than an omission. A table of names over there would
+// be a second description of this list, the same kind of thing as the opcode
+// tables and with the same failure when the two disagree: the page names a
+// cause that is not the one that fired, and whoever reads it goes to fix the
+// wrong thing. Neither compiler can see across. Interpreting nothing cannot
+// disagree with anything, and costs one grep for the number — which is why the
+// numbers are pinned as literals in `refusals_are_the_numbers_the_page_prints`,
+// so that grep lands on the variant that produced it.
+//
+// The condition for revisiting is written where it will be met: when a kit
+// arrives that the page did not lay out itself, the causes become different
+// things for a user to do, and then they earn a table on both sides and a place
+// under `PROTOCOL_VERSION`.
+const COMMIT_NO_INSTANCE: u32 = 1;
+const COMMIT_OUT_OF_MEMORY: u32 = 2;
+const COMMIT_NO_SUCH_SLOT: u32 = 3;
+const COMMIT_CHANNELS: u32 = 4;
+const COMMIT_EMPTY: u32 = 5;
+const COMMIT_DOES_NOT_FIT: u32 = 6;
+
+/// No `_` arm: a refusal added to the enum has to be given a number here, and
+/// the compiler is the only thing that would say so. Under a catch-all it would
+/// reach the page as whatever that arm chose, which is a wrong cause rather
+/// than a missing one.
+fn refusal_code(refusal: Refusal) -> u32 {
+    match refusal {
+        Refusal::OutOfMemory { .. } => COMMIT_OUT_OF_MEMORY,
+        Refusal::NoSuchSlot => COMMIT_NO_SUCH_SLOT,
+        Refusal::Channels(_) => COMMIT_CHANNELS,
+        Refusal::Empty => COMMIT_EMPTY,
+        Refusal::DoesNotFit { .. } => COMMIT_DOES_NOT_FIT,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::commands::{Command, Record};
+    use crate::sampler::SLOTS;
     use crate::testing::Xorshift64;
 
     const SR: f64 = 48_000.0;
@@ -313,6 +430,10 @@ mod tests {
             assert_eq!(engine_cmd_capacity(null), 0);
             assert!(engine_telemetry_ptr(null).is_null());
             engine_process(null, Q, 4);
+            assert!(engine_bank_reserve(null, 8).is_null());
+            // Anything but acceptance, which is what this test is about; the
+            // number itself is pinned where the other codes are.
+            assert_ne!(engine_sample_commit(null, 0, 0, 8, 1), COMMIT_ACCEPTED);
         }
     }
 
@@ -351,6 +472,17 @@ mod tests {
         for _ in 0..1_000 {
             unsafe { engine_process(owned.raw(), Q, 0) };
         }
+
+        // The one allocation that happens after `engine_new`, and so the only
+        // event that could move any of the four. It does not: a growing arena
+        // is a new allocation beside them, and on wasm growth appends pages
+        // rather than relocating anything.
+        //
+        // What a native test cannot see is the other half — that the same growth
+        // detaches every JS view over that memory, which is why the worklet
+        // rebuilds them rather than trusting these addresses. That half is
+        // argued at `Bank::reserve` and covered in the browser.
+        assert!(!unsafe { engine_bank_reserve(owned.raw(), 1 << 20) }.is_null());
 
         assert_eq!(before, addresses(&owned), "hot-path addresses must not move");
     }
@@ -496,5 +628,140 @@ mod tests {
             }
             assert!(owned.output(0, Q as usize).iter().all(|s| s.is_finite()));
         }
+    }
+
+    /// Lay a kit out the way the far side will: one reservation, one write
+    /// through the pointer it hands back, one declaration per sample.
+    ///
+    /// Through the raw pointer rather than through `Engine::reserve_bank`,
+    /// which is what the sampler's own tests use. The two calls in between are
+    /// the whole of what this file adds, and a test taking the safe path would
+    /// exercise neither of them.
+    fn load(owned: &Owned, samples: &[f32]) {
+        let arena = unsafe { engine_bank_reserve(owned.raw(), samples.len() as u32) };
+        assert!(!arena.is_null(), "the arena was refused");
+        unsafe { core::slice::from_raw_parts_mut(arena, samples.len()) }.copy_from_slice(samples);
+        let frames = samples.len() as u32;
+        assert_eq!(
+            unsafe { engine_sample_commit(owned.raw(), 0, 0, frames, 1) },
+            COMMIT_ACCEPTED,
+        );
+    }
+
+    #[test]
+    fn a_track_strikes_what_was_written_through_the_arena_pointer() {
+        // The first test here that reaches a sample, and the one that says the
+        // two new calls are wired to each other: what comes out is the values
+        // written through the pointer the first call handed back, in the order
+        // they were written, for as long as the second call declared and no
+        // longer.
+        //
+        // Asserted as ratios rather than as levels. What scales a sample on its
+        // way out is the gain chain — velocity, the pan law, the master, the
+        // limiter — and none of that is this file's subject; a level here would
+        // be an assertion about the mixer that goes red when the mixer changes,
+        // which is the mistake `quantum` made about `left == right`. Ratios of
+        // powers of two are exact and say only what is asked: these samples and
+        // not some others.
+        const KIT: [f32; 4] = [1.0, 0.5, 0.25, 0.125];
+
+        let owned = Owned::new(SR, Q);
+        load(&owned, &KIT);
+
+        // No `Play`: the pad sounds against a stopped transport, which is what
+        // makes this the sample rather than the grid — and leaves the metronome
+        // silent without having to be switched off.
+        owned.write_commands(&[Record::immediate(Command::TriggerTrack {
+            track: 0,
+            velocity: 1.0,
+        })]);
+        unsafe { engine_process(owned.raw(), Q, 1) };
+
+        let out = owned.output(0, Q as usize);
+        assert!(out[0] > 0.0, "the sample did not sound at all");
+        for (frame, value) in KIT.iter().enumerate() {
+            assert_eq!(out[frame], out[0] * value, "frame {frame} is not the sample");
+        }
+        assert!(
+            out[KIT.len()..].iter().all(|&s| s == 0.0),
+            "the voice read past what was declared"
+        );
+    }
+
+    #[test]
+    fn refusals_are_the_numbers_the_page_prints() {
+        // Literals, not the constants the code returns: a test reading those
+        // agrees with any renumbering, and the number is exactly what a reader
+        // has in hand after seeing it on screen — the whole reason no table of
+        // names exists on the other side.
+        //
+        // The first is not a `Refusal` and shares the code space anyway: from
+        // where the number is read it is one more answer this call can give.
+        assert_eq!(unsafe { engine_sample_commit(core::ptr::null_mut(), 0, 0, 8, 1) }, 1);
+        assert_eq!(refusal_code(Refusal::OutOfMemory { floats: 1 }), 2);
+        assert_eq!(refusal_code(Refusal::NoSuchSlot), 3);
+        assert_eq!(refusal_code(Refusal::Channels(3)), 4);
+        assert_eq!(refusal_code(Refusal::Empty), 5);
+        assert_eq!(refusal_code(Refusal::DoesNotFit { end: 1, reserved: 0 }), 6);
+
+        // And each of them arriving through the call that produces it, so the
+        // mapping above is not a table checked against itself. Out of memory is
+        // absent on purpose: `commit` cannot answer with it, and asking
+        // `reserve` for an amount no host would grant means naming one through
+        // a `u32` — sixteen gigabytes, which a 64-bit host may well hand over.
+        // That branch is covered where it is cheap, at `Bank::reserve`.
+        let owned = Owned::new(SR, Q);
+        assert!(!unsafe { engine_bank_reserve(owned.raw(), 8) }.is_null());
+        unsafe {
+            assert_eq!(engine_sample_commit(owned.raw(), SLOTS as u32, 0, 4, 1), 3);
+            assert_eq!(engine_sample_commit(owned.raw(), 0, 0, 4, 3), 4);
+            assert_eq!(engine_sample_commit(owned.raw(), 0, 0, 0, 1), 5);
+            assert_eq!(engine_sample_commit(owned.raw(), 0, 0, 9, 1), 6);
+            assert_eq!(engine_sample_commit(owned.raw(), 0, 0, 8, 1), COMMIT_ACCEPTED);
+        }
+    }
+
+    #[test]
+    fn a_channel_count_too_large_for_a_byte_is_refused_rather_than_truncated() {
+        // The one argument here that narrows. Truncated, 257 becomes 1 and is
+        // accepted: the slot would declare a mono sample over data laid out for
+        // 257 channels, and the bounds check would pass, because what it checks
+        // is the declaration and not the data.
+        let owned = Owned::new(SR, Q);
+        assert!(!unsafe { engine_bank_reserve(owned.raw(), 8) }.is_null());
+
+        for channels in [256, 257, 512, u32::MAX] {
+            assert_eq!(
+                unsafe { engine_sample_commit(owned.raw(), 0, 0, 4, channels) },
+                COMMIT_CHANNELS,
+                "channels {channels}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_empty_reservation_is_granted_rather_than_refused() {
+        // Asking for nothing is how a caller says the kit is gone, and the
+        // answer has to be told apart from the one refusal this call has. A
+        // `Vec` never hands back a null pointer, so what comes back is an
+        // address with nothing behind it — legal to build a zero-length view
+        // over, and the far side writes nothing through it.
+        let owned = Owned::new(SR, Q);
+        load(&owned, &[1.0, 1.0, 1.0, 1.0]);
+
+        assert!(!unsafe { engine_bank_reserve(owned.raw(), 0) }.is_null());
+
+        // And nothing is left declared: the old kit is gone rather than
+        // pointing into an arena that no longer holds it.
+        assert_eq!(unsafe { engine_sample_commit(owned.raw(), 0, 0, 1, 1) }, COMMIT_DOES_NOT_FIT);
+        owned.write_commands(&[Record::immediate(Command::TriggerTrack {
+            track: 0,
+            velocity: 1.0,
+        })]);
+        unsafe { engine_process(owned.raw(), Q, 1) };
+        assert!(
+            owned.output(0, Q as usize).iter().all(|&s| s == 0.0),
+            "a slot survived the kit being dropped"
+        );
     }
 }
