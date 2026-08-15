@@ -11,11 +11,14 @@
 //! allocation in `process`, feedback state flushed below a threshold, an
 //! explicit `reset`, deterministic behavior.
 
+use crate::TRACKS;
 use crate::commands::Command;
 use crate::dsp::fz;
 use crate::mixer::Mixer;
 use crate::pattern::Pattern;
 use crate::ring::CommandBlock;
+use crate::sampler::{Refusal, Sampler};
+use crate::sequencer;
 use crate::transport::Transport;
 
 /// Telemetry words, in the order the worklet copies them into the SAB.
@@ -125,6 +128,7 @@ pub struct Engine {
     click: Click,
     mixer: Mixer,
     pattern: Pattern,
+    sampler: Sampler,
     peak: [f32; 2],
 }
 
@@ -135,15 +139,45 @@ impl Engine {
             click: Click::new(sample_rate),
             mixer: Mixer::new(sample_rate),
             pattern: Pattern::new(),
+            sampler: Sampler::new(sample_rate),
             peak: [0.0; 2],
         }
+    }
+
+    /// Make room for a kit, and hand back the arena to write it into.
+    ///
+    /// The pair below is not a second road into the engine, though it is the
+    /// only thing here that is not read-only: sample data does not arrive as a
+    /// command because a command is sixteen bytes and a kit is megabytes. What
+    /// keeps it from being a road is that neither call decides anything — one
+    /// asks for memory, the other says what was written into it — and both are
+    /// answered with a refusal by name rather than a boolean.
+    ///
+    /// The caller is the C ABI, once the far side has somewhere to write from;
+    /// until then it is the test that loads a kit, which walks the same two
+    /// calls in the same order. Everything either of them is guarded against
+    /// lives in [`Bank`](crate::sampler), whose doc comments argue it.
+    pub fn reserve_bank(&mut self, floats: usize) -> Result<&mut [f32], Refusal> {
+        self.sampler.reserve(floats)
+    }
+
+    /// Declare what was written into the arena.
+    pub fn commit_sample(
+        &mut self,
+        slot: usize,
+        offset: usize,
+        frames: usize,
+        channels: u8,
+    ) -> Result<(), Refusal> {
+        self.sampler.commit(slot, offset, frames, channels)
     }
 
     // Windows onto the engine's state, and that every one of them is read-only
     // is the point rather than an accident.
     //
-    // Nothing here hands out `&mut` and no field is public, so the only way a
-    // value inside this type changes is a command decoded out of the block —
+    // No field is public and nothing here hands out `&mut`, so — apart from the
+    // sample data above, which decides nothing — the only way a value inside
+    // this type changes is a command decoded out of the block —
     // which is the property the whole design rests on: one road in, and it
     // starts in the ring. A setter added among these would be a second road,
     // and it would not announce itself as one; it would look like the four
@@ -172,12 +206,19 @@ impl Engine {
 
     /// Return to the "as constructed" state. Without it the offline render
     /// would be comparing a warmed-up instance to a cold one.
+    ///
+    /// **The kit goes with everything else**, which is the one part of this
+    /// that costs the caller something: an offline render has to load its
+    /// samples again before each run, exactly as it has to set the tempo again.
+    /// Leaving them would be leaving the largest difference there is between a
+    /// warm instance and a cold one.
     pub fn reset(&mut self) {
         let sample_rate = self.transport.sample_rate();
         self.transport = Transport::new(sample_rate);
         self.click.reset();
         self.mixer.reset();
         self.pattern.reset();
+        self.sampler.reset();
         self.peak = [0.0; 2];
     }
 
@@ -291,9 +332,16 @@ impl Engine {
     fn apply(&mut self, command: Command) {
         match command {
             Command::Play => self.transport.play(),
-            // The click tail is deliberately left to ring out: an abrupt cut
-            // of the buffer is precisely the click that ruins the sound.
-            Command::Stop => self.transport.stop(),
+            // Nothing sounding is cut off here. The click tail is left to ring
+            // out and the voices are faded rather than dropped, both for the
+            // same reason: an abrupt cut of a buffer is precisely the click
+            // that ruins the sound, and on a stop it lands on silence with
+            // nothing to mask it. This is the one caller of the fade — a stolen
+            // voice cannot be faded, having nowhere to fade to.
+            Command::Stop => {
+                self.transport.stop();
+                self.sampler.release_all();
+            }
             Command::SetBpm { bpm } => self.transport.set_bpm(f64::from(bpm)),
             Command::SetTrackGain { track, gain } => self.mixer.set_track_gain(track, gain),
             Command::SetTrackPan { track, pan } => self.mixer.set_track_pan(track, pan),
@@ -306,8 +354,8 @@ impl Engine {
     }
 
     /// A stretch of the quantum between two commands. Tempo and transport
-    /// state do not change inside it, so the beat boundary need only be
-    /// computed once per segment rather than once per frame.
+    /// state do not change inside it, so the next boundary of each musical
+    /// grid need only be found once per segment rather than once per frame.
     fn render_segment(&mut self, out_l: &mut [f32], out_r: &mut [f32]) {
         let frames = out_l.len();
         if frames == 0 {
@@ -316,31 +364,64 @@ impl Engine {
 
         let playing = self.transport.is_playing();
         let mut pos = self.transport.sample_pos();
-        // While paused the position stands still and crosses no beat
-        // boundaries, but the tail of the previous click must ring out.
-        let mut next_click = if playing { self.transport.next_beat_boundary(pos) } else { u64::MAX };
+        // While paused the position stands still and crosses no boundary at
+        // all, but what is already sounding — the tail of the last click, a
+        // voice fading after a stop — must still be rendered.
+        let (mut next_click, mut next_step) = if playing {
+            (
+                self.transport.next_beat_boundary(pos),
+                sequencer::next_boundary(&self.transport, pos),
+            )
+        } else {
+            (u64::MAX, u64::MAX)
+        };
+        // One frame of the pool, kept apart by track. The pool fills every
+        // element before anything reads it, so one array serves the segment.
+        let mut tracks = [[0.0f32; 2]; TRACKS];
 
         for frame in 0..frames {
+            // Both triggers stand before the frame is rendered, which is what
+            // puts an onset in the frame its boundary falls on rather than the
+            // one after it. The jitter is zero by construction, not within
+            // tolerance.
             if pos == next_click {
                 let beat = self.transport.beat_at(pos).round() as i64;
                 let accent = beat.rem_euclid(BEATS_PER_BAR) == 0;
                 self.click.trigger(if accent { CLICK_ACCENT_HZ } else { CLICK_HZ });
                 next_click = self.transport.next_beat_boundary(pos + 1);
             }
+            if pos == next_step {
+                let step = sequencer::step_at(&self.transport, pos);
+                sequencer::strike(&self.pattern, &mut self.sampler, step);
+                next_step = sequencer::next_boundary(&self.transport, pos + 1);
+            }
 
-            let sample = self.click.next_sample();
+            let click = self.click.next_sample();
             // A NaN poisons feedback forever.
-            debug_assert!(sample.is_finite(), "non-finite sample out of the metronome");
+            debug_assert!(click.is_finite(), "non-finite sample out of the metronome");
+
+            self.sampler.next_frame(&mut tracks);
+            // Summed with nothing applied to it. What a track's level and pan
+            // do to its voices belongs to the mixer, which keeps both and
+            // multiplies neither yet — `mixer.rs` argues why at the fields
+            // themselves — and this line is where they will land.
+            let (mut left, mut right) = (click, click);
+            for track in &tracks {
+                left += track[0];
+                right += track[1];
+            }
+            debug_assert!(left.is_finite() && right.is_finite(), "non-finite sample out of the sampler");
 
             // Per frame, not per segment or per quantum: a gain that stepped
             // would be zipper noise, and the smoothing that prevents it only
-            // advances when it is asked for a value. The metronome goes
-            // through the master like everything else will.
-            let sample = sample * self.mixer.next_master_gain();
-            debug_assert!(sample.is_finite(), "non-finite sample out of the mixer");
+            // advances when it is asked for a value. Everything that sounds
+            // goes through the master.
+            let gain = self.mixer.next_master_gain();
+            let (left, right) = (left * gain, right * gain);
+            debug_assert!(left.is_finite() && right.is_finite(), "non-finite sample out of the mixer");
 
-            out_l[frame] = sample;
-            out_r[frame] = sample;
+            out_l[frame] = left;
+            out_r[frame] = right;
 
             if playing {
                 pos += 1;
@@ -369,6 +450,7 @@ impl Engine {
 mod tests {
     use super::*;
     use crate::commands::Record;
+    use crate::pattern::STEPS;
     use crate::testing::Xorshift64;
 
     const SR: f64 = 48_000.0;
@@ -411,6 +493,57 @@ mod tests {
     /// Length of the click tail in frames — from trigger to the gate closing.
     fn tail_frames() -> usize {
         (CLICK_DECAY_SECONDS * (1.0 / CLICK_GATE).ln() * SR as f32) as usize
+    }
+
+    /// One bar at 120 BPM, in whole quanta: four beats of 24 000 frames.
+    const BAR_FRAMES: usize = 4 * 24_000;
+    const BAR_QUANTA: usize = BAR_FRAMES / Q;
+
+    /// A kit of `frames`-long samples, one per track, every value 1.0.
+    ///
+    /// Loaded through the two calls the far side of the ABI will make, in the
+    /// order it will make them. A struck voice then contributes exactly its
+    /// velocity for exactly `frames` frames, which is what turns the output
+    /// buffer into something to be read rather than measured.
+    fn load_kit(engine: &mut Engine, frames: usize) {
+        engine
+            .reserve_bank(TRACKS * frames)
+            .expect("the arena must be granted")
+            .fill(1.0);
+        for slot in 0..TRACKS {
+            assert_eq!(engine.commit_sample(slot, slot * frames, frames, 1), Ok(()), "slot {slot}");
+        }
+    }
+
+    /// Frames louder than the metronome can be.
+    ///
+    /// The click is a sine scaled by an envelope that starts at one, so its
+    /// amplitude never exceeds `CLICK_GAIN`; a frame above that came from a
+    /// voice and from nothing else. That is what makes a strike readable while
+    /// the metronome is still sounding underneath it, and it holds only because
+    /// the master gain is left at unity in these tests.
+    fn struck_frames(signal: &[f32]) -> usize {
+        signal.iter().filter(|sample| sample.abs() > CLICK_GAIN).count()
+    }
+
+    /// Setup that starts the transport at 120 BPM with every cell of the grid
+    /// struck at full velocity.
+    fn every_cell_struck() -> Vec<Record> {
+        let mut setup = vec![Record::immediate(Command::SetBpm { bpm: 120.0 })];
+        for track in 0..TRACKS as u8 {
+            for step in 0..STEPS as u16 {
+                setup.push(Record::immediate(Command::SetStep { track, step, velocity: 1.0 }));
+            }
+        }
+        setup.push(Record::immediate(Command::Play));
+        setup
+    }
+
+    /// One bar rendered from a setup applied on its first quantum.
+    fn one_bar(engine: &mut Engine, setup: &[Record]) -> Vec<f32> {
+        let mut signal = quantum(engine, setup);
+        signal.extend(render(engine, BAR_QUANTA - 1));
+        signal
     }
 
     fn started(bpm: f32) -> (Engine, Vec<f32>) {
@@ -563,6 +696,44 @@ mod tests {
             after[tail_frames() + Q..].iter().all(|&s| s == 0.0),
             "after Stop there must be neither tail nor new clicks"
         );
+    }
+
+    #[test]
+    fn stop_fades_the_voices_rather_than_cutting_them() {
+        // The transport's stop is the one place a fade is reachable at all — a
+        // stolen voice has nowhere to fade to — so this is the only test in
+        // which the ramp is joined to a command.
+        //
+        // Measured where the metronome is already silent: the strike is at
+        // frame 0, the click gate closes some 3 500 frames later, and the next
+        // sixteenth is at 6 000. Stopping at 5 120 leaves the sustained voice
+        // as the only thing sounding, which is what makes the values below
+        // exact rather than approximate.
+        let mut engine = Engine::new(SR);
+        load_kit(&mut engine, SR as usize); // one second per slot: still sounding at the stop
+        let sounding = quantum(
+            &mut engine,
+            &[
+                Record::immediate(Command::SetBpm { bpm: 120.0 }),
+                Record::immediate(Command::SetStep { track: 0, step: 0, velocity: 1.0 }),
+                Record::immediate(Command::Play),
+            ],
+        );
+        assert_eq!(struck_frames(&sounding), Q, "the fixture left no voice sounding");
+        let before = render(&mut engine, 5_120 / Q - 1);
+        assert_eq!(before[before.len() - 1], 1.0, "the metronome was still sounding at the stop");
+
+        let tail = quantum(&mut engine, &[Record::immediate(Command::Stop)]);
+
+        assert_eq!(tail[0], 1.0, "the fade opened with a step of its own");
+        assert!(
+            tail.windows(2).all(|pair| pair[1] <= pair[0]),
+            "the fade rose somewhere on its way down"
+        );
+        // Exactly zero, not nearly: a ramp that stops short leaves the voice in
+        // the pool forever, and the pool then answers fewer strikes every time
+        // the transport is stopped.
+        assert_eq!(tail[Q - 1], 0.0, "the fade did not reach silence within a quantum");
     }
 
     #[test]
@@ -730,35 +901,88 @@ mod tests {
     }
 
     #[test]
-    fn a_filled_pattern_changes_nothing_yet() {
-        // Stated rather than assumed. A grid with every step struck must
-        // render identically to an empty one, because there are no voices for
-        // it to trigger — which is what keeps the metronome tests above
-        // testing the metronome and nothing else.
+    fn a_filled_pattern_is_silent_until_a_kit_is_loaded() {
+        // Written to fail the moment the sampler landed, and it did not — which
+        // turned out to be worth more than the failure. A strike at a slot
+        // holding nothing is refused before a voice is taken, so a full grid
+        // with no kit loaded renders exactly as an empty one. That is what this
+        // now says: an engine with nothing loaded is silence, rather than
+        // thirty-two voices busy rendering nothing.
         //
-        // Written as an equality rather than as silence, since the metronome
-        // is sounding in both. **This test is meant to fail when the sampler
-        // lands** — that failure is the sampler working, and the signal to
-        // replace it with one that asserts what the pattern now does.
-        fn signal(fill: bool) -> Vec<f32> {
-            let mut engine = Engine::new(SR);
-            let mut setup = vec![Record::immediate(Command::SetBpm { bpm: 120.0 })];
-            if fill {
-                for track in 0..8u8 {
-                    for step in 0..16u16 {
-                        let strike = Command::SetStep { track, step, velocity: 1.0 };
-                        setup.push(Record::immediate(strike));
-                    }
-                }
-            }
-            setup.push(Record::immediate(Command::Play));
+        // Written as an equality rather than as silence, since the metronome is
+        // sounding in both.
+        let empty = vec![
+            Record::immediate(Command::SetBpm { bpm: 120.0 }),
+            Record::immediate(Command::Play),
+        ];
+        let struck = one_bar(&mut Engine::new(SR), &every_cell_struck());
 
-            let mut rendered = quantum(&mut engine, &setup);
-            rendered.extend(render(&mut engine, 200));
-            rendered
-        }
+        assert_eq!(struck, one_bar(&mut Engine::new(SR), &empty), "an empty kit sounded");
+    }
 
-        assert_eq!(signal(true), signal(false), "the pattern reached the output");
+    #[test]
+    fn a_struck_grid_reaches_the_output() {
+        // The milestone's first audible claim, and the only place the grid, the
+        // sampler and the sum are seen joined up. Where a boundary falls is
+        // asserted against the transport in `sequencer.rs`, where it is still
+        // arithmetic; what is asked here is that the strikes arrive, and that
+        // there is one per step rather than one per beat or one per frame.
+        let mut engine = Engine::new(SR);
+        load_kit(&mut engine, 1);
+
+        let signal = one_bar(&mut engine, &every_cell_struck());
+
+        assert_eq!(struck_frames(&signal), STEPS, "one struck frame per step of the bar");
+        // Exact, and exactly here: a click begins at zero phase, so the first
+        // frame of the bar carries nothing but the strike — eight tracks at
+        // full velocity on a sample of 1.0. It is the one frame in the bar
+        // whose value can be named while the metronome is sounding, and naming
+        // it is what pins the strike to the frame its boundary falls on rather
+        // than to the one after.
+        assert_eq!(signal[0], TRACKS as f32, "the first step missed the first frame");
+    }
+
+    #[test]
+    fn the_grid_sounds_the_same_however_the_quantum_is_cut() {
+        // 128 frames is the host's number and not an assumption of ours: the
+        // offline render will ask for blocks thousands of frames long, and
+        // several step boundaries then fall inside a single one of them.
+        //
+        // That is also the only place the loop's own bookkeeping can be seen.
+        // After a strike the next boundary is looked up from `pos + 1`, because
+        // looked up from `pos` it answers with the frame just struck — and a
+        // boundary already behind the position never comes round again, so the
+        // grid strikes once per block instead of once per step. At 128 frames
+        // there is never more than one boundary in a block, so nothing else
+        // here can tell the two apart.
+        let mut cut = Engine::new(SR);
+        load_kit(&mut cut, 1);
+        let expected = one_bar(&mut cut, &every_cell_struck());
+
+        let setup = every_cell_struck();
+        let mut whole = Engine::new(SR);
+        load_kit(&mut whole, 1);
+        let mut left = vec![0.0f32; BAR_FRAMES];
+        let mut right = vec![0.0f32; BAR_FRAMES];
+        whole.process(&mut left, &mut right, &encode(&setup), setup.len() as u32);
+
+        assert_eq!(struck_frames(&left), STEPS, "the whole bar struck the wrong number of times");
+        assert_eq!(left, expected, "the bar came out differently rendered in one block");
+    }
+
+    #[test]
+    fn a_struck_grid_falls_silent_again_when_the_pattern_is_cleared() {
+        // The pattern is read every step rather than latched at the start, and
+        // nothing else here would notice if it were: a grid cleared mid-bar has
+        // to stop striking on the very next step.
+        let mut engine = Engine::new(SR);
+        load_kit(&mut engine, 1);
+        let struck = one_bar(&mut engine, &every_cell_struck());
+        assert!(struck_frames(&struck) > 0, "the fixture struck nothing");
+
+        let cleared = one_bar(&mut engine, &[Record::immediate(Command::ClearPattern)]);
+
+        assert_eq!(struck_frames(&cleared), 0, "a cleared grid went on striking");
     }
 
     #[test]
@@ -925,10 +1149,16 @@ mod tests {
     fn render_is_deterministic() {
         // The golden render tests compare a bit for bit and rest on this.
         fn script(engine: &mut Engine) -> Vec<f32> {
+            // With voices in it, because they are the part with a lifecycle:
+            // an allocation order that depended on anything but the pool's own
+            // state would show up here and nowhere else.
+            load_kit(engine, 4_096);
             let mut signal = quantum(
                 engine,
                 &[
                     Record::immediate(Command::SetBpm { bpm: AWKWARD_BPM }),
+                    Record::immediate(Command::SetStep { track: 1, step: 0, velocity: 0.8 }),
+                    Record::immediate(Command::SetStep { track: 5, step: 7, velocity: 0.3 }),
                     Record::immediate(Command::Play),
                 ],
             );
@@ -944,6 +1174,7 @@ mod tests {
     #[test]
     fn reset_restores_the_initial_state() {
         let mut used = Engine::new(SR);
+        load_kit(&mut used, 1);
         quantum(&mut used, &[Record::immediate(Command::SetBpm { bpm: 63.5 })]);
         // The mixer is part of "as constructed" too, and the comparison at the
         // end of this test is what proves it: a master gain left at 0.3 would
@@ -962,18 +1193,24 @@ mod tests {
         assert_eq!(used.mixer().track_gain(6), 1.0);
         assert!(!used.pattern().is_active(2, 9), "the pattern survived the reset");
 
-        let (mut fresh, mut expected) = started(AWKWARD_BPM);
-        expected.extend(render(&mut fresh, 200));
+        // The script strikes, which is what makes the kit part of this
+        // comparison: a bank that survived the reset would sound here, and
+        // nothing else in the test would notice a thing.
+        fn after(engine: &mut Engine) -> Vec<f32> {
+            let mut signal = quantum(
+                engine,
+                &[
+                    Record::immediate(Command::SetBpm { bpm: AWKWARD_BPM }),
+                    Record::immediate(Command::SetStep { track: 0, step: 0, velocity: 1.0 }),
+                    Record::immediate(Command::Play),
+                ],
+            );
+            signal.extend(render(engine, 200));
+            signal
+        }
 
-        let mut after_reset = quantum(
-            &mut used,
-            &[
-                Record::immediate(Command::SetBpm { bpm: AWKWARD_BPM }),
-                Record::immediate(Command::Play),
-            ],
-        );
-        after_reset.extend(render(&mut used, 200));
+        let expected = after(&mut Engine::new(SR));
 
-        assert_eq!(after_reset, expected, "after reset the engine must sound like a new one");
+        assert_eq!(after(&mut used), expected, "after reset the engine must sound like a new one");
     }
 }

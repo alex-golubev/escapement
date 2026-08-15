@@ -36,6 +36,7 @@ pub mod mixer;
 pub mod pattern;
 pub mod ring;
 pub mod sampler;
+pub mod sequencer;
 pub mod transport;
 
 /// Support shared by tests across the crate. Gated here rather than kept out of
