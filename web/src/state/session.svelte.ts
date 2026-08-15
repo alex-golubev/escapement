@@ -192,6 +192,14 @@ export interface Session {
   /** Strike a cell or clear it. Off travels as velocity `0`; there is no flag. */
   setStep(track: number, step: number, on: boolean): void
   /**
+   * Empty the whole grid.
+   *
+   * One record rather than 128 of them, which is the whole reason the opcode
+   * exists: clearing by hand would be a burst larger than the exchange area the
+   * engine drains in a quantum, to say something one byte already says.
+   */
+  clearPattern(): void
+  /**
    * Strike a track outside the grid. Nothing is remembered afterwards, which is
    * what makes this the one verb here with no belief to keep in step: a pad
    * leaves no state behind, so there is nothing for the engine and this module
@@ -565,6 +573,10 @@ export function createSession(deps: SessionDeps = {}): Session {
       if (send({ op: 'set-step', track, step, velocity: on ? CELL_VELOCITY : 0 })) {
         pattern[track][step] = on
       }
+    },
+    clearPattern(): void {
+      if (!send({ op: 'clear-pattern' })) return
+      for (const row of pattern) row.fill(false)
     },
     trigger(track: number): void {
       // Full velocity: a pad is the sound as loud as the kit makes it, and what

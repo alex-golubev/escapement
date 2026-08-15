@@ -424,6 +424,34 @@ describe('createSession', () => {
     expect(harness.session.isStepOn(TRACKS, 0)).toBe(false)
   })
 
+  it('empties the grid with one record rather than a hundred and twenty-eight', async () => {
+    // Which is what the opcode is for: clearing by hand would be a burst larger
+    // than the exchange area the engine drains in a quantum, sent to say
+    // something one byte already says.
+    const harness = rig()
+    await harness.start()
+    harness.session.setStep(0, 0, true)
+    harness.session.setStep(7, 15, true)
+    const settled = harness.sent().length
+
+    harness.session.clearPattern()
+
+    expect(harness.session.isStepOn(0, 0)).toBe(false)
+    expect(harness.session.isStepOn(7, 15)).toBe(false)
+    expect(harness.sent().slice(settled)).toEqual([{ op: 'clear-pattern' }])
+  })
+
+  it('does not empty a grid the ring refused to clear', async () => {
+    const harness = rig()
+    await harness.start()
+    harness.session.setStep(0, 0, true)
+    harness.refuse()
+
+    harness.session.clearPattern()
+
+    expect(harness.session.isStepOn(0, 0)).toBe(true)
+  })
+
   it('tells a new engine the pattern the page is already showing', async () => {
     // The pattern is a setting the page holds, like the tempo, so it outlives
     // the engine it was set on. Worth its own test because the sending is bulk —

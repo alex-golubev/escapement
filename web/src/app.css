@@ -8,6 +8,10 @@
   --line: #2a2a31;
   --ok: #6cc07a;
   --fail: #e0685f;
+  /* A struck cell, and deliberately not `--ok`: that one means a check passed,
+     and a pattern is not a verdict. Two meanings on one colour drift apart the
+     first time either wants to move. */
+  --accent: #d4a24c;
 
   color-scheme: dark;
   font-family: ui-sans-serif, system-ui, sans-serif;

@@ -1,12 +1,8 @@
 <script lang="ts">
-  import { KIT_URLS } from './audio/kit'
+  import { KIT_NAMES } from './audio/kit'
   import { QUANTUM } from './audio/worklet-messages'
   import { createSession } from './state/session.svelte'
-
-  // Derived from the list that decides which sound is on which row, rather than
-  // written out again beside it: two lists in the same order is one list and a
-  // way for them to stop being in the same order.
-  const pads = KIT_URLS.map((url) => url.slice('/kit/'.length, -'.wav'.length))
+  import StepGrid from './ui/StepGrid.svelte'
 
   // The readiness criterion for this milestone, checked on the page instead of
   // in devtools. Without cross-origin isolation there is no
@@ -141,11 +137,12 @@
       </label>
     </div>
 
-    <!-- Eight pads, which is what `TriggerTrack` is for and the only way to hear
-         the kit before there is a grid. They strike on a stopped transport,
-         which is the whole difference between a pad and a cell. -->
+    <!-- Eight pads, which is what `TriggerTrack` is for. They strike and leave
+         nothing behind, which is the whole difference between a pad and a cell:
+         hearing a sound and putting one somewhere are separate wants, and the
+         grid below answers only the second. -->
     <div class="pads">
-      {#each pads as pad, track (pad)}
+      {#each KIT_NAMES as pad, track (pad)}
         <button
           class="pad"
           disabled={session.kit !== 'loaded'}
@@ -155,6 +152,8 @@
         </button>
       {/each}
     </div>
+
+    <StepGrid {session} />
     <ul class="checks">
       <li>
         <code>transport</code>

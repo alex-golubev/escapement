@@ -37,6 +37,19 @@ export const KIT_URLS = [
 ] as const
 
 /**
+ * What to call each row, in track order.
+ *
+ * Derived from the list above rather than written out beside it: two lists in
+ * the same order are one list and a way for them to stop being in the same
+ * order. Here rather than wherever a row is drawn, because the name of a sound
+ * belongs with the sound, and the page that draws it is not the only one that
+ * will ever want to say which is which.
+ */
+export const KIT_NAMES: readonly string[] = KIT_URLS.map((url) =>
+  url.slice('/kit/'.length, -'.wav'.length),
+)
+
+/**
  * The part of `AudioBuffer` this reads.
  *
  * Narrow on purpose, and for the reason `ReadyEndpoint` in host.ts is: a real

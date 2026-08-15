@@ -6,7 +6,8 @@
 
 import { describe, expect, it } from 'vitest'
 
-import { KIT_URLS, describeKitFailure, fetchKit, interleave } from './kit'
+import { KIT_NAMES, KIT_URLS, describeKitFailure, fetchKit, interleave } from './kit'
+import { TRACKS } from './protocol'
 import type { DecodedSample, KitFailure, KitSource } from './kit'
 import { unwrapError, unwrapValue } from '../../tests/support/unwrap'
 
@@ -88,13 +89,18 @@ describe('fetchKit', () => {
     expect(asked).toEqual(['/one.wav'])
   })
 
-  it('loads the kit this page actually ships', async () => {
+  it('loads the kit this page actually ships, one sample to a track', async () => {
     // The list is what assigns a sound to a row, so its length is the number of
-    // tracks and a short one leaves a silent row nobody would look for.
+    // tracks: short, it leaves a row that strikes nothing and that the grid
+    // labels `undefined`. The order below says nothing about that — it holds for
+    // a list of any length — so the length is asserted on its own, against the
+    // engine's own count rather than against eight written out here.
     const asked: string[] = []
     unwrapValue(await fetchKit(source({ asked })))
 
     expect(asked).toEqual([...KIT_URLS])
+    expect(KIT_URLS).toHaveLength(TRACKS)
+    expect(KIT_NAMES).toHaveLength(TRACKS)
   })
 })
 
