@@ -12,20 +12,7 @@
 
 import { describe, expect, it } from 'vitest'
 
-import {
-  COMMAND_SIZE,
-  OP_CLEAR_PATTERN,
-  OP_PLAY,
-  OP_SET_BPM,
-  OP_SET_MASTER_GAIN,
-  OP_SET_STEP,
-  OP_SET_TRACK_GAIN,
-  OP_SET_TRACK_PAN,
-  OP_STOP,
-  STEPS,
-  TRACKS,
-  writeCommand,
-} from './protocol'
+import { COMMAND_SIZE, OP_PLAY, OP_STOP, STEPS, TRACKS, writeCommand } from './protocol'
 import type { Command } from './protocol'
 
 /** 0x0000_00AB_1234_5678 — the same instant the Rust test encodes. */
@@ -82,23 +69,6 @@ describe('writeCommand', () => {
     for (const [command, opcode] of Object.values(OPCODES)) {
       expect(encode(command, 0)[0], `${command.op} went out under another opcode`).toBe(opcode)
     }
-  })
-
-  it('exports an opcode constant for each of those numbers', () => {
-    // Separate from the table above, and not a restatement of it: these
-    // constants are how ring-writer.spec.ts names the record it expects to find
-    // in a slot, so they are read outside this file, and nothing else says what
-    // they are worth.
-    expect([
-      OP_PLAY,
-      OP_STOP,
-      OP_SET_BPM,
-      OP_SET_TRACK_GAIN,
-      OP_SET_TRACK_PAN,
-      OP_SET_MASTER_GAIN,
-      OP_SET_STEP,
-      OP_CLEAR_PATTERN,
-    ]).toEqual([1, 2, 3, 4, 5, 6, 7, 8])
   })
 
   it('addresses a track and a step where commands.rs pins them', () => {

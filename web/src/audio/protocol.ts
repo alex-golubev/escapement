@@ -69,15 +69,27 @@ export const COMMAND_SIZE = 16
 export const TRACKS = 8
 export const STEPS = 16
 
-/** Mirror of `Op` in commands.rs. Numbering starts at 1; 0 means "empty". */
+/**
+ * Mirror of `Op` in commands.rs. Numbering starts at 1; 0 means "empty".
+ *
+ * Exported one by one rather than as a set, and only the three that are read
+ * from outside: they are how a test names the byte it expects to find in a
+ * slot. An export with no caller is a contract offered to nobody, and the five
+ * below had one reader between them — a test asserting that they existed.
+ * Their numbers are pinned all the same, and by something stronger: the table
+ * in the spec encodes every command through `writeCommand` and holds the byte
+ * that comes out against a literal, so a constant that changed would fail
+ * there whether or not anything outside this file can see it.
+ */
 export const OP_PLAY = 1
 export const OP_STOP = 2
-export const OP_SET_BPM = 3
-export const OP_SET_TRACK_GAIN = 4
-export const OP_SET_TRACK_PAN = 5
-export const OP_SET_MASTER_GAIN = 6
 export const OP_SET_STEP = 7
-export const OP_CLEAR_PATTERN = 8
+
+const OP_SET_BPM = 3
+const OP_SET_TRACK_GAIN = 4
+const OP_SET_TRACK_PAN = 5
+const OP_SET_MASTER_GAIN = 6
+const OP_CLEAR_PATTERN = 8
 
 /**
  * A command as the page states it. This mirrors the `Command` enum rather than
