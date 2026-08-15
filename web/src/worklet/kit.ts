@@ -213,7 +213,10 @@ export function loadKit(
  * means that check was passed by two artifacts that agree, so there is nothing
  * left for this line to report.
  */
-export function answerKitMessage(state: EngineState | null, data: unknown): WorkletMessage | null {
+export function answerKitMessage(
+  state: EngineState | null,
+  data: unknown,
+): WorkletMessage | null {
   const message = data as { type?: unknown; samples?: unknown } | null | undefined
   if (message?.type !== 'load-kit') return null
 

@@ -108,8 +108,14 @@ describe('paintMeters', () => {
  * enough to implement honestly — which is the point of its being narrow.
  */
 function recorder() {
-  const calls: { op: string; x: number; y: number; width: number; height: number; fill: string }[] =
-    []
+  const calls: {
+    op: string
+    x: number
+    y: number
+    width: number
+    height: number
+    fill: string
+  }[] = []
 
   let fill = ''
 
@@ -123,7 +129,8 @@ function recorder() {
     // set a colour — so this says it, and would fail loudly rather than record
     // an object as a string.
     set fillStyle(value) {
-      if (typeof value !== 'string') throw new Error('a painter set something that is not a colour')
+      if (typeof value !== 'string')
+        throw new Error('a painter set something that is not a colour')
       fill = value
     },
     clearRect(x, y, width, height) {

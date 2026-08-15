@@ -17,7 +17,9 @@ describe('interleave', () => {
     // only place the two layouts meet. Written channel-first, the stereo image
     // comes out as the left channel followed by the right — which the engine
     // reads as one sample of nonsense rather than as a mistake.
-    const sample = interleave(decoded([new Float32Array([1, 2, 3]), new Float32Array([4, 5, 6])]))
+    const sample = interleave(
+      decoded([new Float32Array([1, 2, 3]), new Float32Array([4, 5, 6])]),
+    )
 
     expect(sample.channels).toBe(2)
     expect(Array.from(sample.data)).toEqual([1, 4, 2, 5, 3, 6])
@@ -63,14 +65,18 @@ describe('fetchKit', () => {
   })
 
   it('names the file the network never reached', async () => {
-    const error = unwrapError(await fetchKit(source({ throwOnFetch: 'offline' }), ['/kit/kick.wav']))
+    const error = unwrapError(
+      await fetchKit(source({ throwOnFetch: 'offline' }), ['/kit/kick.wav']),
+    )
 
     expect(error.kind).toBe('unreachable')
   })
 
   it('names the file the browser would not decode', async () => {
     const error = unwrapError(
-      await fetchKit(source({ throwOnDecode: 'Unable to decode audio data' }), ['/kit/rim.wav']),
+      await fetchKit(source({ throwOnDecode: 'Unable to decode audio data' }), [
+        '/kit/rim.wav',
+      ]),
     )
 
     expect(error).toEqual({
@@ -107,7 +113,11 @@ describe('fetchKit', () => {
 describe('describeKitFailure', () => {
   it('has a distinct, non-empty message for every failure that exists', () => {
     const samples: Record<KitFailure['kind'], KitFailure> = {
-      unreachable: { kind: 'unreachable', url: '/kit/kick.wav', detail: 'the server answered 404' },
+      unreachable: {
+        kind: 'unreachable',
+        url: '/kit/kick.wav',
+        detail: 'the server answered 404',
+      },
       undecodable: { kind: 'undecodable', url: '/kit/kick.wav', message: 'DOMException' },
     }
 

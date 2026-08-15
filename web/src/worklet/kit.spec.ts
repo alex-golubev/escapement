@@ -131,7 +131,9 @@ describe('loadKit', () => {
       engine_sample_commit: (_instance, slot) => (slot === 1 ? 4 : 0),
     })
 
-    const error = unwrapError(loadKit(state, [sample(1, 1, 2), sample(3, 3, 4, 5), sample(1, 6)]))
+    const error = unwrapError(
+      loadKit(state, [sample(1, 1, 2), sample(3, 3, 4, 5), sample(1, 6)]),
+    )
 
     expect(error).toEqual({
       kind: 'refused-sample',
@@ -289,7 +291,9 @@ describe('describeKitError', () => {
     // once already.
     const thrown = 'engine.engine_bank_reserve is not a function.'
 
-    expect(describeKitError({ kind: 'abi-unusable', message: thrown }).endsWith(thrown)).toBe(true)
+    expect(describeKitError({ kind: 'abi-unusable', message: thrown }).endsWith(thrown)).toBe(
+      true,
+    )
   })
 
   it('says where the number it carries is named', () => {

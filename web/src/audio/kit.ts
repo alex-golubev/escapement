@@ -62,6 +62,13 @@ export interface DecodedSample {
   getChannelData(channel: number): Float32Array
 }
 
+/** As much of a `Response` as the load ever asks for. */
+export interface KitResponse {
+  readonly ok: boolean
+  readonly status: number
+  arrayBuffer(): Promise<ArrayBuffer>
+}
+
 /**
  * Where the bytes come from and what turns them into samples.
  *
@@ -69,7 +76,7 @@ export interface DecodedSample {
  * same reason: under Node there is neither.
  */
 export interface KitSource {
-  fetch(url: string): Promise<{ readonly ok: boolean; readonly status: number; arrayBuffer(): Promise<ArrayBuffer> }>
+  fetch(url: string): Promise<KitResponse>
   decode(bytes: ArrayBuffer): Promise<DecodedSample>
 }
 

@@ -332,7 +332,9 @@ describe('the compiled engine', () => {
     const step = (at[1] - at[0]) / 4
     expect(at[0], 'the first cell is not on step 2').toBe(2 * step)
     expect(at[2], 'the third cell is not on step 10').toBe(10 * step)
-    expect(at[3], `the pattern did not come round after ${STEPS} steps`).toBe((STEPS + 2) * step)
+    expect(at[3], `the pattern did not come round after ${STEPS} steps`).toBe(
+      (STEPS + 2) * step,
+    )
     expect(at[4], 'the second lap does not match the first').toBe((STEPS + 6) * step)
 
     // Exact ratios of powers of two, so these are equalities: the velocities
@@ -630,8 +632,16 @@ function render(
   // Built per call rather than kept: a reservation between two renders replaces
   // the buffer these sit on, and a view held across one is a view that reads
   // nothing.
-  const outL = new Float32Array(engine.memory.buffer, engine.engine_out_ptr(instance, 0), QUANTUM)
-  const outR = new Float32Array(engine.memory.buffer, engine.engine_out_ptr(instance, 1), QUANTUM)
+  const outL = new Float32Array(
+    engine.memory.buffer,
+    engine.engine_out_ptr(instance, 0),
+    QUANTUM,
+  )
+  const outR = new Float32Array(
+    engine.memory.buffer,
+    engine.engine_out_ptr(instance, 1),
+    QUANTUM,
+  )
 
   for (let block = 0; block < quanta; block += 1) {
     engine.engine_process(instance, QUANTUM, block === 0 ? cmdCount : 0)

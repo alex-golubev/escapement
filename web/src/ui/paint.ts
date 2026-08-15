@@ -119,17 +119,17 @@ export function paintMeters(
 
   const height = (box.height - SPLIT) / 2
   paintBar(ctx, { x: 0, y: 0, width: box.width, height }, colours, reading.peakL)
-  paintBar(
-    ctx,
-    { x: 0, y: height + SPLIT, width: box.width, height },
-    colours,
-    reading.peakR,
-  )
+  paintBar(ctx, { x: 0, y: height + SPLIT, width: box.width, height }, colours, reading.peakR)
 }
 
 function paintBar(
   ctx: Canvas2D,
-  rect: { readonly x: number; readonly y: number; readonly width: number; readonly height: number },
+  rect: {
+    readonly x: number
+    readonly y: number
+    readonly width: number
+    readonly height: number
+  },
   colours: MeterColours,
   peak: number,
 ): void {
