@@ -34,10 +34,19 @@ export interface TelemetryReader {
 /**
  * How many times to look before giving up for this frame.
  *
- * The writer holds the counter odd for four stores. Against a quantum that
- * comes round every 2.7 ms that window is vanishing, so one retry is already
- * generous — but a bound there must be, because the alternative is a main
- * thread spinning on a value only another thread can change.
+ * Not four chances at four moments: four loads with nothing between them take
+ * about as long as the four stores they are racing, so the whole loop sits
+ * inside the window it is trying to outlast and this is nearer one look than
+ * four. Widening it would not help either — waiting out a publish means
+ * spinning the main thread on a value only the audio thread can change, which
+ * is the one thing a reader here must never do.
+ *
+ * What makes that acceptable is the caller: a frame that reads nothing keeps
+ * the numbers it already has, and the next frame is 16 ms and six publishes
+ * later, holding a newer reading than any wait here could. The bound is not
+ * tuned, and
+ * there is nothing here to tune it against — it is a small number that is not
+ * one, so that a reader arriving mid-store can still catch the same publish.
  */
 const ATTEMPTS = 4
 

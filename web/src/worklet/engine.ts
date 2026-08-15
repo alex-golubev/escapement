@@ -17,6 +17,13 @@ import { TELEMETRY_WORDS } from './telemetry-block'
  * A failure that is a value. Declared again in audio/host.ts on purpose: the
  * two never exchange these values — different threads, neither calls the other
  * — so a shared type would link them by name without linking anything real.
+ *
+ * What that argument turns on is the boundary, not the file, and it is worth
+ * saying now that there are three of these — the tests carry a structural one
+ * of their own. A second module on *this* side of the boundary does not get a
+ * fourth: it takes the one already here, and if that means moving the
+ * declaration out to a file of its own on this side, that is a move rather
+ * than a copy. The sampler brings the first such module, on the page's side.
  */
 type Result<T, E> =
   { readonly ok: true; readonly value: T } | { readonly ok: false; readonly error: E }
