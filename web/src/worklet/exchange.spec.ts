@@ -20,13 +20,9 @@ import {
   openRing,
 } from '../audio/ring'
 import { createWriter } from '../audio/ring-writer'
+import { readRecord, telemetryBlock } from '../../tests/support/abi'
 import { probe, probeMismatch } from '../../tests/support/ring-harness'
 import { drainCommands, publishTelemetry } from './exchange'
-import {
-  TELEMETRY_TRANSPORT_HI,
-  TELEMETRY_TRANSPORT_LO,
-  TELEMETRY_WORDS,
-} from './telemetry-block'
 
 /** What the engine reports through `engine_cmd_capacity`. */
 const CMD_CAPACITY = 256
@@ -232,7 +228,7 @@ describe('publishTelemetry', () => {
     // unchanged around its read knows the fields between are from one quantum.
     const { views } = ring()
 
-    publishTelemetry(views, block(1_234))
+    publishTelemetry(views, telemetryBlock({ position: 1_234 }))
 
     expect(views.words[WORD_TELEMETRY_SEQ] % 2).toBe(0)
     expect(views.words[WORD_TRANSPORT_LO]).toBe(1_234)
@@ -245,7 +241,7 @@ describe('publishTelemetry', () => {
     const seen: number[] = []
 
     for (let quantum = 0; quantum < 3; quantum += 1) {
-      publishTelemetry(views, block(quantum * 128))
+      publishTelemetry(views, telemetryBlock({ position: quantum * 128 }))
       seen.push(views.words[WORD_TELEMETRY_SEQ])
     }
 
@@ -258,7 +254,7 @@ describe('publishTelemetry', () => {
     const { views } = ring()
     Atomics.store(views.words, WORD_TELEMETRY_SEQ, 0xfffffffe)
 
-    publishTelemetry(views, block(0))
+    publishTelemetry(views, telemetryBlock({ position: 0 }))
 
     expect(views.words[WORD_TELEMETRY_SEQ]).toBe(0)
   })
@@ -272,7 +268,7 @@ describe('publishTelemetry', () => {
     const { views } = ring()
     Atomics.store(views.words, WORD_TELEMETRY_SEQ, 7)
 
-    publishTelemetry(views, block(99))
+    publishTelemetry(views, telemetryBlock({ position: 99 }))
 
     expect(views.words[WORD_TELEMETRY_SEQ] % 2).toBe(0)
     expect(views.words[WORD_TRANSPORT_LO]).toBe(99)
@@ -280,7 +276,7 @@ describe('publishTelemetry', () => {
 
   it('allocates nothing', () => {
     const { views } = ring()
-    const words = block(0)
+    const words = telemetryBlock()
 
     const subarray = vi.spyOn(Uint32Array.prototype, 'subarray')
     try {
@@ -291,13 +287,6 @@ describe('publishTelemetry', () => {
     }
   })
 })
-
-function block(position: number): Uint32Array {
-  const words = new Uint32Array(TELEMETRY_WORDS)
-  words[TELEMETRY_TRANSPORT_LO] = position >>> 0
-  words[TELEMETRY_TRANSPORT_HI] = Math.floor(position / 2 ** 32)
-  return words
-}
 
 function ring() {
   const views = openRing(createRing())
@@ -310,6 +299,7 @@ function ring() {
   }
 }
 
+/** The tempo the record in slot `index` carries, whatever else it says. */
 function tempoAt(destination: Uint8Array, index: number): number {
-  return new DataView(destination.buffer).getFloat32(index * COMMAND_SIZE + 4, true)
+  return readRecord(new DataView(destination.buffer), index).value
 }

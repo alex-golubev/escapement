@@ -21,13 +21,7 @@ import { parentPort, workerData } from 'node:worker_threads'
 import { COMMAND_SIZE } from '../../src/audio/protocol'
 import { WORD_CMD_READ, WORD_CMD_WRITE, openRing } from '../../src/audio/ring'
 import { drainCommands, publishTelemetry } from '../../src/worklet/exchange'
-import {
-  TELEMETRY_PEAK_L,
-  TELEMETRY_PEAK_R,
-  TELEMETRY_TRANSPORT_HI,
-  TELEMETRY_TRANSPORT_LO,
-  TELEMETRY_WORDS,
-} from '../../src/worklet/telemetry-block'
+import { telemetryBlock, writeTelemetryBlock } from './abi'
 import {
   PROGRESS_DRAINED,
   PROGRESS_RUNNING,
@@ -49,17 +43,13 @@ const destination = new Uint8Array(capacity * COMMAND_SIZE)
 const drained = new DataView(destination.buffer)
 const progressWords = new Int32Array(progress)
 
-// The block the engine would have filled in, and the same bytes as the floats
-// the peaks are — exactly the pair `publishTelemetry` expects to be handed.
-const telemetry = new Uint32Array(TELEMETRY_WORDS)
-const peaks = new Float32Array(telemetry.buffer)
+// The block the engine would have filled in. Made once and refilled, because
+// this thread runs thousands of quanta and its job is to crowd the ring rather
+// than the collector.
+const telemetry = telemetryBlock()
 
 function publish(quantum: number): void {
-  const probe = TELEMETRY_PROBES[quantum % TELEMETRY_PROBES.length]
-  telemetry[TELEMETRY_TRANSPORT_LO] = probe.lo
-  telemetry[TELEMETRY_TRANSPORT_HI] = probe.hi
-  peaks[TELEMETRY_PEAK_L] = probe.peakL
-  peaks[TELEMETRY_PEAK_R] = probe.peakR
+  writeTelemetryBlock(telemetry, TELEMETRY_PROBES[quantum % TELEMETRY_PROBES.length])
   publishTelemetry(views, telemetry)
 }
 

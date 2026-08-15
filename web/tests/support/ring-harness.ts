@@ -11,7 +11,8 @@
 // told about Node's types.
 
 import type { Command } from '../../src/audio/protocol'
-import { COMMAND_SIZE, OP_SET_STEP } from '../../src/audio/protocol'
+import { OP_SET_STEP } from '../../src/audio/protocol'
+import { readRecord } from './abi'
 
 /**
  * Where the sequence number lands in the record, besides the velocity: the
@@ -62,11 +63,10 @@ export function probe(index: number): Command {
  * `postMessage` to be seen at all.
  */
 export function probeMismatch(block: DataView, slot: number, index: number): string | null {
-  const at = slot * COMMAND_SIZE
-  const op = block.getUint8(at)
-  const track = block.getUint8(at + 1)
-  const step = block.getUint16(at + 2, true)
-  const velocity = block.getFloat32(at + 4, true)
+  // Under the names `probe` gave them: what a `set-step` puts in `arg_a` is a
+  // track, and the reading below is about the record's identity rather than
+  // about where its fields sit.
+  const { op, argA: track, argB: step, value: velocity } = readRecord(block, slot)
 
   if (op !== OP_SET_STEP) {
     return `record ${index}: opcode ${op}, expected ${OP_SET_STEP} — this slot was never written`
@@ -86,20 +86,23 @@ export function probeMismatch(block: DataView, slot: number, index: number): str
   return null
 }
 
-/** One published state of the telemetry block, whole. */
+/**
+ * One published state of the telemetry block, whole. Stated as the reading the
+ * page must get back, because that is both what the worker publishes from and
+ * what the run compares against — the words it lands in are the block builder's
+ * business, and it splits a position the way the shipping code does.
+ */
 export interface TelemetryProbe {
-  readonly lo: number
-  readonly hi: number
+  readonly position: number
   readonly peakL: number
   readonly peakR: number
-  /** What `createReader` must report for it: `hi * 2**32 + lo`. */
-  readonly position: number
 }
 
 /**
  * The two states the worklet side alternates between, quantum by quantum.
  *
- * Chosen so that **every publish moves both words of the position**, which
+ * Chosen so that **every publish moves both words of the position** — the first
+ * lands as `(lo 0, hi 1)` and the second as `(lo 0xffffffff, hi 2)` — which
  * turns the crossing of 2^32 from something that happens once in a run into
  * something that happens on every single quantum. That is the whole exposure a
  * seqlock exists for: a reader that catches the low word of one publish beside
@@ -115,8 +118,8 @@ export interface TelemetryProbe {
  * combination that appears in neither.
  */
 export const TELEMETRY_PROBES: readonly TelemetryProbe[] = [
-  { lo: 0x00000000, hi: 1, peakL: 0.25, peakR: 0.75, position: 2 ** 32 },
-  { lo: 0xffffffff, hi: 2, peakL: 1.5, peakR: 0.5, position: 2 * 2 ** 32 + 0xffffffff },
+  { position: 2 ** 32, peakL: 0.25, peakR: 0.75 },
+  { position: 3 * 2 ** 32 - 1, peakL: 1.5, peakR: 0.5 },
 ]
 
 /**

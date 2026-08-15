@@ -3,7 +3,7 @@
 //
 // The values are written here by the worklet's own `publishTelemetry` rather
 // than by hand: the interesting property is that the two halves agree, and a
-// test that lays out the words itself would only prove that this file agrees
+// test that lays out the ring itself would only prove that this file agrees
 // with itself. What cannot be reached from here is the two threads racing —
 // the torn read below is produced by substitution, and deliberately so: the
 // alternative is a test that waits for a coincidence.
@@ -13,22 +13,13 @@ import { describe, expect, it, vi } from 'vitest'
 import { WORD_TELEMETRY_SEQ, createRing, openRing } from './ring'
 import { createReader } from './telemetry'
 import { publishTelemetry } from '../worklet/exchange'
-// The block layout, from the worklet's side of the tree: these indices address
-// WASM linear memory, which no code on this page ever touches. Imported here
-// because `engineWords` below stands in for Rust — same reason this spec calls
-// the worklet's own `publishTelemetry` rather than laying out the ring by hand.
-import {
-  TELEMETRY_PEAK_L,
-  TELEMETRY_PEAK_R,
-  TELEMETRY_TRANSPORT_HI,
-  TELEMETRY_TRANSPORT_LO,
-  TELEMETRY_WORDS,
-} from '../worklet/telemetry-block'
+// The block as the engine leaves it in linear memory, standing in for Rust.
+import { telemetryBlock } from '../../tests/support/abi'
 
 describe('createReader', () => {
   it('reads back what the worklet published', () => {
     const { views, reader } = setup()
-    publishTelemetry(views, engineWords(48_000, 0.5, 0.25))
+    publishTelemetry(views, telemetryBlock({ position: 48_000, peakL: 0.5, peakR: 0.25 }))
 
     expect(reader.read()).toEqual({ position: 48_000, peakL: 0.5, peakR: 0.25 })
     expect(
@@ -44,7 +35,7 @@ describe('createReader', () => {
     const { views, reader } = setup()
 
     for (const position of [0, 1, 2 ** 32 - 1, 2 ** 32, 2 ** 32 + 12_345, 2 ** 40 + 7]) {
-      publishTelemetry(views, engineWords(position, 0, 0))
+      publishTelemetry(views, telemetryBlock({ position }))
       expect(reader.read()?.position, `position ${position} did not survive`).toBe(position)
     }
   })
@@ -56,7 +47,7 @@ describe('createReader', () => {
     const { views, reader } = setup()
 
     for (const peak of [0, 1, 0.25, 1e-20, 0.1]) {
-      publishTelemetry(views, engineWords(0, peak, peak))
+      publishTelemetry(views, telemetryBlock({ peakL: peak, peakR: peak }))
       expect(reader.read()?.peakL, `peak ${peak} did not survive`).toBe(Math.fround(peak))
     }
   })
@@ -66,7 +57,7 @@ describe('createReader', () => {
     // Returning them would be worse than returning nothing: the caller has a
     // previous frame to fall back on, and no way to spot a bad reading.
     const { views, reader } = setup()
-    publishTelemetry(views, engineWords(1_000, 0, 0))
+    publishTelemetry(views, telemetryBlock({ position: 1_000 }))
     Atomics.store(views.words, WORD_TELEMETRY_SEQ, 3)
 
     expect(reader.read()).toBeNull()
@@ -78,7 +69,7 @@ describe('createReader', () => {
     // words that were just read. Substituted, because on one thread this
     // cannot otherwise happen.
     const { views, reader } = setup()
-    publishTelemetry(views, engineWords(1_000, 0, 0))
+    publishTelemetry(views, telemetryBlock({ position: 1_000 }))
 
     // `Atomics.load` is overloaded, and `vi.spyOn` resolves to the BigInt64
     // signature — while the reader only ever calls it on a Uint32Array.
@@ -105,7 +96,7 @@ describe('createReader', () => {
     Atomics.store(views.words, WORD_TELEMETRY_SEQ, 1)
     expect(reader.read()).toBeNull()
 
-    publishTelemetry(views, engineWords(256, 0, 0))
+    publishTelemetry(views, telemetryBlock({ position: 256 }))
     expect(reader.read()?.position).toBe(256)
   })
 })
@@ -113,19 +104,4 @@ describe('createReader', () => {
 function setup() {
   const views = openRing(createRing())
   return { views, reader: createReader(views) }
-}
-
-/**
- * The block as the engine leaves it in linear memory, peaks and all — built
- * the way `write_telemetry` builds it, `f32::to_bits` included.
- */
-function engineWords(position: number, peakL: number, peakR: number): Uint32Array {
-  const words = new Uint32Array(TELEMETRY_WORDS)
-  words[TELEMETRY_TRANSPORT_LO] = position >>> 0
-  words[TELEMETRY_TRANSPORT_HI] = Math.floor(position / 2 ** 32)
-
-  const bits = new Uint32Array(new Float32Array([peakL, peakR]).buffer)
-  words[TELEMETRY_PEAK_L] = bits[0]
-  words[TELEMETRY_PEAK_R] = bits[1]
-  return words
 }
