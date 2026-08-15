@@ -66,7 +66,7 @@
 <style>
   .meters {
     display: block;
-    width: 6rem;
+    width: 4rem;
     height: 0.85rem;
 
     --meter-track: var(--line);

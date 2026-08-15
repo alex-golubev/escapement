@@ -245,6 +245,11 @@
   }
 
   .clear {
+    /* Block, so that nothing else can come to rest beside it. Inline, it drew
+       the page's next button up alongside — and the next button is the one that
+       ends the session, which is not a neighbour for a button that empties the
+       grid. */
+    display: block;
     margin-top: 1rem;
     padding: 0.35rem 0.9rem;
     font: inherit;

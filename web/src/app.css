@@ -28,3 +28,13 @@ code {
   font-family: ui-monospace, monospace;
   font-size: 0.9em;
 }
+
+/* Global, because more than one component says these two things and a scoped
+   copy in each is two shades of green waiting to happen. */
+.ok {
+  color: var(--ok);
+}
+
+.fail {
+  color: var(--fail);
+}
