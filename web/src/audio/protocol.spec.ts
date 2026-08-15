@@ -41,6 +41,7 @@ const OPCODES: Record<Command['op'], readonly [command: Command, opcode: number]
   'set-master-gain': [{ op: 'set-master-gain', gain: 1.25 }, 6],
   'set-step': [{ op: 'set-step', track: 3, step: 513, velocity: 0.6 }, 7],
   'clear-pattern': [{ op: 'clear-pattern' }, 8],
+  'set-metronome': [{ op: 'set-metronome', enabled: true }, 9],
 }
 
 describe('writeCommand', () => {
@@ -149,6 +150,19 @@ describe('writeCommand', () => {
       const argB = new DataView(bytes.buffer).getUint16(2, true)
       expect(argB, `step ${step} did not survive the write`).toBe(step)
     }
+  })
+
+  it('carries the metronome switch on the side of zero the engine reads it by', () => {
+    // The engine takes this field as "non-zero is on", so what has to be right
+    // is which side of zero the number lands on rather than the number itself.
+    // Both states are written out because `false` shares its encoding with a
+    // field nobody filled: a switch that forgot to write `value` at all would
+    // still say "off", and only the `true` case can tell the two apart.
+    const flag = (enabled: boolean): number =>
+      new DataView(encode({ op: 'set-metronome', enabled }, 0).buffer).getFloat32(4, true)
+
+    expect(flag(true)).toBe(1)
+    expect(flag(false)).toBe(0)
   })
 
   it('carries the tempo as the f32 the engine reads back', () => {

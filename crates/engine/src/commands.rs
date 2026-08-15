@@ -47,7 +47,7 @@
 /// Bumped on any change to any of the three. One number rather than three: the
 /// others would themselves need reconciling with this one, and four telemetry
 /// words and two dimensions do not earn that.
-pub const PROTOCOL_VERSION: u32 = 3;
+pub const PROTOCOL_VERSION: u32 = 4;
 
 /// Size of a single record, in bytes.
 pub const COMMAND_SIZE: usize = 16;
@@ -68,6 +68,7 @@ pub enum Op {
     SetMasterGain = 6,
     SetStep = 7,
     ClearPattern = 8,
+    SetMetronome = 9,
 }
 
 impl Op {
@@ -81,6 +82,7 @@ impl Op {
             6 => Some(Op::SetMasterGain),
             7 => Some(Op::SetStep),
             8 => Some(Op::ClearPattern),
+            9 => Some(Op::SetMetronome),
             _ => None,
         }
     }
@@ -122,6 +124,21 @@ pub enum Command {
     /// on/off flag on the wire, for the reason [`crate::pattern`] gives.
     SetStep { track: u8, step: u16, velocity: f32 },
     ClearPattern,
+    /// A switch, travelling in `value` as non-zero for on.
+    ///
+    /// **A flag is the one thing crossing here that cannot be out of range**,
+    /// and that is why it decodes to a `bool` while a gain does not. The refusal
+    /// a non-finite parameter gets exists because such a value would go on
+    /// multiplying samples; a switch multiplies nothing, and both of its states
+    /// are states the engine is willing to be in. So the mapping is total over
+    /// every bit pattern the wire can hold — the only question is which side NaN
+    /// falls on, and it falls on the side every other non-zero pattern does.
+    /// `a_flag_is_total_over_every_bit_pattern_the_wire_can_carry` says so
+    /// out loud.
+    ///
+    /// In `value` rather than `arg_a`, which would have been the cheaper byte:
+    /// the address fields address, and a switch has nothing to address.
+    SetMetronome { enabled: bool },
 }
 
 /// A command together with the instant it applies at.
@@ -160,6 +177,7 @@ impl Record {
             Op::SetMasterGain => Command::SetMasterGain { gain: value },
             Op::SetStep => Command::SetStep { track: arg_a, step: arg_b, velocity: value },
             Op::ClearPattern => Command::ClearPattern,
+            Op::SetMetronome => Command::SetMetronome { enabled: value != 0.0 },
         };
 
         Some(Self {
@@ -180,6 +198,9 @@ impl Record {
             Command::SetMasterGain { gain } => (Op::SetMasterGain, 0, 0, gain),
             Command::SetStep { track, step, velocity } => (Op::SetStep, track, step, velocity),
             Command::ClearPattern => (Op::ClearPattern, 0, 0, 0.0),
+            Command::SetMetronome { enabled } => {
+                (Op::SetMetronome, 0, 0, if enabled { 1.0 } else { 0.0 })
+            }
         };
 
         let mut out = [0u8; COMMAND_SIZE];
@@ -242,6 +263,7 @@ mod tests {
         (6, Op::SetMasterGain, Command::SetMasterGain { gain: 1.25 }),
         (7, Op::SetStep, Command::SetStep { track: 3, step: 513, velocity: 0.6 }),
         (8, Op::ClearPattern, Command::ClearPattern),
+        (9, Op::SetMetronome, Command::SetMetronome { enabled: true }),
     ];
 
     fn round_trip(record: Record) -> Option<Record> {
@@ -435,6 +457,34 @@ mod tests {
             Record::decode(&bytes),
             Some(Record::immediate(Command::Play))
         );
+    }
+
+    #[test]
+    fn a_flag_is_total_over_every_bit_pattern_the_wire_can_carry() {
+        // The table above carries `true` and nothing else, so both halves of the
+        // switch are asserted here — starting with the one that shares its
+        // encoding with an empty field.
+        for enabled in [true, false] {
+            let record = Record::immediate(Command::SetMetronome { enabled });
+            assert_eq!(round_trip(record), Some(record), "the switch did not survive");
+        }
+
+        // And every other pattern the field can hold, because the far side is
+        // another thread rather than the encoder above. There is no refusal to
+        // make here: a switch has both of its states available for any input,
+        // which is exactly what makes NaN's answer a decision worth writing
+        // down rather than an accident.
+        let flagged = |value: f32| {
+            let mut bytes = Record::immediate(Command::SetMetronome { enabled: true }).encode();
+            bytes[4..8].copy_from_slice(&value.to_le_bytes());
+            Record::decode(&bytes).map(|record| record.command)
+        };
+        for value in [1.0, -1.0, f32::NAN, f32::INFINITY, 1e-40] {
+            assert_eq!(flagged(value), Some(Command::SetMetronome { enabled: true }), "{value}");
+        }
+        for value in [0.0, -0.0] {
+            assert_eq!(flagged(value), Some(Command::SetMetronome { enabled: false }), "{value}");
+        }
     }
 
     #[test]

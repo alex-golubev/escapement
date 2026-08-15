@@ -42,7 +42,7 @@
  *
  * Bump on any change to any of the three.
  */
-export const PROTOCOL_VERSION = 3
+export const PROTOCOL_VERSION = 4
 
 /** Mirror of `COMMAND_SIZE` in commands.rs. */
 export const COMMAND_SIZE = 16
@@ -90,6 +90,7 @@ const OP_SET_TRACK_GAIN = 4
 const OP_SET_TRACK_PAN = 5
 const OP_SET_MASTER_GAIN = 6
 const OP_CLEAR_PATTERN = 8
+const OP_SET_METRONOME = 9
 
 /**
  * A command as the page states it. This mirrors the `Command` enum rather than
@@ -118,6 +119,16 @@ export type Command =
       readonly velocity: number
     }
   | { readonly op: 'clear-pattern' }
+  /**
+   * The metronome switch. It travels in `value` — non-zero is on — because the
+   * address fields address and a switch has nothing to address.
+   *
+   * A `boolean` here rather than the number the wire carries: this is the one
+   * field the engine cannot refuse, both of its states being states the engine
+   * will happily be in, so there is no range for a caller to stay inside and
+   * nothing gained by letting one pass a number.
+   */
+  | { readonly op: 'set-metronome'; readonly enabled: boolean }
 
 /**
  * Write one record at `byteOffset`.
@@ -186,6 +197,10 @@ export function writeCommand(
       break
     case 'clear-pattern':
       op = OP_CLEAR_PATTERN
+      break
+    case 'set-metronome':
+      op = OP_SET_METRONOME
+      value = command.enabled ? 1 : 0
       break
   }
 

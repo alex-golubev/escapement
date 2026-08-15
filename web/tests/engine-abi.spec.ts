@@ -157,15 +157,52 @@ describe('the compiled engine', () => {
     engine.engine_free(instance)
   })
 
+  it('stops sounding the metronome when told to across the wire', () => {
+    // The second opcode of the nine whose effect is observable from this side,
+    // and the first that needs nothing loaded to show it: what it does is
+    // silence, and silence needs no samples. Everything addressing a track
+    // still cannot be checked here — a strike needs a kit, and there is no way
+    // to load one across this ABI yet.
+    //
+    // The negative alone would be worthless: an opcode misnumbered into
+    // nothing, or a `value` read from the wrong offset, produces the same
+    // silence as one that worked. So both halves are rendered from the same
+    // engine, and the claim is the difference between them.
+    const engine = instantiate()
+    const instance = engine.engine_new(SAMPLE_RATE, QUANTUM)
+    expect(instance).not.toBe(0)
+
+    const exchange = new DataView(
+      engine.memory.buffer,
+      engine.engine_cmd_ptr(instance),
+      engine.engine_cmd_capacity(instance) * COMMAND_SIZE,
+    )
+    writeCommand(exchange, 0, { op: 'set-bpm', bpm: 600 }, 0)
+    writeCommand(exchange, COMMAND_SIZE, { op: 'play' }, 0)
+
+    const sounding = render(engine, instance, 20, 2)
+    expect(sounding.some((sample) => sample !== 0)).toBe(true)
+
+    writeCommand(exchange, 0, { op: 'set-metronome', enabled: false }, 0)
+    // Past the tail of the click that was already sounding when the switch
+    // arrived: switching off silences the next beat, not this one.
+    render(engine, instance, 20, 1)
+
+    const silent = render(engine, instance, 20, 0)
+    expect(Array.from(silent).filter((sample) => sample !== 0)).toEqual([])
+
+    engine.engine_free(instance)
+  })
+
   it('scales its output by a master gain that crossed the wire', () => {
-    // The one command of the eight whose effect is observable from this side.
-    // Track gain, pan and the pattern are stored in the engine and reach no
-    // sample yet — there are no voices — so no assertion here could tell a
+    // One of the two commands whose effect is observable from this side. Track
+    // gain, pan and the pattern are stored in the engine and reach no sample
+    // that this side can produce — striking one needs a kit, and loading a kit
+    // needs an ABI that does not exist yet — so no assertion here could tell a
     // working decode from a discarded one, and the native tests hold those
     // instead. Worth knowing precisely because of the mutation this file
     // exists to catch: an opcode numbered differently in the two languages is
-    // caught here for the master gain and by nothing at all for the rest,
-    // until the sampler gives them an audible effect.
+    // caught here for two opcodes and by nothing at all for the rest.
     //
     // This one goes further than the tempo test above, which shows a number
     // surviving the crossing. A gain that arrived as an integer, or landed in

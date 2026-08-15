@@ -67,6 +67,11 @@ const PEAK_FALL_PER_SECOND: f32 = 0.05;
 #[derive(Debug, Clone)]
 struct Click {
     sample_rate: f32,
+    /// Whether a beat still starts a click. On, as a new engine is on: a switch
+    /// that defaulted to off would be a change of behaviour announced by
+    /// nothing, and silence is the one symptom this project refuses to leave
+    /// unexplained.
+    enabled: bool,
     phase: f32,
     phase_step: f32,
     env: f32,
@@ -78,6 +83,7 @@ impl Click {
         let sample_rate = sample_rate as f32;
         Self {
             sample_rate,
+            enabled: true,
             phase: 0.0,
             phase_step: 0.0,
             env: 0.0,
@@ -86,16 +92,32 @@ impl Click {
     }
 
     fn reset(&mut self) {
+        self.enabled = true;
         self.phase = 0.0;
         self.phase_step = 0.0;
         self.env = 0.0;
+    }
+
+    /// **Switching off silences the next click, not this one.** The tail goes on
+    /// decaying, for the reason a stopped transport lets it: cutting a sounding
+    /// buffer is itself a click, and this one would land on the silence the
+    /// listener just asked for.
+    fn set_enabled(&mut self, enabled: bool) {
+        self.enabled = enabled;
     }
 
     /// Retriggering cuts the previous tail short — which is exactly how a
     /// metronome should behave. Phase starts at zero, i.e. at a zero crossing:
     /// starting from an arbitrary phase would produce a step, and a click on
     /// top of the click.
+    ///
+    /// The switch is answered here rather than at the caller so that the whole
+    /// metronome is one object to reason about: the beat still comes round on
+    /// time, and what changes is only whether anything is struck on it.
     fn trigger(&mut self, hz: f32) {
+        if !self.enabled {
+            return;
+        }
         self.phase = 0.0;
         self.phase_step = std::f32::consts::TAU * hz / self.sample_rate;
         self.env = 1.0;
@@ -350,6 +372,7 @@ impl Engine {
                 self.pattern.set_step(track, step, velocity)
             }
             Command::ClearPattern => self.pattern.clear(),
+            Command::SetMetronome { enabled } => self.click.set_enabled(enabled),
         }
     }
 
@@ -526,17 +549,45 @@ mod tests {
         signal.iter().filter(|sample| sample.abs() > CLICK_GAIN).count()
     }
 
-    /// Setup that starts the transport at 120 BPM with every cell of the grid
-    /// struck at full velocity.
-    fn every_cell_struck() -> Vec<Record> {
-        let mut setup = vec![Record::immediate(Command::SetBpm { bpm: 120.0 })];
+    /// A strike in every cell of the grid, at full velocity.
+    fn all_cells() -> Vec<Record> {
+        let mut cells = Vec::new();
         for track in 0..TRACKS as u8 {
             for step in 0..STEPS as u16 {
-                setup.push(Record::immediate(Command::SetStep { track, step, velocity: 1.0 }));
+                cells.push(Record::immediate(Command::SetStep { track, step, velocity: 1.0 }));
             }
         }
+        cells
+    }
+
+    /// Setup that starts the transport at 120 BPM with every cell struck.
+    fn every_cell_struck() -> Vec<Record> {
+        let mut setup = vec![Record::immediate(Command::SetBpm { bpm: 120.0 })];
+        setup.extend(all_cells());
         setup.push(Record::immediate(Command::Play));
         setup
+    }
+
+    /// Positions of the frames that carry a sample, and what they carry.
+    ///
+    /// With the metronome switched off and a one-frame sample loaded, a strike
+    /// is one non-zero frame and nothing else in the engine writes one — so
+    /// this is the whole output, read rather than measured.
+    fn sounding_frames(signal: &[f32]) -> Vec<(usize, f32)> {
+        signal
+            .iter()
+            .enumerate()
+            .filter(|&(_, &sample)| sample != 0.0)
+            .map(|(frame, &sample)| (frame, sample))
+            .collect()
+    }
+
+    /// A transport at `bpm`, for computing where a step ought to fall
+    /// independently of the engine that put it there.
+    fn reference(bpm: f32) -> Transport {
+        let mut transport = Transport::new(SR);
+        transport.set_bpm(f64::from(bpm));
+        transport
     }
 
     /// One bar rendered from a setup applied on its first quantum.
@@ -737,6 +788,47 @@ mod tests {
     }
 
     #[test]
+    fn switching_the_metronome_off_leaves_exact_silence() {
+        // Exact, because the onset tests stand on it: a click leaking through at
+        // any level at all would put a non-zero frame between the strikes, and
+        // there it would be read as one.
+        let mut engine = Engine::new(SR);
+        let mut signal = quantum(
+            &mut engine,
+            &[
+                Record::immediate(Command::SetBpm { bpm: 120.0 }),
+                Record::immediate(Command::SetMetronome { enabled: false }),
+                Record::immediate(Command::Play),
+            ],
+        );
+        signal.extend(render(&mut engine, 500)); // 1.3 s, two beats
+
+        assert!(signal.iter().all(|&sample| sample == 0.0), "the metronome sounded while off");
+        // The beat still comes round; what changed is only whether anything is
+        // struck on it. A switch that stopped the transport would pass the line
+        // above and take the grid with it.
+        assert!(engine.transport().is_playing());
+        assert_eq!(engine.transport().sample_pos(), 501 * Q as u64);
+    }
+
+    #[test]
+    fn switching_the_metronome_off_lets_the_click_it_is_sounding_ring_out() {
+        // The same rule as Stop, and for the same reason: cutting a sounding
+        // buffer is itself a click, and this one would land on the silence the
+        // listener just asked for.
+        let (mut engine, _) = started(120.0);
+        let tail = quantum(&mut engine, &[Record::immediate(Command::SetMetronome { enabled: false })]);
+        assert!(tail.iter().any(|&sample| sample != 0.0), "the click was cut off mid-tail");
+
+        // Past the tail and past the next beat, which must not sound at all.
+        let after = render(&mut engine, 500);
+        assert!(
+            after[tail_frames()..].iter().all(|&sample| sample == 0.0),
+            "a beat struck after the metronome was switched off"
+        );
+    }
+
+    #[test]
     fn click_tail_ends_in_exact_silence() {
         // The voice gate must produce an exact zero, not an endless denormal
         // tail.
@@ -921,25 +1013,82 @@ mod tests {
     }
 
     #[test]
-    fn a_struck_grid_reaches_the_output() {
-        // The milestone's first audible claim, and the only place the grid, the
-        // sampler and the sum are seen joined up. Where a boundary falls is
-        // asserted against the transport in `sequencer.rs`, where it is still
-        // arithmetic; what is asked here is that the strikes arrive, and that
-        // there is one per step rather than one per beat or one per frame.
+    fn onsets_land_exactly_on_the_step_boundaries() {
+        // The criterion of the milestone, through the whole engine and read
+        // straight off the output rather than measured against a threshold:
+        // with the metronome switched off nothing else in the engine writes a
+        // non-zero frame, and a one-frame sample makes every one of them an
+        // onset. An equality, not a tolerance — the jitter is zero by
+        // construction, so anything else is a defect rather than a margin.
+        //
+        // At a tempo whose sixteenth is 5669.29 samples, because a step of a
+        // whole number of frames is the case where every rounding here happens
+        // to be right.
         let mut engine = Engine::new(SR);
         load_kit(&mut engine, 1);
+        let mut setup = vec![
+            Record::immediate(Command::SetBpm { bpm: AWKWARD_BPM }),
+            Record::immediate(Command::SetMetronome { enabled: false }),
+        ];
+        setup.extend(all_cells());
+        setup.push(Record::immediate(Command::Play));
 
-        let signal = one_bar(&mut engine, &every_cell_struck());
+        let mut signal = quantum(&mut engine, &setup);
+        signal.extend(render(&mut engine, 3_000)); // ~8 s, four bars and a little
 
-        assert_eq!(struck_frames(&signal), STEPS, "one struck frame per step of the bar");
-        // Exact, and exactly here: a click begins at zero phase, so the first
-        // frame of the bar carries nothing but the strike — eight tracks at
-        // full velocity on a sample of 1.0. It is the one frame in the bar
-        // whose value can be named while the metronome is sounding, and naming
-        // it is what pins the strike to the frame its boundary falls on rather
-        // than to the one after.
-        assert_eq!(signal[0], TRACKS as f32, "the first step missed the first frame");
+        let grid = reference(AWKWARD_BPM);
+        let expected: Vec<usize> = (0i64..)
+            .map(|step| grid.sample_of_division(step as f64, sequencer::STEPS_PER_BEAT) as usize)
+            .take_while(|&frame| frame < signal.len())
+            .collect();
+
+        let struck: Vec<usize> = sounding_frames(&signal).into_iter().map(|(at, _)| at).collect();
+        assert_eq!(struck, expected, "the grid did not strike where the transport says it should");
+        // Every cell of every track, so a strike is eight voices on a sample of
+        // 1.0. Said here because the positions above would be equally true of a
+        // grid striking one track and dropping seven.
+        assert!(
+            sounding_frames(&signal).iter().all(|&(_, sample)| sample == TRACKS as f32),
+            "a strike did not carry every track of its step"
+        );
+    }
+
+    #[test]
+    fn each_cell_strikes_at_its_own_step_with_its_own_velocity() {
+        // What a full grid cannot say. With every cell struck at one velocity,
+        // a step number read one column over — or never wrapped at the end of
+        // the pattern — produces exactly the right output; here four cells hold
+        // four velocities, and on a unit impulse the value of a frame is the
+        // velocity of the cell that put it there.
+        const CELLS: [(u8, u16, f32); 4] = [(0, 0, 0.25), (3, 3, 0.5), (7, 7, 1.0), (2, 15, 0.75)];
+
+        let mut engine = Engine::new(SR);
+        load_kit(&mut engine, 1);
+        let mut setup = vec![
+            Record::immediate(Command::SetBpm { bpm: AWKWARD_BPM }),
+            Record::immediate(Command::SetMetronome { enabled: false }),
+        ];
+        for (track, step, velocity) in CELLS {
+            setup.push(Record::immediate(Command::SetStep { track, step, velocity }));
+        }
+        setup.push(Record::immediate(Command::Play));
+
+        let mut signal = quantum(&mut engine, &setup);
+        signal.extend(render(&mut engine, 3_000));
+
+        let grid = reference(AWKWARD_BPM);
+        let expected: Vec<(usize, f32)> = (0i64..)
+            .flat_map(|bar| {
+                CELLS.map(|(_, step, velocity)| {
+                    let division = bar * STEPS as i64 + i64::from(step);
+                    let at = grid.sample_of_division(division as f64, sequencer::STEPS_PER_BEAT);
+                    (at as usize, velocity)
+                })
+            })
+            .take_while(|&(frame, _)| frame < signal.len())
+            .collect();
+
+        assert_eq!(sounding_frames(&signal), expected);
     }
 
     #[test]
@@ -1182,6 +1331,7 @@ mod tests {
         quantum(&mut used, &[Record::immediate(Command::SetMasterGain { gain: 0.3 })]);
         quantum(&mut used, &[Record::immediate(Command::SetTrackGain { track: 6, gain: 0.1 })]);
         quantum(&mut used, &[Record::immediate(Command::SetStep { track: 2, step: 9, velocity: 1.0 })]);
+        quantum(&mut used, &[Record::immediate(Command::SetMetronome { enabled: false })]);
         quantum(&mut used, &[Record::immediate(Command::Play)]);
         render(&mut used, 500);
         used.reset();
