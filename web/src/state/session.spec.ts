@@ -10,7 +10,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { READOUT_INTERVAL_MS, createSession } from './session.svelte'
-import type { FrameLoop, KitFetch } from './session.svelte'
+import type { FrameLoop, IntervalLoop, KitFetch } from './session.svelte'
 import type { EngineEvents, EngineHandle, StartFailure } from '../audio/host'
 import { describeKitFailure } from '../audio/kit'
 import type { KitFailure } from '../audio/kit'
@@ -558,7 +558,7 @@ describe('createSession', () => {
     const harness = rig()
     await harness.start()
 
-    harness.post({ type: 'kit-loaded', slots: 8, floats: 1_024 })
+    harness.post({ type: 'kit-loaded', slots: 8, floats: 1_024, bytes: 2 ** 20 })
 
     expect(harness.session.kit).toBe('loaded')
     expect(harness.session.kitFailure).toBeNull()
@@ -618,12 +618,195 @@ describe('createSession', () => {
   it('forgets the kit when the engine is given back', async () => {
     const harness = rig()
     await harness.start()
-    harness.post({ type: 'kit-loaded', slots: 8, floats: 1_024 })
+    harness.post({ type: 'kit-loaded', slots: 8, floats: 1_024, bytes: 2 ** 20 })
 
     harness.session.stop()
 
     expect(harness.session.kit).toBe('none')
     expect(harness.session.kitFailure).toBeNull()
+    expect(harness.session.kitBytes, 'a size belonging to a dead engine').toBeNull()
+  })
+
+  it('takes the linear memory reading off the load that reported it', async () => {
+    const harness = rig()
+    await harness.start()
+
+    harness.post({ type: 'kit-loaded', slots: 8, floats: 1_024, bytes: 3 * 2 ** 20 })
+
+    expect(harness.session.kitBytes).toBe(3 * 2 ** 20)
+  })
+
+  it('fetches and hands over the kit again when asked to reload', async () => {
+    // The verb exists to make the number above move: a load is the only event
+    // that can grow linear memory, so one reading proves nothing and the
+    // question is only ever asked of a series.
+    const harness = rig()
+    await harness.start()
+    expect(harness.handed()).toHaveLength(1)
+    // The first load has to have been answered before a second is accepted:
+    // `loading` covers the wait for the answer, and the answer is where the
+    // size comes from.
+    harness.post({ type: 'kit-loaded', slots: 8, floats: 1_024, bytes: 2 ** 20 })
+
+    harness.session.reloadKit()
+    await harness.settle()
+
+    expect(harness.handed()).toHaveLength(2)
+    expect(harness.session.kit).toBe('loading')
+
+    harness.post({ type: 'kit-loaded', slots: 8, floats: 1_024, bytes: 2 ** 20 })
+
+    expect(harness.session.kitBytes, 'a second load of the same kit grew linear memory').toBe(
+      2 ** 20,
+    )
+  })
+
+  it('will not reload before the first load has been answered', async () => {
+    // The window is not the fetch — that is the test below — but the wait for
+    // the worklet, which is where the size comes from. A press inside it would
+    // report two loads nobody can tell apart.
+    const harness = rig()
+    await harness.start()
+
+    harness.session.reloadKit()
+    await harness.settle()
+
+    expect(harness.handed()).toHaveLength(1)
+  })
+
+  it('refuses a reload while one is already in flight', async () => {
+    // Two reservations racing would leave the second writing into an arena the
+    // first has already replaced. The same reason `start` refuses a second
+    // start, and unlike that one this button stays live while it happens.
+    const harness = rig({ holdKit: true })
+    await harness.session.start()
+
+    harness.session.reloadKit()
+    harness.session.reloadKit()
+    harness.releaseKit()
+    await harness.settle()
+
+    expect(harness.handed()).toHaveLength(1)
+  })
+
+  it('has nothing to reload when there is no engine', () => {
+    // Reachable through this module's surface rather than through a template
+    // that hides the button, and it must not be the failure `send` reports:
+    // nothing was asked of an engine, so there is nothing to give up over.
+    const harness = rig()
+
+    harness.session.reloadKit()
+
+    expect(harness.session.status).toBe('idle')
+    expect(harness.session.failure).toBeNull()
+  })
+
+  it('samples the render drift on a clock the frame loop does not stop', async () => {
+    // The whole point of the second loop. A hidden tab stops delivering frames
+    // long before it stops rendering audio, so the reading that says whether
+    // the audio thread is well has to arrive without one.
+    const harness = rig()
+    await harness.start()
+
+    expect(harness.sampling()).toBe(true)
+
+    // One reading is a count; the difference between two is the measurement.
+    harness.interval(0)
+    expect(harness.session.driftMsPerSecond).toBeNull()
+
+    // A second of wall clock against a second of audio at 44 100.
+    harness.render(SAMPLE_RATE)
+    harness.interval(1_000)
+    expect(harness.session.driftMsPerSecond).toBe(0)
+  })
+
+  it('reports the thread falling behind the wall clock', async () => {
+    const harness = rig()
+    await harness.start()
+
+    harness.interval(0)
+    // Half a second of audio for a second of clock: 500 ms lost.
+    harness.render(SAMPLE_RATE / 2)
+    harness.interval(1_000)
+
+    expect(harness.session.driftMsPerSecond).toBeCloseTo(500, 6)
+  })
+
+  it('keeps the last drift it managed to take', async () => {
+    // A window with no time in it describes nothing, and a zero published there
+    // would read as a healthy engine. The previous number stands, exactly as the
+    // readouts stand through a refused telemetry read.
+    const harness = rig()
+    await harness.start()
+
+    harness.interval(0)
+    harness.render(SAMPLE_RATE / 2)
+    harness.interval(1_000)
+    harness.interval(1_000)
+
+    expect(harness.session.driftMsPerSecond).toBeCloseTo(500, 6)
+  })
+
+  it('measures across the window, and lets a bad second walk out of it', async () => {
+    // Why a published reading spans eight samples and not the last two. At one
+    // second the counter's own step is worth ±2.7 ms/s on a healthy engine, and
+    // the page showed exactly that, alternating sign every window; the argument
+    // is at `DRIFT_WINDOW`. This is what the fix costs, and the width is
+    // written here as a literal on purpose — a test reading the constant would
+    // agree with whatever it said.
+    const WINDOW = 8
+    const harness = rig()
+    await harness.start()
+
+    let now = 0
+    const second = (frames: number): void => {
+      harness.render(frames)
+      now += 1_000
+      harness.interval(now)
+    }
+
+    harness.interval(now)
+    for (let i = 0; i < WINDOW; i += 1) second(SAMPLE_RATE)
+    expect(harness.session.driftMsPerSecond).toBeCloseTo(0, 6)
+
+    // Half a second of audio for a second of clock, once. Reported diluted:
+    // 500 ms spread over the eight seconds the window covers.
+    second(SAMPLE_RATE / 2)
+    expect(harness.session.driftMsPerSecond).toBeCloseTo(62.5, 6)
+
+    for (let i = 0; i < WINDOW - 1; i += 1) second(SAMPLE_RATE)
+    expect(harness.session.driftMsPerSecond, 'still under the window').toBeCloseTo(62.5, 6)
+
+    second(SAMPLE_RATE)
+    expect(harness.session.driftMsPerSecond, 'the window walked past it').toBeCloseTo(0, 6)
+  })
+
+  it('does not carry a drift across two engines', async () => {
+    // The counter belongs to a processor that is gone, and the next one starts
+    // from zero — so a sample straddling the two reports the whole of the first
+    // engine's run as time the second lost. Silent, enormous, and once.
+    const harness = rig()
+    await harness.start()
+    harness.interval(0)
+    harness.render(SAMPLE_RATE)
+    harness.interval(1_000)
+    expect(harness.session.driftMsPerSecond).toBe(0)
+
+    harness.session.stop()
+    expect(
+      harness.session.driftMsPerSecond,
+      'a reading about an engine that is gone',
+    ).toBeNull()
+    expect(harness.sampling(), 'the sampler outlived the engine it was sampling').toBe(false)
+
+    harness.rendered(0)
+    await harness.start()
+    harness.interval(10_000)
+
+    expect(
+      harness.session.driftMsPerSecond,
+      'the first engine was billed to the second',
+    ).toBeNull()
   })
 })
 
@@ -642,6 +825,12 @@ function rig(options: { hold?: boolean; holdKit?: boolean } = {}) {
   let failure: StartFailure | null = null
   let events: EngineEvents = {}
   let tick: ((now: number) => void) | null = null
+  // The free-running counter, cranked by `render` below. A number here and not
+  // a derived one: what the drift measurement is about is the counter and the
+  // clock disagreeing, so a fake that computed one from the other could not
+  // express the case worth testing.
+  let renderedFrames = 0
+  let slowTick: ((now: number) => void) | null = null
   const sent: Command[] = []
 
   let release = (): void => undefined
@@ -676,7 +865,7 @@ function rig(options: { hold?: boolean; holdKit?: boolean } = {}) {
       },
       dropped: () => refusals,
     },
-    telemetry: { read: () => reading },
+    telemetry: { read: () => reading, rendered: () => renderedFrames },
     loadKit: (samples) => {
       handed.push(samples)
     },
@@ -706,6 +895,13 @@ function rig(options: { hold?: boolean; holdKit?: boolean } = {}) {
     }
   }
 
+  const intervals: IntervalLoop = (run) => {
+    slowTick = run
+    return () => {
+      slowTick = null
+    }
+  }
+
   // What `requestAnimationFrame` would be handing the loop. Advanced by a
   // second whenever a test does not care, so that `frame()` keeps meaning what
   // it meant before there was a throttle: a frame late enough to matter.
@@ -713,6 +909,7 @@ function rig(options: { hold?: boolean; holdKit?: boolean } = {}) {
 
   const session = createSession({
     frames,
+    intervals,
     kit,
     start: async (given: EngineEvents = {}) => {
       starts += 1
@@ -742,6 +939,21 @@ function rig(options: { hold?: boolean; holdKit?: boolean } = {}) {
     },
     publish: (next: Telemetry | null): void => {
       reading = next
+    },
+    /** Whether the drift sampler is running. */
+    sampling: () => slowTick !== null,
+    /** Pretend the audio thread rendered this many frames. */
+    render: (count: number): void => {
+      renderedFrames = (renderedFrames + count) >>> 0
+    },
+    /** Put the counter exactly here, for the wrap. */
+    rendered: (count: number): void => {
+      renderedFrames = count
+    },
+    /** Fire the slow loop at a stated wall-clock time, in milliseconds. */
+    interval: (now: number): void => {
+      if (slowTick === null) throw new Error('no drift sampler is running')
+      slowTick(now)
     },
     refuse: (): void => {
       accept = false

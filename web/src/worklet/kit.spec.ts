@@ -46,7 +46,12 @@ describe('loadKit', () => {
       loadKit(state, [sample(1, 1, 2, 3), sample(2, 4, 5, 6, 7), sample(1, 8)]),
     )
 
-    expect(loaded).toEqual({ slots: 3, floats: 8 })
+    // The two fields this test is about, rather than the whole reading. `bytes`
+    // is in there too and is a fact about linear memory instead of about the
+    // layout — asserted here it would put this test in the way of anything that
+    // changes how much memory a load takes, which is not its subject.
+    expect(loaded.slots).toBe(3)
+    expect(loaded.floats).toBe(8)
     expect(reserved, 'the arena was not asked for the sum of the kit').toEqual([8])
     expect(Array.from(arenaOf(engine, 8))).toEqual([1, 2, 3, 4, 5, 6, 7, 8])
     expect(declared).toEqual([
@@ -227,6 +232,11 @@ describe('answerKitMessage', () => {
       type: 'kit-loaded',
       slots: 1,
       floats: 2,
+      // One page, which is what the fake was built with. Asserted against the
+      // memory object rather than against 65536, so that the number says
+      // "linear memory, as it stands" rather than "the size somebody typed
+      // here" — a literal would go on passing if this reported a constant.
+      bytes: state.exports.memory.buffer.byteLength,
     })
   })
 

@@ -14,6 +14,7 @@ import {
   RING_CAPACITY,
   WORD_CMD_READ,
   WORD_CMD_WRITE,
+  WORD_RENDERED_FRAMES,
   WORD_TELEMETRY_SEQ,
   WORD_TRANSPORT_LO,
   createRing,
@@ -23,7 +24,7 @@ import { createWriter } from '../audio/ring-writer'
 import { readRecord, telemetryBlock } from '../../tests/support/abi'
 import { CMD_CAPACITY } from '../../tests/support/engine-fake'
 import { probe, probeMismatch } from '../../tests/support/ring-harness'
-import { drainCommands, publishTelemetry } from './exchange'
+import { drainCommands, publishRenderedFrames, publishTelemetry } from './exchange'
 
 /**
  * Records in the long run below, and the number §6.2 names. It laps the
@@ -282,6 +283,41 @@ describe('publishTelemetry', () => {
     } finally {
       subarray.mockRestore()
     }
+  })
+})
+
+describe('publishRenderedFrames', () => {
+  it('accumulates the blocks it is given', () => {
+    const { views } = ring()
+
+    for (let quantum = 0; quantum < 4; quantum += 1) publishRenderedFrames(views, 128)
+
+    expect(Atomics.load(views.words, WORD_RENDERED_FRAMES)).toBe(512)
+  })
+
+  it('leaves the telemetry sequence alone', () => {
+    // The counter sits outside the seqlock, and a store that reached into it
+    // would leave the parity inverted — the failure `publishTelemetry` opens
+    // even, and this one has no reason to touch at all.
+    const { views } = ring()
+    publishTelemetry(views, telemetryBlock({ position: 128 }))
+    const sequence = Atomics.load(views.words, WORD_TELEMETRY_SEQ)
+
+    publishRenderedFrames(views, 128)
+
+    expect(Atomics.load(views.words, WORD_TELEMETRY_SEQ)).toBe(sequence)
+  })
+
+  it('wraps rather than leaving the word negative', () => {
+    // Some twenty-five hours in at 48 kHz. Written back signed, the reader's
+    // unsigned difference is meaningless from then on — and the only window it
+    // is wrong in is the one nobody is watching.
+    const { views } = ring()
+    Atomics.store(views.words, WORD_RENDERED_FRAMES, 2 ** 32 - 64)
+
+    publishRenderedFrames(views, 128)
+
+    expect(Atomics.load(views.words, WORD_RENDERED_FRAMES)).toBe(64)
   })
 })
 

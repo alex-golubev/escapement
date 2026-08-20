@@ -22,7 +22,8 @@ import type { KitFailure } from '../audio/kit'
 import { STEPS, TRACKS } from '../audio/protocol'
 import type { Command } from '../audio/protocol'
 import type { Result } from '../audio/result'
-import type { Telemetry } from '../audio/telemetry'
+import { renderDrift } from '../audio/telemetry'
+import type { RenderSample, Telemetry } from '../audio/telemetry'
 import type { KitSample, WorkletMessage } from '../audio/worklet-messages'
 
 export type Status = 'idle' | 'starting' | 'running' | 'failed'
@@ -149,6 +150,74 @@ const browserFrames: FrameLoop = (tick) => {
   }
 }
 
+/**
+ * How often the render drift is sampled.
+ *
+ * A second, and the number is not a compromise between cost and resolution —
+ * it is what the browser will give. A hidden tab throttles `setInterval` to
+ * roughly one call a second, and a hidden tab is the case this measurement
+ * exists for, so asking for anything faster would buy resolution only while
+ * nobody needs it and none at all when they do.
+ *
+ * How often a sample is taken and how far apart the two that get compared are
+ * were one number until the page was watched: the second of them is
+ * `DRIFT_WINDOW`, and separating them is what makes the reading readable.
+ */
+const DRIFT_INTERVAL_MS = 1_000
+
+/**
+ * How many intervals apart the two samples of a published reading are — eight,
+ * so the rate is measured across about eight seconds while a sample is still
+ * taken every second.
+ *
+ * **Measured, not chosen for taste.** The counter does not advance frame by
+ * frame: the graph renders whatever chunk the device asks for, so it jumps by
+ * that chunk and a reading lands at an arbitrary point inside one. On the
+ * machine this was watched on the chunk was 256 frames — `baseLatency` 5.33 ms
+ * — and one second is 187.5 of them. Half a chunk of remainder means the error
+ * lands on alternate sides every window, and the page showed exactly that: a
+ * strict −2.5, +2.6, −2.3, +2.3 with a mean of 0.03 over sixteen windows. The
+ * engine was well the whole time and the row said ±2.7 ms/s.
+ *
+ * That error is a fixed quantity of milliseconds, so dividing by a longer
+ * window is the whole of the fix: eight seconds put it near ±0.3 ms/s, and it
+ * works out that way on any device rather than on this one — a chunk twice the
+ * size leaves twice the error and the same division shrinks it just as far.
+ * Averaging pairs of one-second readings would cancel *this* machine's
+ * alternation and leave a remainder wherever the chunk divides the second
+ * differently.
+ *
+ * The cost is what the number is for: a thread that starts falling behind takes
+ * the width of the window to show it in full, and goes on showing it that long
+ * after it recovers. Sustained overload is what this measures — a click's worth
+ * of trouble was never in reach (`renderDrift`).
+ */
+const DRIFT_WINDOW = 8
+
+/**
+ * A slow loop, on a clock that keeps running when the page is not drawn.
+ *
+ * The same shape as `FrameLoop` and deliberately not the same type. They are
+ * not interchangeable in the direction that matters: `requestAnimationFrame`
+ * stops entirely in a hidden tab, which makes it the one clock this measurement
+ * must not be on — a drift sampler that sleeps exactly when the tab is
+ * backgrounded reports nothing about the only condition anybody wanted measured.
+ * Sharing a name would invite the substitution.
+ */
+export type IntervalLoop = (tick: (now: number) => void) => () => void
+
+const browserIntervals: IntervalLoop = (tick) => {
+  const id = setInterval(() => {
+    // `performance.now()` and not `Date.now()`: this is held against a count of
+    // rendered frames, and a wall clock that can be stepped by NTP would show
+    // up as the audio thread having jumped.
+    tick(performance.now())
+  }, DRIFT_INTERVAL_MS)
+  return () => {
+    clearInterval(id)
+  }
+}
+
 /** Where a kit comes from. A parameter for the same reason `start` is. */
 export type KitFetch = (
   context: BaseAudioContext,
@@ -158,6 +227,7 @@ export type KitFetch = (
 export interface SessionDeps {
   readonly start?: typeof startEngine
   readonly frames?: FrameLoop
+  readonly intervals?: IntervalLoop
   readonly kit?: KitFetch
 }
 
@@ -197,6 +267,26 @@ export interface Session {
   readonly kit: KitStatus
   /** Why the kit is not loaded, when that is known. */
   readonly kitFailure: string | null
+  /**
+   * WASM linear memory in bytes, as of the last kit that went in, or `null`
+   * before any has. Watched across repeated loads — see `reloadKit`.
+   */
+  readonly kitBytes: number | null
+  /**
+   * How far the render thread fell behind the wall clock, in milliseconds per
+   * second, measured across the last `DRIFT_WINDOW` samples — or `null` before
+   * the second one.
+   *
+   * The only reading here that keeps arriving while the page is not drawn, and
+   * the only one that says anything about the audio thread's health. Watched
+   * live: with the tab hidden, the transport, the step and the peaks all stood
+   * still — the frame loop is gone — and this went on updating, which is also
+   * the only evidence left that the engine is rendering at all. Near zero is
+   * well; a number that grows window after window is the thread failing to keep
+   * up. It is not a dropout counter and cannot be read as one — that is argued
+   * at `renderDrift`.
+   */
+  readonly driftMsPerSecond: number | null
   /**
    * Take every telemetry reading as it arrives, and hand back the way to stop.
    *
@@ -248,11 +338,34 @@ export interface Session {
    * to disagree about.
    */
   trigger(track: number): void
+  /**
+   * Fetch the kit again and hand it over, replacing what the engine holds.
+   *
+   * A verb with no musical purpose whatever — the kit that comes back is the
+   * kit that is already loaded — and it exists to make `kitBytes` move. Loading
+   * a kit is the only thing that grows linear memory, so "does this leak" is a
+   * question with no other way to ask it: there is nothing to watch between two
+   * loads, and one load proves nothing at all. Repeated, the number either
+   * stands still, which is the arena's capacity being reused, or it climbs,
+   * which is the leak.
+   *
+   * Ignored while a load is in flight, and **not** because two of them would
+   * corrupt anything — the worklet takes port messages one at a time, so the
+   * second reservation cannot begin before the first has finished. What
+   * overlapping presses cost is the measurement: `kitBytes` would come back
+   * from loads nobody can tell apart, and a number that cannot be attributed to
+   * a press is no better than no number. Refused, each press is one reading.
+   *
+   * `loading` covers the wait for the worklet's answer as well as the fetch,
+   * which is what makes that true — the size is in the answer.
+   */
+  reloadKit(): void
 }
 
 export function createSession(deps: SessionDeps = {}): Session {
   const bringUp = deps.start ?? startEngine
   const frames = deps.frames ?? browserFrames
+  const intervals = deps.intervals ?? browserIntervals
   // Built from the context that will play them, because that is what decides
   // the rate `decodeAudioData` resamples to.
   const collectKit = deps.kit ?? ((context) => fetchKit(browserKitSource(context)))
@@ -312,6 +425,12 @@ export function createSession(deps: SessionDeps = {}): Session {
   // wait, and only its end has two shapes.
   let kit = $state<KitStatus>('none')
   let kitFailure = $state<string | null>(null)
+  let kitBytes = $state<number | null>(null)
+
+  // The render thread's health, sampled once a second. A rune because a row on
+  // the page reads it; one update a second against the 0.2% of a core each
+  // costs is the cheapest reading here by a wide margin.
+  let driftMsPerSecond = $state<number | null>(null)
 
   // What the ring's own counter says, sampled where it can have changed. A tally
   // kept here beside it would be a second answer to one question, and the ring's
@@ -319,6 +438,16 @@ export function createSession(deps: SessionDeps = {}): Session {
   let dropped = $state(0)
 
   let stopFrames: (() => void) | null = null
+  let stopIntervals: (() => void) | null = null
+
+  /**
+   * The samples a published reading is measured across, oldest first, at most
+   * `DRIFT_WINDOW + 1` of them — that many ends to that many intervals.
+   *
+   * Plain and not a rune, like `publishedAt` above and for the same reason: it
+   * is written and read by the sampler alone and never from a reactive scope.
+   */
+  const renderSamples: RenderSample[] = []
 
   /**
    * Who is drawing from the readings, and when the last one reached the screen.
@@ -357,6 +486,39 @@ export function createSession(deps: SessionDeps = {}): Session {
   }
 
   /**
+   * Take one drift sample, and publish the window it closes.
+   *
+   * The first call after a start publishes nothing: one reading is a count, and
+   * what this is about is the difference between two. Every call after it does
+   * publish, against the oldest sample still held — so the first seconds of an
+   * engine are measured across a window narrower than `DRIFT_WINDOW`, and are
+   * noisier by exactly as much. Deliberate: the reading is honest at any width,
+   * and holding the row at `sampling…` for eight seconds after every start
+   * would read as a panel that does not work, at the one moment when nothing
+   * depends on what it says.
+   *
+   * The samples go with the engine in `discard`, so a restart cannot straddle
+   * two processors — the second of which counts from zero, and would report the
+   * whole of the first engine's run as time the render thread lost.
+   */
+  function sampleDrift(now: number): void {
+    const live = handle
+    if (live === null) return
+
+    renderSamples.push({ frames: live.telemetry.rendered(), at: now })
+    if (renderSamples.length > DRIFT_WINDOW + 1) renderSamples.shift()
+
+    const oldest = renderSamples[0]
+    const newest = renderSamples[renderSamples.length - 1]
+    if (oldest === newest) return
+
+    const drift = renderDrift(oldest, newest, live.sampleRate)
+    // Null is a window with no time in it, which describes nothing. The
+    // previous reading stands, exactly as it does for a refused telemetry read.
+    if (drift !== null) driftMsPerSecond = drift
+  }
+
+  /**
    * Give up whatever is running, with a reason or without one.
    *
    * Closing the context is the substantive part. A handle merely dropped leaves
@@ -367,6 +529,13 @@ export function createSession(deps: SessionDeps = {}): Session {
   function discard(reason: string | null): void {
     stopFrames?.()
     stopFrames = null
+    stopIntervals?.()
+    stopIntervals = null
+    // Both halves of the drift measurement go with the engine that produced
+    // them: the counter belongs to a processor that is about to be gone, and
+    // the next one starts from zero.
+    renderSamples.length = 0
+    driftMsPerSecond = null
 
     const live = handle
     handle = null
@@ -385,6 +554,7 @@ export function createSession(deps: SessionDeps = {}): Session {
     // a reading of what the engine has.
     kit = 'none'
     kitFailure = null
+    kitBytes = null
 
     // Not awaited, and the rejection is dropped: the context is already
     // unreachable from this file, so there is nothing a failed close leaves for
@@ -439,6 +609,10 @@ export function createSession(deps: SessionDeps = {}): Session {
     // particular order — swapping two lines would have stopped it for good, with
     // the numbers frozen and nothing to notice.
     stopFrames = frames(readTelemetry)
+    // Beside it and on its own clock, for the reason `IntervalLoop` gives: this
+    // one has to keep sampling through exactly the conditions that stop the
+    // other.
+    stopIntervals = intervals(sampleDrift)
 
     // Not awaited, and `start` resolves without it. The engine is running — the
     // transport moves and the metronome sounds — and holding the button on
@@ -538,6 +712,7 @@ export function createSession(deps: SessionDeps = {}): Session {
     else if (message.type === 'kit-loaded') {
       kit = 'loaded'
       kitFailure = null
+      kitBytes = message.bytes
     } else if (message.type === 'kit-refused') {
       // The engine holds no kit after a refusal — it throws away the whole one
       // rather than half of it, which is why this can be a single word here.
@@ -610,6 +785,12 @@ export function createSession(deps: SessionDeps = {}): Session {
     get kitFailure(): string | null {
       return kitFailure
     },
+    get kitBytes(): number | null {
+      return kitBytes
+    },
+    get driftMsPerSecond(): number | null {
+      return driftMsPerSecond
+    },
     onFrame(listener: (reading: Telemetry) => void): () => void {
       listeners.add(listener)
       return () => {
@@ -652,6 +833,11 @@ export function createSession(deps: SessionDeps = {}): Session {
       // Full velocity: a pad is the sound as loud as the kit makes it, and what
       // scales it after that is the track's own fader.
       send({ op: 'trigger-track', track, velocity: 1 })
+    },
+    reloadKit(): void {
+      const live = handle
+      if (live === null || kit === 'loading') return
+      void collect(live)
     },
   }
 }

@@ -19,6 +19,21 @@ import type { KitSample, WorkletMessage } from '../audio/worklet-messages'
 export interface LoadedKit {
   readonly slots: number
   readonly floats: number
+  /**
+   * WASM linear memory, in bytes, after the load.
+   *
+   * **The one number here that is not about this kit**, and it travels with the
+   * kit because this is the only moment it can change: the reservation is the
+   * sole allocation the worklet ever makes, so a load is the only event that
+   * grows linear memory and there is nothing to watch between two of them.
+   *
+   * What it is for is a question no other reading can answer — whether loading
+   * kit after kit leaks. Linear memory never shrinks, so the property worth
+   * having was never "it goes back down"; it is that the arena's capacity gets
+   * reused, and the only way to see that is this number standing still across
+   * repeated loads of a kit no larger than the last.
+   */
+  readonly bytes: number
 }
 
 /**
@@ -196,11 +211,16 @@ export function loadKit(
       }
       offset += data.length
     }
+
+    // Inside the try and read last, after every commit. Last because the
+    // reservation is what may have grown the memory and a size taken before it
+    // describes the load that came before this one; inside because
+    // `exports.memory` is the same reach across the ABI as the two calls above,
+    // and a throw here has the same one thing to say.
+    return ok({ slots: kit.value.length, floats, bytes: exports.memory.buffer.byteLength })
   } catch (error) {
     return err({ kind: 'abi-unusable', message: messageOf(error) })
   }
-
-  return ok({ slots: kit.value.length, floats })
 }
 
 /**

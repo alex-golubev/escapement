@@ -63,11 +63,18 @@ export interface FirstQuantumMessage {
   readonly frames: number
 }
 
-/** The kit went in. Both numbers are readings, not a promise anything sounds. */
+/** The kit went in. Every number is a reading, not a promise anything sounds. */
 export interface KitLoadedMessage {
   readonly type: 'kit-loaded'
   readonly slots: number
   readonly floats: number
+  /**
+   * WASM linear memory in bytes, after the load — what the page watches across
+   * repeated loads to see whether the arena is being reused or the memory is
+   * only ever growing. Why it rides on this message rather than being polled is
+   * argued at `LoadedKit`, which is where it is read.
+   */
+  readonly bytes: number
 }
 
 /**

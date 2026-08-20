@@ -8,6 +8,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import {
   WORD_CMD_READ,
+  WORD_RENDERED_FRAMES,
   WORD_TELEMETRY_SEQ,
   WORD_TRANSPORT_LO,
   createRing,
@@ -109,6 +110,37 @@ describe('renderQuantum', () => {
 
     expect(renderQuantum(state, [])).toBe(0)
     expect(state.ring.words[WORD_TELEMETRY_SEQ]).toBe(0)
+    expect(
+      state.ring.words[WORD_RENDERED_FRAMES],
+      'a block that was never rendered was counted as time the thread spent',
+    ).toBe(0)
+  })
+
+  it('counts the frames it rendered, quantum after quantum', () => {
+    // What the drift measurement is taken from. It has to advance on every
+    // block and only on rendered ones: counted short, a healthy thread reads as
+    // falling behind, and the reading is worth nothing in the direction that
+    // would send somebody looking for a dropout that never happened.
+    const { state } = openedEngine()
+
+    for (let quantum = 0; quantum < 3; quantum += 1) {
+      renderQuantum(state, [[emptyBlock(QUANTUM), emptyBlock(QUANTUM)]])
+    }
+
+    expect(state.ring.words[WORD_RENDERED_FRAMES]).toBe(QUANTUM * 3)
+  })
+
+  it('counts the block the host handed over, not the part the engine filled', () => {
+    // The two differ only past `maxFrames`, where the engine renders a prefix
+    // and the rest is zeroed. The device still consumed the whole block, and it
+    // is the device the count is held against — so counting the rendered part
+    // would report silence as lost time.
+    const { state } = openedEngine()
+    const oversized = state.maxFrames + 64
+
+    renderQuantum(state, [[emptyBlock(oversized)]])
+
+    expect(state.ring.words[WORD_RENDERED_FRAMES]).toBe(oversized)
   })
 
   it('allocates nothing on the block size Web Audio actually uses', () => {

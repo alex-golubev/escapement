@@ -6,7 +6,7 @@
 
 import { buildViews } from './engine'
 import type { EngineState } from './engine'
-import { drainCommands, publishTelemetry } from './exchange'
+import { drainCommands, publishRenderedFrames, publishTelemetry } from './exchange'
 
 /**
  * Rebuild after the `memory.grow` detach described in `buildViews`. The
@@ -71,6 +71,14 @@ export function renderQuantum(state: EngineState, outputs: Float32Array[][]): nu
   // under a fresh sequence number — a reader would see the position stand
   // still and have no way to tell that from a stopped transport.
   publishTelemetry(state.ring, state.views.telemetry)
+
+  // `block` and not `frames`, and the two differ only where the host asks for
+  // more than the engine was built for. What this counter is held against is a
+  // wall clock, and what the wall clock measures is the device consuming the
+  // host's block — so the block is the honest number even on a quantum the
+  // engine only partly filled. Counting `frames` there would report the render
+  // thread as falling behind when what happened is that it rendered silence.
+  publishRenderedFrames(state.ring, block)
 
   return block
 }

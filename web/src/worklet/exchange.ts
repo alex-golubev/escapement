@@ -23,6 +23,7 @@ import {
   WORD_CMD_WRITE,
   WORD_PEAK_L,
   WORD_PEAK_R,
+  WORD_RENDERED_FRAMES,
   WORD_STEP,
   WORD_TELEMETRY_SEQ,
   WORD_TRANSPORT_HI,
@@ -124,4 +125,26 @@ export function publishTelemetry(ring: RingViews, telemetry: Uint32Array): void 
   Atomics.store(words, WORD_STEP, telemetry[TELEMETRY_STEP])
 
   Atomics.store(words, WORD_TELEMETRY_SEQ, (start + 2) >>> 0)
+}
+
+/**
+ * Add a rendered block to the free-running frame counter.
+ *
+ * Apart from `publishTelemetry` rather than folded into it, and not because it
+ * would not fit: that function's whole argument is the seqlock, and a store
+ * that deliberately sits outside the seqlock has no business happening inside
+ * the lines that open and close it. What the counter is for, and why it is
+ * outside, is argued once at `WORD_RENDERED_FRAMES`.
+ *
+ * Read-modify-write without `Atomics.add`, which would be the obvious reach and
+ * buys nothing here: this worklet is the only writer, so there is no other
+ * increment to lose, and the load and the store are each already atomic against
+ * the reader. `>>> 0` is what keeps the wrap unsigned — the counter is meant to
+ * lap, and a value read back as negative would make the reader's difference
+ * meaningless in exactly the hour it wrapped.
+ */
+export function publishRenderedFrames(ring: RingViews, frames: number): void {
+  const { words } = ring
+  const rendered = Atomics.load(words, WORD_RENDERED_FRAMES)
+  Atomics.store(words, WORD_RENDERED_FRAMES, (rendered + frames) >>> 0)
 }

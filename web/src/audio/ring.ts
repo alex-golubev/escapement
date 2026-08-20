@@ -19,6 +19,7 @@
 //   20  peak_l             f32 bits, as `f32::to_bits` left them
 //   21  peak_r             f32 bits
 //   22  step               f32 bits — position within the pattern, in steps
+//   23  rendered_frames    free-running; outside the seqlock, see below
 //   32  commands           RING_CAPACITY records of COMMAND_SIZE bytes
 //
 // The two directions start 64 bytes apart so that writers going opposite ways
@@ -50,6 +51,39 @@ export const WORD_TRANSPORT_HI = 19
 export const WORD_PEAK_L = 20
 export const WORD_PEAK_R = 21
 export const WORD_STEP = 22
+
+/**
+ * Frames the worklet has rendered since it came up, counting on regardless of
+ * what the transport is doing.
+ *
+ * **Free-running, and that is the whole of why it is not the transport
+ * position.** A paused transport stands still while the render thread goes on
+ * working, so a drift measured from the position says nothing at all about the
+ * half of the time nobody is playing — and the thread is what this exists to
+ * watch.
+ *
+ * What makes the number worth anything is who it is paired with. The engine's
+ * own clocks — `sample_pos`, `currentTime` — all advance with the render thread,
+ * so holding any of them against this one compares that thread with itself and
+ * reports a confident zero. `performance.now()` on the main thread does not:
+ * it is the device's wall clock, and the difference between the two over a few
+ * seconds is the render thread falling behind. That is not an underrun detector
+ * and must not be read as one — it cannot see a single missed quantum recovered
+ * from — but sustained overload it does see, which is more than the reserved
+ * zero at `WORD_UNDERRUN_COUNT` sees.
+ *
+ * **Outside the seqlock, on purpose.** The counter is one word, so there is
+ * nothing here to tear, and it is nobody's business to read it in the same
+ * breath as the position: the seqlock exists because a 64-bit value crosses in
+ * two words that must come from one quantum, and this is neither. Reading it
+ * inside would make every frame's telemetry retry on a word the playhead does
+ * not use.
+ *
+ * It wraps, at 2^32 frames — some 24.8 hours at 48 kHz. The unsigned difference
+ * of two readings survives that, exactly as it does for the command indices
+ * above, and for the same reason: the reader wants an interval, never a total.
+ */
+export const WORD_RENDERED_FRAMES = 23
 
 /** Base of the command area. A multiple of 16, so every record is aligned. */
 export const COMMANDS_BYTE_OFFSET = 128

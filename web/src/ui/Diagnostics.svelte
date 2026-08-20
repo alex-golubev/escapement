@@ -85,12 +85,52 @@
         <code>commands dropped</code>
         <span>{session.dropped}</span>
       </li>
+      <!-- The one row here that keeps arriving while the page is not drawn.
+           Everything above it is read from `requestAnimationFrame` and freezes
+           with the tab — watched hidden, and they stood still to the digit —
+           which is why none of them can say whether the audio thread is well,
+           and the tab being hidden is exactly when that is worth knowing.
+           A tenth of the clock and not something near the noise: the reading
+           carries the counter's quantisation, which is bounded rather than
+           small (`DRIFT_WINDOW`), and what this row is for is a thread that
+           stopped keeping up, not one that is a few milliseconds off. -->
+      <li
+        class:fail={session.driftMsPerSecond !== null &&
+          Math.abs(session.driftMsPerSecond) > 100}
+      >
+        <code>render drift</code>
+        <span
+          >{session.driftMsPerSecond === null
+            ? 'sampling…'
+            : `${session.driftMsPerSecond.toFixed(1)} ms/s`}</span
+        >
+      </li>
       <!-- A reading and not part of the engine's status: with no kit the
            transport still runs and the metronome still sounds, and only the pads
            have nothing to play. -->
       <li class:ok={session.kit === 'loaded'} class:fail={session.kit === 'failed'}>
         <code>kit</code>
         <span>{session.kit}</span>
+      </li>
+      <!-- The button is an instrument in a panel that calls itself evidence, and
+           it is here anyway: the number beside it only means something as a
+           series, and loading a kit is the only event that can move it. One
+           press proves nothing; a dozen with this figure standing still is the
+           whole of what the milestone asks about leaked sample memory. -->
+      <li>
+        <code>linear memory</code>
+        <span>
+          {session.kitBytes === null
+            ? '—'
+            : `${(session.kitBytes / 1024 / 1024).toFixed(2)} MiB`}
+          <button
+            type="button"
+            onclick={() => session.reloadKit()}
+            disabled={session.kit === 'loading'}
+          >
+            reload kit
+          </button>
+        </span>
       </li>
     {/if}
   </ul>
@@ -131,8 +171,27 @@
   }
 
   .checks span {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
     font-variant-numeric: tabular-nums;
     text-align: right;
+  }
+
+  .checks button {
+    padding: 0.15rem 0.5rem;
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    background: none;
+    color: var(--dim);
+    font: inherit;
+    font-size: 0.8rem;
+    cursor: pointer;
+  }
+
+  .checks button:disabled {
+    cursor: default;
+    opacity: 0.5;
   }
 
   .note {

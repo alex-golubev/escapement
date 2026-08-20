@@ -54,7 +54,11 @@ export interface EngineHandle {
   readonly protocolVersion: number
   /** The one way to reach the audio thread. Every gesture goes through here. */
   readonly commands: RingWriter
-  /** The one way to hear back from it. Read from `requestAnimationFrame`. */
+  /**
+   * The one way to hear back from it. Read on two clocks — the snapshot on
+   * every frame, the frame counter once a second, for the reason `renderDrift`
+   * gives.
+   */
   readonly telemetry: TelemetryReader
   /**
    * Put a kit into the engine. Everything loaded before it is replaced, and
