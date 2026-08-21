@@ -808,6 +808,90 @@ describe('createSession', () => {
       'the first engine was billed to the second',
     ).toBeNull()
   })
+
+  it('counts the samples it took, and the longest it went without one', async () => {
+    const harness = rig()
+    await harness.start()
+
+    harness.interval(0)
+    expect(harness.session.driftSamples).toBe(1)
+    // One sample is no interval: a gap is the distance between two of them.
+    expect(harness.session.driftMaxGapMs).toBeNull()
+    expect(harness.session.driftSpanMs).toBe(0)
+
+    harness.interval(1_000)
+    harness.interval(1_500)
+
+    expect(harness.session.driftSamples).toBe(3)
+    // The widest and not the latest, because the interval worth knowing about
+    // passed while the page could not be seen.
+    expect(harness.session.driftMaxGapMs).toBe(1_000)
+    // From the first sample and not from the oldest one still in the window,
+    // which walks forward and would report a span that shrinks.
+    expect(harness.session.driftSpanMs).toBe(1_500)
+  })
+
+  it('measures a clock that was slowed rather than stopped', async () => {
+    // The case the count alone cannot report and the gap alone calls innocent:
+    // every interval twice what was asked for, none of them alarming, and half
+    // the samples never taken. Only the two numbers together say so — 6 over
+    // ten seconds, against the ten that one a second would have given.
+    const harness = rig()
+    await harness.start()
+
+    for (let i = 0; i <= 10_000; i += 2_000) harness.interval(i)
+
+    expect(harness.session.driftSamples).toBe(6)
+    expect(harness.session.driftSpanMs).toBe(10_000)
+    expect(harness.session.driftMaxGapMs).toBe(2_000)
+  })
+
+  it('shows a sampler that slept, which the drift beside it cannot', async () => {
+    // Why the two numbers above exist at all. A hidden tab goes on rendering
+    // and the frame counter runs free, so ten minutes sampled once a second and
+    // one sample taken on waking with the tab publish the same reading — and it
+    // is the correct reading both times. Only the gap differs.
+    const harness = rig()
+    await harness.start()
+
+    harness.interval(0)
+    harness.render(SAMPLE_RATE * 600)
+    harness.interval(600_000)
+
+    expect(harness.session.driftMsPerSecond, 'ten well minutes, and it says so').toBeCloseTo(
+      0,
+      6,
+    )
+    expect(harness.session.driftSamples).toBe(2)
+    expect(harness.session.driftMaxGapMs).toBe(600_000)
+    expect(harness.session.driftSpanMs).toBe(600_000)
+  })
+
+  it('starts the sampler tally over with the next engine', async () => {
+    // The same rule as the drift itself: a gap measured across a restart is a
+    // stretch during which nothing was owed, and the count is about a processor
+    // that no longer exists.
+    const harness = rig()
+    await harness.start()
+    harness.interval(0)
+    harness.interval(1_000)
+    expect(harness.session.driftSamples).toBe(2)
+
+    harness.session.stop()
+    expect(harness.session.driftSamples).toBe(0)
+    expect(harness.session.driftMaxGapMs).toBeNull()
+    expect(harness.session.driftSpanMs).toBe(0)
+
+    harness.rendered(0)
+    await harness.start()
+    harness.interval(60_000)
+
+    expect(harness.session.driftSamples).toBe(1)
+    expect(harness.session.driftMaxGapMs, 'a gap billed across the restart').toBeNull()
+    // The span counts from this engine's first sample, not from a clock that
+    // has been running since the page loaded.
+    expect(harness.session.driftSpanMs).toBe(0)
+  })
 })
 
 /**

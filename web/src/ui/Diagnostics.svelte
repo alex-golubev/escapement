@@ -85,7 +85,7 @@
         <code>commands dropped</code>
         <span>{session.dropped}</span>
       </li>
-      <!-- The one row here that keeps arriving while the page is not drawn.
+      <!-- The one row here read from a clock a hidden tab does not stop.
            Everything above it is read from `requestAnimationFrame` and freezes
            with the tab — watched hidden, and they stood still to the digit —
            which is why none of them can say whether the audio thread is well,
@@ -103,6 +103,25 @@
           >{session.driftMsPerSecond === null
             ? 'sampling…'
             : `${session.driftMsPerSecond.toFixed(1)} ms/s`}</span
+        >
+      </li>
+      <!-- Whether the clock above was running while nobody could see it, which
+           the drift itself cannot say: audio goes on in a hidden tab, so a
+           sampler that slept through the absence and woke with the tab reports
+           the same healthy number as one that watched all of it. Read on
+           coming back, and read as a pair — the count against the seconds it
+           covers, one a second being what was asked for. A short count with
+           every gap innocent is a clock the browser slowed; a gap the width of
+           the absence is one it stopped. Nothing here is coloured: a throttled
+           timer is the browser being itself, and red on this panel means a
+           check failed. -->
+      <li>
+        <code>drift samples</code>
+        <span
+          >{session.driftSamples} in {(session.driftSpanMs / 1000).toFixed(0)} s · longest gap {session.driftMaxGapMs ===
+          null
+            ? '—'
+            : `${(session.driftMaxGapMs / 1000).toFixed(1)} s`}</span
         >
       </li>
       <!-- A reading and not part of the engine's status: with no kit the

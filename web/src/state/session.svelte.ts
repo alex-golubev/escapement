@@ -154,10 +154,29 @@ const browserFrames: FrameLoop = (tick) => {
  * How often the render drift is sampled.
  *
  * A second, and the number is not a compromise between cost and resolution —
- * it is what the browser will give. A hidden tab throttles `setInterval` to
- * roughly one call a second, and a hidden tab is the case this measurement
- * exists for, so asking for anything faster would buy resolution only while
- * nobody needs it and none at all when they do.
+ * it is the most a hidden tab will give, which was measured rather than assumed
+ * (macOS, 2026-08-21, this page against the same page stripped of its audio):
+ *
+ * - Chrome, hidden, transport rolling: a call a second, with not one interval
+ *   missed in five minutes. Stop the transport — engine up, context running,
+ *   nothing audible — and it is a call a minute, exactly what a page with no
+ *   audio in it gets after its first minute hidden.
+ * - Safari, hidden, engine up: a call every two seconds, transport rolling or
+ *   stopped alike, unchanged over twelve minutes. A page with no audio walks
+ *   from four seconds up to forty and holds there.
+ *
+ * So both exempt a tab from throttling for sound and they disagree about what
+ * counts as sound: Safari takes a live output stream, Chrome takes only what
+ * someone could hear. Anything faster than a second would buy resolution while
+ * nobody needs it and none at all when they do — the cadence is not this
+ * number's to give.
+ *
+ * The consequence lands where it is least expected, and it is not the closed
+ * context anyone would think to guard: a hidden Chrome tab with the transport
+ * merely stopped samples once a minute, which `DRIFT_WINDOW` widens into a
+ * reading eight minutes across. It still answers, late and coarse, and the
+ * count in `driftSamples` falling behind the seconds beside it is what says
+ * that is what happened.
  *
  * How often a sample is taken and how far apart the two that get compared are
  * were one number until the page was watched: the second of them is
@@ -168,7 +187,10 @@ const DRIFT_INTERVAL_MS = 1_000
 /**
  * How many intervals apart the two samples of a published reading are — eight,
  * so the rate is measured across about eight seconds while a sample is still
- * taken every second.
+ * taken every second. Eight intervals and not eight seconds: sixteen seconds in
+ * a hidden Safari tab, eight minutes in a hidden Chrome tab whose transport is
+ * stopped. The reading stays correct throughout and takes that much longer to
+ * say anything — `DRIFT_INTERVAL_MS` has the measurements.
  *
  * **Measured, not chosen for taste.** The counter does not advance frame by
  * frame: the graph renders whatever chunk the device asks for, so it jumps by
@@ -277,16 +299,46 @@ export interface Session {
    * second, measured across the last `DRIFT_WINDOW` samples — or `null` before
    * the second one.
    *
-   * The only reading here that keeps arriving while the page is not drawn, and
-   * the only one that says anything about the audio thread's health. Watched
-   * live: with the tab hidden, the transport, the step and the peaks all stood
-   * still — the frame loop is gone — and this went on updating, which is also
-   * the only evidence left that the engine is rendering at all. Near zero is
-   * well; a number that grows window after window is the thread failing to keep
-   * up. It is not a dropout counter and cannot be read as one — that is argued
-   * at `renderDrift`.
+   * The only reading here that can keep arriving while the page is not drawn,
+   * and the only one that says anything about the audio thread's health.
+   * Watched live: with the tab hidden, the transport, the step and the peaks
+   * all stood still — the frame loop is gone — and this one was fresh again on
+   * return. That last part is less than it looks, and `driftSamples` is what
+   * separates it from a sampler that woke with the tab. Near zero is well; a
+   * number that grows window after window is the thread failing to keep up. It
+   * is not a dropout counter and cannot be read as one — that is argued at
+   * `renderDrift`.
    */
   readonly driftMsPerSecond: number | null
+  /**
+   * How many samples this engine's drift sampler managed to take, and the
+   * longest it ever went between two of them, in milliseconds — `null` until
+   * there have been two, because one sample is no interval.
+   *
+   * Read after the fact, on coming back to a tab that was hidden: a widest gap
+   * near the sampling interval is a clock the browser left alone, a minute is
+   * one it throttled to a minute, and a gap the width of the whole absence is
+   * one that slept and woke with the tab. The drift beside them reads ≈0 in all
+   * three cases and is right in all three — which is why it takes these to say
+   * whether anything was watching.
+   */
+  readonly driftSamples: number
+  readonly driftMaxGapMs: number | null
+  /**
+   * How long this engine's sampler has been at it: from its first sample to its
+   * latest, in milliseconds. Zero before the first.
+   *
+   * The count above is not a rate without it, and the deficit is the reading:
+   * so many samples over so many seconds, against one a second asked for. A
+   * clock quietly slowed — every gap short, hundreds of ticks never delivered —
+   * shows here and in nothing else, because each individual gap stays under
+   * whatever a reader would call suspicious.
+   *
+   * Not derivable from the transport clock beside it on the page: that one
+   * counts what was played, and the sampler runs whenever an engine is up,
+   * whether or not the transport is rolling.
+   */
+  readonly driftSpanMs: number
   /**
    * Take every telemetry reading as it arrives, and hand back the way to stop.
    *
@@ -432,6 +484,38 @@ export function createSession(deps: SessionDeps = {}): Session {
   // costs is the cheapest reading here by a wide margin.
   let driftMsPerSecond = $state<number | null>(null)
 
+  /**
+   * The same instrument reporting on itself, because the drift cannot.
+   *
+   * A hidden tab goes on rendering audio and the frame counter runs free, so a
+   * sampler that fired every second through ten minutes and one that slept
+   * those ten minutes and fired on waking publish the same ≈0 ms/s. A count is
+   * the only thing that tells them apart, and telling them apart is the whole
+   * of what the row claims.
+   *
+   * The gap is a high-water mark and not the last interval, because what it is
+   * read for happens while nobody can see the page: an interval that walks out
+   * of the window in eight samples would have to be caught within eight seconds
+   * of coming back.
+   *
+   * The span goes with the count for the same reason the count goes with the
+   * drift: 426 samples describes nothing until it is 426 samples over 720
+   * seconds, and a browser that halves the rate leaves every gap innocent and
+   * only the total short.
+   */
+  let driftSamples = $state(0)
+  let driftMaxGapMs = $state<number | null>(null)
+  let driftSpanMs = $state(0)
+
+  /**
+   * When this engine's sampler first fired, or `null` before it has.
+   *
+   * Not `renderSamples[0]`, which is the oldest sample still in the window and
+   * walks forward with it; the span is measured from a point that does not
+   * move.
+   */
+  let firstSampleAt: number | null = null
+
   // What the ring's own counter says, sampled where it can have changed. A tally
   // kept here beside it would be a second answer to one question, and the ring's
   // is the one the count actually lives in.
@@ -505,6 +589,17 @@ export function createSession(deps: SessionDeps = {}): Session {
     const live = handle
     if (live === null) return
 
+    // Measured before the push, against the call before this one: a clock the
+    // browser throttled or stopped is visible here and in no other reading.
+    const previous = renderSamples[renderSamples.length - 1]
+    if (previous !== undefined) {
+      const gap = now - previous.at
+      if (driftMaxGapMs === null || gap > driftMaxGapMs) driftMaxGapMs = gap
+    }
+    driftSamples += 1
+    firstSampleAt ??= now
+    driftSpanMs = now - firstSampleAt
+
     renderSamples.push({ frames: live.telemetry.rendered(), at: now })
     if (renderSamples.length > DRIFT_WINDOW + 1) renderSamples.shift()
 
@@ -531,11 +626,16 @@ export function createSession(deps: SessionDeps = {}): Session {
     stopFrames = null
     stopIntervals?.()
     stopIntervals = null
-    // Both halves of the drift measurement go with the engine that produced
-    // them: the counter belongs to a processor that is about to be gone, and
-    // the next one starts from zero.
+    // Everything the drift measurement holds goes with the engine that produced
+    // it: the counter belongs to a processor that is about to be gone, and the
+    // next one starts from zero. The sampler's own tally goes with it for the
+    // same reason — a gap measured across a restart is time nobody lost.
     renderSamples.length = 0
     driftMsPerSecond = null
+    driftSamples = 0
+    driftMaxGapMs = null
+    driftSpanMs = 0
+    firstSampleAt = null
 
     const live = handle
     handle = null
@@ -790,6 +890,15 @@ export function createSession(deps: SessionDeps = {}): Session {
     },
     get driftMsPerSecond(): number | null {
       return driftMsPerSecond
+    },
+    get driftSamples(): number {
+      return driftSamples
+    },
+    get driftMaxGapMs(): number | null {
+      return driftMaxGapMs
+    },
+    get driftSpanMs(): number {
+      return driftSpanMs
     },
     onFrame(listener: (reading: Telemetry) => void): () => void {
       listeners.add(listener)
