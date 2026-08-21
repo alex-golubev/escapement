@@ -164,12 +164,21 @@ const browserFrames: FrameLoop = (tick) => {
  * - Safari, hidden, engine up: a call every two seconds, transport rolling or
  *   stopped alike, unchanged over twelve minutes. A page with no audio walks
  *   from four seconds up to forty and holds there.
+ * - Firefox, hidden: a call a second through all of it — transport stopped, and
+ *   the same page carrying no audio at all. Nothing is bought here because
+ *   nothing is charged.
  *
- * So both exempt a tab from throttling for sound and they disagree about what
- * counts as sound: Safari takes a live output stream, Chrome takes only what
- * someone could hear. Anything faster than a second would buy resolution while
- * nobody needs it and none at all when they do — the cadence is not this
- * number's to give.
+ * So two of the three exempt a tab from throttling for sound, and those two
+ * disagree about what counts as sound: Safari takes a live output stream,
+ * Chrome takes only what someone could hear. Anything faster than a second
+ * would buy resolution while nobody needs it and none at all when they do — the
+ * cadence is not this number's to give.
+ *
+ * One thing these numbers cannot show, and it is this number's doing: a second
+ * is also about the clamp every one of the three puts on a hidden tab's timers
+ * to begin with, so what was measured is the tier past that clamp. Whether
+ * Firefox throttles at all under it is not something a sampler asking for a
+ * second can answer.
  *
  * The consequence lands where it is least expected, and it is not the closed
  * context anyone would think to guard: a hidden Chrome tab with the transport
