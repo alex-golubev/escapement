@@ -106,52 +106,83 @@
   }
 </script>
 
-<div class="grid" style="--tracks: {TRACKS}; --steps: {STEPS}">
-  <div class="labels">
-    {#each tracks as track (track)}
-      <span>{KIT_NAMES[track]}</span>
-    {/each}
-  </div>
-  <div class="cells">
-    {#each tracks as track (track)}
-      {#each steps as step (step)}
-        <!-- `aria-pressed` carries the state and the stylesheet reads it back:
+<section class="panel">
+  <div class="grid" style="--tracks: {TRACKS}; --steps: {STEPS}; --beat: {STEPS_PER_BEAT}">
+    <div class="labels">
+      {#each tracks as track (track)}
+        <!-- The track's name, and the way to hear it. A strike that leaves
+             nothing behind, which is the whole difference between this and the
+             cells beside it: hearing a sound and putting one somewhere are
+             separate wants, and the row now answers the first in the same place
+             it answers the second.
+
+             It had a panel of eight large buttons to itself, and stopped
+             needing one the moment anybody looked at the two together. The name
+             was already written here, so that panel was a second copy of all
+             eight names whose only further job was being clickable — and it
+             outweighed the sequencer to do it.
+
+             Disabled without a kit, unlike a cell: this is only ever a sound,
+             so with no samples loaded it has nothing to be. -->
+        <button
+          disabled={session.kit !== 'loaded'}
+          aria-label="play {KIT_NAMES[track]}"
+          onclick={() => session.trigger(track)}
+        >
+          {KIT_NAMES[track]}
+        </button>
+      {/each}
+    </div>
+    <div class="cells">
+      {#each tracks as track (track)}
+        {#each steps as step (step)}
+          <!-- `aria-pressed` carries the state and the stylesheet reads it back:
              held in a class as well, a cell would say the same thing twice and
              they would eventually disagree.
 
-             Enabled whether or not a kit is loaded, unlike the pads. A pad is
-             only ever a sound, so without samples it has nothing to be; a cell
-             is the page's own belief about a pattern, and the engine takes it
-             and plays nothing, which is exactly what an empty slot should sound
+             Enabled whether or not a kit is loaded, unlike the name at the
+             head of the row: that one is only ever a sound, while a cell is the
+             page's own belief about a pattern, and the engine takes it and
+             plays nothing, which is exactly what an empty slot should sound
              like. -->
-        <button
-          type="button"
-          class="cell"
-          class:beat={step % STEPS_PER_BEAT === 0}
-          aria-pressed={session.isStepOn(track, step)}
-          aria-label="{KIT_NAMES[track]}, step {step + 1}"
-          onclick={() => {
-            flip(track, step)
-          }}
-        ></button>
+          <button
+            type="button"
+            class="cell"
+            aria-pressed={session.isStepOn(track, step)}
+            aria-label="{KIT_NAMES[track]}, step {step + 1}"
+            onclick={() => {
+              flip(track, step)
+            }}
+          ></button>
+        {/each}
       {/each}
-    {/each}
-    <!-- Last, so it lies over the cells rather than under them, and inert, so
+      <!-- Last, so it lies over the cells rather than under them, and inert, so
          the clicks it lies over still land. -->
-    <canvas bind:this={playhead} class="playhead" aria-hidden="true"></canvas>
+      <canvas bind:this={playhead} class="playhead" aria-hidden="true"></canvas>
+    </div>
   </div>
-</div>
 
-<button type="button" class="clear" onclick={() => session.clearPattern()}>Clear</button>
+  <button
+    type="button"
+    class="clear btn btn-quiet btn-danger"
+    onclick={() => session.clearPattern()}
+  >
+    Clear
+  </button>
+</section>
 
 <style>
   .grid {
     display: grid;
     grid-template-columns: max-content 1fr;
-    column-gap: 0.5rem;
-    margin-top: 1.5rem;
+    column-gap: var(--space-2);
 
-    --row: 1.7rem;
+    /* Tall enough that a cell at the page's widest is not a slot. What stops
+       it being one is the page measure and nothing here: a ceiling per cell was
+       tried and removed, because two knobs on one width meant the field stopped
+       growing while the panel around it did not, and two hundred pixels of dead
+       panel opened to the right of the last step. */
+    --row: 2.25rem;
   }
 
   /* The two halves are laid out on the same explicit rows, so a label always
@@ -162,14 +193,30 @@
   .cells {
     display: grid;
     grid-template-rows: repeat(var(--tracks), var(--row));
-    row-gap: 0.25rem;
+    row-gap: var(--space-1);
   }
 
   .labels {
     align-items: center;
     color: var(--dim);
-    font-size: 0.85rem;
+    font-size: var(--text-sm);
     white-space: nowrap;
+  }
+
+  /* Left, because a column of names read down the edge of a grid is a list and
+     not a set of captions — and the button reset takes the colour from the
+     column above rather than restating it. */
+  .labels button {
+    text-align: left;
+  }
+
+  .labels button:hover:not(:disabled) {
+    color: var(--fg);
+  }
+
+  .labels button:disabled {
+    color: var(--faint);
+    cursor: default;
   }
 
   .cells {
@@ -192,35 +239,64 @@
        a margin instead, which insets the button inside its track and leaves the
        track where it was. */
     column-gap: 0;
+
+    /* One beat wide, in the units the gradient measures in. Written from the two
+       counts rather than as 25%, so that a pattern of another length or a beat
+       of another division moves the marking with it instead of leaving it
+       plausibly wrong. */
+    --band: calc(100% * var(--beat) / var(--steps));
+
+    /* The beat, said by the field rather than by every fourth cell — a rule on
+       each beat's first column line.
+
+       As a brighter border on the cell it was competing with a struck cell for
+       the same property on the same element, so an empty pattern read as one
+       that already had something in it. It cannot be said with a gap either:
+       that is the arithmetic directly above. A wash across the whole beat was
+       tried first and is what this replaces — two surfaces eleven units apart in
+       a dark palette, which measured as no marking at all on the page and would
+       have needed a contrast that then fought the struck cells. A line needs no
+       contrast budget: it is thin, so it can be as bright as it likes.
+
+       Lines land in the two-pixel gutter the cells' margins leave, which is why
+       this moves nothing either — and they are exact because the columns are
+       equal fractions of the same width the beat is measured against.
+
+       Ink and not a line token, which is what it was first and what made it
+       unreadable on the page while measuring perfectly correct in the
+       inspector: the mark has to be told apart from a field of 128 cell
+       borders, and `--line-strong` is a neighbour of the colour those borders
+       are drawn in. Nothing about the geometry was wrong — forcing the colour
+       to red put the lines exactly on the beats — so the whole of the defect
+       was that a rule had been given a border's weight. What ranks it is the
+       playhead above and the cell borders below. */
+    background: repeating-linear-gradient(90deg, var(--dim) 0 1px, transparent 1px var(--band));
   }
 
   .cell {
     /* What the column gap would have been, moved inside the track — see
        above. */
     margin: 0 2px;
-    padding: 0;
-    background: transparent;
     border: 1px solid var(--line);
-    border-radius: 0.15rem;
-    cursor: pointer;
-  }
-
-  /* Every fourth cell brighter, so a beat can be counted without reading
-     numbers. It shows on empty cells, which is where counting happens; a struck
-     cell is filled, and the fill has already said where it is. */
-  .cell.beat {
-    border-color: var(--dim);
+    border-radius: var(--radius-sm);
   }
 
   .cell:hover {
     border-color: var(--fg);
   }
 
-  /* Last, so that it wins over `.beat` at equal specificity: a struck cell on a
-     beat is struck first and on a beat second. */
   .cell[aria-pressed='true'] {
     background: var(--accent);
     border-color: var(--accent);
+  }
+
+  /* Inside the grid's own panel, which is what now holds it away from the
+     button that ends the session: that one is a child of the shell, a panel
+     edge and a gap away. Before there were panels the two were adjacent boxes
+     in one column and `display: block` here was the whole of what separated
+     them. */
+  .clear {
+    margin-top: var(--space-4);
   }
 
   .playhead {
@@ -242,27 +318,5 @@
        that the colours of this page live in one language. */
     --playhead: var(--fg);
     --playhead-wash: rgb(255 255 255 / 8%);
-  }
-
-  .clear {
-    /* Block, so that nothing else can come to rest beside it. Inline, it drew
-       the page's next button up alongside — and the next button is the one that
-       ends the session, which is not a neighbour for a button that empties the
-       grid. */
-    display: block;
-    margin-top: 1rem;
-    padding: 0.35rem 0.9rem;
-    font: inherit;
-    font-size: 0.85rem;
-    color: var(--dim);
-    background: transparent;
-    border: 1px solid var(--line);
-    border-radius: 0.25rem;
-    cursor: pointer;
-  }
-
-  .clear:hover {
-    color: var(--fg);
-    border-color: var(--dim);
   }
 </style>

@@ -64,12 +64,19 @@
 <canvas bind:this={canvas} class="meters" aria-hidden="true"></canvas>
 
 <style>
+  /* Sized so the reading can actually be read. At four rems by fourteen pixels
+     it was the smallest thing on a page whose every other control it is the only
+     feedback for — and the one mark here that moves with the sound. */
   .meters {
     display: block;
-    width: 4rem;
-    height: 0.85rem;
+    width: 9rem;
+    height: 1.25rem;
 
-    --meter-track: var(--line);
+    /* Sunken rather than the panel's own line: the painter fills the whole track
+       before it fills the bar, so this colour is what silence looks like, and
+       silence has to sit below the surface the meter is mounted in. No radius —
+       the fills are square and would show through the corners. */
+    --meter-track: var(--surface-sunken);
     --meter-bar: var(--ok);
     --meter-over: var(--fail);
   }

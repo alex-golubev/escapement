@@ -144,6 +144,7 @@
             : `${(session.kitBytes / 1024 / 1024).toFixed(2)} MiB`}
           <button
             type="button"
+            class="btn btn-quiet"
             onclick={() => session.reloadKit()}
             disabled={session.kit === 'loading'}
           >
@@ -162,15 +163,17 @@
 </details>
 
 <style>
+  /* No panel, and that is the decision rather than an omission: this is the
+     instrument's measuring equipment, not one of its groups, and a panel would
+     put it among them. A rule and a disclosure triangle say what it is. */
   .diagnostics {
-    margin-top: 2.5rem;
     border-top: 1px solid var(--line);
   }
 
   summary {
-    padding: 0.75rem 0;
+    padding: var(--space-3) 0;
     color: var(--dim);
-    font-size: 0.85rem;
+    font-size: var(--text-sm);
     cursor: pointer;
   }
 
@@ -184,37 +187,25 @@
   .checks li {
     display: flex;
     justify-content: space-between;
-    gap: 1rem;
-    padding: 0.75rem 0;
+    gap: var(--space-4);
+    padding: var(--space-3) 0;
     border-bottom: 1px solid var(--line);
   }
 
   .checks span {
     display: flex;
     align-items: center;
-    gap: 0.75rem;
+    gap: var(--space-3);
     font-variant-numeric: tabular-nums;
     text-align: right;
   }
 
-  .checks button {
-    padding: 0.15rem 0.5rem;
-    border: 1px solid var(--line);
-    border-radius: 3px;
-    background: none;
-    color: var(--dim);
-    font: inherit;
-    font-size: 0.8rem;
-    cursor: pointer;
-  }
-
   .checks button:disabled {
-    cursor: default;
     opacity: 0.5;
   }
 
   .note {
     color: var(--dim);
-    font-size: 0.85rem;
+    font-size: var(--text-sm);
   }
 </style>

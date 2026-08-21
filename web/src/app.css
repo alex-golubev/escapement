@@ -1,32 +1,149 @@
-/* Baseline only. The real UI arrives with the step grid and the mixer strip;
-   nothing here is meant to survive that. */
+/* The page's shared vocabulary: colour roles, one spacing scale, and the framed
+   control every screen is built out of.
+
+   Global on purpose, and that is the whole argument for the file. Each thing
+   here is one whose second copy is the defect — the framed button had five, one
+   per component, and they matched by coincidence rather than by anything. The
+   first of them to be adjusted would have been the one that made the page look
+   accidental, and nothing would have reported it. */
 
 :root {
-  --bg: #16161a;
+  /* Three surfaces. The page had one, so a group could only be said with a
+     margin — and a column of stacks separated by equal margins reads as one
+     undivided run, which is exactly what it looked like. Raised carries a
+     group; sunken carries a field something is drawn into, where marks have to
+     sit against something darker than the frame around them. */
+  --surface: #131316;
+  --surface-raised: #191920;
+  --surface-sunken: #0e0e12;
+
+  /* Ink in three weights: what is read, what is labelled, and what is only
+     located. */
   --fg: #e8e8ea;
   --dim: #8a8a94;
-  --line: #2a2a31;
-  --ok: #6cc07a;
-  --fail: #e0685f;
+  --faint: #5a5a64;
+
+  /* Two lines, because a border that divides and a border that encloses want
+     different weights against the same surface — one copy of the value made
+     every enclosure either too loud to sit inside a panel or too faint to be
+     one. */
+  --line: #26262e;
+  --line-strong: #3a3a45;
+
   /* A struck cell, and deliberately not `--ok`: that one means a check passed,
      and a pattern is not a verdict. Two meanings on one colour drift apart the
      first time either wants to move. */
   --accent: #d4a24c;
+  --ok: #6cc07a;
+  --fail: #e0685f;
+
+  /* One scale, so that a distance is chosen out of a set rather than typed.
+     Across five files the page held fourteen distinct values and no two of them
+     were deliberate against each other. */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2rem;
+  --space-7: 3rem;
+
+  --radius-sm: 0.15rem;
+  --radius: 0.3rem;
+
+  --text-sm: 0.85rem;
+
+  /* Two measures, because the page holds two kinds of thing and one measure
+     over both is what put a grid of 29-pixel cells in the middle of a
+     1440-pixel window. Prose wants a line short enough to read; the sequencer
+     is sixteen columns and wants the room those columns need. */
+  --measure-prose: 36rem;
+  --measure-page: 62rem;
 
   color-scheme: dark;
+  /* The native range thumb and the checkbox were the only saturated blue
+     anywhere here, which left the browser's default as the loudest colour in a
+     palette that had not chosen it. */
+  accent-color: var(--accent);
   font-family: ui-sans-serif, system-ui, sans-serif;
   line-height: 1.5;
 }
 
 body {
   margin: 0;
-  background: var(--bg);
+  background: var(--surface);
   color: var(--fg);
 }
 
 code {
   font-family: ui-monospace, monospace;
   font-size: 0.9em;
+}
+
+/* A reset, and not the framed look, because not every button here is framed:
+   the 128 cells of the step grid are buttons too and each draws a border it
+   decides itself. What every button on this page actually has in common is only
+   that it inherits type and answers the pointer. */
+button {
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+/* The framed control — one home for what had five. */
+.btn {
+  padding: var(--space-3) var(--space-5);
+  color: var(--fg);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+}
+
+.btn:hover:not(:disabled) {
+  border-color: var(--dim);
+}
+
+.btn:disabled {
+  color: var(--faint);
+  cursor: default;
+}
+
+/* Quieter, for what the page offers rather than what it asks for. Worn beside
+   `.btn`, so the frame is described once. */
+.btn-quiet {
+  padding: var(--space-1) var(--space-3);
+  font-size: var(--text-sm);
+  color: var(--dim);
+  border-color: var(--line);
+}
+
+.btn-quiet:hover:not(:disabled) {
+  color: var(--fg);
+}
+
+/* Marks what cannot be taken back: emptying the grid, ending the session.
+
+   Quiet until it is reached for, because a page that shouts at rest teaches its
+   reader to stop seeing the shout. The colour says which class of action this
+   is and the position says which action — the two wearing it are a panel apart
+   and were adjacent once, which is how they came to need a mark at all.
+
+   The first of them loses the mark when there is an undo to take it back, and
+   that is M2. */
+.btn-danger:hover:not(:disabled),
+.btn-danger:focus-visible {
+  color: var(--fail);
+  border-color: var(--fail);
+}
+
+/* A group, and the reason the three surfaces above exist. */
+.panel {
+  padding: var(--space-5);
+  background: var(--surface-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
 }
 
 /* Global, because more than one component says these two things and a scoped

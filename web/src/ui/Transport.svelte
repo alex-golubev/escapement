@@ -12,10 +12,13 @@
   const { session }: { session: Session } = $props()
 </script>
 
-<div class="transport">
-  <button onclick={() => session.toggle()}>{session.playing ? 'Stop' : 'Play'}</button>
+<div class="transport panel">
+  <button class="btn" onclick={() => session.toggle()}>
+    {session.playing ? 'Stop' : 'Play'}
+  </button>
 
-  <label>
+  <label class="field">
+    <span class="name">tempo</span>
     <!-- On every step of the drag, not on release: a tempo change that only
          lands when the pointer comes up cannot show whether the change itself is
          seamless, which is the criterion being tested.
@@ -41,7 +44,8 @@
        stops at unity: above it there is nothing to reach that the limiter is not
        already holding, and a range the UI keeps itself inside is the UI's own
        business. -->
-  <label>
+  <label class="field">
+    <span class="name">master</span>
     <input
       type="range"
       min="0"
@@ -57,7 +61,7 @@
   <!-- The engine comes up with the click on, and it is in the way of hearing
        anything else. Off is a command like any other, which is why the box
        follows what was accepted rather than what was clicked. -->
-  <label class="switch">
+  <label class="field switch">
     <input
       type="checkbox"
       checked={session.metronome}
@@ -72,25 +76,31 @@
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: 1rem 1.5rem;
-    margin-top: 2rem;
+    gap: var(--space-4) var(--space-6);
   }
 
-  label {
+  /* A name, a control, a reading — in that order, every time. The tempo had a
+     name only because its unit happened to need spelling out and the master had
+     none at all, so the row read as one labelled control and one loose number. */
+  .field {
     display: flex;
     align-items: center;
-    gap: 0.75rem;
+    gap: var(--space-3);
+  }
+
+  .name {
+    color: var(--dim);
+    font-size: var(--text-sm);
   }
 
   /* Sized, so the row wraps where this file decides rather than wherever a
      browser's default track length happens to put the break. */
   input[type='range'] {
-    width: 7rem;
+    width: 8rem;
   }
 
   output {
     min-width: 3.5rem;
-    color: var(--dim);
     font-variant-numeric: tabular-nums;
   }
 
@@ -100,16 +110,5 @@
 
   button {
     min-width: 6rem;
-    padding: 0.6rem 1.2rem;
-    font: inherit;
-    color: var(--fg);
-    background: transparent;
-    border: 1px solid var(--line);
-    border-radius: 0.25rem;
-    cursor: pointer;
-  }
-
-  button:hover {
-    border-color: var(--dim);
   }
 </style>

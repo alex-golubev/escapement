@@ -6,7 +6,6 @@
 
   import { createSession } from './state/session.svelte'
   import Diagnostics from './ui/Diagnostics.svelte'
-  import Pads from './ui/Pads.svelte'
   import StepGrid from './ui/StepGrid.svelte'
   import Transport from './ui/Transport.svelte'
 
@@ -39,24 +38,37 @@
 </script>
 
 <main>
-  <h1>DAW</h1>
-  <p class="subtitle">Milestone 1 — drum machine</p>
+  <header>
+    <div class="titles">
+      <h1>DAW</h1>
+      <p class="subtitle">Milestone 1 — drum machine</p>
+    </div>
+
+    <!-- The only way to hand the device back. Without it the context outlives
+         every interest the page has in it, and the metronome plays until the tab
+         is reloaded.
+
+         Up here with the page's own name rather than below the instrument,
+         because what it ends is the session and not anything the instrument is
+         doing. In the flow it was one gap under the grid and wearing the same
+         quiet frame as the button that empties it — two controls of very
+         different consequence, told apart by nothing. -->
+    {#if session.status === 'running'}
+      <button class="btn btn-quiet btn-danger" onclick={() => session.stop()}>
+        Stop engine
+      </button>
+    {/if}
+  </header>
 
   {#if !isolationReady}
     <p class="verdict fail">Not isolated — check the COOP/COEP headers in vite.config.ts.</p>
   {:else if session.status === 'running'}
     <Transport {session} />
-    <Pads {session} />
     <StepGrid {session} />
 
     {#if session.kitFailure !== null}
       <p class="verdict fail">{session.kitFailure}</p>
     {/if}
-
-    <!-- The only way to hand the device back. Without it the context outlives
-         every interest the page has in it, and the metronome plays until the tab
-         is reloaded. -->
-    <button onclick={() => session.stop()}>Stop engine</button>
   {:else}
     <!-- The failure and the way out of it, together. A page that reports a dead
          engine and takes the button away leaves a reload as the only move, and
@@ -65,7 +77,11 @@
     {#if session.failure !== null}
       <p class="verdict fail">{session.failure}</p>
     {/if}
-    <button onclick={() => void session.start()} disabled={session.status === 'starting'}>
+    <button
+      class="btn"
+      onclick={() => void session.start()}
+      disabled={session.status === 'starting'}
+    >
       {#if session.status === 'starting'}
         Starting…
       {:else if session.failure !== null}
@@ -84,10 +100,33 @@
 </main>
 
 <style>
+  /* The instrument sets the page width, and the distance between groups is the
+     shell's rather than each group's own top margin. Both were the other way
+     round: one reading measure over everything gave the sequencer 29-pixel
+     cells with two thirds of the window empty beside them, and the spacing was
+     five `margin-top` values in five files that agreed only by being read one
+     after another. */
   main {
-    max-width: 36rem;
+    display: grid;
+    gap: var(--space-5);
+    max-width: var(--measure-page);
     margin: 0 auto;
-    padding: 4rem 1.5rem;
+    padding: var(--space-7) var(--space-5);
+  }
+
+  /* The page's name at one end and the control over its session at the other. */
+  header {
+    display: flex;
+    align-items: start;
+    justify-content: space-between;
+    gap: var(--space-5);
+  }
+
+  /* Prose stays narrow inside the page width — a heading and a failure are
+     read, not scanned. */
+  .titles,
+  .verdict {
+    max-width: var(--measure-prose);
   }
 
   h1 {
@@ -97,31 +136,17 @@
   }
 
   .subtitle {
-    margin: 0.25rem 0 0;
+    margin: var(--space-1) 0 0;
     color: var(--dim);
   }
 
   .verdict {
-    margin-top: 2rem;
+    margin: 0;
   }
 
+  /* A button is as wide as its own words. Left to the grid it would be as wide
+     as the sequencer. */
   button {
-    margin-top: 2rem;
-    padding: 0.6rem 1.2rem;
-    font: inherit;
-    color: var(--fg);
-    background: transparent;
-    border: 1px solid var(--line);
-    border-radius: 0.25rem;
-    cursor: pointer;
-  }
-
-  button:hover:not(:disabled) {
-    border-color: var(--dim);
-  }
-
-  button:disabled {
-    color: var(--dim);
-    cursor: default;
+    justify-self: start;
   }
 </style>
