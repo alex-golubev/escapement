@@ -21,7 +21,10 @@ use crate::pattern::{MAX_VELOCITY, MIN_VELOCITY};
 /// why that rise is expected rather than forbidden, which is what makes this a
 /// line somebody will one day change on purpose; what it must not be is a line
 /// somebody changes without meeting the consequence.
-const _: () = assert!(SLOTS == TRACKS, "a voice's slot is its track — see Pool::next_frame");
+const _: () = assert!(
+    SLOTS == TRACKS,
+    "a voice's slot is its track — see Pool::next_frame"
+);
 
 /// Voices in the pool.
 ///
@@ -61,7 +64,12 @@ struct Voice {
 }
 
 impl Voice {
-    const FREE: Self = Self { slot: 0, cursor: 0, velocity: 0.0, stage: Stage::Free };
+    const FREE: Self = Self {
+        slot: 0,
+        cursor: 0,
+        velocity: 0.0,
+        stage: Stage::Free,
+    };
 
     /// This voice's contribution to one frame, or `None` when it has none.
     ///
@@ -94,7 +102,11 @@ impl Voice {
             Stage::Free => return None,
             Stage::Playing => 1.0,
             Stage::Releasing(left) => {
-                self.stage = if left <= 1 { Stage::Free } else { Stage::Releasing(left - 1) };
+                self.stage = if left <= 1 {
+                    Stage::Free
+                } else {
+                    Stage::Releasing(left - 1)
+                };
                 (left - 1) as f32 / release_span
             }
         };
@@ -198,7 +210,12 @@ impl Pool {
 
         let index = self.allocate(bank);
         if let Some(voice) = self.voices.get_mut(index) {
-            *voice = Voice { slot, cursor: 0, velocity, stage: Stage::Playing };
+            *voice = Voice {
+                slot,
+                cursor: 0,
+                velocity,
+                stage: Stage::Playing,
+            };
         }
     }
 
@@ -318,7 +335,15 @@ mod tests {
     /// be read directly — where the frame sits is the onset, how big it is is
     /// the product of everything that scaled it.
     fn one(slot: usize, frames: usize, channels: u8) -> (Bank, Pool) {
-        (loaded(&[Sample { slot, frames, channels, value: 1.0 }]), Pool::new(SR))
+        (
+            loaded(&[Sample {
+                slot,
+                frames,
+                channels,
+                value: 1.0,
+            }]),
+            Pool::new(SR),
+        )
     }
 
     /// Render one frame and sum it across tracks, left and right.
@@ -329,7 +354,8 @@ mod tests {
     fn summed_frame(pool: &mut Pool, bank: &Bank) -> (f32, f32) {
         let mut out = [[0.0f32; 2]; TRACKS];
         pool.next_frame(bank, &mut out);
-        out.iter().fold((0.0, 0.0), |(l, r), track| (l + track[0], r + track[1]))
+        out.iter()
+            .fold((0.0, 0.0), |(l, r), track| (l + track[0], r + track[1]))
     }
 
     fn silent(pool: &mut Pool, bank: &Bank, frames: usize) -> bool {
@@ -337,7 +363,10 @@ mod tests {
     }
 
     fn sounding(pool: &Pool) -> usize {
-        pool.voices.iter().filter(|v| v.stage != Stage::Free).count()
+        pool.voices
+            .iter()
+            .filter(|v| v.stage != Stage::Free)
+            .count()
     }
 
     #[test]
@@ -361,7 +390,10 @@ mod tests {
         pool.trigger(&bank, 3, 1.0);
 
         assert_eq!(summed_frame(&mut pool, &bank), (1.0, 1.0));
-        assert!(silent(&mut pool, &bank, 16), "the voice outlived its one frame");
+        assert!(
+            silent(&mut pool, &bank, 16),
+            "the voice outlived its one frame"
+        );
         assert_eq!(sounding(&pool), 0, "the voice did not free itself");
     }
 
@@ -370,15 +402,28 @@ mod tests {
         // The neighbour holds a different value, so a cursor running past its
         // declaration shows up as a tail rather than as silence.
         let bank = loaded(&[
-            Sample { slot: 0, frames: 2, channels: 1, value: 1.0 },
-            Sample { slot: 1, frames: 5_000, channels: 1, value: 0.7 },
+            Sample {
+                slot: 0,
+                frames: 2,
+                channels: 1,
+                value: 1.0,
+            },
+            Sample {
+                slot: 1,
+                frames: 5_000,
+                channels: 1,
+                value: 0.7,
+            },
         ]);
         let mut pool = Pool::new(SR);
 
         pool.trigger(&bank, 0, 1.0);
         assert_eq!(summed_frame(&mut pool, &bank), (1.0, 1.0));
         assert_eq!(summed_frame(&mut pool, &bank), (1.0, 1.0));
-        assert!(silent(&mut pool, &bank, 32), "the voice ran on into its neighbour");
+        assert!(
+            silent(&mut pool, &bank, 32),
+            "the voice ran on into its neighbour"
+        );
     }
 
     #[test]
@@ -399,9 +444,14 @@ mod tests {
         pool.trigger(&bank, 0, 1.0);
         assert_eq!(summed_frame(&mut pool, &bank), (1.0, 1.0));
 
-        bank.reserve(1_000).expect("the arena must be granted").fill(0.5);
+        bank.reserve(1_000)
+            .expect("the arena must be granted")
+            .fill(0.5);
 
-        assert!(silent(&mut pool, &bank, 8), "a voice went on reading an undeclared slot");
+        assert!(
+            silent(&mut pool, &bank, 8),
+            "a voice went on reading an undeclared slot"
+        );
         assert_eq!(sounding(&pool), 0, "the voice did not free itself");
     }
 
@@ -410,8 +460,18 @@ mod tests {
         // Only the offset tells two samples in one arena apart: read from the
         // wrong one, the kit is intact and every drum is the wrong drum.
         let bank = loaded(&[
-            Sample { slot: 0, frames: 1, channels: 1, value: 0.25 },
-            Sample { slot: 1, frames: 1, channels: 1, value: 0.75 },
+            Sample {
+                slot: 0,
+                frames: 1,
+                channels: 1,
+                value: 0.25,
+            },
+            Sample {
+                slot: 1,
+                frames: 1,
+                channels: 1,
+                value: 0.75,
+            },
         ]);
         let mut pool = Pool::new(SR);
 
@@ -442,7 +502,11 @@ mod tests {
         for velocity in [1.0f32, 0.5, 0.25, MAX_VELOCITY] {
             let (bank, mut pool) = one(0, 1, 1);
             pool.trigger(&bank, 0, velocity);
-            assert_eq!(summed_frame(&mut pool, &bank), (velocity, velocity), "velocity {velocity}");
+            assert_eq!(
+                summed_frame(&mut pool, &bank),
+                (velocity, velocity),
+                "velocity {velocity}"
+            );
         }
     }
 
@@ -485,14 +549,20 @@ mod tests {
         // started in it would play whatever the copy has managed so far.
         let mut bank = Bank::new();
         let mut pool = Pool::new(SR);
-        bank.reserve(4).expect("the arena must be granted").fill(1.0);
+        bank.reserve(4)
+            .expect("the arena must be granted")
+            .fill(1.0);
 
         pool.trigger(&bank, 2, 1.0);
         assert_eq!(sounding(&pool), 0, "an undeclared slot was struck");
 
         assert_eq!(bank.commit(2, 0, 4, 1), Ok(()));
         pool.trigger(&bank, 2, 1.0);
-        assert_eq!(summed_frame(&mut pool, &bank), (1.0, 1.0), "a declared slot must sound");
+        assert_eq!(
+            summed_frame(&mut pool, &bank),
+            (1.0, 1.0),
+            "a declared slot must sound"
+        );
     }
 
     #[test]
@@ -510,7 +580,10 @@ mod tests {
 
         assert_eq!(summed_frame(&mut pool, &bank), (1.0, -1.0));
         assert_eq!(summed_frame(&mut pool, &bank), (0.5, -0.5));
-        assert!(silent(&mut pool, &bank, 4), "a two-frame stereo sample lasted longer");
+        assert!(
+            silent(&mut pool, &bank, 4),
+            "a two-frame stereo sample lasted longer"
+        );
 
         let (mono, mut pool) = one(0, 1, 1);
         pool.trigger(&mono, 0, 1.0);
@@ -528,7 +601,11 @@ mod tests {
         pool.trigger(&bank, 0, 1.0);
         assert_eq!(summed_frame(&mut pool, &bank), (1.0, 1.0));
         pool.trigger(&bank, 0, 1.0);
-        assert_eq!(summed_frame(&mut pool, &bank), (2.0, 2.0), "the second strike replaced the first");
+        assert_eq!(
+            summed_frame(&mut pool, &bank),
+            (2.0, 2.0),
+            "the second strike replaced the first"
+        );
         assert_eq!(sounding(&pool), 2);
     }
 
@@ -554,12 +631,21 @@ mod tests {
         let mut previous = first;
         for step in 1..pool.release_frames as usize {
             let value = summed_frame(&mut pool, &bank).0;
-            assert!(value < previous, "the release stalled at {value} on step {step}");
+            assert!(
+                value < previous,
+                "the release stalled at {value} on step {step}"
+            );
             previous = value;
         }
-        assert_eq!(previous, 0.0, "the ramp ended at {previous} and stepped to silence");
+        assert_eq!(
+            previous, 0.0,
+            "the ramp ended at {previous} and stepped to silence"
+        );
 
-        assert!(silent(&mut pool, &bank, 8), "the release did not reach silence");
+        assert!(
+            silent(&mut pool, &bank, 8),
+            "the release did not reach silence"
+        );
         assert_eq!(sounding(&pool), 0, "a faded voice stayed in the pool");
     }
 
@@ -582,7 +668,12 @@ mod tests {
         // No free voice: the most faded release wins over any playing voice,
         // however near its end.
         for voice in pool.voices.iter_mut() {
-            *voice = Voice { slot: 0, cursor: 999, velocity: 1.0, stage: Stage::Playing };
+            *voice = Voice {
+                slot: 0,
+                cursor: 999,
+                velocity: 1.0,
+                stage: Stage::Playing,
+            };
         }
         pool.voices[4].stage = Stage::Releasing(90);
         pool.voices[9].stage = Stage::Releasing(3);
@@ -590,7 +681,12 @@ mod tests {
 
         // Nothing releasing either: the one with the least left to play.
         for (index, voice) in pool.voices.iter_mut().enumerate() {
-            *voice = Voice { slot: 0, cursor: index * 10, velocity: 1.0, stage: Stage::Playing };
+            *voice = Voice {
+                slot: 0,
+                cursor: index * 10,
+                velocity: 1.0,
+                stage: Stage::Playing,
+            };
         }
         assert_eq!(pool.allocate(&bank), VOICES - 1);
     }
@@ -609,7 +705,10 @@ mod tests {
         assert_eq!(sounding(&pool), VOICES, "the pool lost voices or grew");
 
         let (left, _) = summed_frame(&mut pool, &bank);
-        assert_eq!(left, VOICES as f32, "not every voice in the pool was sounding");
+        assert_eq!(
+            left, VOICES as f32,
+            "not every voice in the pool was sounding"
+        );
     }
 
     #[test]

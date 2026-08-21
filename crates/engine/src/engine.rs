@@ -374,9 +374,11 @@ impl Engine {
             Command::SetTrackGain { track, gain } => self.mixer.set_track_gain(track, gain),
             Command::SetTrackPan { track, pan } => self.mixer.set_track_pan(track, pan),
             Command::SetMasterGain { gain } => self.mixer.set_master_gain(gain),
-            Command::SetStep { track, step, velocity } => {
-                self.pattern.set_step(track, step, velocity)
-            }
+            Command::SetStep {
+                track,
+                step,
+                velocity,
+            } => self.pattern.set_step(track, step, velocity),
             Command::ClearPattern => self.pattern.clear(),
             Command::SetMetronome { enabled } => self.click.set_enabled(enabled),
             Command::TriggerTrack { track, velocity } => self.sampler.trigger(track, velocity),
@@ -422,7 +424,8 @@ impl Engine {
             if pos == next_click {
                 let beat = self.transport.beat_at(pos).round() as i64;
                 let accent = beat.rem_euclid(BEATS_PER_BAR) == 0;
-                self.click.trigger(if accent { CLICK_ACCENT_HZ } else { CLICK_HZ });
+                self.click
+                    .trigger(if accent { CLICK_ACCENT_HZ } else { CLICK_HZ });
                 next_click = self.transport.next_beat_boundary(pos + 1);
             }
             if pos == next_step {
@@ -444,7 +447,10 @@ impl Engine {
             let [mut left, mut right] = self.mixer.mix_tracks(&tracks);
             left += click;
             right += click;
-            debug_assert!(left.is_finite() && right.is_finite(), "non-finite sample out of the sampler");
+            debug_assert!(
+                left.is_finite() && right.is_finite(),
+                "non-finite sample out of the sampler"
+            );
 
             // Per frame, not per segment or per quantum: a gain that stepped
             // would be zipper noise, and the smoothing that prevents it only
@@ -452,7 +458,10 @@ impl Engine {
             // goes through the master.
             let gain = self.mixer.next_master_gain();
             let (left, right) = (left * gain, right * gain);
-            debug_assert!(left.is_finite() && right.is_finite(), "non-finite sample out of the mixer");
+            debug_assert!(
+                left.is_finite() && right.is_finite(),
+                "non-finite sample out of the mixer"
+            );
 
             // **The meter reads here, before the limiter**, and the position of
             // these two lines is the whole decision. The sum is deliberately
@@ -567,7 +576,11 @@ mod tests {
                 Record::immediate(Command::SetMetronome { enabled: false }),
                 Record::immediate(Command::SetTrackGain { track: 0, gain }),
                 Record::immediate(Command::SetTrackPan { track: 0, pan }),
-                Record::immediate(Command::SetStep { track: 0, step: 0, velocity: 1.0 }),
+                Record::immediate(Command::SetStep {
+                    track: 0,
+                    step: 0,
+                    velocity: 1.0,
+                }),
             ],
         );
         skip(&mut engine, 8); // past the 480-frame glide, with room to spare
@@ -609,7 +622,11 @@ mod tests {
             .expect("the arena must be granted")
             .fill(1.0);
         for slot in 0..TRACKS {
-            assert_eq!(engine.commit_sample(slot, slot * frames, frames, 1), Ok(()), "slot {slot}");
+            assert_eq!(
+                engine.commit_sample(slot, slot * frames, frames, 1),
+                Ok(()),
+                "slot {slot}"
+            );
         }
     }
 
@@ -621,7 +638,10 @@ mod tests {
     /// the metronome is still sounding underneath it, and it holds only because
     /// the master gain is left at unity in these tests.
     fn struck_frames(signal: &[f32]) -> usize {
-        signal.iter().filter(|sample| sample.abs() > CLICK_GAIN).count()
+        signal
+            .iter()
+            .filter(|sample| sample.abs() > CLICK_GAIN)
+            .count()
     }
 
     /// A strike in every cell of the grid, at full velocity.
@@ -629,7 +649,11 @@ mod tests {
         let mut cells = Vec::new();
         for track in 0..TRACKS as u8 {
             for step in 0..STEPS as u16 {
-                cells.push(Record::immediate(Command::SetStep { track, step, velocity: 1.0 }));
+                cells.push(Record::immediate(Command::SetStep {
+                    track,
+                    step,
+                    velocity: 1.0,
+                }));
             }
         }
         cells
@@ -742,7 +766,10 @@ mod tests {
 
         engine.process(&mut left, &mut right, &bytes, 2);
         assert_eq!(left, right, "the channels parted on the first quantum");
-        assert!(left.iter().any(|&s| s != 0.0), "two silent channels match for nothing");
+        assert!(
+            left.iter().any(|&s| s != 0.0),
+            "two silent channels match for nothing"
+        );
 
         for quantum in 0..200 {
             engine.process(&mut left, &mut right, &[], 0);
@@ -753,7 +780,10 @@ mod tests {
     #[test]
     fn play_produces_sound() {
         let (_, first) = started(120.0);
-        assert!(first.iter().any(|&s| s != 0.0), "sound must start after Play");
+        assert!(
+            first.iter().any(|&s| s != 0.0),
+            "sound must start after Play"
+        );
     }
 
     #[test]
@@ -814,7 +844,11 @@ mod tests {
         let tail = quantum(&mut engine, &[Record::immediate(Command::Stop)]);
 
         assert!(!engine.transport().is_playing());
-        assert_eq!(engine.transport().sample_pos(), 0, "Stop rewinds to the start");
+        assert_eq!(
+            engine.transport().sample_pos(),
+            0,
+            "Stop rewinds to the start"
+        );
         assert!(
             tail.iter().any(|&s| s != 0.0),
             "the click tail must ring out: cutting the buffer is itself a click"
@@ -847,14 +881,26 @@ mod tests {
             &mut engine,
             &[
                 Record::immediate(Command::SetBpm { bpm: 120.0 }),
-                Record::immediate(Command::SetStep { track: 0, step: 0, velocity: 1.0 }),
+                Record::immediate(Command::SetStep {
+                    track: 0,
+                    step: 0,
+                    velocity: 1.0,
+                }),
                 Record::immediate(Command::Play),
             ],
         );
-        assert_eq!(struck_frames(&sounding), Q, "the fixture left no voice sounding");
+        assert_eq!(
+            struck_frames(&sounding),
+            Q,
+            "the fixture left no voice sounding"
+        );
         let before = render(&mut engine, 5_120 / Q - 1);
         let sustained = centred(1.0);
-        assert_eq!(before[before.len() - 1], sustained, "the metronome was still sounding at the stop");
+        assert_eq!(
+            before[before.len() - 1],
+            sustained,
+            "the metronome was still sounding at the stop"
+        );
 
         let tail = quantum(&mut engine, &[Record::immediate(Command::Stop)]);
 
@@ -866,7 +912,11 @@ mod tests {
         // Exactly zero, not nearly: a ramp that stops short leaves the voice in
         // the pool forever, and the pool then answers fewer strikes every time
         // the transport is stopped.
-        assert_eq!(tail[Q - 1], 0.0, "the fade did not reach silence within a quantum");
+        assert_eq!(
+            tail[Q - 1],
+            0.0,
+            "the fade did not reach silence within a quantum"
+        );
     }
 
     #[test]
@@ -885,7 +935,10 @@ mod tests {
         );
         signal.extend(render(&mut engine, 500)); // 1.3 s, two beats
 
-        assert!(signal.iter().all(|&sample| sample == 0.0), "the metronome sounded while off");
+        assert!(
+            signal.iter().all(|&sample| sample == 0.0),
+            "the metronome sounded while off"
+        );
         // The beat still comes round; what changed is only whether anything is
         // struck on it. A switch that stopped the transport would pass the line
         // above and take the grid with it.
@@ -899,8 +952,14 @@ mod tests {
         // buffer is itself a click, and this one would land on the silence the
         // listener just asked for.
         let (mut engine, _) = started(120.0);
-        let tail = quantum(&mut engine, &[Record::immediate(Command::SetMetronome { enabled: false })]);
-        assert!(tail.iter().any(|&sample| sample != 0.0), "the click was cut off mid-tail");
+        let tail = quantum(
+            &mut engine,
+            &[Record::immediate(Command::SetMetronome { enabled: false })],
+        );
+        assert!(
+            tail.iter().any(|&sample| sample != 0.0),
+            "the click was cut off mid-tail"
+        );
 
         // Past the tail and past the next beat, which must not sound at all.
         let after = render(&mut engine, 500);
@@ -917,7 +976,10 @@ mod tests {
         let (mut engine, _) = started(120.0);
         let quiet = render(&mut engine, 100); // ~0.27 s; the next beat is far off
         assert_eq!(
-            quiet[quiet.len() - Q..].iter().copied().fold(0.0f32, f32::max),
+            quiet[quiet.len() - Q..]
+                .iter()
+                .copied()
+                .fold(0.0f32, f32::max),
             0.0,
             "the tail does not converge to an exact zero"
         );
@@ -926,7 +988,10 @@ mod tests {
     #[test]
     fn command_takes_effect_mid_quantum() {
         let mut engine = Engine::new(SR);
-        let bytes = encode(&[Record { command: Command::Play, at_sample: 64 }]);
+        let bytes = encode(&[Record {
+            command: Command::Play,
+            at_sample: 64,
+        }]);
         let mut left = vec![0.0f32; Q];
         let mut right = vec![0.0f32; Q];
         engine.process(&mut left, &mut right, &bytes, 1);
@@ -935,7 +1000,11 @@ mod tests {
             left[..64].iter().all(|&s| s == 0.0),
             "there must be silence before the moment of application"
         );
-        assert_eq!(onsets(&left), vec![64], "the click must start exactly on frame 64");
+        assert_eq!(
+            onsets(&left),
+            vec![64],
+            "the click must start exactly on frame 64"
+        );
         assert_eq!(
             engine.transport().sample_pos(),
             64,
@@ -965,7 +1034,10 @@ mod tests {
         let records = [
             Record::immediate(Command::Play),
             // Frame 500, three quanta past the end of this 128-frame block.
-            Record { command: Command::SetBpm { bpm: AWKWARD_BPM }, at_sample: 500 },
+            Record {
+                command: Command::SetBpm { bpm: AWKWARD_BPM },
+                at_sample: 500,
+            },
             // A neighbour behind the one passed over: skipping a record must
             // not take the rest of the block with it, any more than an
             // unrecognized record does.
@@ -974,20 +1046,38 @@ mod tests {
         quantum(&mut engine, &records);
 
         assert!(engine.transport().is_playing());
-        assert_eq!(engine.mixer().master_gain(), 0.5, "the record behind it was lost too");
-        assert_eq!(engine.transport().bpm(), default_bpm, "a future instant was applied at once");
+        assert_eq!(
+            engine.mixer().master_gain(),
+            0.5,
+            "the record behind it was lost too"
+        );
+        assert_eq!(
+            engine.transport().bpm(),
+            default_bpm,
+            "a future instant was applied at once"
+        );
 
         // Past frame 500 now, which is where a held record would have fired.
         render(&mut engine, 10);
-        assert!(engine.transport().sample_pos() > 500, "the instant was never reached");
-        assert_eq!(engine.transport().bpm(), default_bpm, "the record came back later");
+        assert!(
+            engine.transport().sample_pos() > 500,
+            "the instant was never reached"
+        );
+        assert_eq!(
+            engine.transport().bpm(),
+            default_bpm,
+            "the record came back later"
+        );
     }
 
     #[test]
     fn tempo_change_reaches_the_grid() {
         let (mut engine, mut signal) = started(120.0);
         signal.extend(render(&mut engine, 200));
-        signal.extend(quantum(&mut engine, &[Record::immediate(Command::SetBpm { bpm: 240.0 })]));
+        signal.extend(quantum(
+            &mut engine,
+            &[Record::immediate(Command::SetBpm { bpm: 240.0 })],
+        ));
         signal.extend(render(&mut engine, 600));
 
         let found = onsets(&signal);
@@ -999,10 +1089,16 @@ mod tests {
         // 1.072; beat 2 remains beat 2 and arrives 0.928 of a new-tempo beat
         // later: 25728 + 0.928 × 12000 = 36864. Exactly 36000 would only
         // happen if the tempo changed precisely on a beat boundary.
-        assert_eq!(found[2], 36_864, "the new tempo was not applied from the beat number");
+        assert_eq!(
+            found[2], 36_864,
+            "the new tempo was not applied from the beat number"
+        );
 
         let gaps: Vec<usize> = found.windows(2).skip(2).map(|w| w[1] - w[0]).collect();
-        assert!(gaps.len() >= 3, "too few clicks after the tempo change: {found:?}");
+        assert!(
+            gaps.len() >= 3,
+            "too few clicks after the tempo change: {found:?}"
+        );
         assert!(
             gaps.iter().all(|&gap| gap == 12_000),
             "the new tempo did not take hold: {gaps:?}"
@@ -1018,8 +1114,14 @@ mod tests {
         quantum(
             &mut engine,
             &[
-                Record::immediate(Command::SetTrackGain { track: 3, gain: 0.25 }),
-                Record::immediate(Command::SetTrackPan { track: 3, pan: -0.75 }),
+                Record::immediate(Command::SetTrackGain {
+                    track: 3,
+                    gain: 0.25,
+                }),
+                Record::immediate(Command::SetTrackPan {
+                    track: 3,
+                    pan: -0.75,
+                }),
                 Record::immediate(Command::SetMasterGain { gain: 0.5 }),
             ],
         );
@@ -1027,8 +1129,16 @@ mod tests {
         assert_eq!(engine.mixer().track_gain(3), 0.25);
         assert_eq!(engine.mixer().track_pan(3), -0.75);
         assert_eq!(engine.mixer().master_gain(), 0.5);
-        assert_eq!(engine.mixer().track_gain(0), 1.0, "the command reached the wrong track");
-        assert_eq!(engine.mixer().track_pan(0), 0.0, "the command reached the wrong track");
+        assert_eq!(
+            engine.mixer().track_gain(0),
+            1.0,
+            "the command reached the wrong track"
+        );
+        assert_eq!(
+            engine.mixer().track_pan(0),
+            0.0,
+            "the command reached the wrong track"
+        );
     }
 
     #[test]
@@ -1041,16 +1151,36 @@ mod tests {
         quantum(
             &mut engine,
             &[
-                Record::immediate(Command::SetStep { track: 3, step: 11, velocity: 0.6 }),
-                Record::immediate(Command::SetStep { track: 0, step: 0, velocity: 1.0 }),
+                Record::immediate(Command::SetStep {
+                    track: 3,
+                    step: 11,
+                    velocity: 0.6,
+                }),
+                Record::immediate(Command::SetStep {
+                    track: 0,
+                    step: 0,
+                    velocity: 1.0,
+                }),
             ],
         );
 
         assert_eq!(engine.pattern().velocity(3, 11), 0.6);
         assert_eq!(engine.pattern().velocity(0, 0), 1.0);
-        assert_eq!(engine.pattern().velocity(11, 3), 0.0, "track and step were swapped");
-        assert_eq!(engine.pattern().velocity(3, 0), 0.0, "the step index was dropped");
-        assert_eq!(engine.pattern().velocity(0, 11), 0.0, "the track index was dropped");
+        assert_eq!(
+            engine.pattern().velocity(11, 3),
+            0.0,
+            "track and step were swapped"
+        );
+        assert_eq!(
+            engine.pattern().velocity(3, 0),
+            0.0,
+            "the step index was dropped"
+        );
+        assert_eq!(
+            engine.pattern().velocity(0, 11),
+            0.0,
+            "the track index was dropped"
+        );
     }
 
     #[test]
@@ -1064,12 +1194,19 @@ mod tests {
             &[
                 Record::immediate(Command::SetBpm { bpm: AWKWARD_BPM }),
                 Record::immediate(Command::SetMasterGain { gain: 0.4 }),
-                Record::immediate(Command::SetStep { track: 7, step: 15, velocity: 1.0 }),
+                Record::immediate(Command::SetStep {
+                    track: 7,
+                    step: 15,
+                    velocity: 1.0,
+                }),
             ],
         );
         quantum(&mut engine, &[Record::immediate(Command::ClearPattern)]);
 
-        assert!(!engine.pattern().is_active(7, 15), "the step survived the clear");
+        assert!(
+            !engine.pattern().is_active(7, 15),
+            "the step survived the clear"
+        );
         assert_eq!(engine.transport().bpm(), f64::from(AWKWARD_BPM));
         assert_eq!(engine.mixer().master_gain(), 0.4);
     }
@@ -1091,7 +1228,11 @@ mod tests {
         ];
         let struck = one_bar(&mut Engine::new(SR), &every_cell_struck());
 
-        assert_eq!(struck, one_bar(&mut Engine::new(SR), &empty), "an empty kit sounded");
+        assert_eq!(
+            struck,
+            one_bar(&mut Engine::new(SR), &empty),
+            "an empty kit sounded"
+        );
     }
 
     #[test]
@@ -1124,8 +1265,14 @@ mod tests {
             .take_while(|&frame| frame < signal.len())
             .collect();
 
-        let struck: Vec<usize> = sounding_frames(&signal).into_iter().map(|(at, _)| at).collect();
-        assert_eq!(struck, expected, "the grid did not strike where the transport says it should");
+        let struck: Vec<usize> = sounding_frames(&signal)
+            .into_iter()
+            .map(|(at, _)| at)
+            .collect();
+        assert_eq!(
+            struck, expected,
+            "the grid did not strike where the transport says it should"
+        );
         // What a strike is *worth* was asserted here too, and is not any more:
         // it is `a_strike_carries_every_track_of_its_step`, one test down. The
         // amplitude of a strike now depends on the pan law and on the limiter,
@@ -1154,7 +1301,11 @@ mod tests {
             Record::immediate(Command::SetMetronome { enabled: false }),
         ];
         for track in 0..TRACKS as u8 {
-            setup.push(Record::immediate(Command::SetStep { track, step: 0, velocity: VELOCITY }));
+            setup.push(Record::immediate(Command::SetStep {
+                track,
+                step: 0,
+                velocity: VELOCITY,
+            }));
         }
         setup.push(Record::immediate(Command::Play));
 
@@ -1185,7 +1336,11 @@ mod tests {
             Record::immediate(Command::SetMetronome { enabled: false }),
         ];
         for (track, step, velocity) in CELLS {
-            setup.push(Record::immediate(Command::SetStep { track, step, velocity }));
+            setup.push(Record::immediate(Command::SetStep {
+                track,
+                step,
+                velocity,
+            }));
         }
         setup.push(Record::immediate(Command::Play));
 
@@ -1231,8 +1386,15 @@ mod tests {
         let mut right = vec![0.0f32; BAR_FRAMES];
         whole.process(&mut left, &mut right, &encode(&setup), setup.len() as u32);
 
-        assert_eq!(struck_frames(&left), STEPS, "the whole bar struck the wrong number of times");
-        assert_eq!(left, expected, "the bar came out differently rendered in one block");
+        assert_eq!(
+            struck_frames(&left),
+            STEPS,
+            "the whole bar struck the wrong number of times"
+        );
+        assert_eq!(
+            left, expected,
+            "the bar came out differently rendered in one block"
+        );
     }
 
     #[test]
@@ -1247,7 +1409,11 @@ mod tests {
 
         let cleared = one_bar(&mut engine, &[Record::immediate(Command::ClearPattern)]);
 
-        assert_eq!(struck_frames(&cleared), 0, "a cleared grid went on striking");
+        assert_eq!(
+            struck_frames(&cleared),
+            0,
+            "a cleared grid went on striking"
+        );
     }
 
     #[test]
@@ -1263,7 +1429,11 @@ mod tests {
 
         let silent = quantum(
             &mut engine,
-            &[Record::immediate(Command::SetStep { track: 0, step: 0, velocity: 1.0 })],
+            &[Record::immediate(Command::SetStep {
+                track: 0,
+                step: 0,
+                velocity: 1.0,
+            })],
         );
         // Exact zeros rather than `struck_frames`, whose threshold would also
         // report nothing for a strike that merely came out quiet.
@@ -1274,7 +1444,10 @@ mod tests {
 
         let previewed = quantum(
             &mut engine,
-            &[Record::immediate(Command::TriggerTrack { track: 0, velocity: 1.0 })],
+            &[Record::immediate(Command::TriggerTrack {
+                track: 0,
+                velocity: 1.0,
+            })],
         );
         assert_eq!(previewed[0], centred(1.0), "the pad did not strike");
     }
@@ -1299,18 +1472,28 @@ mod tests {
 
         let pad = quantum(
             &mut engine_with_a_kit(),
-            &[Record::immediate(Command::TriggerTrack { track: 3, velocity: VELOCITY })],
+            &[Record::immediate(Command::TriggerTrack {
+                track: 3,
+                velocity: VELOCITY,
+            })],
         );
         let grid = quantum(
             &mut engine_with_a_kit(),
             &[
                 Record::immediate(Command::SetMetronome { enabled: false }),
-                Record::immediate(Command::SetStep { track: 3, step: 0, velocity: VELOCITY }),
+                Record::immediate(Command::SetStep {
+                    track: 3,
+                    step: 0,
+                    velocity: VELOCITY,
+                }),
                 Record::immediate(Command::Play),
             ],
         );
 
-        assert_eq!(pad[0], grid[0], "the pad and the cell came out at different levels");
+        assert_eq!(
+            pad[0], grid[0],
+            "the pad and the cell came out at different levels"
+        );
         assert_eq!(pad[0], centred(VELOCITY));
     }
 
@@ -1318,7 +1501,10 @@ mod tests {
     fn the_master_gain_scales_the_output() {
         fn peak_at(gain: f32) -> f32 {
             let mut engine = Engine::new(SR);
-            quantum(&mut engine, &[Record::immediate(Command::SetMasterGain { gain })]);
+            quantum(
+                &mut engine,
+                &[Record::immediate(Command::SetMasterGain { gain })],
+            );
             // The glide is 10 ms; 100 quanta is 267 ms, long since settled.
             // Measured after it lands, so this is about the gain and not
             // about the smoothing, which dsp.rs tests on its own.
@@ -1331,8 +1517,14 @@ mod tests {
 
         let unity = peak_at(1.0);
         assert!(unity > 0.0, "there was nothing to scale");
-        assert!((peak_at(0.5) - unity / 2.0).abs() < 1e-6, "half gain is not half");
-        assert!((peak_at(2.0) - unity * 2.0).abs() < 1e-6, "the ceiling is not reachable");
+        assert!(
+            (peak_at(0.5) - unity / 2.0).abs() < 1e-6,
+            "half gain is not half"
+        );
+        assert!(
+            (peak_at(2.0) - unity * 2.0).abs() < 1e-6,
+            "the ceiling is not reachable"
+        );
     }
 
     #[test]
@@ -1342,7 +1534,10 @@ mod tests {
         // forever — inaudible, but enough to make every "is it silent" test
         // downstream of it a tolerance comparison.
         let (mut engine, _) = started(120.0);
-        quantum(&mut engine, &[Record::immediate(Command::SetMasterGain { gain: 0.0 })]);
+        quantum(
+            &mut engine,
+            &[Record::immediate(Command::SetMasterGain { gain: 0.0 })],
+        );
         skip(&mut engine, 100);
 
         assert!(
@@ -1358,7 +1553,10 @@ mod tests {
         // that discontinuity is itself a click, which is the noise the gain
         // was being turned down to avoid.
         let (mut engine, _) = started(120.0);
-        let muted = quantum(&mut engine, &[Record::immediate(Command::SetMasterGain { gain: 0.0 })]);
+        let muted = quantum(
+            &mut engine,
+            &[Record::immediate(Command::SetMasterGain { gain: 0.0 })],
+        );
 
         assert!(
             muted.iter().any(|&s| s != 0.0),
@@ -1412,12 +1610,29 @@ mod tests {
                 &mut engine,
                 &[
                     Record::immediate(Command::SetMetronome { enabled: false }),
-                    Record::immediate(Command::SetTrackPan { track: 0, pan: -1.0 }),
+                    Record::immediate(Command::SetTrackPan {
+                        track: 0,
+                        pan: -1.0,
+                    }),
                     Record::immediate(Command::SetTrackPan { track: 1, pan: 1.0 }),
-                    Record::immediate(Command::SetTrackGain { track: 0, gain: gain_of_track_0 }),
-                    Record::immediate(Command::SetTrackGain { track: 1, gain: QUIET }),
-                    Record::immediate(Command::SetStep { track: 0, step: 0, velocity: 1.0 }),
-                    Record::immediate(Command::SetStep { track: 1, step: 0, velocity: 1.0 }),
+                    Record::immediate(Command::SetTrackGain {
+                        track: 0,
+                        gain: gain_of_track_0,
+                    }),
+                    Record::immediate(Command::SetTrackGain {
+                        track: 1,
+                        gain: QUIET,
+                    }),
+                    Record::immediate(Command::SetStep {
+                        track: 0,
+                        step: 0,
+                        velocity: 1.0,
+                    }),
+                    Record::immediate(Command::SetStep {
+                        track: 1,
+                        step: 0,
+                        velocity: 1.0,
+                    }),
                 ],
             );
             skip(&mut engine, 8);
@@ -1425,8 +1640,16 @@ mod tests {
             (left[0], right[0])
         }
 
-        assert_eq!(struck(QUIET), (QUIET, QUIET), "the fixture did not separate the tracks");
-        assert_eq!(struck(QUIET / 2.0), (QUIET / 2.0, QUIET), "the fader moved more than its track");
+        assert_eq!(
+            struck(QUIET),
+            (QUIET, QUIET),
+            "the fixture did not separate the tracks"
+        );
+        assert_eq!(
+            struck(QUIET / 2.0),
+            (QUIET / 2.0, QUIET),
+            "the fader moved more than its track"
+        );
     }
 
     #[test]
@@ -1443,8 +1666,15 @@ mod tests {
             &mut engine,
             &[
                 Record::immediate(Command::SetMetronome { enabled: false }),
-                Record::immediate(Command::SetTrackGain { track: 0, gain: QUIET }),
-                Record::immediate(Command::SetStep { track: 0, step: 0, velocity: 1.0 }),
+                Record::immediate(Command::SetTrackGain {
+                    track: 0,
+                    gain: QUIET,
+                }),
+                Record::immediate(Command::SetStep {
+                    track: 0,
+                    step: 0,
+                    velocity: 1.0,
+                }),
             ],
         );
         // Nothing sounds through any of this: no voice has been struck yet, so
@@ -1453,7 +1683,11 @@ mod tests {
         skip(&mut engine, 8);
 
         let struck = quantum(&mut engine, &[Record::immediate(Command::Play)])[0];
-        assert_eq!(struck, centred(QUIET), "the fader had not arrived when the strike did");
+        assert_eq!(
+            struck,
+            centred(QUIET),
+            "the fader had not arrived when the strike did"
+        );
     }
 
     #[test]
@@ -1469,14 +1703,21 @@ mod tests {
         // the first thing that has one.
         fn struck(pan: f32) -> (f32, f32) {
             let mut engine = Engine::new(SR);
-            engine.reserve_bank(2).expect("the arena must be granted").copy_from_slice(&[0.5, 0.25]);
+            engine
+                .reserve_bank(2)
+                .expect("the arena must be granted")
+                .copy_from_slice(&[0.5, 0.25]);
             assert_eq!(engine.commit_sample(0, 0, 1, 2), Ok(()));
             stereo_quantum(
                 &mut engine,
                 &[
                     Record::immediate(Command::SetMetronome { enabled: false }),
                     Record::immediate(Command::SetTrackPan { track: 0, pan }),
-                    Record::immediate(Command::SetStep { track: 0, step: 0, velocity: 1.0 }),
+                    Record::immediate(Command::SetStep {
+                        track: 0,
+                        step: 0,
+                        velocity: 1.0,
+                    }),
                 ],
             );
             skip(&mut engine, 8);
@@ -1485,7 +1726,11 @@ mod tests {
         }
 
         let (left, right) = struck(DEFAULT_PAN);
-        assert_eq!((left, right), (centred(0.5), centred(0.25)), "the image was not kept");
+        assert_eq!(
+            (left, right),
+            (centred(0.5), centred(0.25)),
+            "the image was not kept"
+        );
 
         // Hard left leaves the source's left channel alone and drops its right
         // entirely — a balance control, not a collapse into one signal.
@@ -1509,12 +1754,19 @@ mod tests {
         let summed = (0..TRACKS).fold(0.0f32, |sum, _| sum + centred(1.0));
 
         assert!(summed > 1.0, "the fixture did not reach the limiter at all");
-        assert_eq!(engine.peak(0), summed, "the meter read something other than the bus");
+        assert_eq!(
+            engine.peak(0),
+            summed,
+            "the meter read something other than the bus"
+        );
         // And the output is that same reading put through the curve, which is
         // what makes reading early lossless: the page can compute this from the
         // meter, and could not compute the meter from this.
         assert_eq!(signal[0], soft_limit(summed, summed).0);
-        assert!(signal.iter().all(|&s| s.abs() <= 1.0), "the output passed full scale");
+        assert!(
+            signal.iter().all(|&s| s.abs() <= 1.0),
+            "the output passed full scale"
+        );
     }
 
     #[test]
@@ -1522,7 +1774,10 @@ mod tests {
         let mut engine = Engine::new(SR);
         for bpm in [f32::NAN, f32::INFINITY, -1.0, 0.0, 1e9] {
             quantum(&mut engine, &[Record::immediate(Command::SetBpm { bpm })]);
-            assert!(engine.transport().samples_per_beat().is_finite(), "bpm={bpm}");
+            assert!(
+                engine.transport().samples_per_beat().is_finite(),
+                "bpm={bpm}"
+            );
         }
         let signal = quantum(&mut engine, &[Record::immediate(Command::Play)]);
         assert!(signal.iter().all(|s| s.is_finite()));
@@ -1625,7 +1880,11 @@ mod tests {
 
         skip(&mut engine, BAR_QUANTA / 2);
         engine.write_telemetry(&mut words);
-        assert_eq!(f32::from_bits(words[TELEMETRY_STEP]), 0.0, "the word did not wrap");
+        assert_eq!(
+            f32::from_bits(words[TELEMETRY_STEP]),
+            0.0,
+            "the word did not wrap"
+        );
     }
 
     #[test]
@@ -1633,7 +1892,10 @@ mod tests {
         let (engine, _) = started(120.0);
         let mut words = [0xDEAD_BEEFu32; TELEMETRY_WORDS - 1];
         engine.write_telemetry(&mut words);
-        assert!(words.iter().all(|&w| w == 0xDEAD_BEEF), "the write ran past the buffer");
+        assert!(
+            words.iter().all(|&w| w == 0xDEAD_BEEF),
+            "the write ran past the buffer"
+        );
     }
 
     #[test]
@@ -1661,13 +1923,24 @@ mod tests {
                 engine,
                 &[
                     Record::immediate(Command::SetBpm { bpm: AWKWARD_BPM }),
-                    Record::immediate(Command::SetStep { track: 1, step: 0, velocity: 0.8 }),
-                    Record::immediate(Command::SetStep { track: 5, step: 7, velocity: 0.3 }),
+                    Record::immediate(Command::SetStep {
+                        track: 1,
+                        step: 0,
+                        velocity: 0.8,
+                    }),
+                    Record::immediate(Command::SetStep {
+                        track: 5,
+                        step: 7,
+                        velocity: 0.3,
+                    }),
                     Record::immediate(Command::Play),
                 ],
             );
             signal.extend(render(engine, 300));
-            signal.extend(quantum(engine, &[Record::immediate(Command::SetBpm { bpm: 90.0 })]));
+            signal.extend(quantum(
+                engine,
+                &[Record::immediate(Command::SetBpm { bpm: 90.0 })],
+            ));
             signal.extend(render(engine, 300));
             signal
         }
@@ -1679,14 +1952,36 @@ mod tests {
     fn reset_restores_the_initial_state() {
         let mut used = Engine::new(SR);
         load_kit(&mut used, 1);
-        quantum(&mut used, &[Record::immediate(Command::SetBpm { bpm: 63.5 })]);
+        quantum(
+            &mut used,
+            &[Record::immediate(Command::SetBpm { bpm: 63.5 })],
+        );
         // The mixer is part of "as constructed" too, and the comparison at the
         // end of this test is what proves it: a master gain left at 0.3 would
         // make every sample after the reset three tenths of the fresh one.
-        quantum(&mut used, &[Record::immediate(Command::SetMasterGain { gain: 0.3 })]);
-        quantum(&mut used, &[Record::immediate(Command::SetTrackGain { track: 6, gain: 0.1 })]);
-        quantum(&mut used, &[Record::immediate(Command::SetStep { track: 2, step: 9, velocity: 1.0 })]);
-        quantum(&mut used, &[Record::immediate(Command::SetMetronome { enabled: false })]);
+        quantum(
+            &mut used,
+            &[Record::immediate(Command::SetMasterGain { gain: 0.3 })],
+        );
+        quantum(
+            &mut used,
+            &[Record::immediate(Command::SetTrackGain {
+                track: 6,
+                gain: 0.1,
+            })],
+        );
+        quantum(
+            &mut used,
+            &[Record::immediate(Command::SetStep {
+                track: 2,
+                step: 9,
+                velocity: 1.0,
+            })],
+        );
+        quantum(
+            &mut used,
+            &[Record::immediate(Command::SetMetronome { enabled: false })],
+        );
         quantum(&mut used, &[Record::immediate(Command::Play)]);
         render(&mut used, 500);
         used.reset();
@@ -1696,7 +1991,10 @@ mod tests {
         assert_eq!(used.peak(0), 0.0);
         assert_eq!(used.mixer().master_gain(), 1.0);
         assert_eq!(used.mixer().track_gain(6), 1.0);
-        assert!(!used.pattern().is_active(2, 9), "the pattern survived the reset");
+        assert!(
+            !used.pattern().is_active(2, 9),
+            "the pattern survived the reset"
+        );
 
         // The script strikes, which is what makes the kit part of this
         // comparison: a bank that survived the reset would sound here, and
@@ -1706,7 +2004,11 @@ mod tests {
                 engine,
                 &[
                     Record::immediate(Command::SetBpm { bpm: AWKWARD_BPM }),
-                    Record::immediate(Command::SetStep { track: 0, step: 0, velocity: 1.0 }),
+                    Record::immediate(Command::SetStep {
+                        track: 0,
+                        step: 0,
+                        velocity: 1.0,
+                    }),
                     Record::immediate(Command::Play),
                 ],
             );
@@ -1716,6 +2018,10 @@ mod tests {
 
         let expected = after(&mut Engine::new(SR));
 
-        assert_eq!(after(&mut used), expected, "after reset the engine must sound like a new one");
+        assert_eq!(
+            after(&mut used),
+            expected,
+            "after reset the engine must sound like a new one"
+        );
     }
 }

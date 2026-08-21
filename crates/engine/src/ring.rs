@@ -61,7 +61,10 @@ impl<'a> CommandBlock<'a> {
     /// [`entry`]: Self::entry
     pub fn new(bytes: &'a [u8], count: u32) -> Self {
         let available = bytes.len() / COMMAND_SIZE;
-        Self { bytes, count: (count as usize).min(available) }
+        Self {
+            bytes,
+            count: (count as usize).min(available),
+        }
     }
 
     /// Number of records in the block before decoding. Unrecognized ones
@@ -95,15 +98,17 @@ impl<'a> CommandBlock<'a> {
             return None;
         }
         let start = index * COMMAND_SIZE;
-        let bytes: &[u8; COMMAND_SIZE] =
-            self.bytes.get(start..start + COMMAND_SIZE)?.try_into().ok()?;
+        let bytes: &[u8; COMMAND_SIZE] = self
+            .bytes
+            .get(start..start + COMMAND_SIZE)?
+            .try_into()
+            .ok()?;
         let record = Record::decode(bytes)?;
         Some(Entry {
             record,
             offset: offset_in_quantum(record.at_sample, quantum_start, frames),
         })
     }
-
 }
 
 /// The frame of the quantum that the instant `at_sample` falls on, or `None`
@@ -187,7 +192,11 @@ mod tests {
 
         let block = CommandBlock::new(&bytes, 0);
         assert!(block.is_empty());
-        assert_eq!(entries(&block, 0, FRAMES).len(), 0, "count=0 must hide the bytes");
+        assert_eq!(
+            entries(&block, 0, FRAMES).len(),
+            0,
+            "count=0 must hide the bytes"
+        );
 
         let empty = CommandBlock::new(&[], 0);
         assert_eq!(entries(&empty, 0, FRAMES).len(), 0);
@@ -202,7 +211,11 @@ mod tests {
         ]);
         for claimed in [2, 3, 1_000, u32::MAX] {
             let block = CommandBlock::new(&bytes, claimed);
-            assert_eq!(block.len(), 2, "a claim of {claimed} records ran past the slice");
+            assert_eq!(
+                block.len(),
+                2,
+                "a claim of {claimed} records ran past the slice"
+            );
             assert_eq!(entries(&block, 0, FRAMES).len(), 2);
         }
     }
@@ -217,7 +230,10 @@ mod tests {
 
         let block = CommandBlock::new(&bytes, 2);
         assert_eq!(block.len(), 1, "a partial record is not a record");
-        assert_eq!(commands_of(&entries(&block, 0, FRAMES)), vec![Command::Play]);
+        assert_eq!(
+            commands_of(&entries(&block, 0, FRAMES)),
+            vec![Command::Play]
+        );
     }
 
     #[test]
@@ -264,9 +280,16 @@ mod tests {
     #[test]
     fn late_commands_are_applied_not_dropped() {
         for at_sample in [1, 100, 9_999] {
-            let record = Record { command: Command::Stop, at_sample };
+            let record = Record {
+                command: Command::Stop,
+                at_sample,
+            };
             let bytes = block_of(&[record]);
-            assert_eq!(only_entry(&bytes, 10_000, FRAMES).offset, Some(0), "at_sample={at_sample}");
+            assert_eq!(
+                only_entry(&bytes, 10_000, FRAMES).offset,
+                Some(0),
+                "at_sample={at_sample}"
+            );
         }
     }
 
@@ -299,7 +322,11 @@ mod tests {
                 at_sample: start + u64::from(FRAMES) + ahead,
             };
             let bytes = block_of(&[record]);
-            assert_eq!(only_entry(&bytes, start, FRAMES).offset, None, "ahead={ahead}");
+            assert_eq!(
+                only_entry(&bytes, start, FRAMES).offset,
+                None,
+                "ahead={ahead}"
+            );
         }
     }
 
@@ -324,9 +351,16 @@ mod tests {
         let start = (1u64 << 32) - 64;
         for offset in 0..FRAMES {
             let at = start + u64::from(offset);
-            let record = Record { command: Command::Play, at_sample: at };
+            let record = Record {
+                command: Command::Play,
+                at_sample: at,
+            };
             let bytes = block_of(&[record]);
-            assert_eq!(only_entry(&bytes, start, FRAMES).offset, Some(offset), "at_sample={at}");
+            assert_eq!(
+                only_entry(&bytes, start, FRAMES).offset,
+                Some(offset),
+                "at_sample={at}"
+            );
         }
     }
 

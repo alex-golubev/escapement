@@ -40,7 +40,9 @@ impl Default for Pattern {
 impl Pattern {
     /// An empty grid: every step silent.
     pub fn new() -> Self {
-        Self { steps: [[0.0; STEPS]; TRACKS] }
+        Self {
+            steps: [[0.0; STEPS]; TRACKS],
+        }
     }
 
     /// Return to the as-constructed state.
@@ -98,7 +100,11 @@ mod tests {
         let pattern = Pattern::new();
         for track in 0..TRACKS {
             for step in 0..STEPS {
-                assert_eq!(pattern.velocity(track, step), 0.0, "track {track} step {step}");
+                assert_eq!(
+                    pattern.velocity(track, step),
+                    0.0,
+                    "track {track} step {step}"
+                );
                 assert!(!pattern.is_active(track, step), "track {track} step {step}");
             }
         }
@@ -191,7 +197,11 @@ mod tests {
 
         for track in 0..TRACKS {
             for step in 0..STEPS {
-                assert_eq!(pattern.velocity(track, step), 0.0, "track {track} step {step}");
+                assert_eq!(
+                    pattern.velocity(track, step),
+                    0.0,
+                    "track {track} step {step}"
+                );
             }
         }
         // Reading past the end answers "silent" rather than panicking.
@@ -212,7 +222,10 @@ mod tests {
 
         for track in 0..TRACKS {
             for step in 0..STEPS {
-                assert!(!pattern.is_active(track, step), "track {track} step {step} survived");
+                assert!(
+                    !pattern.is_active(track, step),
+                    "track {track} step {step} survived"
+                );
             }
         }
     }

@@ -221,7 +221,13 @@ pub struct Smoothed {
 impl Smoothed {
     pub fn new(value: f32, sample_rate: f64) -> Self {
         let frames = frames_for(SMOOTHING_SECONDS, sample_rate);
-        Self { current: value, target: value, step: 0.0, remaining: 0, frames }
+        Self {
+            current: value,
+            target: value,
+            step: 0.0,
+            remaining: 0,
+            frames,
+        }
     }
 
     /// Where the parameter is headed — what the UI last asked for, not what
@@ -308,7 +314,11 @@ mod tests {
         // No range, deliberately: a sample above unity is loud, not wrong, and
         // clamping it here would quietly reshape whatever was loaded.
         for good in [0.0f32, 1.0, -1.0, 4.0, -4.0, 1e-10, 1e30] {
-            assert_eq!(sanitized(good), good, "sanitized({good:e}) altered a legal sample");
+            assert_eq!(
+                sanitized(good),
+                good,
+                "sanitized({good:e}) altered a legal sample"
+            );
         }
     }
 
@@ -359,7 +369,11 @@ mod tests {
         for level in [0.0f32, 1e-9, 0.25, 0.5, LIMIT_THRESHOLD] {
             assert_eq!(soft_limit(level, level), (level, level), "at {level}");
             assert_eq!(soft_limit(-level, level), (-level, level), "at -{level}");
-            assert_eq!(soft_limit(level, 0.0), (level, 0.0), "at {level} on one side");
+            assert_eq!(
+                soft_limit(level, 0.0),
+                (level, 0.0),
+                "at {level} on one side"
+            );
         }
     }
 
@@ -388,10 +402,18 @@ mod tests {
         // argument, so the slope is one by construction rather than by
         // arithmetic — and a finite difference taken across the threshold would
         // be measuring the rounding of `T - step` instead of the curve.
-        let slope = |step: f32| (soft_limit(LIMIT_THRESHOLD + step, 0.0).0 - LIMIT_THRESHOLD) / step;
+        let slope =
+            |step: f32| (soft_limit(LIMIT_THRESHOLD + step, 0.0).0 - LIMIT_THRESHOLD) / step;
 
-        assert!(slope(1e-2) < 1.0, "the curve rises faster than the line into it");
-        assert!(slope(1e-3) > 0.99, "the curve starts at a slope of {}", slope(1e-3));
+        assert!(
+            slope(1e-2) < 1.0,
+            "the curve rises faster than the line into it"
+        );
+        assert!(
+            slope(1e-3) > 0.99,
+            "the curve starts at a slope of {}",
+            slope(1e-3)
+        );
         assert!(
             slope(1e-3) > slope(1e-2),
             "the slope does not approach the line's as the step shrinks"
@@ -404,7 +426,10 @@ mod tests {
         for step in 0..2_000 {
             let level = step as f32 * 0.01;
             let (limited, _) = soft_limit(level, 0.0);
-            assert!(limited >= previous, "{level} came out below the sample before it");
+            assert!(
+                limited >= previous,
+                "{level} came out below the sample before it"
+            );
             previous = limited;
         }
     }
@@ -422,7 +447,10 @@ mod tests {
         // by mutation: keyed to the left, only the pair below goes red.
         for (loud, quiet) in [(2.0f32, 0.5f32), (0.5, 2.0)] {
             let (left, right) = soft_limit(loud, quiet);
-            assert!(left.abs() <= 1.0 && right.abs() <= 1.0, "{loud}/{quiet} left {left}/{right}");
+            assert!(
+                left.abs() <= 1.0 && right.abs() <= 1.0,
+                "{loud}/{quiet} left {left}/{right}"
+            );
             assert!(left < loud, "the loud channel was not limited at all");
             assert!(right < quiet, "the quiet channel was left where it was");
             assert!(
@@ -453,7 +481,10 @@ mod tests {
         }
         for rate in [f64::INFINITY, 1e12, f64::MAX] {
             let frames = frames_for(0.01, rate);
-            assert!(frames <= MAX_RAMP_FRAMES, "sample_rate={rate} gave {frames} frames");
+            assert!(
+                frames <= MAX_RAMP_FRAMES,
+                "sample_rate={rate} gave {frames} frames"
+            );
         }
         assert_eq!(frames_for(0.0, SR), 1, "a zero duration is still one frame");
     }
@@ -508,9 +539,16 @@ mod tests {
         let mut frames = 0;
         while gain.tick() != 0.0 {
             frames += 1;
-            assert!(frames < 48_000, "one second was not enough to reach the target");
+            assert!(
+                frames < 48_000,
+                "one second was not enough to reach the target"
+            );
         }
-        assert_eq!(gain.tick(), 0.0, "the parameter left a target it had reached");
+        assert_eq!(
+            gain.tick(),
+            0.0,
+            "the parameter left a target it had reached"
+        );
     }
 
     #[test]
@@ -564,7 +602,10 @@ mod tests {
         let after = gain.tick();
 
         assert!(after > before, "the parameter did not turn around");
-        assert!(after - before < 0.01, "retargeting produced a step: {before} → {after}");
+        assert!(
+            after - before < 0.01,
+            "retargeting produced a step: {before} → {after}"
+        );
     }
 
     #[test]
@@ -576,7 +617,10 @@ mod tests {
                 let value = param.tick();
                 assert!(value.is_finite(), "non-finite value gliding {from} → {to}");
                 let (low, high) = if from < to { (from, to) } else { (to, from) };
-                assert!(value >= low && value <= high, "{value} is outside {low}..{high}");
+                assert!(
+                    value >= low && value <= high,
+                    "{value} is outside {low}..{high}"
+                );
             }
         }
     }
@@ -614,6 +658,9 @@ mod tests {
         }
 
         let (left, right) = (at_44.tick(), at_96.tick());
-        assert!((left - right).abs() < 1e-3, "5 ms in is not 5 ms in: {left} vs {right}");
+        assert!(
+            (left - right).abs() < 1e-3,
+            "5 ms in is not 5 ms in: {left} vs {right}"
+        );
     }
 }

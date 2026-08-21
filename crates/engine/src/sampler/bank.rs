@@ -57,7 +57,9 @@ pub enum Refusal {
     /// The arena could not be made that large — the only refusal here whose
     /// cause is not in its arguments. That it is a refusal at all is the point
     /// of [`Bank::reserve`].
-    OutOfMemory { floats: usize },
+    OutOfMemory {
+        floats: usize,
+    },
     NoSuchSlot,
     /// Neither mono nor stereo.
     Channels(u8),
@@ -65,7 +67,10 @@ pub enum Refusal {
     /// The declared sample runs past the end of the arena. Both numbers travel
     /// with it because the page can act on the difference — it laid the kit out
     /// and can lay it out again — and neither number alone says by how much.
-    DoesNotFit { end: usize, reserved: usize },
+    DoesNotFit {
+        end: usize,
+        reserved: usize,
+    },
 }
 
 /// Where one sample sits in the arena.
@@ -97,7 +102,11 @@ pub struct Region {
 impl Region {
     /// A slot holding nothing. One channel rather than none, for the reason
     /// that field gives.
-    const EMPTY: Self = Self { offset: 0, frames: 0, channels: 1 };
+    const EMPTY: Self = Self {
+        offset: 0,
+        frames: 0,
+        channels: 1,
+    };
 }
 
 pub struct Bank {
@@ -109,7 +118,10 @@ pub struct Bank {
 
 impl Bank {
     pub fn new() -> Self {
-        Self { arena: Vec::new(), slots: [Region::EMPTY; SLOTS] }
+        Self {
+            arena: Vec::new(),
+            slots: [Region::EMPTY; SLOTS],
+        }
     }
 
     /// Make room for a whole kit, and hand back the arena to write it into.
@@ -213,7 +225,11 @@ impl Bank {
             *value = sanitized(*value);
         }
 
-        self.slots[slot] = Region { offset, frames, channels };
+        self.slots[slot] = Region {
+            offset,
+            frames,
+            channels,
+        };
         Ok(())
     }
 
@@ -325,11 +341,21 @@ pub(in crate::sampler) mod tests {
         // size, and must refuse anything declared into what it has not been
         // given.
         let mut bank = Bank::new();
-        assert_eq!(bank.arena().len(), 0, "the engine took memory nobody asked for");
+        assert_eq!(
+            bank.arena().len(),
+            0,
+            "the engine took memory nobody asked for"
+        );
 
         // And nothing can be declared into an arena that was never reserved:
         // the bounds check is against its length, which is zero.
-        assert_eq!(bank.commit(0, 0, 1, 1), Err(Refusal::DoesNotFit { end: 1, reserved: 0 }));
+        assert_eq!(
+            bank.commit(0, 0, 1, 1),
+            Err(Refusal::DoesNotFit {
+                end: 1,
+                reserved: 0
+            })
+        );
         assert!(!bank.holds_a_sample(0));
     }
 
@@ -341,10 +367,18 @@ pub(in crate::sampler) mod tests {
         // reservation — `commit` cannot produce one, having refused a channel
         // count of zero before it builds a region at all — so both are checked
         // here, where the constant is.
-        let mut bank = loaded(&[Sample { slot: 0, frames: 16, channels: 2, value: 1.0 }]);
+        let mut bank = loaded(&[Sample {
+            slot: 0,
+            frames: 16,
+            channels: 2,
+            value: 1.0,
+        }]);
         bank.reset();
         let absurd = usize::MAX / 8;
-        assert_eq!(bank.reserve(absurd), Err(Refusal::OutOfMemory { floats: absurd }));
+        assert_eq!(
+            bank.reserve(absurd),
+            Err(Refusal::OutOfMemory { floats: absurd })
+        );
 
         for slot in 0..SLOTS {
             let region = bank.region(slot).expect("every slot has a declaration");
@@ -359,7 +393,12 @@ pub(in crate::sampler) mod tests {
         // a bank that reserved afresh on every load would climb for as long as
         // the session lasted — half an hour of swapping kits and the tab is
         // measurably heavier, with nothing to show where it went.
-        let mut bank = loaded(&[Sample { slot: 0, frames: 48_000, channels: 2, value: 1.0 }]);
+        let mut bank = loaded(&[Sample {
+            slot: 0,
+            frames: 48_000,
+            channels: 2,
+            value: 1.0,
+        }]);
         let granted = bank.arena.capacity();
         assert!(granted >= 96_000);
 
@@ -374,7 +413,11 @@ pub(in crate::sampler) mod tests {
                     value: 1.0,
                 }],
             );
-            assert_eq!(bank.arena.capacity(), granted, "round {round} grew the arena");
+            assert_eq!(
+                bank.arena.capacity(),
+                granted,
+                "round {round} grew the arena"
+            );
         }
     }
 
@@ -383,14 +426,25 @@ pub(in crate::sampler) mod tests {
         // The refusal the whole design turns on — see `reserve` for why it is
         // one at all. What this pins is that it carries the number, so the page
         // can say what it could not have.
-        let mut bank = loaded(&[Sample { slot: 0, frames: 16, channels: 1, value: 1.0 }]);
+        let mut bank = loaded(&[Sample {
+            slot: 0,
+            frames: 16,
+            channels: 1,
+            value: 1.0,
+        }]);
         let absurd = usize::MAX / 8;
 
-        assert_eq!(bank.reserve(absurd), Err(Refusal::OutOfMemory { floats: absurd }));
+        assert_eq!(
+            bank.reserve(absurd),
+            Err(Refusal::OutOfMemory { floats: absurd })
+        );
 
         // And a refused reservation leaves a bank holding nothing, rather than
         // slots still pointing into an arena that is no longer the right size.
-        assert!(!bank.holds_a_sample(0), "a slot survived a refused reservation");
+        assert!(
+            !bank.holds_a_sample(0),
+            "a slot survived a refused reservation"
+        );
     }
 
     #[test]
@@ -402,7 +456,14 @@ pub(in crate::sampler) mod tests {
         // nothing is audible.
         let mut bank = Bank::new();
         let arena = bank.reserve(6).expect("the arena must be granted");
-        arena.copy_from_slice(&[f32::NAN, f32::INFINITY, f32::NEG_INFINITY, 1e-40, -1e-40, 0.5]);
+        arena.copy_from_slice(&[
+            f32::NAN,
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+            1e-40,
+            -1e-40,
+            0.5,
+        ]);
         assert_eq!(bank.commit(1, 0, 6, 1), Ok(()));
 
         assert_eq!(bank.arena(), &[0.0, 0.0, 0.0, 0.0, 0.0, 0.5]);
@@ -428,7 +489,9 @@ pub(in crate::sampler) mod tests {
         // Two tracks on one sound is a kit, not a mistake — which is what a
         // check against overlapping regions would cost. See `commit`.
         let mut bank = Bank::new();
-        bank.reserve(4).expect("the arena must be granted").fill(1.0);
+        bank.reserve(4)
+            .expect("the arena must be granted")
+            .fill(1.0);
 
         assert_eq!(bank.commit(2, 0, 4, 1), Ok(()));
         assert_eq!(bank.commit(5, 0, 4, 1), Ok(()));
@@ -442,15 +505,36 @@ pub(in crate::sampler) mod tests {
         let mut bank = Bank::new();
         bank.reserve(64).expect("the arena must be granted");
 
-        assert_eq!(bank.commit(0, 0, 65, 1), Err(Refusal::DoesNotFit { end: 65, reserved: 64 }));
-        assert_eq!(bank.commit(0, 60, 8, 1), Err(Refusal::DoesNotFit { end: 68, reserved: 64 }));
-        assert_eq!(bank.commit(0, 0, 33, 2), Err(Refusal::DoesNotFit { end: 66, reserved: 64 }));
+        assert_eq!(
+            bank.commit(0, 0, 65, 1),
+            Err(Refusal::DoesNotFit {
+                end: 65,
+                reserved: 64
+            })
+        );
+        assert_eq!(
+            bank.commit(0, 60, 8, 1),
+            Err(Refusal::DoesNotFit {
+                end: 68,
+                reserved: 64
+            })
+        );
+        assert_eq!(
+            bank.commit(0, 0, 33, 2),
+            Err(Refusal::DoesNotFit {
+                end: 66,
+                reserved: 64
+            })
+        );
         assert_eq!(bank.commit(0, 0, 0, 1), Err(Refusal::Empty));
         assert_eq!(bank.commit(0, 0, 8, 0), Err(Refusal::Channels(0)));
         assert_eq!(bank.commit(0, 0, 8, 3), Err(Refusal::Channels(3)));
         assert_eq!(bank.commit(SLOTS, 0, 8, 1), Err(Refusal::NoSuchSlot));
 
-        assert!(!bank.holds_a_sample(0), "a refused slot was declared anyway");
+        assert!(
+            !bank.holds_a_sample(0),
+            "a refused slot was declared anyway"
+        );
 
         // The exact fit is accepted, in either channel count: the bound is the
         // arena's length in floats, and nothing about it prefers a shape.
@@ -487,12 +571,20 @@ pub(in crate::sampler) mod tests {
         // Both halves matter and they pull apart: a reset bank has to read as a
         // fresh one, or the golden tests compare a warmed engine against a cold
         // one — while the memory has to stay, for the reason `reset` gives.
-        let mut bank = loaded(&[Sample { slot: 0, frames: 4_096, channels: 1, value: 1.0 }]);
+        let mut bank = loaded(&[Sample {
+            slot: 0,
+            frames: 4_096,
+            channels: 1,
+            value: 1.0,
+        }]);
         let granted = bank.arena.capacity();
 
         bank.reset();
 
-        assert!(!bank.holds_a_sample(0), "a reset slot still held its sample");
+        assert!(
+            !bank.holds_a_sample(0),
+            "a reset slot still held its sample"
+        );
         assert_eq!(bank.arena().len(), 0);
         assert_eq!(bank.arena.capacity(), granted, "the arena was handed back");
     }

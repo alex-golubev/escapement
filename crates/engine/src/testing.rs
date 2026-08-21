@@ -67,7 +67,12 @@ mod tests {
         // and a statistical test would be a test that sometimes fails.
         let mut rng = Xorshift64::new(1);
         assert_eq!(
-            [rng.next_u64(), rng.next_u64(), rng.next_u64(), rng.next_u64()],
+            [
+                rng.next_u64(),
+                rng.next_u64(),
+                rng.next_u64(),
+                rng.next_u64()
+            ],
             [
                 0x0000_0000_4082_2041,
                 0x1000_4106_0C01_1441,

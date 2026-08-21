@@ -267,7 +267,10 @@ mod tests {
     fn boundary_never_goes_backwards() {
         let t = at(AWKWARD_BPM);
         for pos in 0..200_000u64 {
-            assert!(t.next_beat_boundary(pos) >= pos, "boundary left of pos={pos}");
+            assert!(
+                t.next_beat_boundary(pos) >= pos,
+                "boundary left of pos={pos}"
+            );
         }
     }
 
@@ -399,7 +402,12 @@ mod tests {
     fn tempo_change_is_continuous() {
         let mut t = at(AWKWARD_BPM);
         t.play();
-        for (frames, bpm) in [(1_000u32, 90.0), (12_345, 174.0), (7, 63.5), (99_999, 128.0)] {
+        for (frames, bpm) in [
+            (1_000u32, 90.0),
+            (12_345, 174.0),
+            (7, 63.5),
+            (99_999, 128.0),
+        ] {
             t.advance(frames);
             let before = t.beat_at(t.sample_pos());
             t.set_bpm(bpm);

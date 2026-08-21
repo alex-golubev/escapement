@@ -15,9 +15,13 @@ cargo test                                   # all tests, native target
 cargo test transport::                       # one module
 cargo test clicks_land_exactly_on_beats      # one test
 cargo check
+cargo fmt                                    # rustfmt, default style
+cargo fmt --check                            # what a reviewer would ask
 ./scripts/build-wasm.sh                      # release WASM → web/public/engine.wasm
 ./scripts/build-worklet.sh                   # esbuild bundle → web/public/worklet/processor.js
 ```
+
+**Neither `cargo check` nor `cargo clippy` says anything about formatting**, so run `cargo fmt` before committing. The Rust half had never been formatted at all until 2026-08-21, when one mechanical commit over thirteen files adopted the default style; before it, `--check` reported 186 hunks of code no formatter had ever touched. There is deliberately **no `rustfmt.toml`** — a config preserving the density the code was written at (`use_small_heuristics = "Max"`) was measured at 40 hunks against the default's 186 and turned down anyway, because the point of taking a formatter is to stop owning a style rather than to write one down. A red `--check` is therefore drift, with one exception worth recognising: a new toolchain occasionally reformats something on its own, and that diff belongs to rustfmt rather than to whoever ran it.
 
 TypeScript, from `web/` (pnpm, not npm):
 

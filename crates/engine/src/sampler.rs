@@ -37,7 +37,10 @@ pub struct Sampler {
 
 impl Sampler {
     pub fn new(sample_rate: f64) -> Self {
-        Self { bank: Bank::new(), pool: Pool::new(sample_rate) }
+        Self {
+            bank: Bank::new(),
+            pool: Pool::new(sample_rate),
+        }
     }
 
     /// Make room for a whole kit, and hand back the arena to write it into.
@@ -117,7 +120,10 @@ mod tests {
 
     fn sounding_sampler(frames: usize) -> Sampler {
         let mut sampler = Sampler::new(SR);
-        sampler.reserve(frames).expect("the arena must be granted").fill(1.0);
+        sampler
+            .reserve(frames)
+            .expect("the arena must be granted")
+            .fill(1.0);
         assert_eq!(sampler.commit(0, 0, frames, 1), Ok(()));
         sampler.trigger(0, 1.0);
         sampler
@@ -141,11 +147,22 @@ mod tests {
         // audible, plausible, and impossible to attribute to the reservation
         // that caused it.
         let mut sampler = sounding_sampler(1_000);
-        assert_eq!(summed_left(&mut sampler), 1.0, "the fixture did not leave a voice sounding");
+        assert_eq!(
+            summed_left(&mut sampler),
+            1.0,
+            "the fixture did not leave a voice sounding"
+        );
 
-        sampler.reserve(4).expect("the arena must be granted").fill(1.0);
+        sampler
+            .reserve(4)
+            .expect("the arena must be granted")
+            .fill(1.0);
 
-        assert_eq!(summed_left(&mut sampler), 0.0, "a voice survived the new kit");
+        assert_eq!(
+            summed_left(&mut sampler),
+            0.0,
+            "a voice survived the new kit"
+        );
     }
 
     #[test]
@@ -154,11 +171,22 @@ mod tests {
         // no longer declared.
         let mut sampler = sounding_sampler(1_000);
         let absurd = usize::MAX / 8;
-        assert_eq!(sampler.reserve(absurd), Err(Refusal::OutOfMemory { floats: absurd }));
+        assert_eq!(
+            sampler.reserve(absurd),
+            Err(Refusal::OutOfMemory { floats: absurd })
+        );
 
-        assert_eq!(summed_left(&mut sampler), 0.0, "a voice survived a refused reservation");
+        assert_eq!(
+            summed_left(&mut sampler),
+            0.0,
+            "a voice survived a refused reservation"
+        );
         sampler.trigger(0, 1.0);
-        assert_eq!(summed_left(&mut sampler), 0.0, "a slot survived a refused reservation");
+        assert_eq!(
+            summed_left(&mut sampler),
+            0.0,
+            "a slot survived a refused reservation"
+        );
     }
 
     #[test]
@@ -173,6 +201,10 @@ mod tests {
 
         assert_eq!(summed_left(&mut sampler), 0.0, "a voice survived the reset");
         sampler.trigger(0, 1.0);
-        assert_eq!(summed_left(&mut sampler), 0.0, "a reset slot still held its sample");
+        assert_eq!(
+            summed_left(&mut sampler),
+            0.0,
+            "a reset slot still held its sample"
+        );
     }
 }

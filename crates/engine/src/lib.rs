@@ -225,7 +225,13 @@ pub unsafe extern "C" fn engine_process(instance: *mut Instance, frames: u32, cm
     };
 
     // Destructured because the engine needs three of these slices at once.
-    let Instance { engine, out, cmd, telemetry, max_frames } = instance;
+    let Instance {
+        engine,
+        out,
+        cmd,
+        telemetry,
+        max_frames,
+    } = instance;
     let frames = (frames as usize).min(*max_frames);
     let [out_l, out_r] = out;
 
@@ -299,7 +305,9 @@ pub unsafe extern "C" fn engine_sample_commit(
     };
 
     let refusal =
-        instance.engine.commit_sample(slot as usize, offset as usize, frames as usize, channels);
+        instance
+            .engine
+            .commit_sample(slot as usize, offset as usize, frames as usize, channels);
     match refusal {
         Ok(()) => COMMIT_ACCEPTED,
         Err(refusal) => refusal_code(refusal),
@@ -444,7 +452,10 @@ mod tests {
             assert!(!engine_out_ptr(owned.raw(), 0).is_null());
             assert!(!engine_out_ptr(owned.raw(), 1).is_null());
             for channel in [2, 3, u32::MAX] {
-                assert!(engine_out_ptr(owned.raw(), channel).is_null(), "channel {channel}");
+                assert!(
+                    engine_out_ptr(owned.raw(), channel).is_null(),
+                    "channel {channel}"
+                );
             }
         }
     }
@@ -484,7 +495,11 @@ mod tests {
         // argued at `Bank::reserve` and covered in the browser.
         assert!(!unsafe { engine_bank_reserve(owned.raw(), 1 << 20) }.is_null());
 
-        assert_eq!(before, addresses(&owned), "hot-path addresses must not move");
+        assert_eq!(
+            before,
+            addresses(&owned),
+            "hot-path addresses must not move"
+        );
     }
 
     #[test]
@@ -565,7 +580,11 @@ mod tests {
     #[test]
     fn telemetry_follows_the_transport() {
         let owned = Owned::new(SR, Q);
-        assert_eq!(owned.telemetry(), [0; TELEMETRY_WORDS], "zeros before the first call");
+        assert_eq!(
+            owned.telemetry(),
+            [0; TELEMETRY_WORDS],
+            "zeros before the first call"
+        );
 
         owned.write_commands(&[Record::immediate(Command::Play)]);
         unsafe { engine_process(owned.raw(), Q, 1) };
@@ -586,7 +605,10 @@ mod tests {
     #[test]
     fn capacity_matches_the_exchange_area() {
         let owned = Owned::new(SR, Q);
-        assert_eq!(unsafe { engine_cmd_capacity(owned.raw()) }, CMD_CAPACITY as u32);
+        assert_eq!(
+            unsafe { engine_cmd_capacity(owned.raw()) },
+            CMD_CAPACITY as u32
+        );
     }
 
     #[test]
@@ -680,7 +702,11 @@ mod tests {
         let out = owned.output(0, Q as usize);
         assert!(out[0] > 0.0, "the sample did not sound at all");
         for (frame, value) in KIT.iter().enumerate() {
-            assert_eq!(out[frame], out[0] * value, "frame {frame} is not the sample");
+            assert_eq!(
+                out[frame],
+                out[0] * value,
+                "frame {frame} is not the sample"
+            );
         }
         assert!(
             out[KIT.len()..].iter().all(|&s| s == 0.0),
@@ -703,8 +729,14 @@ mod tests {
         assert!(!arena.is_null(), "the arena was refused");
         unsafe { core::slice::from_raw_parts_mut(arena, ARENA.len()) }.copy_from_slice(&ARENA);
         unsafe {
-            assert_eq!(engine_sample_commit(owned.raw(), 0, 0, 2, 1), COMMIT_ACCEPTED);
-            assert_eq!(engine_sample_commit(owned.raw(), 1, 2, 2, 1), COMMIT_ACCEPTED);
+            assert_eq!(
+                engine_sample_commit(owned.raw(), 0, 0, 2, 1),
+                COMMIT_ACCEPTED
+            );
+            assert_eq!(
+                engine_sample_commit(owned.raw(), 1, 2, 2, 1),
+                COMMIT_ACCEPTED
+            );
         }
 
         // Half velocity, so the product stays under the limiter's threshold and
@@ -720,7 +752,11 @@ mod tests {
 
         let first = struck(0);
         assert!(first > 0.0, "the first slot did not sound at all");
-        assert_eq!(struck(1), first / 4.0, "the second slot did not sound from its own offset");
+        assert_eq!(
+            struck(1),
+            first / 4.0,
+            "the second slot did not sound from its own offset"
+        );
     }
 
     #[test]
@@ -732,12 +768,21 @@ mod tests {
         //
         // The first is not a `Refusal` and shares the code space anyway: from
         // where the number is read it is one more answer this call can give.
-        assert_eq!(unsafe { engine_sample_commit(core::ptr::null_mut(), 0, 0, 8, 1) }, 1);
+        assert_eq!(
+            unsafe { engine_sample_commit(core::ptr::null_mut(), 0, 0, 8, 1) },
+            1
+        );
         assert_eq!(refusal_code(Refusal::OutOfMemory { floats: 1 }), 2);
         assert_eq!(refusal_code(Refusal::NoSuchSlot), 3);
         assert_eq!(refusal_code(Refusal::Channels(3)), 4);
         assert_eq!(refusal_code(Refusal::Empty), 5);
-        assert_eq!(refusal_code(Refusal::DoesNotFit { end: 1, reserved: 0 }), 6);
+        assert_eq!(
+            refusal_code(Refusal::DoesNotFit {
+                end: 1,
+                reserved: 0
+            }),
+            6
+        );
 
         // And each of them arriving through the call that produces it, so the
         // mapping above is not a table checked against itself. Out of memory is
@@ -752,7 +797,10 @@ mod tests {
             assert_eq!(engine_sample_commit(owned.raw(), 0, 0, 4, 3), 4);
             assert_eq!(engine_sample_commit(owned.raw(), 0, 0, 0, 1), 5);
             assert_eq!(engine_sample_commit(owned.raw(), 0, 0, 9, 1), 6);
-            assert_eq!(engine_sample_commit(owned.raw(), 0, 0, 8, 1), COMMIT_ACCEPTED);
+            assert_eq!(
+                engine_sample_commit(owned.raw(), 0, 0, 8, 1),
+                COMMIT_ACCEPTED
+            );
         }
     }
 
@@ -788,7 +836,10 @@ mod tests {
 
         // And nothing is left declared: the old kit is gone rather than
         // pointing into an arena that no longer holds it.
-        assert_eq!(unsafe { engine_sample_commit(owned.raw(), 0, 0, 1, 1) }, COMMIT_DOES_NOT_FIT);
+        assert_eq!(
+            unsafe { engine_sample_commit(owned.raw(), 0, 0, 1, 1) },
+            COMMIT_DOES_NOT_FIT
+        );
         owned.write_commands(&[Record::immediate(Command::TriggerTrack {
             track: 0,
             velocity: 1.0,

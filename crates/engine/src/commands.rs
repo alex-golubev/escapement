@@ -118,13 +118,27 @@ impl Op {
 pub enum Command {
     Play,
     Stop,
-    SetBpm { bpm: f32 },
-    SetTrackGain { track: u8, gain: f32 },
-    SetTrackPan { track: u8, pan: f32 },
-    SetMasterGain { gain: f32 },
+    SetBpm {
+        bpm: f32,
+    },
+    SetTrackGain {
+        track: u8,
+        gain: f32,
+    },
+    SetTrackPan {
+        track: u8,
+        pan: f32,
+    },
+    SetMasterGain {
+        gain: f32,
+    },
     /// Velocity `0.0` is a step that does not sound; there is no separate
     /// on/off flag on the wire, for the reason [`crate::pattern`] gives.
-    SetStep { track: u8, step: u16, velocity: f32 },
+    SetStep {
+        track: u8,
+        step: u16,
+        velocity: f32,
+    },
     ClearPattern,
     /// A switch, travelling in `value` as non-zero for on.
     ///
@@ -140,7 +154,9 @@ pub enum Command {
     ///
     /// In `value` rather than `arg_a`, which would have been the cheaper byte:
     /// the address fields address, and a switch has nothing to address.
-    SetMetronome { enabled: bool },
+    SetMetronome {
+        enabled: bool,
+    },
     /// Strike a track outside the grid — a pad, or the preview of a cell being
     /// edited.
     ///
@@ -151,7 +167,10 @@ pub enum Command {
     /// Velocity rides in `value`, the field a cell already uses for the same
     /// number, so a preview is as hard as the cell it previews and nothing new
     /// goes on the wire for it.
-    TriggerTrack { track: u8, velocity: f32 },
+    TriggerTrack {
+        track: u8,
+        velocity: f32,
+    },
 }
 
 /// A command together with the instant it applies at.
@@ -164,7 +183,10 @@ pub struct Record {
 
 impl Record {
     pub fn immediate(command: Command) -> Self {
-        Self { command, at_sample: 0 }
+        Self {
+            command,
+            at_sample: 0,
+        }
     }
 
     /// Decode a record. The input is untrusted: another thread writes it into
@@ -185,13 +207,28 @@ impl Record {
             Op::Play => Command::Play,
             Op::Stop => Command::Stop,
             Op::SetBpm => Command::SetBpm { bpm: value },
-            Op::SetTrackGain => Command::SetTrackGain { track: arg_a, gain: value },
-            Op::SetTrackPan => Command::SetTrackPan { track: arg_a, pan: value },
+            Op::SetTrackGain => Command::SetTrackGain {
+                track: arg_a,
+                gain: value,
+            },
+            Op::SetTrackPan => Command::SetTrackPan {
+                track: arg_a,
+                pan: value,
+            },
             Op::SetMasterGain => Command::SetMasterGain { gain: value },
-            Op::SetStep => Command::SetStep { track: arg_a, step: arg_b, velocity: value },
+            Op::SetStep => Command::SetStep {
+                track: arg_a,
+                step: arg_b,
+                velocity: value,
+            },
             Op::ClearPattern => Command::ClearPattern,
-            Op::SetMetronome => Command::SetMetronome { enabled: value != 0.0 },
-            Op::TriggerTrack => Command::TriggerTrack { track: arg_a, velocity: value },
+            Op::SetMetronome => Command::SetMetronome {
+                enabled: value != 0.0,
+            },
+            Op::TriggerTrack => Command::TriggerTrack {
+                track: arg_a,
+                velocity: value,
+            },
         };
 
         Some(Self {
@@ -210,7 +247,11 @@ impl Record {
             Command::SetTrackGain { track, gain } => (Op::SetTrackGain, track, 0, gain),
             Command::SetTrackPan { track, pan } => (Op::SetTrackPan, track, 0, pan),
             Command::SetMasterGain { gain } => (Op::SetMasterGain, 0, 0, gain),
-            Command::SetStep { track, step, velocity } => (Op::SetStep, track, step, velocity),
+            Command::SetStep {
+                track,
+                step,
+                velocity,
+            } => (Op::SetStep, track, step, velocity),
             Command::ClearPattern => (Op::ClearPattern, 0, 0, 0.0),
             Command::SetMetronome { enabled } => {
                 (Op::SetMetronome, 0, 0, if enabled { 1.0 } else { 0.0 })
@@ -273,13 +314,42 @@ mod tests {
         (1, Op::Play, Command::Play),
         (2, Op::Stop, Command::Stop),
         (3, Op::SetBpm, Command::SetBpm { bpm: 127.5 }),
-        (4, Op::SetTrackGain, Command::SetTrackGain { track: 5, gain: 0.75 }),
-        (5, Op::SetTrackPan, Command::SetTrackPan { track: 2, pan: -0.5 }),
+        (
+            4,
+            Op::SetTrackGain,
+            Command::SetTrackGain {
+                track: 5,
+                gain: 0.75,
+            },
+        ),
+        (
+            5,
+            Op::SetTrackPan,
+            Command::SetTrackPan {
+                track: 2,
+                pan: -0.5,
+            },
+        ),
         (6, Op::SetMasterGain, Command::SetMasterGain { gain: 1.25 }),
-        (7, Op::SetStep, Command::SetStep { track: 3, step: 513, velocity: 0.6 }),
+        (
+            7,
+            Op::SetStep,
+            Command::SetStep {
+                track: 3,
+                step: 513,
+                velocity: 0.6,
+            },
+        ),
         (8, Op::ClearPattern, Command::ClearPattern),
         (9, Op::SetMetronome, Command::SetMetronome { enabled: true }),
-        (10, Op::TriggerTrack, Command::TriggerTrack { track: 6, velocity: 0.4 }),
+        (
+            10,
+            Op::TriggerTrack,
+            Command::TriggerTrack {
+                track: 6,
+                velocity: 0.4,
+            },
+        ),
     ];
 
     fn round_trip(record: Record) -> Option<Record> {
@@ -289,11 +359,19 @@ mod tests {
     #[test]
     fn every_opcode_decodes_to_the_variant_it_is_numbered_for() {
         for &(byte, op, _) in OPCODES {
-            assert_eq!(Op::from_byte(byte), Some(op), "byte {byte} decoded to something else");
+            assert_eq!(
+                Op::from_byte(byte),
+                Some(op),
+                "byte {byte} decoded to something else"
+            );
             // The enum's own discriminant, checked separately from the mapping
             // above: `from_byte` could agree with this table while `encode`,
             // which writes `op as u8`, disagrees with both.
-            assert_eq!(op as u8, byte, "{op:?} is {} in the enum and {byte} here", op as u8);
+            assert_eq!(
+                op as u8, byte,
+                "{op:?} is {} in the enum and {byte} here",
+                op as u8
+            );
         }
     }
 
@@ -311,7 +389,11 @@ mod tests {
     fn round_trips_every_command() {
         for &(_, _, command) in OPCODES {
             let record = Record::immediate(command);
-            assert_eq!(round_trip(record), Some(record), "{command:?} did not survive");
+            assert_eq!(
+                round_trip(record),
+                Some(record),
+                "{command:?} did not survive"
+            );
         }
     }
 
@@ -331,8 +413,15 @@ mod tests {
             u64::MAX,
         ];
         for at_sample in positions {
-            let record = Record { command: Command::Play, at_sample };
-            assert_eq!(round_trip(record), Some(record), "position {at_sample} did not survive");
+            let record = Record {
+                command: Command::Play,
+                at_sample,
+            };
+            assert_eq!(
+                round_trip(record),
+                Some(record),
+                "position {at_sample} did not survive"
+            );
         }
     }
 
@@ -345,8 +434,16 @@ mod tests {
         // exercised the moment they do. The boundary is 255/256, where a field
         // narrowed to a byte stops agreeing with one that was not.
         for step in [0u16, 1, 15, 255, 256, 257, u16::MAX] {
-            let record = Record::immediate(Command::SetStep { track: 3, step, velocity: 0.5 });
-            assert_eq!(round_trip(record), Some(record), "step {step} did not survive");
+            let record = Record::immediate(Command::SetStep {
+                track: 3,
+                step,
+                velocity: 0.5,
+            });
+            assert_eq!(
+                round_trip(record),
+                Some(record),
+                "step {step} did not survive"
+            );
         }
     }
 
@@ -385,7 +482,11 @@ mod tests {
         // zero, and the array below would be equally true of a field only
         // eight bits wide — which is the one shape of this record no pin here
         // used to rule out.
-        let addressed = Record::immediate(Command::SetStep { track: 3, step: 513, velocity: 0.5 });
+        let addressed = Record::immediate(Command::SetStep {
+            track: 3,
+            step: 513,
+            velocity: 0.5,
+        });
         assert_eq!(
             addressed.encode(),
             [
@@ -429,8 +530,14 @@ mod tests {
         // the `u8`, and `writeCommand` would put it there in the first place,
         // `setUint8` being a modulo. Growing the grid past a field is a change
         // to the record, not to the grid alone.
-        assert!(TRACKS <= usize::from(u8::MAX) + 1, "arg_a cannot address {TRACKS} tracks");
-        assert!(STEPS <= usize::from(u16::MAX) + 1, "arg_b cannot address {STEPS} steps");
+        assert!(
+            TRACKS <= usize::from(u8::MAX) + 1,
+            "arg_a cannot address {TRACKS} tracks"
+        );
+        assert!(
+            STEPS <= usize::from(u16::MAX) + 1,
+            "arg_b cannot address {STEPS} steps"
+        );
     }
 
     #[test]
@@ -482,7 +589,11 @@ mod tests {
         // encoding with an empty field.
         for enabled in [true, false] {
             let record = Record::immediate(Command::SetMetronome { enabled });
-            assert_eq!(round_trip(record), Some(record), "the switch did not survive");
+            assert_eq!(
+                round_trip(record),
+                Some(record),
+                "the switch did not survive"
+            );
         }
 
         // And every other pattern the field can hold, because the far side is
@@ -496,10 +607,18 @@ mod tests {
             Record::decode(&bytes).map(|record| record.command)
         };
         for value in [1.0, -1.0, f32::NAN, f32::INFINITY, 1e-40] {
-            assert_eq!(flagged(value), Some(Command::SetMetronome { enabled: true }), "{value}");
+            assert_eq!(
+                flagged(value),
+                Some(Command::SetMetronome { enabled: true }),
+                "{value}"
+            );
         }
         for value in [0.0, -0.0] {
-            assert_eq!(flagged(value), Some(Command::SetMetronome { enabled: false }), "{value}");
+            assert_eq!(
+                flagged(value),
+                Some(Command::SetMetronome { enabled: false }),
+                "{value}"
+            );
         }
     }
 
@@ -507,14 +626,20 @@ mod tests {
     fn codec_is_transparent_to_non_finite_values() {
         let bytes = Record::immediate(Command::SetBpm { bpm: f32::NAN }).encode();
         match Record::decode(&bytes) {
-            Some(Record { command: Command::SetBpm { bpm }, .. }) => assert!(bpm.is_nan()),
+            Some(Record {
+                command: Command::SetBpm { bpm },
+                ..
+            }) => assert!(bpm.is_nan()),
             other => panic!("expected SetBpm with NaN, got {other:?}"),
         }
     }
 
     #[test]
     fn record_size_matches_declared_constant() {
-        assert_eq!(Record::immediate(Command::Stop).encode().len(), COMMAND_SIZE);
+        assert_eq!(
+            Record::immediate(Command::Stop).encode().len(),
+            COMMAND_SIZE
+        );
         assert_eq!(COMMAND_SIZE, 16);
     }
 }

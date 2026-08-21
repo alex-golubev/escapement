@@ -64,7 +64,10 @@ pub const DEFAULT_PAN: f32 = 0.0;
 /// it. A second copy of `0.707` written into a test would agree with itself
 /// and not with the law.
 pub fn channel_gains(gain: f32, pan: f32) -> [f32; 2] {
-    [gain * ((1.0 - pan) * 0.5).sqrt(), gain * ((1.0 + pan) * 0.5).sqrt()]
+    [
+        gain * ((1.0 - pan) * 0.5).sqrt(),
+        gain * ((1.0 + pan) * 0.5).sqrt(),
+    ]
 }
 
 #[derive(Debug, Clone)]
@@ -85,7 +88,10 @@ impl Mixer {
             track_gain: [DEFAULT_GAIN; TRACKS],
             track_pan: [DEFAULT_PAN; TRACKS],
             channel: std::array::from_fn(|_| {
-                [Smoothed::new(left, sample_rate), Smoothed::new(right, sample_rate)]
+                [
+                    Smoothed::new(left, sample_rate),
+                    Smoothed::new(right, sample_rate),
+                ]
             }),
         }
     }
@@ -252,8 +258,16 @@ mod tests {
             mixer.set_track_pan(track as u8, track as f32 / 10.0 - 0.4);
         }
         for track in 0..TRACKS {
-            assert_eq!(mixer.track_gain(track), track as f32 / 10.0, "track {track}");
-            assert_eq!(mixer.track_pan(track), track as f32 / 10.0 - 0.4, "track {track}");
+            assert_eq!(
+                mixer.track_gain(track),
+                track as f32 / 10.0,
+                "track {track}"
+            );
+            assert_eq!(
+                mixer.track_pan(track),
+                track as f32 / 10.0 - 0.4,
+                "track {track}"
+            );
         }
     }
 
@@ -279,7 +293,10 @@ mod tests {
         let mut mixer = Mixer::new(SR);
         for pan in [-2.0, 2.0, 1e9, -1e9] {
             mixer.set_track_pan(0, pan);
-            assert!((MIN_PAN..=MAX_PAN).contains(&mixer.track_pan(0)), "accepted {pan}");
+            assert!(
+                (MIN_PAN..=MAX_PAN).contains(&mixer.track_pan(0)),
+                "accepted {pan}"
+            );
         }
     }
 
@@ -308,7 +325,11 @@ mod tests {
         // distinction matters at this end: refused would leave 0.5 multiplying
         // every frame, where the UI asked for something inaudible.
         mixer.set_master_gain(1e-40);
-        assert_eq!(mixer.master_gain(), 0.0, "a denormal gain was refused, not flushed");
+        assert_eq!(
+            mixer.master_gain(),
+            0.0,
+            "a denormal gain was refused, not flushed"
+        );
     }
 
     #[test]
@@ -320,8 +341,16 @@ mod tests {
             mixer.set_track_pan(track, 0.5);
         }
         for track in 0..TRACKS {
-            assert_eq!(mixer.track_gain(track), 1.0, "track {track} was written through");
-            assert_eq!(mixer.track_pan(track), 0.0, "track {track} was written through");
+            assert_eq!(
+                mixer.track_gain(track),
+                1.0,
+                "track {track} was written through"
+            );
+            assert_eq!(
+                mixer.track_pan(track),
+                0.0,
+                "track {track} was written through"
+            );
         }
         // Reading past the end answers rather than panicking — and answers
         // silence, which is the direction that matters. A track that does not
@@ -365,7 +394,10 @@ mod tests {
         }
         assert_eq!(channel_gains(1.0, MIN_PAN), [1.0, 0.0]);
         assert_eq!(channel_gains(1.0, MAX_PAN), [0.0, 1.0]);
-        assert_eq!(channel_gains(0.5, DEFAULT_PAN), [0.5 * FRAC_1_SQRT_2, 0.5 * FRAC_1_SQRT_2]);
+        assert_eq!(
+            channel_gains(0.5, DEFAULT_PAN),
+            [0.5 * FRAC_1_SQRT_2, 0.5 * FRAC_1_SQRT_2]
+        );
     }
 
     #[test]
@@ -387,13 +419,21 @@ mod tests {
         let mut mixer = Mixer::new(SR);
         mixer.set_track_pan(0, MAX_PAN);
         mixer.set_track_gain(0, 0.5);
-        assert_eq!(settled(&mut mixer, &one_track(0)), [0.0, 0.5], "the gain re-centred the track");
+        assert_eq!(
+            settled(&mut mixer, &one_track(0)),
+            [0.0, 0.5],
+            "the gain re-centred the track"
+        );
 
         // And the other way round, because one order can be right by accident.
         let mut mixer = Mixer::new(SR);
         mixer.set_track_gain(1, 0.5);
         mixer.set_track_pan(1, MIN_PAN);
-        assert_eq!(settled(&mut mixer, &one_track(1)), [0.5, 0.0], "the pan discarded the gain");
+        assert_eq!(
+            settled(&mut mixer, &one_track(1)),
+            [0.5, 0.0],
+            "the pan discarded the gain"
+        );
     }
 
     #[test]
@@ -404,7 +444,10 @@ mod tests {
 
         let first = mixer.mix_tracks(&one_track(0));
         assert!(first[0] < opening[0], "the level did not move");
-        assert!(first[0] > opening[0] * 0.99, "the level jumped: {opening:?} → {first:?}");
+        assert!(
+            first[0] > opening[0] * 0.99,
+            "the level jumped: {opening:?} → {first:?}"
+        );
     }
 
     #[test]
@@ -423,7 +466,10 @@ mod tests {
             assert_eq!(mixer.mix_tracks(&silence), [0.0, 0.0]);
         }
 
-        assert_eq!(mixer.mix_tracks(&one_track(0)), channel_gains(0.5, DEFAULT_PAN));
+        assert_eq!(
+            mixer.mix_tracks(&one_track(0)),
+            channel_gains(0.5, DEFAULT_PAN)
+        );
     }
 
     #[test]
@@ -458,6 +504,9 @@ mod tests {
         // multiplied by, and a reset that restored one and not the other would
         // leave an engine reporting unity and rendering something else.
         // Snapped, not glided, for the same reason as the master.
-        assert_eq!(mixer.mix_tracks(&one_track(0)), channel_gains(DEFAULT_GAIN, DEFAULT_PAN));
+        assert_eq!(
+            mixer.mix_tracks(&one_track(0)),
+            channel_gains(DEFAULT_GAIN, DEFAULT_PAN)
+        );
     }
 }

@@ -78,7 +78,9 @@ pub fn step_at(transport: &Transport, pos: u64) -> usize {
 /// place it shows is the page, and the place it would be searched for is this
 /// module.
 pub fn position_in_steps(transport: &Transport, pos: u64) -> f32 {
-    let wrapped = transport.division_at(pos, STEPS_PER_BEAT).rem_euclid(STEPS as f64);
+    let wrapped = transport
+        .division_at(pos, STEPS_PER_BEAT)
+        .rem_euclid(STEPS as f64);
     // Wrapped a second time after the narrowing, which is not the first wrap
     // repeated. Just below sixteen an `f32` steps by 1.9e-6, so a position
     // inside half of that rounds *up* to the modulus — and the wrap that exists
@@ -168,7 +170,11 @@ mod tests {
         // number computed one off — or never wrapped — sounds exactly right.
         let transport = at(AWKWARD_BPM);
         for (index, boundary) in boundaries(&transport, STEPS * BARS).into_iter().enumerate() {
-            assert_eq!(step_at(&transport, boundary), index % STEPS, "boundary {index}");
+            assert_eq!(
+                step_at(&transport, boundary),
+                index % STEPS,
+                "boundary {index}"
+            );
         }
     }
 
@@ -196,7 +202,11 @@ mod tests {
         transport.set_bpm(AWKWARD_BPM);
 
         let fourth = next_boundary(&transport, transport.sample_pos());
-        assert_eq!(step_at(&transport, fourth), 4, "the step after a tempo change");
+        assert_eq!(
+            step_at(&transport, fourth),
+            4,
+            "the step after a tempo change"
+        );
         assert!(fourth > third, "the grid stepped backwards");
     }
 
@@ -234,7 +244,10 @@ mod tests {
         let span = transport.sample_of_division((STEPS * BARS) as f64, STEPS_PER_BEAT);
         for pos in (0..span).step_by(97) {
             let word = position_in_steps(&transport, pos);
-            assert!((0.0..STEPS as f32).contains(&word), "{word} is outside the pattern at {pos}");
+            assert!(
+                (0.0..STEPS as f32).contains(&word),
+                "{word} is outside the pattern at {pos}"
+            );
         }
     }
 
@@ -256,9 +269,17 @@ mod tests {
         transport.set_bpm(120.0);
         let pos = 1_999_999_968_750;
 
-        let wide = transport.division_at(pos, STEPS_PER_BEAT).rem_euclid(STEPS as f64);
-        assert!(wide < STEPS as f64, "the fixture must sit inside the pattern");
-        assert_eq!(wide as f32, STEPS as f32, "the fixture must round up when narrowed");
+        let wide = transport
+            .division_at(pos, STEPS_PER_BEAT)
+            .rem_euclid(STEPS as f64);
+        assert!(
+            wide < STEPS as f64,
+            "the fixture must sit inside the pattern"
+        );
+        assert_eq!(
+            wide as f32, STEPS as f32,
+            "the fixture must round up when narrowed"
+        );
 
         assert_eq!(position_in_steps(&transport, pos), 0.0);
     }
@@ -293,7 +314,10 @@ mod tests {
     /// exactly one non-zero frame whose value is its velocity.
     fn impulse_kit() -> Sampler {
         let mut sampler = Sampler::new(SR);
-        sampler.reserve(TRACKS).expect("the arena must be granted").fill(1.0);
+        sampler
+            .reserve(TRACKS)
+            .expect("the arena must be granted")
+            .fill(1.0);
         for slot in 0..TRACKS {
             assert_eq!(sampler.commit(slot, slot, 1, 1), Ok(()), "slot {slot}");
         }
@@ -320,7 +344,10 @@ mod tests {
         strike(&pattern, &mut sampler, 3);
 
         let out = one_frame(&mut sampler);
-        assert_eq!(out[1][0], 0.25, "track 1 did not strike at its own velocity");
+        assert_eq!(
+            out[1][0], 0.25,
+            "track 1 did not strike at its own velocity"
+        );
         assert_eq!(out[6][0], 0.5, "track 6 did not strike at its own velocity");
         for track in [0, 2, 3, 4, 5, 7] {
             assert_eq!(out[track][0], 0.0, "track {track} struck without a cell");
@@ -340,6 +367,9 @@ mod tests {
         strike(&pattern, &mut sampler, 5);
 
         let out = one_frame(&mut sampler);
-        assert!(out.iter().all(|track| track == &[0.0, 0.0]), "an empty step sounded");
+        assert!(
+            out.iter().all(|track| track == &[0.0, 0.0]),
+            "an empty step sounded"
+        );
     }
 }
