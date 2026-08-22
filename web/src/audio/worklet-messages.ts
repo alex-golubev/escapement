@@ -93,7 +93,11 @@ export interface KitRefusedMessage {
 }
 
 export type WorkletMessage =
-  ReadyMessage | FailedMessage | FirstQuantumMessage | KitLoadedMessage | KitRefusedMessage
+  | ReadyMessage
+  | FailedMessage
+  | FirstQuantumMessage
+  | KitLoadedMessage
+  | KitRefusedMessage
 
 /**
  * One sample, interleaved, as the page decoded it.

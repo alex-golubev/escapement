@@ -50,6 +50,22 @@ if grep -nE '^[[:space:]]*(import|export)[[:space:]]' "$destination"; then
     exit 1
 fi
 
+# The same failure by the other door, and this one arrives here from ESLint.
+# `no-restricted-syntax` used to ban `import()` under src/worklet/ by AST
+# selector; Biome has no rule taking one, so the check moved to the artifact.
+# That is the better place for it anyway — the bundle is what has no module
+# loader behind it, and the bundle is what this reads. It also now covers a
+# dynamic import arriving through a dependency, which the source rule never saw.
+#
+# esbuild rewrites a dynamic import of a bundled module into a resolved promise,
+# so what survives to here is the kind that would actually be evaluated at
+# runtime: a specifier esbuild could not resolve, left for a loader that does
+# not exist.
+if grep -nE '\bimport[[:space:]]*\(' "$destination"; then
+    echo "Bundle contains a dynamic import — there is no module loader to resolve it" >&2
+    exit 1
+fi
+
 # registerProcessor is the whole point of the file: without that call the module
 # loads cleanly and the AudioWorkletNode constructor then fails with an
 # unregistered-name error that says nothing about why.

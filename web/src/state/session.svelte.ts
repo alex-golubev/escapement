@@ -551,7 +551,6 @@ export function createSession(deps: SessionDeps = {}): Session {
    * a subscription belongs to whatever mounted it, and the loop stopping is
    * already the only thing that could reach it.
    */
-  // eslint-disable-next-line svelte/prefer-svelte-reactivity -- reactive is what this deliberately is not; see above
   const listeners = new Set<(reading: Telemetry) => void>()
   let publishedAt = Number.NEGATIVE_INFINITY
 

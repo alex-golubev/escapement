@@ -1019,7 +1019,8 @@ function rig(options: { hold?: boolean; holdKit?: boolean } = {}) {
     reading: () => tick !== null,
     frame: (now?: number): void => {
       if (tick === null) throw new Error('no frame loop is running')
-      tick(now ?? (clock += 1_000))
+      if (now === undefined) clock += 1_000
+      tick(now ?? clock)
     },
     publish: (next: Telemetry | null): void => {
       reading = next

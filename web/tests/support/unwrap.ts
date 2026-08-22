@@ -8,7 +8,8 @@
 // instead of letting an assertion run against the wrong branch.
 
 type Fallible<T, E> =
-  { readonly ok: true; readonly value: T } | { readonly ok: false; readonly error: E }
+  | { readonly ok: true; readonly value: T }
+  | { readonly ok: false; readonly error: E }
 
 export function unwrapValue<T, E>(result: Fallible<T, E>): T {
   if (!result.ok) throw new Error(`expected success, got ${JSON.stringify(result.error)}`)

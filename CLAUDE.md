@@ -29,14 +29,16 @@ TypeScript, from `web/` (pnpm, not npm):
 pnpm dev                                     # Vite, with the COOP/COEP headers
 pnpm test                                    # vitest, one run
 pnpm test:watch
-pnpm lint                                    # eslint, type-aware
-pnpm format                                  # prettier --write
-pnpm check                                   # svelte-check + tsc over all three projects
-pnpm format:check                            # prettier --check; not part of `check`
+pnpm lint                                    # biome lint
+pnpm format                                  # biome format --write
+pnpm check                                   # tsc over all three projects
+pnpm format:check                            # biome format; not part of `check`
 pnpm build:worklet                           # alias for ../scripts/build-worklet.sh
 ```
 
-**`pnpm check` and `pnpm lint` say nothing about formatting**, so run `pnpm format` before committing — nine files had drifted by the time anyone looked. One caveat found doing that: prettier is not idempotent on a method signature returning an inline object type (`fetch(url): Promise<{ … }>`), so `--write` produces output `--check` then rejects. The fix is to name the type rather than to fight the formatter.
+**`pnpm check` and `pnpm lint` say nothing about formatting**, so run `pnpm format` before committing — nine files had drifted by the time anyone looked. `biome check --write .` does lint fixes and formatting in one pass and is the shorter way to say both.
+
+Two things about this toolchain are worth knowing before touching it. **Nothing checks components**, and the reason is written out at `include` in `web/tsconfig.app.json`: `svelte-check` wants the TypeScript 6 compiler API and this package is on 7, `tsc` reads no `.svelte` either way, and Biome reads only the `<script>` block — so it was excluded rather than left to report every markup-only binding as unused. All three of those go away with the components themselves. And **one lint rule has no home in Biome**: ESLint banned `import()` under `src/worklet/` through an AST selector, and the check now lives in `scripts/build-worklet.sh` as a grep over the built bundle — which is the stronger place for it, since the bundle is what has no module loader behind it.
 
 `scripts/build-wasm.sh` must be used instead of a bare `cargo build`: it forces the build from the workspace root (see profiles below), checks that the `wasm32-unknown-unknown` target is installed, and verifies via `node` that the compiled module still exports every ABI function plus `memory`. **When adding or renaming an exported ABI function, update the `expected` array in that script** — a lost `#[unsafe(no_mangle)]` otherwise produces a successful build and a silently useless module.
 
@@ -139,7 +141,7 @@ Transport position is `u64` end to end, carried as two `u32` words (lo/hi) in bo
 - `ui/paint.ts`, `ui/format.ts` — and therefore everything those files would otherwise have contained that a test could call. Both take contexts and values narrowed to what they touch, so the fakes beside them are honest rather than cast.
 - `app.css` — the styles that are not any one component's: the colour roles, one spacing scale, the two measures, the panel and the framed control. What earns a place here is what a second copy of would itself be the defect — the framed button had five, one per component, agreeing by coincidence rather than by anything, and the first of them to be adjusted would have made the page look accidental with nothing anywhere to report it. A component reaches for a token instead of a value, and keeps only its own layout and sizes.
 
-**Failures are values, not exceptions.** Forced, not stylistic: the processor constructor cannot let an exception escape — it would reach the page as a bare `processorerror` event carrying no reason at all — and on the page every failure presents identically, as silence, so the case has to survive to somewhere it can be described. Each failure that has to reach a person has a tagged union and a `describe*` function whose `switch` has no `default` — three of them now: bring-up and kit loading on the audio side, starting on the page's. `@typescript-eslint/switch-exhaustiveness-check` is on, and each union is pinned again by a test keyed on `Record<Kind, …>`, so adding a case fails to compile in two places at once.
+**Failures are values, not exceptions.** Forced, not stylistic: the processor constructor cannot let an exception escape — it would reach the page as a bare `processorerror` event carrying no reason at all — and on the page every failure presents identically, as silence, so the case has to survive to somewhere it can be described. Each failure that has to reach a person has a tagged union and a `describe*` function whose `switch` has no `default` — three of them now: bring-up and kit loading on the audio side, starting on the page's. Biome's `useExhaustiveSwitchCases` is on, and each union is pinned again by a test keyed on `Record<Kind, …>`, so adding a case fails to compile in two places at once.
 
 `worklet/engine.ts` and `audio/result.ts` each declare their own `Result` rather than sharing one. They never exchange these values — different threads, neither calls the other — so a shared type would link them by name without linking anything real. The tests unwrap both through one structural helper, which is the only identity that has to hold. The page's went into a file of its own the moment a second page module needed it; the worklet's has not, because bring-up is still where a reader would look for it.
 

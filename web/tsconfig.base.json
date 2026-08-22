@@ -42,8 +42,8 @@
      *
      * The check it would have made mandatory — `outputs[0] === undefined` in
      * render.ts — is held by a test instead, which is stronger than either
-     * answer here. See the note at that line, and `no-unnecessary-condition` in
-     * eslint.config.js, which would delete it.
+     * answer here. See the note at that line, and `noUnnecessaryConditions` in
+     * biome.jsonc, which would delete it and is turned off there for saying so.
      */
     "noUncheckedIndexedAccess": false
   }

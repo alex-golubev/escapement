@@ -1,6 +1,0 @@
-# Build artifacts, reproduced in full by their scripts.
-dist/
-public/engine.wasm
-public/worklet/
-
-pnpm-lock.yaml

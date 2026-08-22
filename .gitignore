@@ -23,3 +23,5 @@ web/public/worklet/processor.js
 # owed neither.
 PLAN.md
 FORMAT.md
+MIGRATION.md
+.migration-probes/

@@ -19,5 +19,5 @@
     "allowJs": true,
     "checkJs": true
   },
-  "include": ["vite.config.ts", "eslint.config.js", "svelte.config.js", "plugins/**/*.ts"]
+  "include": ["vite.config.ts", "svelte.config.js", "plugins/**/*.ts"]
 }

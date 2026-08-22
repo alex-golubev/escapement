@@ -1,0 +1,144 @@
+{
+  "$schema": "./node_modules/@biomejs/biome/configuration_schema.json",
+
+  // One tool where there were two. Biome formats and lints; what it cannot do
+  // is type-aware linting in the sense `typescript-eslint` meant — it infers
+  // types itself rather than asking a compiler. That is the trade this file
+  // records: the rules below are the ones that survived the move, and the one
+  // that did not is named at the bottom.
+
+  // Generated, never authored: `dist/` is Vite output, `public/worklet/` is the
+  // esbuild bundle of src/worklet/processor.ts, and `engine.wasm` is the Rust
+  // engine. All three are reproduced in full by their scripts.
+  //
+  // `.svelte` is excluded for a different reason, and a temporary one: Biome
+  // reads the `<script>` block and nothing else, so every binding a component
+  // uses only in its markup reads as unused — it offered to delete `session`
+  // out of `Transport.svelte`. Svelte is on its way out of this repository
+  // entirely, so the exclusion goes when the last component does, rather than
+  // being worked around now.
+  "files": {
+    "includes": ["**", "!dist", "!public/worklet", "!public/engine.wasm", "!**/*.svelte"]
+  },
+
+  // These four values are not Biome's defaults. They are what `.prettierrc`
+  // said, carried over so that dropping Prettier does not also reformat every
+  // file in the repository — a tooling change and a whitespace change in one
+  // diff is two changes nobody can review apart. Biome's own defaults are tabs
+  // and double quotes.
+  "formatter": {
+    "indentStyle": "space",
+    "indentWidth": 2,
+    "lineWidth": 96
+  },
+  "javascript": {
+    "formatter": {
+      "semicolons": "asNeeded",
+      "quoteStyle": "single"
+    }
+  },
+
+  // Off, deliberately. Biome would sort every import block on `--write`, and
+  // that churn has nothing to do with why this file exists. Worth turning on
+  // later, on its own commit.
+  "assist": {
+    "actions": {
+      "source": { "organizeImports": "off" }
+    }
+  },
+
+  "linter": {
+    "rules": {
+      "preset": "recommended",
+
+      "correctness": {
+        // `process(_inputs, outputs)` cannot drop its first parameter: the
+        // signature is Web Audio's, not ours. Biome exempts a leading
+        // underscore by default, which is the convention already in the code.
+        "noUnusedVariables": "error",
+        "noUnusedFunctionParameters": "error"
+      },
+
+      "style": {
+        // The codebase already writes `import type` throughout; this keeps it
+        // that way. It matters more than style here — `verbatimModuleSyntax` is
+        // on, so a value import of a type-only module survives into the emitted
+        // worklet bundle.
+        "useImportType": "error"
+      },
+
+      "suspicious": {
+        // Off, and the decision predates Biome — ESLint refused the same rule
+        // under the name `no-unnecessary-condition`, which is why this package
+        // took `recommendedTypeChecked` rather than the strict preset. The rule
+        // reads a guard against input the type system was never told about as
+        // dead code, and it has exactly one target here: the check on the
+        // host's output array in `renderQuantum`. That check is right, for a
+        // reason no type in this codebase expresses — what crosses a thread
+        // boundary is input, not a promise. Biome leaves it off by default too,
+        // but only because its `types` domain is not enabled; said out loud
+        // here so that turning that domain on does not quietly re-open it.
+        "noUnnecessaryConditions": "off"
+      },
+
+      "nursery": {
+        // The load-bearing one. Both failure unions are switched over without a
+        // `default`, so that a new case has to be described before it compiles.
+        // Still in nursery, so its name and behaviour can move under us; it is
+        // pinned by the spec beside each union either way, which is why taking
+        // an unstable rule is affordable here.
+        "useExhaustiveSwitchCases": "error"
+      }
+    }
+  },
+
+  "overrides": [
+    {
+      // What ships is what sits under `src/`, minus the specs beside it — and
+      // that is meant to be readable from the path rather than worked out. Half
+      // of it already is: a support file that reaches for `node:` fails
+      // `pnpm check`, because the specs pull it into the app project and that
+      // project is told about no Node types at all. This is the other half,
+      // which nothing checked. An import of `tests/` from a module that ships
+      // compiles, lints, and bundles the fake into the page.
+      "includes": ["src/**", "!**/*.spec.ts"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": ["**/tests/**"],
+                    "message": "tests/ holds fakes and helpers. Only a spec may import them; nothing that ships may."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+
+    {
+      // The audio thread. Specs sit in this directory too but do not run there,
+      // and the rule is justified by where the code executes: a `console.log`
+      // left in `process` runs 375 times a second and allocates every time. The
+      // symptom is a dropout, not a slow frame.
+      //
+      // Its companion did not survive the move. ESLint banned a dynamic import
+      // here through `no-restricted-syntax`, and Biome has no rule taking an
+      // AST selector. That check now lives in `scripts/build-worklet.sh` as a
+      // grep over the built bundle, which is the stronger place for it: the
+      // bundle is what has no module loader behind it, and it is the bundle the
+      // check now reads.
+      "includes": ["src/worklet/**", "!**/*.spec.ts"],
+      "linter": {
+        "rules": {
+          "suspicious": { "noConsole": "error" }
+        }
+      }
+    }
+  ]
+}

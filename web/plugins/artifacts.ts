@@ -36,7 +36,7 @@ const engineSources = path.join(repoRoot, 'crates/engine/src')
 // Vitest applies this config too, and neither plugin has anything to do there:
 // the suites import TypeScript directly and read `engine.wasm` off disk, so a
 // rebuild would only add a way for an unrelated failure to fail the tests.
-const underTest = process.env['VITEST'] !== undefined
+const underTest = process.env.VITEST !== undefined
 
 /** The stderr of a failed child process, or whatever else went wrong. */
 function failureText(error: unknown): string {

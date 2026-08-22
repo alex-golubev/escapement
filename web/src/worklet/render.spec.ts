@@ -50,7 +50,11 @@ describe('renderQuantum', () => {
     // `engine_process` anyway would advance the transport against silence
     // nobody asked for, and the drift would never be recovered.
     let calls = 0
-    const { state, writer } = openedEngine({ engine_process: () => void (calls += 1) })
+    const { state, writer } = openedEngine({
+      engine_process: () => {
+        calls += 1
+      },
+    })
     writer.send({ op: 'play' })
 
     expect(renderQuantum(state, [])).toBe(0)

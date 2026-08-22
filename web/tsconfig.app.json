@@ -4,6 +4,15 @@
    * next to their modules. Extends two bases — the Svelte one for how `.svelte`
    * files are compiled and resolved, and ours for how strictly all of it is
    * checked. Ours comes second, so it wins where they overlap.
+   *
+   * `.svelte` is not in `include`, and the omission is load-bearing rather than
+   * an oversight: nothing checks components any more. `svelte-check` drives
+   * `svelte2tsx`, which wants the TypeScript 6 compiler API, and this package is
+   * on 7 — it refuses to start rather than degrading. `tsc` reads no component
+   * either way; listing them here bought only a line that looked like coverage,
+   * measured by planting a type error in `Meters.svelte` and watching `tsc`
+   * pass. Components are checked by nobody until they are `.tsx`, and this
+   * comment goes when the last one is.
    */
   "extends": ["@tsconfig/svelte/tsconfig.json", "./tsconfig.base.json"],
   "compilerOptions": {
@@ -18,5 +27,5 @@
     "allowJs": true,
     "checkJs": true
   },
-  "include": ["src/**/*.ts", "src/**/*.js", "src/**/*.svelte"]
+  "include": ["src/**/*.ts", "src/**/*.js"]
 }
