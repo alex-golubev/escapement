@@ -27,8 +27,9 @@ import { probe, probeMismatch } from '../../tests/support/ring-harness'
 import { drainCommands, publishRenderedFrames, publishTelemetry } from './exchange'
 
 /**
- * Records in the long run below, and the number §6.2 names. It laps the
- * 1024-record ring some ninety-eight times.
+ * Records in the long run below. Chosen as a distance rather than a size: it
+ * laps the 1024-record ring some ninety-eight times, so the run crosses the
+ * wrap of a slot index over and over instead of once.
  */
 const RUN_LENGTH = 100_000
 
@@ -131,7 +132,7 @@ describe('drainCommands', () => {
   })
 
   it('carries a hundred thousand records through in order, across the wrap of the index', () => {
-    // The run §6.2 asks for, and single-threaded on purpose: what it covers is
+    // The long run, and single-threaded on purpose: what it covers is
     // the arithmetic over distance, not the ordering between two threads, and
     // the two want opposite things from a test. This one is deterministic and
     // reproducible; the ordering is `tests/ring-concurrency.spec.ts`, which is
@@ -157,8 +158,8 @@ describe('drainCommands', () => {
       // A burst that sweeps every size from 1 to 512 against a drain of 256, so
       // the ring spends the run swinging between empty and full instead of
       // settling at one of them. Deterministic — a random burst size would make
-      // a failure impossible to reproduce, which §9 rules out for the engine and
-      // which is no more welcome here.
+      // a failure impossible to reproduce, and a red run nobody can re-run is
+      // indistinguishable from noise, which is how it would end up being read.
       const burst = 1 + ((quantum * 137) % 512)
       for (let n = 0; n < burst && sent < RUN_LENGTH; n += 1) {
         attempts += 1

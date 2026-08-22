@@ -73,7 +73,7 @@ import {
 import type { RingWorkerData, RingWorkerMessage } from './support/ring-harness'
 
 /**
- * The run length §6.2 asks for. Long enough to lap the 1024-record ring some
+ * The run length. Long enough to lap the 1024-record ring some
  * ninety-eight times, which is what puts the two threads across a slot boundary
  * again and again rather than once.
  */
