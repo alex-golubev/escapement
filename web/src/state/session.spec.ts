@@ -7,16 +7,16 @@
 // reason. The rig at the bottom is local to this file: it has one consumer, and
 // a fake with one consumer belongs beside it.
 
+import { Effect } from 'effect'
 import { describe, expect, it } from 'vitest'
 
 import { READOUT_INTERVAL_MS, createSession } from './session.svelte'
 import type { FrameLoop, IntervalLoop, KitFetch } from './session.svelte'
 import type { EngineEvents, EngineHandle, StartFailure } from '../audio/host'
-import { describeKitFailure } from '../audio/kit'
+import { KitUnreachable, describeKitFailure } from '../audio/kit'
 import type { KitFailure } from '../audio/kit'
 import { STEPS, TRACKS } from '../audio/protocol'
 import type { Command } from '../audio/protocol'
-import type { Result } from '../audio/result'
 import type { Telemetry } from '../audio/telemetry'
 import type { KitSample, WorkletMessage } from '../audio/worklet-messages'
 
@@ -576,7 +576,7 @@ describe('createSession', () => {
 
   it('shows a kit that never got as far as the audio thread', async () => {
     const harness = rig()
-    const failure: KitFailure = { kind: 'unreachable', url: '/kit/kick.wav', detail: '404' }
+    const failure: KitFailure = new KitUnreachable({ url: '/kit/kick.wav', detail: '404' })
     harness.refuseKit(failure)
 
     await harness.start()
@@ -591,7 +591,7 @@ describe('createSession', () => {
     // metronome still sounds, so tearing the engine down over it would take away
     // more than was lost.
     const harness = rig()
-    harness.refuseKit({ kind: 'unreachable', url: '/kit/kick.wav', detail: '404' })
+    harness.refuseKit(new KitUnreachable({ url: '/kit/kick.wav', detail: '404' }))
 
     await harness.start()
 
@@ -958,7 +958,10 @@ function rig(options: { hold?: boolean; holdKit?: boolean } = {}) {
   /** One sample, standing in for a decoded file. Its contents are never read. */
   const KIT: readonly KitSample[] = [{ data: new Float32Array([1, 0]), channels: 1 }]
   const handed: (readonly KitSample[])[] = []
-  let kitResult: Result<readonly KitSample[], KitFailure> = { ok: true, value: KIT }
+  // An Effect rather than a value the fake resolves to, because that is the
+  // currency `KitFetch` is in now — a promise-returning fake would be testing
+  // the session against a shape nothing else hands it.
+  let kitEffect: Effect.Effect<readonly KitSample[], KitFailure> = Effect.succeed(KIT)
 
   let releaseKit = (): void => undefined
   const heldKit = new Promise<void>((resolve) => {
@@ -967,10 +970,11 @@ function rig(options: { hold?: boolean; holdKit?: boolean } = {}) {
     }
   })
 
-  const kit: KitFetch = async () => {
-    if (options.holdKit === true) await heldKit
-    return kitResult
-  }
+  const kit: KitFetch = () =>
+    Effect.gen(function* () {
+      if (options.holdKit === true) yield* Effect.promise(() => heldKit)
+      return yield* kitEffect
+    })
 
   const frames: FrameLoop = (run) => {
     tick = run
@@ -1057,7 +1061,7 @@ function rig(options: { hold?: boolean; holdKit?: boolean } = {}) {
       releaseKit()
     },
     refuseKit: (failure: KitFailure): void => {
-      kitResult = { ok: false, error: failure }
+      kitEffect = Effect.fail(failure)
     },
     settle,
     /**

@@ -10,6 +10,19 @@
 // there: the two sides never exchange these values, so one type across both
 // would link them by name without linking anything real.
 
+/**
+ * Not Effect's `Result`, which is a different type with this name, the same
+ * parameter order and a shape that is not this one — `_tag` with `success` and
+ * `failure` where this has `ok` with `value` and `error`. Both are in reach of
+ * `audio/`: `Effect.result` produces theirs, and `audio/kit.ts` already returns
+ * Effects. Import one or the other deliberately; the two do not interchange and
+ * nothing but the field names will say so.
+ *
+ * This one is on its way out. `audio/kit.ts` no longer uses it, and `host.ts`
+ * is what still does — when that goes to Effect, what remains here is
+ * `messageOf`, and the worklet's own copy of these three names stays where it
+ * is, because the worklet never takes Effect at all.
+ */
 export type Result<T, E> =
   | { readonly ok: true; readonly value: T }
   | { readonly ok: false; readonly error: E }

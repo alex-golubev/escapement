@@ -15,13 +15,13 @@
 // read by a template, so they are state; `stopFrames` is read by handlers alone,
 // so it is a plain `let`.
 
+import { Effect } from 'effect'
 import { describeStartFailure, startEngine } from '../audio/host'
 import type { EngineHandle } from '../audio/host'
-import { browserKitSource, describeKitFailure, fetchKit } from '../audio/kit'
+import { browserKit, describeKitFailure } from '../audio/kit'
 import type { KitFailure } from '../audio/kit'
 import { STEPS, TRACKS } from '../audio/protocol'
 import type { Command } from '../audio/protocol'
-import type { Result } from '../audio/result'
 import { renderDrift } from '../audio/telemetry'
 import type { RenderSample, Telemetry } from '../audio/telemetry'
 import type { KitSample, WorkletMessage } from '../audio/worklet-messages'
@@ -249,10 +249,18 @@ const browserIntervals: IntervalLoop = (tick) => {
   }
 }
 
-/** Where a kit comes from. A parameter for the same reason `start` is. */
+/**
+ * Where a kit comes from. A parameter for the same reason `start` is.
+ *
+ * An Effect and not a promise, because `audio/kit.ts` describes the load rather
+ * than performing it, and this is the side that performs it. The boundary is
+ * here on purpose: a fake handed in by a test is then in the same currency as
+ * the real one, which a promise-returning fake against an Effect-returning
+ * module would not be.
+ */
 export type KitFetch = (
   context: BaseAudioContext,
-) => Promise<Result<readonly KitSample[], KitFailure>>
+) => Effect.Effect<readonly KitSample[], KitFailure>
 
 /** What a session is driven by, so that a test can drive it by something else. */
 export interface SessionDeps {
@@ -428,8 +436,10 @@ export function createSession(deps: SessionDeps = {}): Session {
   const frames = deps.frames ?? browserFrames
   const intervals = deps.intervals ?? browserIntervals
   // Built from the context that will play them, because that is what decides
-  // the rate `decodeAudioData` resamples to.
-  const collectKit = deps.kit ?? ((context) => fetchKit(browserKitSource(context)))
+  // the rate `decodeAudioData` resamples to. `browserKit` has already provided
+  // the two services the load needs, so what arrives here needs nothing — which
+  // is what lets a test hand in a plain Effect instead of a set of layers.
+  const collectKit = deps.kit ?? browserKit
 
   /**
    * Everything a successful start produced, in one holder. Non-null exactly
@@ -737,7 +747,11 @@ export function createSession(deps: SessionDeps = {}): Session {
     kit = 'loading'
     kitFailure = null
 
-    const fetched = await collectKit(live.context)
+    // `Effect.result` moves the two failures out of the error channel and into
+    // the value, which is what lets the guard below sit between the load and
+    // the writes. Handled inside `Effect.match` instead, that one check would
+    // have had to be written twice, once per branch.
+    const fetched = await Effect.runPromise(Effect.result(collectKit(live.context)))
 
     // The engine can be given back while a kit is in the air — a failed start
     // retried, or the stop button. Writing the outcome then would put a reading
@@ -745,15 +759,15 @@ export function createSession(deps: SessionDeps = {}): Session {
     // has already cleared.
     if (handle !== live) return
 
-    if (!fetched.ok) {
+    if (fetched._tag === 'Failure') {
       kit = 'failed'
-      kitFailure = describeKitFailure(fetched.error)
+      kitFailure = describeKitFailure(fetched.failure)
       return
     }
 
     // Stays `loading` until the worklet answers: what has happened so far is
     // that the page has the samples, which is not what the word is about.
-    live.loadKit(fetched.value)
+    live.loadKit(fetched.success)
   }
 
   /**
