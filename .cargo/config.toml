@@ -1,0 +1,11 @@
+[target.wasm32-unknown-unknown]
+rustflags = [
+    # 128-bit only. Autovectorization is unreliable, so hot loops need explicit
+    # core::arch::wasm32 intrinsics.
+    "-C", "target-feature=+simd128",
+
+    # SharedArrayBuffer needs atomics. Enable together with nightly + build-std:
+    #   "-C", "target-feature=+atomics,+bulk-memory,+mutable-globals",
+    # and pass -Z build-std=std,panic_abort to the build.
+    # Left off so the skeleton builds on stable.
+]

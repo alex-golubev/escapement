@@ -1,0 +1,10 @@
+[package]
+name = "escapement-app"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+escapement-model.workspace = true
+escapement-render.workspace = true
+# leptos = "*"

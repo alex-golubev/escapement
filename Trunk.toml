@@ -1,0 +1,16 @@
+[build]
+target = "web/index.html"
+dist = "dist"
+
+[watch]
+ignore = ["dist", "target"]
+
+[serve]
+port = 8080
+open = false
+
+# Without these there is no SharedArrayBuffer, and the failure looks like broken
+# wasm. Production hosting must send the same headers.
+[serve.headers]
+"Cross-Origin-Opener-Policy" = "same-origin"
+"Cross-Origin-Embedder-Policy" = "require-corp"

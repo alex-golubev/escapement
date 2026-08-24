@@ -1,0 +1,13 @@
+# Rust
+/target
+**/*.rs.bk
+
+# Trunk
+/dist
+
+# IDE
+.idea/
+.vscode/
+
+# macOS
+.DS_Store
