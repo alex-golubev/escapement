@@ -63,10 +63,6 @@ jobs:
       - name: No allocator on the audio thread
         run: python3 tools/check-worklet-module.py target/wasm32-unknown-unknown/release/escapement_worklet.wasm
 
-      # A comment repeating ARCHITECTURE.md or CLAUDE.md is a second copy, and
-      # the two go stale apart. Point at the section instead.
-      - name: A reason is written down once
-        run: python3 tools/check-comment-drift.py
 
   # Undefined behaviour in the two places this project has any: the protocol's
   # one unsafe module, and the worklet's statics — plus whether the deliberate

@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Reading a built wasm module — what both checks beside this file need.
+"""Reading a built wasm module — what the two wasm checks beside this file need.
 
-Here rather than copied into each of them: the two ask different questions of
-the same bytes, and a section walk that drifted between them would leave one of
-the two answering about a module it had parsed differently.
+Here rather than copied into each: they ask different questions of the same
+bytes, and a section walk that drifted between them would leave one of the two
+answering about a module it had parsed differently. Both exist so that a wrong
+answer does not reach the browser, which is what makes that dangerous.
 
 Not a module for anything outside this directory. Both callers are run as
 `python3 tools/<name>.py`, which is what puts this directory first on the path.

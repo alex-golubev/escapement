@@ -27,7 +27,6 @@ Usage:  tools/check-worklet-module.py <file.wasm> [<file.wasm> ...]
 
 import sys
 
-from report import advise
 from wasm import sections, uleb
 
 SECTION_CUSTOM = 0
@@ -85,14 +84,14 @@ def main(argv):
             print(f"ok   {path}: no allocator")
 
     if allocates:
-        advise(
-            "Something on the audio path allocates (ARCHITECTURE.md §1). It is",
-            "as likely to be a dependency allocating inside itself as our own",
-            "code: build with `--target wasm32-unknown-unknown --release`, then",
-            "read the name section for what pulled `dlmalloc` in.",
+        print(
+            "\nSomething on the audio path allocates (ARCHITECTURE.md §1). It is\n"
+            "as likely to be a dependency allocating inside itself as our own\n"
+            "code: build with `--target wasm32-unknown-unknown --release`, then\n"
+            "read the name section for what pulled `dlmalloc` in."
         )
     if unchecked:
-        advise("Symbol names were stripped from the module. Check `strip` in Cargo.toml.")
+        print("\nSymbol names were stripped. Check `strip` in Cargo.toml.")
     return 1 if (allocates or unchecked) else 0
 
 

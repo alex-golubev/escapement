@@ -24,7 +24,6 @@ cargo build --workspace --target wasm32-unknown-unknown --release
 python3 tools/check-shared-memory.py target/wasm32-unknown-unknown/release/*.wasm
 python3 tools/check-shared-memory.py --fixed target/wasm32-unknown-unknown/release/escapement_worklet.wasm
 python3 tools/check-worklet-module.py target/wasm32-unknown-unknown/release/escapement_worklet.wasm
-python3 tools/check-comment-drift.py            # is a reason written down twice
 
 tools/miri.sh -p escapement-protocol -p escapement-worklet   # undefined behaviour, data races
 RUSTFLAGS="--cfg loom" cargo test -p escapement-protocol   # memory orderings
@@ -160,12 +159,10 @@ So a comment does not carry the number that justified a choice already made, doe
 not narrate the change that introduced it, and does not retell a section it could
 point at — the `ARCHITECTURE.md §3` idiom is there for that.
 
-`tools/check-comment-drift.py` gates the half a script can check: prose living in
-both a comment and one of the two documents. Two copies part company silently,
-and the stale one is the copy people read while working. The density and the
-longest blocks it prints after that gate nothing — there is no honest threshold
-for a judgement, and the number is there so "are we growing" is one command
-rather than a fresh script. It was 39% the day the rule was written.
+Nothing checks this. A script can catch the narrowest corner of it — prose
+copied word for word out of one of the documents — and that is not where the
+weight is: the essays that grow are restatements, and a check that reads as
+coverage while missing them is worse than none.
 
 ## Architecture
 

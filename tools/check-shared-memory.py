@@ -19,7 +19,6 @@ Usage:  tools/check-shared-memory.py [--fixed] <file.wasm> [<file.wasm> ...]
 
 import sys
 
-from report import advise
 from wasm import sections, uleb
 
 PAGE = 64 * 1024
@@ -115,17 +114,18 @@ def main(argv):
                 continue
             print(f"FAIL {path}: {reason} ({detail})")
 
-    # Two different failures with two different fixes.
+    # Two different failures with two different fixes, and the wrong advice on
+    # a silent build problem costs more than none.
     if not_shared:
-        advise(
-            "Check that crates/*/build.rs still pass --shared-memory and",
-            "--max-memory=..., alongside -C target-feature=+atomics from",
-            ".cargo/config.toml. The feature flag alone is not enough.",
+        print(
+            "\nCheck that crates/*/build.rs still pass --shared-memory and\n"
+            "--max-memory=..., alongside -C target-feature=+atomics from\n"
+            ".cargo/config.toml. The feature flag alone is not enough."
         )
     if grows:
-        advise(
-            "A fixed memory is --initial-memory equal to --max-memory. Check",
-            "crates/worklet/build.rs.",
+        print(
+            "\nA fixed memory is --initial-memory equal to --max-memory. Check\n"
+            "crates/worklet/build.rs."
         )
     return 1 if (not_shared or grows) else 0
 
