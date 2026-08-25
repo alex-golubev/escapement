@@ -14,8 +14,11 @@ impl Words {
     }
 }
 
-// Implemented for the reference so both halves can hold one and cross threads.
-impl Cells for &Words {
+impl Cells for Words {
+    fn words(&self) -> usize {
+        self.0.len()
+    }
+
     fn load_relaxed(&self, word: usize) -> u32 {
         self.0[word].load(Ordering::Relaxed)
     }

@@ -19,7 +19,8 @@
 
 #![no_std]
 // Exactly one module is allowed to break this, and it is named where it is let
-// through: `access::pointers`.
+// through: `access::pointers`. The rest of the crate's lints live in
+// `Cargo.toml` — this one is here because the exception belongs next to it.
 #![deny(unsafe_code)]
 
 // The crate is `no_std` unconditionally, so that neither half can reach for an
@@ -31,6 +32,17 @@
 extern crate std;
 
 #[cfg(test)]
+mod fixtures;
+
+// Two attributes rather than one `all(...)`, here and at every test module in
+// this crate. `cargo-mutants` parses the source without evaluating `cfg` and
+// recognises only a bare `#[cfg(test)]` as test code; spelled
+// `#[cfg(all(test, loom))]` it mutates modules an ordinary build never compiles
+// and reports the mutants as surviving. Measured on 27.1.0: collapsing them
+// crate-wide takes 147 mutants to 182. Nothing else can tell the two forms
+// apart — the collapsed one compiles and passes CI — so this is the one place
+// the crate is written for a tool rather than for the compiler.
+#[cfg(test)]
 #[cfg(loom)]
 mod interleavings;
 
@@ -39,10 +51,14 @@ pub mod command;
 pub mod ring;
 pub mod state;
 
-pub use access::Cells;
+// Everything nameable in an ordinary use of the protocol, so that a caller
+// needs one import rather than one per module. The ceilings and the wire codes
+// stay behind their modules: reaching for `ring::MAX_CAPACITY` should read like
+// reaching past the front door, because it is.
+pub use access::{Cells, Pointers};
 pub use command::{Command, CommandKind};
-pub use ring::{Consumer, Producer, Slot};
-pub use state::{EngineState, Publisher, Subscriber};
+pub use ring::{Consumer, Full, Producer, RingLayout, Slot};
+pub use state::{BlockLayout, EngineState, Publisher, Subscriber};
 
 use core::fmt;
 
@@ -82,6 +98,19 @@ pub const MAX_REGION_WORDS: usize = 1 << 24;
 /// itself, so growing it later costs nothing, while moving the rings does.
 pub const HEADER_WORDS: usize = 32;
 
+// The largest region the ceilings above permit, checked against the ceiling that
+// matters: every offset travels through the header as a `u32`, and `usize` is 32
+// bits on the target. Stated here rather than in `Layout::new`, because it is a
+// claim about the constants and not about any one layout — a runtime check there
+// no valid argument could reach would look like a guard while guarding nothing.
+const _: () = {
+    let largest = RingLayout::new(HEADER_WORDS, ring::MAX_CAPACITY, ring::MAX_SLOT_WORDS);
+    assert!(
+        BlockLayout::new(largest.end()).end() <= MAX_REGION_WORDS,
+        "the ring and slot ceilings no longer fit MAX_REGION_WORDS"
+    );
+};
+
 const HEADER_MAGIC: usize = 0;
 const HEADER_VERSION: usize = 1;
 const HEADER_WORDS_TOTAL: usize = 2;
@@ -99,16 +128,23 @@ const HEADER_STATE_WORDS: usize = 7;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Layout {
     words: usize,
-    commands: ring::RingLayout,
-    state: state::BlockLayout,
+    commands: RingLayout,
+    state: BlockLayout,
 }
 
 impl Layout {
     /// `command_slots` must be a power of two; called in a `const` context, as
-    /// the owning side does, that is checked at compile time.
+    /// the owning side does, both this and the ceiling below are checked at
+    /// compile time.
+    ///
+    /// # Panics
+    ///
+    /// If `command_slots` is not a power of two — outside a `const` context,
+    /// where the same mistake is a compile error.
+    #[must_use]
     pub const fn new(command_slots: u32) -> Self {
-        let commands = ring::RingLayout::new(HEADER_WORDS, command_slots, Command::WORDS);
-        let state = state::BlockLayout::new(commands.end());
+        let commands = RingLayout::new(HEADER_WORDS, command_slots, Command::WORDS);
+        let state = BlockLayout::new(commands.end());
         Self {
             words: state.end(),
             commands,
@@ -117,21 +153,39 @@ impl Layout {
     }
 
     /// Size of the whole region, in words.
+    #[must_use]
     pub const fn words(&self) -> usize {
         self.words
     }
 
-    pub const fn commands(&self) -> ring::RingLayout {
+    /// Where the command ring sits.
+    #[must_use]
+    pub const fn commands(&self) -> RingLayout {
         self.commands
     }
 
-    pub const fn state(&self) -> state::BlockLayout {
+    /// Where the state block sits.
+    #[must_use]
+    pub const fn state(&self) -> BlockLayout {
         self.state
     }
 
     /// Writes the header. The owning side calls this once, before publishing the
     /// region's address; nothing else may touch the region until it has.
+    ///
+    /// # Panics
+    ///
+    /// In a debug build, if `cells` is smaller than the region this describes.
     pub fn write_header<C: Cells>(&self, cells: &C) {
+        debug_assert!(
+            self.words <= cells.words(),
+            "a region of {} words does not fit {} words of memory",
+            self.words,
+            cells.words()
+        );
+
+        // Lossless: no layout the ceilings permit reaches `u32::MAX`, which is
+        // what the `const` assertion above this module's offsets establishes.
         cells.store_relaxed(HEADER_WORDS_TOTAL, self.words as u32);
         cells.store_relaxed(HEADER_COMMANDS_BASE, self.commands.base() as u32);
         cells.store_relaxed(HEADER_COMMANDS_CAPACITY, self.commands.capacity());
@@ -150,6 +204,12 @@ impl Layout {
 
     /// Reads the header back. The outside side calls this once, at the
     /// handshake.
+    ///
+    /// # Errors
+    ///
+    /// Nothing has written a header here, the two halves are different builds,
+    /// or the region described is not one this build can use — see
+    /// [`HandshakeError`].
     pub fn read_header<C: Cells>(cells: &C) -> Result<Self, HandshakeError> {
         let magic = cells.load_acquire(HEADER_MAGIC);
         if magic != MAGIC {
@@ -189,10 +249,20 @@ impl Layout {
             return Err(HandshakeError::Shape);
         }
 
-        let commands = ring::RingLayout::new(commands_base, capacity, slot_words);
-        let state = state::BlockLayout::new(state_base);
+        let commands = RingLayout::new(commands_base, capacity, slot_words);
+        let state = BlockLayout::new(state_base);
         if state_base < commands.end() || words < state.end() {
             return Err(HandshakeError::Shape);
+        }
+
+        // The one thing a header cannot describe is the memory holding it, so it
+        // is the one thing checked against something other than the header. A
+        // region that overruns its memory is otherwise perfectly well formed,
+        // and fails at the first access instead — where it points at the ring
+        // rather than at the handshake.
+        let available = cells.words();
+        if words > available {
+            return Err(HandshakeError::TooLarge { words, available });
         }
 
         Ok(Self {
@@ -203,18 +273,30 @@ impl Layout {
     }
 }
 
+/// Why a handshake did not produce a [`Layout`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HandshakeError {
     /// Nothing has written a header here, or the address is wrong.
     Magic {
+        /// What stood where the magic should have.
         found: u32,
     },
+    /// One of the two modules is a stale build the browser had cached.
     Version {
+        /// The version in the header.
         found: u32,
+        /// The version this build speaks.
         expected: u32,
     },
     /// Same version, but the region described is not one this build can use.
     Shape,
+    /// The region described does not fit the memory the header was found in.
+    TooLarge {
+        /// Words the header claims.
+        words: usize,
+        /// Words actually reachable.
+        available: usize,
+    },
 }
 
 impl fmt::Display for HandshakeError {
@@ -228,9 +310,15 @@ impl fmt::Display for HandshakeError {
                 "protocol version {found}, expected {expected} — one side is stale, reload"
             ),
             Self::Shape => f.write_str("protocol version agrees but the region described does not"),
+            Self::TooLarge { words, available } => write!(
+                f,
+                "header describes {words} words in a memory holding {available}"
+            ),
         }
     }
 }
+
+impl core::error::Error for HandshakeError {}
 
 #[cfg(test)]
 #[cfg(not(loom))]
@@ -242,20 +330,20 @@ mod tests {
 
     fn written() -> Words {
         let words = Words::new(LAYOUT.words());
-        LAYOUT.write_header(&&words);
+        LAYOUT.write_header(&words);
         words
     }
 
     #[test]
     fn header_round_trips() {
-        assert_eq!(Layout::read_header(&&written()), Ok(LAYOUT));
+        assert_eq!(Layout::read_header(&written()), Ok(LAYOUT));
     }
 
     #[test]
     fn empty_region_is_not_mistaken_for_a_header() {
         let words = Words::new(LAYOUT.words());
         assert_eq!(
-            Layout::read_header(&&words),
+            Layout::read_header(&words),
             Err(HandshakeError::Magic { found: 0 })
         );
     }
@@ -263,9 +351,9 @@ mod tests {
     #[test]
     fn a_stale_half_is_named_as_such() {
         let words = written();
-        (&words).store_relaxed(HEADER_VERSION, VERSION + 1);
+        words.store_relaxed(HEADER_VERSION, VERSION + 1);
         assert_eq!(
-            Layout::read_header(&&words),
+            Layout::read_header(&words),
             Err(HandshakeError::Version {
                 found: VERSION + 1,
                 expected: VERSION,
@@ -276,8 +364,8 @@ mod tests {
     #[test]
     fn same_version_different_encoding_is_caught() {
         let words = written();
-        (&words).store_relaxed(HEADER_COMMANDS_SLOT_WORDS, Command::WORDS as u32 + 1);
-        assert_eq!(Layout::read_header(&&words), Err(HandshakeError::Shape));
+        words.store_relaxed(HEADER_COMMANDS_SLOT_WORDS, Command::WORDS as u32 + 1);
+        assert_eq!(Layout::read_header(&words), Err(HandshakeError::Shape));
     }
 
     /// A header is read before anything in it has been trusted, so every field
@@ -297,13 +385,31 @@ mod tests {
             (HEADER_WORDS_TOTAL, 0),
         ] {
             let words = written();
-            (&words).store_relaxed(word, value);
+            words.store_relaxed(word, value);
             assert_eq!(
-                Layout::read_header(&&words),
+                Layout::read_header(&words),
                 Err(HandshakeError::Shape),
                 "word {word} = {value} was believed"
             );
         }
+    }
+
+    /// The one claim in the header that nothing inside it can contradict. A
+    /// region one word too big is well formed by every other measure, so before
+    /// this was checked it read back as `Ok`.
+    #[test]
+    fn a_region_larger_than_its_memory_is_refused() {
+        let words = written();
+        let claimed = LAYOUT.words() + 1;
+        words.store_relaxed(HEADER_WORDS_TOTAL, claimed as u32);
+
+        assert_eq!(
+            Layout::read_header(&words),
+            Err(HandshakeError::TooLarge {
+                words: claimed,
+                available: LAYOUT.words(),
+            })
+        );
     }
 
     /// These are read by a person looking at a page that will not start, so an
@@ -317,9 +423,22 @@ mod tests {
                 expected: 1,
             },
             HandshakeError::Shape,
+            HandshakeError::TooLarge {
+                words: 200,
+                available: 100,
+            },
         ] {
             assert!(std::format!("{error}").len() > 20, "{error:?} says nothing");
         }
+    }
+
+    /// Both of them cross into code that knows only `dyn Error` — the interface
+    /// reports a failed handshake next to every other kind of startup failure.
+    #[test]
+    fn the_failures_are_errors() {
+        const fn assert_error<E: core::error::Error>() {}
+        assert_error::<HandshakeError>();
+        assert_error::<Full>();
     }
 
     #[test]

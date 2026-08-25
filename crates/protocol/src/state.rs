@@ -34,14 +34,21 @@ pub struct EngineState {
     pub quanta: u64,
     /// Peak of the last quantum, full scale.
     pub peak: f32,
+    /// Whether the transport is running, as the engine sees it — which is what
+    /// a button should follow, rather than what it was last told.
     pub playing: bool,
+    /// Commands taken off the ring. The interface knows what it sent, so this
+    /// is how far behind the engine is.
     pub commands_applied: u32,
     /// Commands this side did not recognise. Non-zero means the two halves have
-    /// parted company (RING-BUFFER.md Р6).
+    /// parted company — different builds behind one protocol version
+    /// (ARCHITECTURE.md §3).
     pub commands_unknown: u32,
 }
 
 impl EngineState {
+    /// Words on the wire. Eight, and the header carries it so that a half
+    /// compiled against a different number is caught at the handshake.
     pub const WORDS: usize = 8;
 
     fn encode(&self, into: &mut [u32]) {
@@ -76,15 +83,20 @@ pub struct BlockLayout {
 }
 
 impl BlockLayout {
+    /// `base` is the generation counter; the payload follows it.
+    #[must_use]
     pub const fn new(base: usize) -> Self {
         Self { base }
     }
 
+    /// First word of the block — the counter.
+    #[must_use]
     pub const fn base(&self) -> usize {
         self.base
     }
 
     /// First word after the block.
+    #[must_use]
     pub const fn end(&self) -> usize {
         self.base + SEQ_WORDS + EngineState::WORDS
     }
@@ -101,10 +113,16 @@ pub struct Publisher<C> {
 }
 
 impl<C: Cells> Publisher<C> {
-    pub fn new(cells: C, layout: BlockLayout) -> Self {
+    /// `layout` must be the one the subscriber was built with.
+    #[must_use]
+    pub const fn new(cells: C, layout: BlockLayout) -> Self {
         Self { cells, layout }
     }
 
+    /// Replaces the published state. Never waits, never allocates and cannot
+    /// fail — which is the whole requirement on the audio thread. A reader that
+    /// arrives mid-write retries; one that arrives between writes never learns
+    /// that the values it skipped existed.
     pub fn publish(&mut self, state: &EngineState) {
         let seq = self.cells.load_relaxed(self.layout.base);
 
@@ -131,16 +149,21 @@ pub struct Subscriber<C> {
 }
 
 impl<C: Cells> Subscriber<C> {
-    pub fn new(cells: C, layout: BlockLayout) -> Self {
+    /// See [`Publisher::new`]. Takes `&self` to read, so a second subscriber —
+    /// another panel, another worker — costs nothing and needs no coordination.
+    #[must_use]
+    pub const fn new(cells: C, layout: BlockLayout) -> Self {
         Self { cells, layout }
     }
 
     /// `None` if the writer was in the way every time. Keep the previous frame's
     /// values; the next frame is 16 ms away.
+    #[must_use]
     pub fn read(&self) -> Option<EngineState> {
         for _ in 0..ATTEMPTS {
             let before = self.cells.load_acquire(self.layout.base);
             if before & 1 != 0 {
+                core::hint::spin_loop();
                 continue;
             }
 
@@ -162,10 +185,11 @@ impl<C: Cells> Subscriber<C> {
 mod tests {
     use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
     use std::thread;
-    use std::time::{Duration, Instant};
+    use std::time::Instant;
 
     use super::*;
     use crate::access::testing::Words;
+    use crate::fixtures::{sample, STUCK};
 
     // Non-zero, so that `base + SEQ_WORDS` cannot be mistaken for either of
     // its halves.
@@ -173,20 +197,6 @@ mod tests {
 
     fn words() -> Words {
         Words::new(LAYOUT.end())
-    }
-
-    /// See the note on the same constant in `ring`.
-    const STUCK: Duration = Duration::from_secs(if cfg!(miri) { 60 } else { 2 });
-
-    fn sample(n: u64) -> EngineState {
-        EngineState {
-            playhead: n * 128,
-            quanta: n,
-            peak: n as f32,
-            playing: n % 2 == 1,
-            commands_applied: n as u32,
-            commands_unknown: 0,
-        }
     }
 
     #[test]
@@ -221,7 +231,7 @@ mod tests {
         publisher.publish(&sample(1));
 
         // What the block looks like with the writer halfway through it.
-        (&words).store_relaxed(LAYOUT.base(), 1);
+        words.store_relaxed(LAYOUT.base(), 1);
 
         assert_eq!(Subscriber::new(&words, LAYOUT).read(), None);
     }

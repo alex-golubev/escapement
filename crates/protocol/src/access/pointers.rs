@@ -36,6 +36,10 @@ impl Pointers {
 }
 
 impl Cells for Pointers {
+    fn words(&self) -> usize {
+        self.words
+    }
+
     fn load_relaxed(&self, word: usize) -> u32 {
         self.cell(word).load(Ordering::Relaxed)
     }
@@ -73,6 +77,17 @@ mod tests {
         assert_eq!(cells.load_acquire(2), 9);
         assert_eq!(cells.load_relaxed(0), 0, "a neighbour was written");
         assert_eq!(cells.load_relaxed(3), 0, "a neighbour was written");
+    }
+
+    /// What the handshake asks the owning side, and the only question whose
+    /// answer no header can carry.
+    #[test]
+    fn a_region_knows_how_far_it_reaches() {
+        let region: Box<[AtomicU32]> = (0..4).map(|_| AtomicU32::new(0)).collect();
+        // SAFETY: as above.
+        let cells = unsafe { Pointers::new(region.as_ptr(), region.len()) };
+
+        assert_eq!(cells.words(), 4);
     }
 
     #[test]

@@ -7,13 +7,13 @@
 
 #[cfg(test)]
 #[cfg(loom)]
-pub mod loom;
+pub(crate) mod loom;
 /// The crate's only `unsafe`.
 #[allow(unsafe_code)]
 pub mod pointers;
 #[cfg(test)]
 #[cfg(not(loom))]
-pub mod testing;
+pub(crate) mod testing;
 
 pub use pointers::Pointers;
 
@@ -35,9 +35,30 @@ use core::sync::atomic::{fence, Ordering};
 /// cannot honour a weaker request; a parameter it silently ignored would be a
 /// lie. Named methods let it satisfy all four honestly, by being stronger.
 pub trait Cells {
+    /// How many words this reaches.
+    ///
+    /// The handshake is what wants it. A header describes where everything sits,
+    /// and the one thing it cannot describe is the memory it was found in — so
+    /// without this, a header claiming a region larger than the memory holding
+    /// it reads back as valid and fails at the first access instead
+    /// ([`Layout::read_header`](crate::Layout::read_header)).
+    fn words(&self) -> usize;
+
+    /// A load with no ordering of its own — on wasm, an ordinary load.
+    ///
+    /// What orders it is the atomic guarding the block it belongs to, never
+    /// this call.
     fn load_relaxed(&self, word: usize) -> u32;
+
+    /// Reads a word, and with it everything the other side wrote before
+    /// publishing it with [`Cells::store_release`].
     fn load_acquire(&self, word: usize) -> u32;
+
+    /// A store with no ordering of its own. See [`Cells::load_relaxed`].
     fn store_relaxed(&self, word: usize, value: u32);
+
+    /// Publishes this word, and everything written before it, to whoever reads
+    /// it with [`Cells::load_acquire`].
     fn store_release(&self, word: usize, value: u32);
 
     /// Bulk read, no ordering of its own.
@@ -77,5 +98,66 @@ pub trait Cells {
         for (offset, word) in from.iter().enumerate() {
             self.store_relaxed(at + offset, *word);
         }
+    }
+}
+
+// A backend is a value, and both halves of a ring hold one, so they hold it
+// through a handle. Written once here rather than once per backend — and only
+// for the handles the crate uses: a blanket over `Deref` would claim every
+// future type that happens to deref to a `Cells`.
+impl<C: Cells + ?Sized> Cells for &C {
+    fn words(&self) -> usize {
+        (**self).words()
+    }
+
+    fn load_relaxed(&self, word: usize) -> u32 {
+        (**self).load_relaxed(word)
+    }
+
+    fn load_acquire(&self, word: usize) -> u32 {
+        (**self).load_acquire(word)
+    }
+
+    fn store_relaxed(&self, word: usize, value: u32) {
+        (**self).store_relaxed(word, value);
+    }
+
+    fn store_release(&self, word: usize, value: u32) {
+        (**self).store_release(word, value);
+    }
+}
+
+#[cfg(test)]
+#[cfg(not(loom))]
+mod tests {
+    use super::*;
+    use crate::access::testing::Words;
+
+    /// Everything downstream is generic over `Cells`, so this is too — and it is
+    /// handed a value and then a handle to the same words. Erasing that
+    /// difference is the blanket impl's whole job, and `words` in particular is
+    /// what the handshake trusts to be the truth about the memory.
+    fn behaves_like_the_region<C: Cells>(cells: &C, size: usize) {
+        assert_eq!(cells.words(), size);
+
+        cells.store_relaxed(0, 7);
+        cells.store_release(1, 9);
+        assert_eq!(cells.load_relaxed(0), 7);
+        assert_eq!(cells.load_acquire(1), 9);
+
+        cells.write_words(2, &[10, 20]);
+        let mut read = [0u32; 2];
+        cells.read_words(2, &mut read);
+        assert_eq!(read, [10, 20]);
+    }
+
+    #[test]
+    fn a_handle_reaches_what_the_value_reaches() {
+        let words = Words::new(4);
+
+        behaves_like_the_region(&words, 4);
+        // The double reference is the point: `C` is `&Words` here, so this is
+        // the blanket impl and the line above is not.
+        behaves_like_the_region(&&words, 4);
     }
 }

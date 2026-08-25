@@ -60,6 +60,15 @@ impl RingLayout {
     /// `capacity` is in slots and must be a power of two — the mask that turns a
     /// counter into an index is what keeps that index provably inside the ring,
     /// which is what keeps a panic off the audio thread.
+    ///
+    /// # Panics
+    ///
+    /// If `capacity` is not a power of two or is above [`MAX_CAPACITY`], or the
+    /// slot is above [`MAX_SLOT_WORDS`]. Called in a `const` context, as the
+    /// owning side does, all three are compile errors; the side that reads these
+    /// values out of shared memory must check them first, and does
+    /// ([`Layout::read_header`](crate::Layout::read_header)).
+    #[must_use]
     pub const fn new(base: usize, capacity: u32, slot_words: usize) -> Self {
         assert!(
             capacity.is_power_of_two(),
@@ -74,19 +83,26 @@ impl RingLayout {
         }
     }
 
+    /// First word of the ring, counters included.
+    #[must_use]
     pub const fn base(&self) -> usize {
         self.base
     }
 
+    /// Slots, always a power of two.
+    #[must_use]
     pub const fn capacity(&self) -> u32 {
         self.capacity
     }
 
+    /// Words per slot.
+    #[must_use]
     pub const fn slot_words(&self) -> usize {
         self.slot_words
     }
 
     /// First word after the ring.
+    #[must_use]
     pub const fn end(&self) -> usize {
         self.base + SLOTS + self.capacity as usize * self.slot_words
     }
@@ -108,6 +124,8 @@ impl fmt::Display for Full {
     }
 }
 
+impl core::error::Error for Full {}
+
 /// What both halves are.
 ///
 /// They hold the same three fields and see the same two counters, and differ
@@ -116,7 +134,9 @@ impl fmt::Display for Full {
 struct Half<C, S> {
     cells: C,
     layout: RingLayout,
-    slot: PhantomData<S>,
+    /// `fn(S) -> S` rather than `S`: a half passes slots through and owns none,
+    /// so it has no business inheriting `S`'s auto traits or its drop order.
+    slot: PhantomData<fn(S) -> S>,
 }
 
 impl<C: Cells, S: Slot> Half<C, S> {
@@ -167,12 +187,21 @@ pub struct Producer<C, S> {
 }
 
 impl<C: Cells, S: Slot> Producer<C, S> {
+    /// `layout` must be the one the consumer was built with, and its slot must
+    /// be `S`'s — checked in a debug build, and by the handshake in every build.
+    #[must_use]
     pub fn new(cells: C, layout: RingLayout) -> Self {
         Self {
             half: Half::new(cells, layout),
         }
     }
 
+    /// Copies `item` into the ring. Never blocks and never allocates.
+    ///
+    /// # Errors
+    ///
+    /// [`Full`] if the consumer has not drained enough to make room. `item` is
+    /// untouched, so the caller may keep it and offer it again.
     pub fn push(&mut self, item: &S) -> Result<(), Full> {
         let head = self.half.ours(HEAD);
         // Acquiring the tail is also what makes the consumer's reads of the slot
@@ -193,12 +222,17 @@ pub struct Consumer<C, S> {
 }
 
 impl<C: Cells, S: Slot> Consumer<C, S> {
+    /// See [`Producer::new`].
+    #[must_use]
     pub fn new(cells: C, layout: RingLayout) -> Self {
         Self {
             half: Half::new(cells, layout),
         }
     }
 
+    /// The oldest item waiting, or `None` if there is none. Never blocks, never
+    /// allocates and cannot fail — a slot this side does not recognise decodes
+    /// to a value rather than an error ([`Slot`]).
     pub fn pop(&mut self) -> Option<S> {
         let tail = self.half.ours(TAIL);
         if self.half.theirs(HEAD) == tail {
@@ -211,10 +245,13 @@ impl<C: Cells, S: Slot> Consumer<C, S> {
     }
 
     /// Items waiting. A snapshot: the producer may add more before it is read.
+    #[must_use]
     pub fn len(&self) -> u32 {
         self.half.theirs(HEAD).wrapping_sub(self.half.ours(TAIL))
     }
 
+    /// Whether anything is waiting. See [`Consumer::len`].
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
@@ -226,10 +263,11 @@ mod tests {
     use std::collections::VecDeque;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::thread;
-    use std::time::{Duration, Instant};
+    use std::time::Instant;
 
     use super::*;
     use crate::access::testing::Words;
+    use crate::fixtures::STUCK;
 
     /// Three words, each carrying something, so a slot read one word out of
     /// place fails rather than happens to work.
@@ -269,12 +307,6 @@ mod tests {
     /// gets a shorter version of the loops below rather than none at all.
     const ROUNDS: usize = if cfg!(miri) { 2_000 } else { 100_000 };
     const ITEMS: u32 = if cfg!(miri) { 2_000 } else { 1_000_000 };
-
-    /// Measured from the last item that moved, not from the start, so a slow
-    /// machine is not mistaken for a stuck ring. A test that hangs is worse than
-    /// one that fails: it reports nothing and holds the job until some outer
-    /// limit gives up on it.
-    const STUCK: Duration = Duration::from_secs(if cfg!(miri) { 60 } else { 2 });
 
     fn words() -> Words {
         Words::new(LAYOUT.end())
@@ -363,15 +395,15 @@ mod tests {
     fn counters_survive_their_own_overflow() {
         let words = words();
         let near_the_end = u32::MAX - 2;
-        (&words).store_relaxed(BASE + HEAD, near_the_end);
-        (&words).store_relaxed(BASE + TAIL, near_the_end);
+        words.store_relaxed(BASE + HEAD, near_the_end);
+        words.store_relaxed(BASE + TAIL, near_the_end);
 
         let (mut producer, mut consumer) = ring(&words);
         for i in 0..CAPACITY * 4 {
             producer.push(&Tick(i)).unwrap();
             assert_eq!(consumer.pop(), Some(Tick(i)));
         }
-        assert!((&words).load_relaxed(BASE + HEAD) < CAPACITY * 4);
+        assert!(words.load_relaxed(BASE + HEAD) < CAPACITY * 4);
     }
 
     #[test]

@@ -15,7 +15,23 @@ publish.workspace = true
 [target.'cfg(loom)'.dependencies]
 loom = "0.7"
 
-# `loom` is ours, not the compiler's; without this the build warns about an
-# unknown cfg and CI runs clippy with -D warnings.
+# Everything here is `warn`; CI runs clippy with `-D warnings`, so it is `deny`
+# where it matters and merely loud while working. `unsafe_code` is the exception
+# and lives in `lib.rs`, because its one exemption belongs next to it.
+#
+# This crate is a contract between two separately compiled modules, and the half
+# that reads a value cannot ask the half that wrote it what it meant. So the
+# things that are ordinarily a matter of taste — a documented public item, a
+# named panic, a named error — are the contract, and are checked rather than
+# remembered.
 [lints.rust]
+missing_docs = "warn"
+# `loom` is ours, not the compiler's; without this the build warns about an
+# unknown cfg.
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(loom)'] }
+
+[lints.clippy]
+missing_errors_doc = "warn"
+missing_panics_doc = "warn"
+must_use_candidate = "warn"
+undocumented_unsafe_blocks = "warn"

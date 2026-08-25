@@ -12,8 +12,9 @@ use std::sync::Arc;
 use ::loom::thread;
 
 use crate::access::loom::LoomWords;
+use crate::fixtures::sample;
 use crate::ring::{Consumer, Producer, RingLayout, Slot};
-use crate::state::{BlockLayout, EngineState, Publisher, Subscriber};
+use crate::state::{BlockLayout, Publisher, Subscriber};
 
 const ITEMS: u32 = 3;
 const CAPACITY: u32 = 2;
@@ -68,18 +69,6 @@ fn the_ring_hands_items_over_in_order_under_every_interleaving() {
     });
 }
 
-/// Consistent with itself, and `state(0)` is what an untouched block reads as.
-fn state(n: u64) -> EngineState {
-    EngineState {
-        playhead: n * 128,
-        quanta: n,
-        peak: n as f32,
-        playing: n % 2 == 1,
-        commands_applied: n as u32,
-        commands_unknown: 0,
-    }
-}
-
 /// One publish against one read. The reader either retries or returns a state
 /// whose fields belong together; nothing but a missing ordering could give it
 /// half of one and half of another.
@@ -100,12 +89,12 @@ fn the_state_block_is_never_read_half_written() {
         let writing = {
             let cells = Arc::clone(&cells);
             thread::spawn(move || {
-                Publisher::new(cells, layout).publish(&state(1));
+                Publisher::new(cells, layout).publish(&sample(1));
             })
         };
 
         if let Some(seen) = Subscriber::new(cells, layout).read() {
-            assert_eq!(seen, state(seen.quanta), "torn read");
+            assert_eq!(seen, sample(seen.quanta), "torn read");
         }
 
         writing.join().unwrap();

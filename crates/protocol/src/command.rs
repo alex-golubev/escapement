@@ -21,23 +21,32 @@ const SET_GAIN: u32 = 4;
 pub struct Command {
     /// Samples since the engine started. `0` means as soon as it is seen.
     pub when: u64,
+    /// What to do then.
     pub kind: CommandKind,
 }
 
 impl Command {
     /// As soon as the engine sees it.
+    #[must_use]
     pub const fn now(kind: CommandKind) -> Self {
         Self { when: 0, kind }
     }
 }
 
+/// What a command asks for. The wire code lives here rather than in the enum —
+/// a discriminant is chosen by the compiler and would change under an edit that
+/// looks harmless, which is exactly the drift the version in the header cannot
+/// catch.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum CommandKind {
+    /// Run the transport from wherever it stands.
     Start,
+    /// Stop it, leaving the playhead where it is.
     Stop,
     /// Slice 1 only: the engine is one oscillator. Goes when a graph arrives and
     /// parameters get addresses.
     SetFrequency(f32),
+    /// Master gain, linear. Slice 1 only, as above.
     SetGain(f32),
     /// Sent by a half that knows something this one does not. Kept as a value
     /// rather than an error so that decoding cannot fail on the audio thread.

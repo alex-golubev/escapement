@@ -24,6 +24,10 @@ impl LoomWords {
 }
 
 impl Cells for LoomWords {
+    fn words(&self) -> usize {
+        self.0.len()
+    }
+
     fn load_relaxed(&self, word: usize) -> u32 {
         self.0[word].load(Ordering::Relaxed)
     }
@@ -42,8 +46,13 @@ impl Cells for LoomWords {
 }
 
 // `loom::thread::spawn` wants `'static`, so the halves hold an `Arc` rather than
-// a borrow the way the other backends do.
-impl Cells for Arc<LoomWords> {
+// a borrow the way the other backends do. Generic for the same reason the
+// borrowing impl next to it is: so the next handle does not add a fourth copy.
+impl<C: Cells + ?Sized> Cells for Arc<C> {
+    fn words(&self) -> usize {
+        (**self).words()
+    }
+
     fn load_relaxed(&self, word: usize) -> u32 {
         (**self).load_relaxed(word)
     }
