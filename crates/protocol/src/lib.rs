@@ -242,7 +242,7 @@ impl Layout {
         let sizes_are_sane = capacity.is_power_of_two()
             && capacity <= ring::MAX_CAPACITY
             && (HEADER_WORDS..MAX_REGION_WORDS).contains(&commands_base)
-            && state_base < MAX_REGION_WORDS
+            && (HEADER_WORDS..MAX_REGION_WORDS).contains(&state_base)
             && words <= MAX_REGION_WORDS;
 
         if !encodings_match || !sizes_are_sane {
@@ -410,6 +410,19 @@ mod tests {
                 available: LAYOUT.words(),
             })
         );
+    }
+
+    /// The blocks must not overlap, and this is the case that reaches that
+    /// check: a base inside the ring is plausible enough to pass the range test
+    /// above it, where a wild one (`0`, `u32::MAX`) is turned away earlier and
+    /// never exercises this.
+    #[test]
+    fn a_state_block_starting_inside_the_ring_is_refused() {
+        let words = written();
+        let inside_the_ring = LAYOUT.commands().end() - 1;
+        words.store_relaxed(HEADER_STATE_BASE, inside_the_ring as u32);
+
+        assert_eq!(Layout::read_header(&words), Err(HandshakeError::Shape));
     }
 
     /// These are read by a person looking at a page that will not start, so an
