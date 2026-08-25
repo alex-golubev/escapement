@@ -94,7 +94,7 @@ fn the_state_block_is_never_read_half_written() {
         };
 
         if let Some(seen) = Subscriber::new(cells, layout).read() {
-            assert_eq!(seen, sample(seen.quanta), "torn read");
+            assert_eq!(seen, sample(seen.commands_applied), "torn read");
         }
 
         writing.join().unwrap();

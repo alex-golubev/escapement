@@ -16,16 +16,26 @@ use crate::state::EngineState;
 pub(crate) const STUCK: core::time::Duration =
     core::time::Duration::from_secs(if cfg!(miri) { 60 } else { 2 });
 
-/// A state whose fields agree with each other, so that nothing but a torn read
-/// could produce one where they do not. `sample(0)` is also what an untouched
-/// block reads as.
-pub(crate) fn sample(n: u64) -> EngineState {
+/// A state stamped with its generation in every word it takes on the wire.
+///
+/// The torn-read tests rebuild a whole state from one field and compare, so a
+/// word carrying the same bits in every generation could not betray a tear that
+/// landed on it. `commands_applied` is the field they rebuild from, and `n` is
+/// its width rather than the wider one of the fields below it: narrowing on the
+/// way in would hand back a different generation without saying so.
+///
+/// `sample(0)` is what an untouched block reads as.
+pub(crate) fn sample(n: u32) -> EngineState {
+    let wide = u64::from(n);
     EngineState {
-        clock: n * 128,
-        quanta: n,
+        // A clock counting quanta at 128 samples never reaches the high word
+        // inside a test, so the generation goes there directly.
+        clock: wide * 128 + (wide << 32),
+        quanta: wide + (wide << 32),
         peak: n as f32,
         playing: n % 2 == 1,
-        commands_applied: n as u32,
-        commands_unknown: 0,
+        commands_applied: n,
+        // A different multiple, so the last two words never agree either.
+        commands_unknown: n.wrapping_mul(3),
     }
 }

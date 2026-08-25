@@ -204,11 +204,35 @@ mod tests {
         assert_eq!(LAYOUT.end(), LAYOUT.payload() + EngineState::WORDS);
     }
 
+    /// What the torn-read test below rests on: a word carrying the same bits in
+    /// every generation cannot betray a tear that lands on it.
+    #[test]
+    fn every_word_of_a_sample_moves_with_its_generation() {
+        let mut first = [0u32; EngineState::WORDS];
+        sample(1).encode(&mut first);
+
+        let mut moved = [false; EngineState::WORDS];
+        for n in 2..=64 {
+            let mut words = [0u32; EngineState::WORDS];
+            sample(n).encode(&mut words);
+            for (word, (before, now)) in first.iter().zip(&words).enumerate() {
+                moved[word] |= before != now;
+            }
+        }
+
+        for (word, moved) in moved.iter().enumerate() {
+            assert!(moved, "word {word} carries the same bits in every state");
+        }
+    }
+
     #[test]
     fn an_unwritten_block_reads_as_nothing_happened() {
         let words = words();
         let subscriber = Subscriber::new(&words, LAYOUT);
         assert_eq!(subscriber.read(), Some(EngineState::default()));
+        // The `loom` model rebuilds from a read that may land before the first
+        // publish, so the zeroth generation has to be that same nothing.
+        assert_eq!(sample(0), EngineState::default());
     }
 
     #[test]
@@ -239,7 +263,7 @@ mod tests {
     /// nothing but a torn read could break that.
     #[test]
     fn a_reader_never_sees_half_of_two_states() {
-        const WRITES: u64 = if cfg!(miri) { 500 } else { 200_000 };
+        const WRITES: u32 = if cfg!(miri) { 500 } else { 200_000 };
 
         let words = words();
         let done = AtomicBool::new(false);
@@ -261,7 +285,7 @@ mod tests {
                 // reader would spin on it until some outer limit gave up.
                 assert!(started.elapsed() < STUCK, "the writer never finished");
                 if let Some(state) = subscriber.read() {
-                    assert_eq!(state, sample(state.quanta), "torn read");
+                    assert_eq!(state, sample(state.commands_applied), "torn read");
                     assert!(state.quanta >= seen, "went backwards");
                     seen = state.quanta;
                 }
