@@ -8,3 +8,6 @@ publish.workspace = true
 
 [dependencies]
 # loro = "*"
+
+[lints]
+workspace = true

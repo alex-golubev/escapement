@@ -26,6 +26,13 @@ escapement-model = { path = "crates/model" }
 escapement-protocol = { path = "crates/protocol" }
 escapement-render = { path = "crates/render" }
 
+# A qualification the prelude already provides is a leftover from a crate that
+# needed it — `escapement-protocol` is `no_std` and must write `std::boxed::Box`,
+# and the idiom travels by copy into crates that do not. The lint tells the two
+# apart; CI turns it into an error with `-D warnings`.
+[workspace.lints.rust]
+unused_qualifications = "warn"
+
 [profile.release]
 opt-level = 3
 lto = "fat"

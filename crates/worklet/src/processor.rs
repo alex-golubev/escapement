@@ -132,9 +132,6 @@ fn peak(block: &[f32]) -> f32 {
 
 #[cfg(test)]
 mod tests {
-    use std::boxed::Box;
-    use std::vec::Vec;
-
     use core::marker::PhantomData;
     use core::sync::atomic::AtomicU32;
 
@@ -339,7 +336,7 @@ mod tests {
     fn a_block_that_is_not_a_render_quantum_moves_the_clock_by_its_own_length() {
         let words = words();
         let mut probe = Probe::new(&words);
-        let mut long: Vec<f32> = std::vec![0.0; 1024];
+        let mut long = vec![0.0f32; 1024];
         probe.processor.process(&mut long);
 
         let state = probe.state();

@@ -24,7 +24,11 @@ loom = "0.7"
 # things that are ordinarily a matter of taste — a documented public item, a
 # named panic, a named error — are the contract, and are checked rather than
 # remembered.
+# Repeated from the workspace rather than inherited: cargo refuses a manifest
+# that both takes `workspace.lints` and adds to it, and this crate has lints of
+# its own that the others do not want.
 [lints.rust]
+unused_qualifications = "warn"
 missing_docs = "warn"
 # `loom` is ours, not the compiler's; without this the build warns about an
 # unknown cfg.

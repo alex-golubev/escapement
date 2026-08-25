@@ -10,3 +10,6 @@ publish.workspace = true
 escapement-model.workspace = true
 escapement-render.workspace = true
 # leptos = "*"
+
+[lints]
+workspace = true

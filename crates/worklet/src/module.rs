@@ -50,7 +50,6 @@ impl Module {
 #[cfg(test)]
 mod tests {
     use core::sync::atomic::AtomicU32;
-    use std::boxed::Box;
 
     use escapement_core::RENDER_QUANTUM;
     use escapement_protocol::{Command, CommandKind, HandshakeError, Layout, Producer};

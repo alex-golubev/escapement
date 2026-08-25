@@ -119,7 +119,7 @@ mod tests {
     /// A borrow of it cannot be held across [`escapement_process`], which takes
     /// `&mut` to the same words — that is the aliasing the module is careful
     /// about, and a test is not exempt from it.
-    fn output() -> std::vec::Vec<f32> {
+    fn output() -> Vec<f32> {
         let ptr = escapement_output_ptr();
         let len = escapement_output_len();
 
