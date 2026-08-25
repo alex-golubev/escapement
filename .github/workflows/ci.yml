@@ -63,8 +63,9 @@ jobs:
       - name: No allocator on the audio thread
         run: python3 tools/check-worklet-module.py target/wasm32-unknown-unknown/release/escapement_worklet.wasm
 
-  # Undefined behaviour in the crate's one unsafe module, and whether the
-  # deliberate race in the state block is the kind the language permits.
+  # Undefined behaviour in the two places this project has any: the protocol's
+  # one unsafe module, and the worklet's statics — plus whether the deliberate
+  # race in the state block is the kind the language permits.
   miri:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -85,9 +86,11 @@ jobs:
       # its cost follows the code put under it, and only code with `unsafe` or
       # a deliberate race has anything to find. Measured: escapement-core has
       # no `unsafe` at all and takes 36 s against the protocol's 23, because
-      # its tests push 48 000 samples through a sine one sample at a time.
+      # its tests push 48 000 samples through a sine one sample at a time. The
+      # worklet is 8 s and paid for itself on its first run, on a test that
+      # moved a `Box` after taking a pointer into it.
       - name: Undefined behaviour and data races
-        run: tools/miri.sh -p escapement-protocol
+        run: tools/miri.sh -p escapement-protocol -p escapement-worklet
 
   # What the two-thread stress tests cannot check: that the orderings hold
   # under every interleaving the memory model permits, rather than under the

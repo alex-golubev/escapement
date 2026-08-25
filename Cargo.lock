@@ -62,6 +62,7 @@ name = "escapement-worklet"
 version = "0.0.0"
 dependencies = [
  "escapement-core",
+ "escapement-protocol",
 ]
 
 [[package]]

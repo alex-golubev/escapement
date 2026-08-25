@@ -20,8 +20,18 @@ class EscapementProcessor extends AudioWorkletProcessor {
     const len = this.wasm.escapement_output_len();
     this.out = new Float32Array(this.wasm.memory.buffer, ptr, len);
 
-    // Confirms the §3 premise from inside the worklet, rather than by assertion.
+    // The handshake (§3). One message, at startup: the ban on postMessage is
+    // about frame rate, not about this. Everything the other side needs to find
+    // its way around the region is in the header at `region` — that offset is
+    // the only thing it is told rather than shown, and the only thing a header
+    // cannot describe about itself.
+    //
+    // Sent after escapement_init, which is what writes that header. The rest is
+    // diagnostics: it confirms the §3 premise from inside the worklet rather
+    // than by assertion.
     this.port.postMessage({
+      buffer: this.wasm.memory.buffer,
+      region: this.wasm.escapement_region_ptr(),
       quantum: len,
       sharedMemory: this.wasm.memory.buffer instanceof SharedArrayBuffer,
       memoryBytes: this.wasm.memory.buffer.byteLength,

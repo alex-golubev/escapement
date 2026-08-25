@@ -25,7 +25,7 @@ python3 tools/check-shared-memory.py target/wasm32-unknown-unknown/release/*.was
 python3 tools/check-shared-memory.py --fixed target/wasm32-unknown-unknown/release/escapement_worklet.wasm
 python3 tools/check-worklet-module.py target/wasm32-unknown-unknown/release/escapement_worklet.wasm
 
-tools/miri.sh -p escapement-protocol                 # undefined behaviour, data races
+tools/miri.sh -p escapement-protocol -p escapement-worklet   # undefined behaviour, data races
 RUSTFLAGS="--cfg loom" cargo test -p escapement-protocol   # memory orderings
 cargo mutants -p escapement-protocol --timeout 10   # do the tests test anything
 
@@ -40,7 +40,9 @@ target, the `rust-src` component `build-std` needs, and `miri` — comes from
 so its cost follows the code put under it, and only `unsafe` or a deliberate race
 gives it anything to find. Measured: `escapement-core` contains no `unsafe` at
 all and costs 36 s against the protocol's 23, because its tests push 48 000
-samples through a sine one sample at a time.
+samples through a sine one sample at a time. The worklet costs 8 s and earned
+its place on the first run, on a test that took a pointer into a `Box` and then
+moved the `Box` — undefined behaviour that every ordinary run passed.
 
 CI runs all three. Miri and Loom are jobs beside the ordinary checks rather than
 steps inside them, so they add waiting time only if they turn out to be the

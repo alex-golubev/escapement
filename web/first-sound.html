@@ -13,6 +13,10 @@
 <h1>Slice 1 — first sound</h1>
 <p>440 Hz out of a Rust graph in an <code>AudioWorklet</code>. Closes risk 1
     (ARCHITECTURE.md §7): does the combination work at all.</p>
+<p><b>Silent for now, on purpose.</b> The engine has a transport, and a
+    transport that has not been started has not been started — the interface
+    says when. It cannot yet: reaching the command ring from this side is the
+    next step. What this page shows meanwhile is the handshake.</p>
 <button id="play">Play</button>
 <button id="stop">Stop</button>
 <pre id="log"></pre>
@@ -57,10 +61,11 @@
                 say(`quantum = ${data.quantum} samples`);
                 say(`memory.buffer is SharedArrayBuffer = ${data.sharedMemory}`);
                 say(`memory = ${(data.memoryBytes / 1024 / 1024).toFixed(2)} MiB`);
+                say(`shared region at byte ${data.region}`);
             };
 
             node.connect(ctx.destination);
-            say("connected — 440 Hz should be audible");
+            say("connected — silent until the transport can be started");
         } catch (error) {
             say("FAILED: " + error);
             ctx = null;
