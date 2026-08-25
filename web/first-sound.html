@@ -11,14 +11,16 @@
 </head>
 <body>
 <h1>Slice 1 — first sound</h1>
-<p>440 Hz out of a Rust graph in an <code>AudioWorklet</code>. Closes risk 1
+<p>A Rust graph rendering quanta inside an <code>AudioWorklet</code>, out of a
+    wasm module whose linear memory is shared with this page. Closes risk 1
     (ARCHITECTURE.md §7): does the combination work at all.</p>
-<p><b>Silent for now, on purpose.</b> The engine has a transport, and a
-    transport that has not been started has not been started — the interface
-    says when. It cannot yet: reaching the command ring from this side is the
-    next step. What this page shows meanwhile is the handshake.</p>
-<button id="play">Play</button>
-<button id="stop">Stop</button>
+<p><b>Silent on purpose.</b> The engine has a transport, and a transport that
+    has not been started has not been started — the interface says when. It
+    cannot yet: reaching the command ring from this side is the next step. So
+    the buttons below start and close the <code>AudioContext</code> rather than
+    the transport, and what the page shows meanwhile is the handshake.</p>
+<button id="start">Start the worklet</button>
+<button id="close">Close the context</button>
 <pre id="log"></pre>
 
 <script type="module">
@@ -35,8 +37,8 @@
 
     let ctx = null;
 
-    document.getElementById("play").onclick = async () => {
-        if (ctx) return say("already playing");
+    document.getElementById("start").onclick = async () => {
+        if (ctx) return say("already running");
         try {
             // Only startable from a user gesture.
             ctx = new AudioContext();
@@ -59,8 +61,6 @@
             });
             node.port.onmessage = ({data}) => {
                 say(`quantum = ${data.quantum} samples`);
-                say(`memory.buffer is SharedArrayBuffer = ${data.sharedMemory}`);
-                say(`memory = ${(data.memoryBytes / 1024 / 1024).toFixed(2)} MiB`);
                 say(`shared region at byte ${data.region}`);
             };
 
@@ -72,11 +72,11 @@
         }
     };
 
-    document.getElementById("stop").onclick = async () => {
-        if (!ctx) return say("not playing");
+    document.getElementById("close").onclick = async () => {
+        if (!ctx) return say("not running");
         await ctx.close();
         ctx = null;
-        say("stopped");
+        say("closed");
     };
 </script>
 </body>

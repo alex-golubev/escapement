@@ -13,9 +13,15 @@ Architectural decisions and the reasoning behind them live in
 ## Status
 
 Early development. There is no application yet — the first vertical slice
-(ARCHITECTURE.md §7) is under way: a sine from a Rust graph in an `AudioWorklet`
-plays, which is what closed the question of whether that combination works at
-all. Everything below it — clips, the mixer, the model — is still to be written.
+(ARCHITECTURE.md §7) is under way. A Rust graph renders quanta inside an
+`AudioWorklet`, out of a wasm module whose linear memory is shared with the page
+and carries the command ring and the state block, which is what closed the
+question of whether that combination works at all.
+
+It makes no sound yet, and that is the design rather than a fault: the engine
+has a transport, and a transport that has not been started has not been started
+— the interface says when. Reaching the ring from the page is the next step.
+Everything below it — clips, the mixer, the model — is still to be written.
 
 ## Layout
 
@@ -50,18 +56,23 @@ That last check is not ceremony: `+atomics` alone links a *private* memory, and
 the build still succeeds. It fails in the browser, with an error that points at
 the wasm rather than at the missing linker flag.
 
-To hear the current slice:
+To run the current slice:
 
 ```sh
-tools/build-first-sound.sh     # builds the worklet, assembles dist/
-tools/dev-server.py            # http://127.0.0.1:8080
+tools/build-first-sound.sh              # worklet + dist-first-sound/
+tools/dev-server.py dist-first-sound    # http://127.0.0.1:8080
 ```
+
+The page reports the handshake — cross-origin isolation, the render quantum, and
+where the shared region sits — and stays silent, for the reason under *Status*.
 
 `Trunk.toml` is configured but Trunk is deliberately out of the loop until the
 audio path is settled — a build tool in the chain is a second suspect when
-something breaks. Install it with **`cargo +stable install trunk`**: run inside
-the repository, plain `cargo install` picks up the pinned nightly, and trunk's
-`lightningcss` dependency does not compile there.
+something breaks. That is also why the probe assembles `dist-first-sound/` of
+its own: `dist` is Trunk's, and Trunk clears it on every build. Install Trunk
+with **`cargo +stable install trunk`**: run inside the repository, plain
+`cargo install` picks up the pinned nightly, and trunk's `lightningcss`
+dependency does not compile there.
 
 Either server must send `COOP`/`COEP` headers, otherwise there is no
 `SharedArrayBuffer` and the failure looks like broken wasm rather than a missing

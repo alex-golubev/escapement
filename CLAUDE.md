@@ -29,12 +29,15 @@ tools/miri.sh -p escapement-protocol -p escapement-worklet   # undefined behavio
 RUSTFLAGS="--cfg loom" cargo test -p escapement-protocol   # memory orderings
 cargo mutants -p escapement-protocol --timeout 10   # do the tests test anything
 
-trunk serve      # dev server on :8080, serves the required COOP/COEP headers
+tools/build-first-sound.sh              # worklet + dist-first-sound/
+tools/dev-server.py dist-first-sound    # :8080 with the COOP/COEP headers
 ```
 
-First-time setup: `cargo install trunk`. The toolchain — pinned nightly, wasm
-target, the `rust-src` component `build-std` needs, and `miri` — comes from
-`rust-toolchain.toml`; `rustup show` installs it.
+The toolchain — pinned nightly, wasm target, the `rust-src` component
+`build-std` needs, and `miri` — comes from `rust-toolchain.toml`; `rustup show`
+installs it, and nothing else is needed to build. Trunk is configured but not in
+the chain yet, so `trunk serve` gets you `web/index.html` — the empty Leptos
+client — rather than the slice above.
 
 **Miri takes a crate list, never `--workspace`.** It interprets rather than runs,
 so its cost follows the code put under it, and only `unsafe` or a deliberate race
@@ -168,13 +171,19 @@ is closed source; the engine is open.
   with `-D warnings`, and a floating nightly reddens untouched trees.
 - `build-std` only engages when `--target` is passed explicitly, so host builds and
   `cargo test` keep using the prebuilt std and stay fast.
-- **Install host tooling with `cargo +stable install`.** Run inside the repo,
-  `cargo install` picks up the pinned nightly and builds the tool with it; trunk's
-  dependency `lightningcss` does not compile there. Trunk is a host binary and has
-  nothing to do with the wasm toolchain.
-- COOP/COEP headers are mandatory for `SharedArrayBuffer`. Configured in
-  `Trunk.toml` for dev; production hosting must send the same. Without them the
-  failure looks like broken wasm rather than a missing header.
+- **Install host tooling with `cargo +stable install`** — `cargo +stable install
+  trunk`, never plain `cargo install trunk`. Run inside the repo, `cargo install`
+  picks up the pinned nightly and builds the tool with it; trunk's dependency
+  `lightningcss` does not compile there. Trunk is a host binary and has nothing
+  to do with the wasm toolchain.
+- **The slice 1 probe and Trunk do not share an output directory.** Trunk owns
+  `dist` and clears it on every build; `tools/build-first-sound.sh` assembles
+  `dist-first-sound/` by hand. One directory would make `index.html` whichever of
+  the two ran last, with `tools/dev-server.py` serving it and saying nothing.
+- COOP/COEP headers are mandatory for `SharedArrayBuffer`. Sent by
+  `tools/dev-server.py`, which is what serves the probe today, and configured in
+  `Trunk.toml` for when Trunk takes over; production hosting must send the same.
+  Without them the failure looks like broken wasm rather than a missing header.
 - `escapement-app` is built with `opt-level = "s"`; everything else with `3` + LTO.
 
 ## Work order

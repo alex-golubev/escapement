@@ -12,6 +12,7 @@ over — it already sends the same headers (Trunk.toml), which is also why this
 defaults to the same port.
 
 Usage:  tools/dev-server.py [directory] [port]
+        tools/dev-server.py dist-first-sound     # the slice 1 probe
 """
 
 import mimetypes
