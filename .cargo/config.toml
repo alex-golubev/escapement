@@ -4,8 +4,22 @@ rustflags = [
     # core::arch::wasm32 intrinsics.
     "-C", "target-feature=+simd128",
 
-    # SharedArrayBuffer needs atomics. Enable together with nightly + build-std:
-    #   "-C", "target-feature=+atomics,+bulk-memory,+mutable-globals",
-    # and pass -Z build-std=std,panic_abort to the build.
-    # Left off so the skeleton builds on stable.
+    # SharedArrayBuffer needs atomics. These flags change the wasm ABI, so every
+    # crate in the link — std included — must be built with them. Hence build-std
+    # below; the two go together or not at all.
+    "-C", "target-feature=+atomics,+bulk-memory,+mutable-globals",
+
+    # The target-feature flags alone are not enough: they make atomic
+    # instructions available but still emit a private, unshared memory. Shared
+    # memory has to be asked of the linker, and it is only legal with a declared
+    # maximum. Provisional size — revisit per crate (§1 wants a fixed memory and
+    # no memory.grow on the worklet).
+    "-C", "link-arg=--shared-memory",
+    "-C", "link-arg=--max-memory=1073741824",
 ]
+
+[unstable]
+# The shipped std is precompiled without atomics and will not link against
+# atomics-enabled crates. Rebuilding it from source is the only route; needs the
+# rust-src component (pinned in rust-toolchain.toml).
+build-std = ["std", "panic_abort"]

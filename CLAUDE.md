@@ -21,12 +21,14 @@ cargo test -p escapement-core render_quantum        # a single test
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all --check                             # CI enforces this
 cargo build --workspace --target wasm32-unknown-unknown --release
+python3 tools/check-shared-memory.py target/wasm32-unknown-unknown/release/*.wasm
 
 trunk serve      # dev server on :8080, serves the required COOP/COEP headers
 ```
 
-First-time setup: `rustup target add wasm32-unknown-unknown && cargo install trunk`.
-The toolchain is pinned in `rust-toolchain.toml`.
+First-time setup: `cargo install trunk`. The toolchain — pinned nightly, wasm
+target and the `rust-src` component `build-std` needs — comes from
+`rust-toolchain.toml`; `rustup show` installs it.
 
 ## Invariants that break things silently
 
@@ -48,6 +50,12 @@ the cause.
 - **Never send frame-rate data through `postMessage`.** Meters, playhead position
   and transport state go into a fixed `SharedArrayBuffer` region that the UI polls
   each frame. Messages carry only user commands and structural model changes.
+- **`+atomics` alone does not give you shared memory.** The feature flag makes
+  atomic instructions available but still links a *private* memory; shared memory
+  must be requested from the linker (`--shared-memory`, legal only with
+  `--max-memory`). Dropping those link args still builds, still produces valid
+  wasm, and fails only in the browser — pointing at the wasm rather than at the
+  flag. `tools/check-shared-memory.py` guards this in CI.
 - **The render quantum is 128 samples and cannot be changed.** Anything wanting
   larger windows (FFT, time-stretch) buffers internally across quanta.
 - **The transport must be drivable from outside** — the engine accepts "start at
@@ -85,9 +93,17 @@ is closed source; the engine is open.
 
 ## Build configuration worth knowing
 
-- `.cargo/config.toml` enables `+simd128`. The **atomics flags are commented out**
-  and must be enabled together with nightly + `build-std` when `SharedArrayBuffer`
-  work starts (slices 1 and 2). The skeleton currently builds on stable.
+- `.cargo/config.toml` enables `+simd128` and `+atomics,+bulk-memory,+mutable-globals`,
+  plus `--shared-memory` / `--max-memory` as link args. The toolchain is a **pinned
+  dated nightly** — atomics-enabled wasm needs std rebuilt from source
+  (`build-std`), which is nightly-only. The pin is dated on purpose: CI runs clippy
+  with `-D warnings`, and a floating nightly reddens untouched trees.
+- `build-std` only engages when `--target` is passed explicitly, so host builds and
+  `cargo test` keep using the prebuilt std and stay fast.
+- **Install host tooling with `cargo +stable install`.** Run inside the repo,
+  `cargo install` picks up the pinned nightly and builds the tool with it; trunk's
+  dependency `lightningcss` does not compile there. Trunk is a host binary and has
+  nothing to do with the wasm toolchain.
 - COOP/COEP headers are mandatory for `SharedArrayBuffer`. Configured in
   `Trunk.toml` for dev; production hosting must send the same. Without them the
   failure looks like broken wasm rather than a missing header.

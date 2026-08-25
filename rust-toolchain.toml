@@ -1,4 +1,10 @@
+# Nightly is not a preference, it is a requirement. SharedArrayBuffer needs
+# +atomics on wasm, and an atomics-enabled std has to be rebuilt from source
+# (build-std, see .cargo/config.toml). Both are nightly-only. ARCHITECTURE.md §1.
+#
+# Pinned to a date deliberately: CI runs clippy with -D warnings, and a floating
+# nightly turns every newly added lint into a red build on an untouched tree.
 [toolchain]
-channel = "stable"
+channel = "nightly-2026-08-24"
 targets = ["wasm32-unknown-unknown"]
-components = ["rustfmt", "clippy"]
+components = ["rustfmt", "clippy", "rust-src"]
