@@ -115,6 +115,18 @@ Four vertical slices, each closing one risk (`ARCHITECTURE.md` §7): audio path 
 CRDT on Loro → patterns → warp. Slices 1 and 2 can run in parallel. The pattern
 model outranks warping because patterns are the product's identity.
 
+## Branches
+
+Two prefixes, and the split is between product and plumbing:
+
+- `feature/` — anything that changes what the product does: the slices above, the
+  engine, the UI, the model.
+- `chore/` — toolchain, CI, scripts, dependencies, documentation. No product
+  behaviour changes.
+
+Nothing else until there is something to put in it. The descriptive half carries
+the meaning — `chore/wasm-shared-memory`, not `chore/build-fixes`.
+
 ## Contributions
 
 External changes require a signed CLA, and the CLA bot is **not set up yet** — see
