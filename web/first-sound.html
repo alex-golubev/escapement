@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="utf-8"/>
+    <title>Escapement — first sound</title>
+    <style>
+        body { font: 14px/1.5 ui-monospace, monospace; margin: 2rem; max-width: 40rem; }
+        button { font: inherit; padding: .4rem 1rem; margin-right: .5rem; }
+        pre { background: #f4f4f4; padding: 1rem; white-space: pre-wrap; }
+    </style>
+</head>
+<body>
+<h1>Slice 1 — first sound</h1>
+<p>440 Hz out of a Rust graph in an <code>AudioWorklet</code>. Closes risk 1
+    (ARCHITECTURE.md §7): does the combination work at all.</p>
+<button id="play">Play</button>
+<button id="stop">Stop</button>
+<pre id="log"></pre>
+
+<script type="module">
+    const log = document.getElementById("log");
+    const say = (line) => {
+        log.textContent += line + "\n";
+        console.log("[first-sound] " + line);
+    };
+
+    say(`crossOriginIsolated = ${crossOriginIsolated}`);
+    if (!crossOriginIsolated) {
+        say("!! not isolated — the server is not sending COOP/COEP (tools/dev-server.py)");
+    }
+
+    let ctx = null;
+
+    document.getElementById("play").onclick = async () => {
+        if (ctx) return say("already playing");
+        try {
+            // Only startable from a user gesture.
+            ctx = new AudioContext();
+            say(`AudioContext sampleRate = ${ctx.sampleRate}`);
+
+            const bytes = await fetch("escapement_worklet.wasm").then((r) => r.arrayBuffer());
+            say(`wasm fetched: ${bytes.byteLength} bytes`);
+
+            // Compiled out here: no fetch inside the worklet, and a compiled
+            // Module survives the structured clone into processorOptions.
+            const module = await WebAssembly.compile(bytes);
+            say("wasm compiled");
+
+            await ctx.audioWorklet.addModule("worklet.js");
+            say("worklet.js registered");
+
+            const node = new AudioWorkletNode(ctx, "escapement", {
+                outputChannelCount: [1],
+                processorOptions: {module},
+            });
+            node.port.onmessage = ({data}) => {
+                say(`quantum = ${data.quantum} samples`);
+                say(`memory.buffer is SharedArrayBuffer = ${data.sharedMemory}`);
+                say(`memory = ${(data.memoryBytes / 1024 / 1024).toFixed(2)} MiB`);
+            };
+
+            node.connect(ctx.destination);
+            say("connected — 440 Hz should be audible");
+        } catch (error) {
+            say("FAILED: " + error);
+            ctx = null;
+        }
+    };
+
+    document.getElementById("stop").onclick = async () => {
+        if (!ctx) return say("not playing");
+        await ctx.close();
+        ctx = null;
+        say("stopped");
+    };
+</script>
+</body>
+</html>

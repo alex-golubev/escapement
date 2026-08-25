@@ -12,7 +12,10 @@ Architectural decisions and the reasoning behind them live in
 
 ## Status
 
-Early development. There is no working application yet.
+Early development. There is no application yet — the first vertical slice
+(ARCHITECTURE.md §7) is under way: a sine from a Rust graph in an `AudioWorklet`
+plays, which is what closed the question of whether that combination works at
+all. Everything below it — clips, the mixer, the model — is still to be written.
 
 ## Layout
 
@@ -29,18 +32,40 @@ repository** and is not part of this one.
 
 ## Building
 
-```sh
-rustup target add wasm32-unknown-unknown
-cargo install trunk
+The toolchain — a pinned nightly, the wasm target and the `rust-src` component
+that `build-std` needs — comes from `rust-toolchain.toml`. `rustup show` installs
+all of it; nothing has to be added by hand.
 
-trunk serve      # development, http://localhost:8080
-cargo test       # tests
-cargo clippy --workspace --all-targets
+```sh
+cargo test --workspace
+cargo clippy --workspace --all-targets -- -D warnings
+cargo fmt --all --check
+
+cargo build --workspace --target wasm32-unknown-unknown --release
+python3 tools/check-shared-memory.py target/wasm32-unknown-unknown/release/*.wasm
 ```
 
-The dev server must send `COOP`/`COEP` headers, otherwise there is no
-`SharedArrayBuffer`. This is configured in `Trunk.toml`; production hosting must
-send the same headers.
+That last check is not ceremony: `+atomics` alone links a *private* memory, and
+the build still succeeds. It fails in the browser, with an error that points at
+the wasm rather than at the missing linker flag.
+
+To hear the current slice:
+
+```sh
+tools/build-first-sound.sh     # builds the worklet, assembles dist/
+tools/dev-server.py            # http://127.0.0.1:8080
+```
+
+`Trunk.toml` is configured but Trunk is deliberately out of the loop until the
+audio path is settled — a build tool in the chain is a second suspect when
+something breaks. Install it with **`cargo +stable install trunk`**: run inside
+the repository, plain `cargo install` picks up the pinned nightly, and trunk's
+`lightningcss` dependency does not compile there.
+
+Either server must send `COOP`/`COEP` headers, otherwise there is no
+`SharedArrayBuffer` and the failure looks like broken wasm rather than a missing
+header. Configured in `Trunk.toml` and in `tools/dev-server.py`; production
+hosting must send the same.
 
 ## License and rights
 
