@@ -14,27 +14,24 @@ class EscapementProcessor extends AudioWorkletProcessor {
 
     this.wasm.escapement_init(sampleRate);
 
-    // memory.buffer is a SharedArrayBuffer — this is the memory the rings will
-    // live in (§3). Viewed once; per-quantum would allocate on the RT thread.
+    // memory.buffer is a SharedArrayBuffer — this is the memory the rings live
+    // in (§3). Viewed once; per-quantum would allocate on the RT thread.
     const ptr = this.wasm.escapement_output_ptr();
     const len = this.wasm.escapement_output_len();
     this.out = new Float32Array(this.wasm.memory.buffer, ptr, len);
 
     // The handshake (§3). One message, at startup: the ban on postMessage is
-    // about frame rate, not about this. Everything the other side needs to find
-    // its way around the region is in the header at `region` — that offset is
-    // the only thing it is told rather than shown, and the only thing a header
-    // cannot describe about itself.
+    // about frame rate, not about this. Sent after escapement_init, which is
+    // what writes the header `region` points at.
     //
-    // Sent after escapement_init, which is what writes that header. The rest is
-    // diagnostics: it confirms the §3 premise from inside the worklet rather
-    // than by assertion.
+    // Three fields and no diagnostics. Whether the memory is really shared and
+    // how large it is are questions about the build, and the build answers them
+    // on every run — tools/check-shared-memory.py, before this file is copied
+    // anywhere.
     this.port.postMessage({
       buffer: this.wasm.memory.buffer,
       region: this.wasm.escapement_region_ptr(),
       quantum: len,
-      sharedMemory: this.wasm.memory.buffer instanceof SharedArrayBuffer,
-      memoryBytes: this.wasm.memory.buffer.byteLength,
     });
   }
 

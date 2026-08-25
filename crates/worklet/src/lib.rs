@@ -5,13 +5,12 @@
 //! instantiates straight from bytes, which the worklet has to do anyway — there
 //! is no `fetch` in here (§1).
 //!
-//! Five entry points, and `worklet.js` is a shim over them that moves bytes and
-//! never touches a sample. The output buffer keeps two of its own rather than
-//! being described by the header, because the side that needs it is
-//! `worklet.js` itself, every quantum, on this thread — putting it in the
-//! header would mean parsing the header in JavaScript, which is the one thing
-//! the protocol exists to avoid (§4). It never crosses a thread boundary; the
-//! region does.
+//! `worklet.js` is a shim over the entry points below: it moves bytes and never
+//! touches a sample. The output buffer keeps two of its own rather than being
+//! described by the header, because the side that needs it is `worklet.js`
+//! itself, every quantum, on this thread — putting it in the header would mean
+//! parsing the header in JavaScript, which is the one thing the protocol exists
+//! to avoid (§4). It never crosses a thread boundary; the region does.
 
 use core::cell::UnsafeCell;
 use core::sync::atomic::AtomicU32;
@@ -35,13 +34,9 @@ use processor::{Processor, LAYOUT};
 /// promised.
 static REGION: [AtomicU32; LAYOUT.words()] = [const { AtomicU32::new(0) }; LAYOUT.words()];
 
-/// For what the audio thread alone touches.
-///
-/// The rings have arrived now, and this is the answer to the note that used to
-/// stand here: the shared region is above, in real atomics, and what is left
-/// under this wrapper is what the `extern "C"` entry points reach sequentially
-/// on one thread. `worklet.js` reads [`OUTPUT`] inside the same `process()`
-/// call that filled it.
+/// For what the audio thread alone touches: what the `extern "C"` entry points
+/// reach sequentially on one thread, never two. `worklet.js` reads [`OUTPUT`]
+/// inside the same `process()` call that filled it.
 struct SingleThreaded<T>(UnsafeCell<T>);
 
 // SAFETY: see above — the `extern "C"` entry points are called sequentially,
@@ -70,12 +65,11 @@ pub extern "C" fn escapement_init(sample_rate_hz: f32) {
     unsafe { *ENGINE.0.get() = Some(Processor::new(cells, sample_rate_hz)) };
 }
 
-/// Where the shared region starts, as an offset into `memory.buffer`.
+/// Where the shared region starts, as an offset into `memory.buffer`. Stable
+/// for the life of the module.
 ///
-/// Everything else about the region — how big it is, where the ring and the
-/// state block sit inside it — is in the header at this address, so this is the
-/// only number the other side is told rather than shown (§3). Stable for the
-/// life of the module.
+/// The only number the other side is told rather than shown: everything else
+/// about the region is in the header at this address (§3).
 #[no_mangle]
 pub extern "C" fn escapement_region_ptr() -> *const u32 {
     REGION.as_ptr().cast()

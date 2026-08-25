@@ -12,4 +12,3 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 escapement-core.workspace = true
 escapement-protocol.workspace = true
-# wasm-bindgen = "*"
