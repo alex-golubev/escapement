@@ -763,6 +763,29 @@ cleanly — the Rust core (graph, DSP, warp, time model) and the service (sync,
 hosting, accounts) are physically separate codebases. But this is a leaning, not a
 decision.
 
+> **Decided 2026-08-25.** `LICENSE` is **PolyForm Shield 1.0.0**, not Apache. The
+> leaning above rests on an assumption that does not survive inspection: that the
+> value sits in the service and the engine can be given away. It is the other way
+> round. The engine — graph, DSP, sampler with voice allocation, warp, CRDT model,
+> WebGL2 renderer — is years of work; the relay is a websocket server broadcasting
+> Loro updates, plus asset storage and accounts, and that is weeks. Apache would
+> hand a competitor the expensive half and leave them the cheap half to build.
+>
+> Shield rather than Noncommercial, and the reason is specific to a DAW.
+> Noncommercial permits personal use only "without any anticipated commercial
+> application" — which excludes a beatmaker who intends to sell the track. That
+> restriction lands on the target user rather than on the threat. Shield permits
+> every purpose except providing a competing product, so music made with the DAW
+> is unrestricted while the DAW itself cannot be resold or re-hosted.
+>
+> `LICENSE` carries a `Licensor Line of Business:` line, without which Shield's
+> Discontinued Products clause would let a competitor in on anything that stops
+> being offered.
+>
+> The cost is accepted knowingly: this is not open source by the OSI definition,
+> and few contributors come to a repository they may not compete with. The CLA
+> half of the leaning stands unchanged.
+
 ### The sample library — a deceptively hard problem
 
 A beatmaker has thousands of files, and a browser has no filesystem. How do 40 GB

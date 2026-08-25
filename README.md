@@ -44,14 +44,28 @@ send the same headers.
 
 ## License and rights
 
-**The code is open, the rights belong to the author.**
+**The source is published; the rights are the author's.**
 
-There is deliberately no `LICENSE` file yet, which by default means all rights
-are reserved. The decision is postponed and blocks nothing (ARCHITECTURE.md §5.1).
+The code is under the [PolyForm Shield License 1.0.0](LICENSE). Read it, build
+it, change it, use it for **any** purpose — including making music you sell,
+and including using it in a studio — with one exception: you may not use it to
+provide a product that competes with Escapement or with the service it connects
+to.
 
-Two rules already apply:
+The restriction is aimed at a fork-turned-competitor, not at musicians. Anything
+you make *with* the DAW is yours, commercially or otherwise; the DAW itself is
+not something to be resold or re-hosted.
+
+This is deliberately **not** an open source licence in the OSI sense. The source
+is public; the rights are not. Saying it plainly beats saying nothing: a public
+repository with no licence at all means *all* rights reserved, which reads to
+most people as the opposite of what it is.
+
+Two rules follow:
 
 1. **Permissively licensed dependencies only.** Never GPL: shipping a wasm bundle
    to the browser is distribution of the program, so a GPL dependency would force
    the entire product to be released under the GPL.
-2. **Contributions require a signed CLA.** See [CONTRIBUTING.md](CONTRIBUTING.md).
+2. **Contributions require a signed CLA.** The contributor keeps copyright and
+   grants the project a broad, irrevocable, sublicensable licence — that is what
+   keeps relicensing possible later. See [CONTRIBUTING.md](CONTRIBUTING.md).

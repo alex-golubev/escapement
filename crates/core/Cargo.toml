@@ -3,6 +3,8 @@ name = "escapement-core"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
+license-file.workspace = true
+publish.workspace = true
 
 # Anything that allocates on the processing path does not belong here.
 [dependencies]

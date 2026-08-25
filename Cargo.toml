@@ -14,6 +14,10 @@ edition = "2021"
 rust-version = "1.82"
 authors = ["Alex Golubev"]
 repository = "https://github.com/alex-golubev/escapement"
+license-file = "LICENSE"
+# Nothing here goes to crates.io: the license is not an OSI one and the
+# crates are parts of one application, not reusable libraries.
+publish = false
 
 [workspace.dependencies]
 escapement-core = { path = "crates/core" }
