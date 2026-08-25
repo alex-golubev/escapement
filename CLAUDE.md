@@ -23,6 +23,7 @@ cargo fmt --all --check                             # CI enforces this
 cargo build --workspace --target wasm32-unknown-unknown --release
 python3 tools/check-shared-memory.py target/wasm32-unknown-unknown/release/*.wasm
 python3 tools/check-shared-memory.py --fixed target/wasm32-unknown-unknown/release/escapement_worklet.wasm
+python3 tools/check-worklet-module.py target/wasm32-unknown-unknown/release/escapement_worklet.wasm
 
 tools/miri.sh -p escapement-protocol                 # undefined behaviour, data races
 RUSTFLAGS="--cfg loom" cargo test -p escapement-protocol   # memory orderings
@@ -58,7 +59,14 @@ the cause.
 - **`escapement-core` runs on the real-time thread.** No allocation, locks, panics,
   I/O or logging on the processing path. Allocation is allowed only while building
   the graph, before playback. Adding a dependency that allocates internally breaks
-  this invisibly.
+  this invisibly — which is why the allocation half is checked twice, from both
+  ends. `escapement-core` and `escapement-protocol` are `no_std`, so nothing in
+  them can *name* a heap; and `tools/check-worklet-module.py` reads the built
+  module for an allocator, which is the half that reaches inside dependencies.
+  The worklet crate itself cannot be `no_std`: a `cdylib` without `std` wants its
+  own `#[panic_handler]`, the dev profile's unwinding panics are unsupported
+  without `std`, and the host `.dylib` then fails to link for want of a libc.
+  Measured, not assumed — the script's docstring carries the numbers.
 - **`escapement-render` must not depend on the UI framework.** State in, mouse
   events out, no Leptos types in its public API. This is the only decision in the
   project that is deliberately kept reversible.
