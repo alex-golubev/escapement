@@ -78,6 +78,7 @@ impl Slot for Command {
 }
 
 #[cfg(test)]
+#[cfg(not(loom))]
 mod tests {
     use super::*;
 

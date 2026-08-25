@@ -10,3 +10,12 @@ publish.workspace = true
 # reach for an allocator by accident.
 [dependencies]
 
+# Only under `--cfg loom`, so it is absent from every ordinary build and can
+# never reach the bundle. MIT, like everything else here.
+[target.'cfg(loom)'.dependencies]
+loom = "0.7"
+
+# `loom` is ours, not the compiler's; without this the build warns about an
+# unknown cfg and CI runs clippy with -D warnings.
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(loom)'] }

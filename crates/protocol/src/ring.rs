@@ -221,6 +221,7 @@ impl<C: Cells, S: Slot> Consumer<C, S> {
 }
 
 #[cfg(test)]
+#[cfg(not(loom))]
 mod tests {
     use std::collections::VecDeque;
     use std::sync::atomic::{AtomicBool, Ordering};

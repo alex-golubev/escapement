@@ -27,6 +27,7 @@ python3 tools/check-shared-memory.py --fixed target/wasm32-unknown-unknown/relea
 tools/miri.sh                                       # undefined behaviour, data races
 tools/miri.sh -p escapement-protocol                # just the one crate
 cargo mutants -p escapement-protocol --timeout 10   # do the tests test anything
+RUSTFLAGS="--cfg loom" cargo test -p escapement-protocol   # memory orderings
 
 trunk serve      # dev server on :8080, serves the required COOP/COEP headers
 ```
@@ -76,6 +77,16 @@ the cause.
   points nowhere near the cause. Cargo finds `.cargo/config.toml` by walking up
   from the *working directory*, not from the manifest, so `tools/miri.sh` runs
   from outside the repository and points cargo back at it.
+- **Loom only sees what goes through Loom's types**, and it must see the *same*
+  code that ships. A `core::sync::atomic::fence` is invisible to it, so it
+  explores interleavings the real fence forbids and reports a failure that is not
+  there — looking exactly like a torn read. So `Cells::fence_release` and
+  `fence_acquire` pick their fence with `cfg(loom)` and are **not overridden** by
+  the Loom backend: an override would have the model checking a different
+  function from the one in the bundle, which is worse than not checking at all.
+  A fence has no effect any single-interleaving test can observe, so Loom is the
+  only thing covering them — mutation testing reports both as surviving, and
+  that is expected rather than a gap.
 - **The render quantum is 128 samples and cannot be changed.** Anything wanting
   larger windows (FFT, time-stretch) buffers internally across quanta.
 - **The transport must be drivable from outside** — the engine accepts "start at

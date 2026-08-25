@@ -54,6 +54,7 @@ impl Cells for Pointers {
 }
 
 #[cfg(test)]
+#[cfg(not(loom))]
 mod tests {
     use std::boxed::Box;
 

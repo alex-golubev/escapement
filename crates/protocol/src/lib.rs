@@ -30,6 +30,10 @@
 #[cfg(test)]
 extern crate std;
 
+#[cfg(test)]
+#[cfg(loom)]
+mod interleavings;
+
 pub mod access;
 pub mod command;
 pub mod ring;
@@ -229,6 +233,7 @@ impl fmt::Display for HandshakeError {
 }
 
 #[cfg(test)]
+#[cfg(not(loom))]
 mod tests {
     use super::*;
     use crate::access::testing::Words;

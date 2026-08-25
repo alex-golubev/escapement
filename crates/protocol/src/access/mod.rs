@@ -5,14 +5,24 @@
 //! interface and the workers reach into it through a typed-array view, which
 //! lands here in slice 1 step 3.
 
+#[cfg(test)]
+#[cfg(loom)]
+pub mod loom;
 /// The crate's only `unsafe`.
 #[allow(unsafe_code)]
 pub mod pointers;
 #[cfg(test)]
+#[cfg(not(loom))]
 pub mod testing;
 
 pub use pointers::Pointers;
 
+// The one place that knows about `loom`. Swapping the fence here rather than in
+// a `loom`-only implementation is what makes the model exercise the fence that
+// ships: an override would have `loom` checking a different function.
+#[cfg(loom)]
+use ::loom::sync::atomic::{fence, Ordering};
+#[cfg(not(loom))]
 use core::sync::atomic::{fence, Ordering};
 
 /// Word-addressed access to the shared region.
@@ -46,8 +56,12 @@ pub trait Cells {
     /// Everything before this is finished before any store that follows it.
     ///
     /// A fence is thread-wide rather than about one word, so it sits here only
-    /// because this is where the memory model lives, next to the loads and
-    /// stores it orders.
+    /// because this is where the memory model lives — and instrumented atomics
+    /// need instrumented fences, or the model explores interleavings the real
+    /// fence forbids and reports them as failures.
+    ///
+    /// Not overridable, and not covered by the ordinary suite: a fence has no
+    /// effect a single-interleaving test can see. `loom` is what checks it.
     fn fence_release(&self) {
         fence(Ordering::Release);
     }

@@ -158,6 +158,7 @@ impl<C: Cells> Subscriber<C> {
 }
 
 #[cfg(test)]
+#[cfg(not(loom))]
 mod tests {
     use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
     use std::thread;
