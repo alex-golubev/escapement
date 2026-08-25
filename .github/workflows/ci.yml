@@ -5,12 +5,28 @@ on:
     branches: [main]
   pull_request:
 
+# A new push to a pull request makes the run already in flight pointless.
+# Without this they pile up and every one of them runs to the end. Not on
+# `main`, where each commit's result is worth having on its own.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
   CARGO_TERM_COLOR: always
 
+# The checking jobs are separate jobs rather than more steps in `check`, so
+# they run at the same time as it: the wait on a pull request is the longest
+# one rather than the sum. They pay for that in runner minutes, since each
+# builds its own tree — time to wait and time bought are not the same budget.
+#
+# Every job carries a timeout because GitHub's default is six hours. The tests
+# bound their own waiting from the inside, which is the real fix; this is the
+# net under it.
 jobs:
   check:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
 
@@ -40,3 +56,92 @@ jobs:
       # memory.grow is unbounded, and a quantum at 48 kHz is 2.7 ms (§1).
       - name: The worklet's memory cannot grow
         run: python3 tools/check-shared-memory.py --fixed target/wasm32-unknown-unknown/release/escapement_worklet.wasm
+
+  # Undefined behaviour in the crate's one unsafe module, and whether the
+  # deliberate race in the state block is the kind the language permits.
+  miri:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Toolchain
+        run: rustup show
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: miri
+          # Miri builds a sysroot of its own, and rebuilding it costs more than
+          # the run does.
+          cache-directories: "~/.cache/miri"
+
+      # Named crates, never --workspace. Miri interprets rather than runs, so
+      # its cost follows the code put under it, and only code with `unsafe` or
+      # a deliberate race has anything to find. Measured: escapement-core has
+      # no `unsafe` at all and takes 36 s against the protocol's 23, because
+      # its tests push 48 000 samples through a sine one sample at a time.
+      - name: Undefined behaviour and data races
+        run: tools/miri.sh -p escapement-protocol
+
+  # What the two-thread stress tests cannot check: that the orderings hold
+  # under every interleaving the memory model permits, rather than under the
+  # one that happened on this machine today.
+  loom:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Toolchain
+        run: rustup show
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: loom
+
+      # A different RUSTFLAGS is a different build, hence the separate cache
+      # key above. Loom grows combinatorially inside a model, so what keeps
+      # this bounded is the models being tiny and preemption-bounded, not
+      # anything here.
+      - name: Memory orderings under every interleaving
+        run: cargo test -p escapement-protocol
+        env:
+          RUSTFLAGS: --cfg loom
+
+  # Whether the tests would notice if this code stopped working — but only for
+  # the lines the pull request touched. A full run is three minutes today and
+  # grows as (number of mutants) x (time to run the tests), so it is the one
+  # cost here that does not stay put as the project does. `--in-diff` makes it
+  # follow the size of the change instead.
+  mutants:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # --in-diff needs the base branch present to diff against.
+          fetch-depth: 0
+
+      - name: Toolchain
+        run: rustup show
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: mutants
+
+      # A prebuilt binary. `cargo install` inside the repository picks up the
+      # pinned nightly, and building a host tool with it is neither wanted nor
+      # reliable (CLAUDE.md).
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-mutants
+
+      - name: What this pull request changed
+        run: git diff origin/${{ github.base_ref }}...HEAD > /tmp/pr.diff
+
+      # Not -p: as other crates grow, a change in them should be held to the
+      # same standard. Mutants that survive by construction rather than by a
+      # gap are listed in .cargo/mutants.toml.
+      - name: Do the tests test the new code
+        run: cargo mutants --in-diff /tmp/pr.diff --timeout 10

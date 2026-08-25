@@ -1,0 +1,14 @@
+# Mutants that survive by construction rather than by a gap in the tests. Each
+# one was checked by hand before being listed; the reasoning is in CLAUDE.md.
+#
+# Kept narrow on purpose. A regex here silences a real bug just as happily as a
+# false alarm, so these match one mutation each and never a whole function.
+exclude_re = [
+    # A fence has no effect any single-interleaving test can observe. Loom is
+    # what covers these two, and Loom is a separate job.
+    "replace Cells::fence_release with \\(\\)",
+    "replace Cells::fence_acquire with \\(\\)",
+    # The halves of a `u64` occupy disjoint bits, so `|` and `^` are the same
+    # operation there. No test can distinguish them, and none should try.
+    "replace \\| with \\^ in get_u64",
+]

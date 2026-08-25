@@ -24,17 +24,31 @@ cargo build --workspace --target wasm32-unknown-unknown --release
 python3 tools/check-shared-memory.py target/wasm32-unknown-unknown/release/*.wasm
 python3 tools/check-shared-memory.py --fixed target/wasm32-unknown-unknown/release/escapement_worklet.wasm
 
-tools/miri.sh                                       # undefined behaviour, data races
-tools/miri.sh -p escapement-protocol                # just the one crate
-cargo mutants -p escapement-protocol --timeout 10   # do the tests test anything
+tools/miri.sh -p escapement-protocol                 # undefined behaviour, data races
 RUSTFLAGS="--cfg loom" cargo test -p escapement-protocol   # memory orderings
+cargo mutants -p escapement-protocol --timeout 10   # do the tests test anything
 
 trunk serve      # dev server on :8080, serves the required COOP/COEP headers
 ```
 
 First-time setup: `cargo install trunk`. The toolchain — pinned nightly, wasm
-target and the `rust-src` component `build-std` needs — comes from
+target, the `rust-src` component `build-std` needs, and `miri` — comes from
 `rust-toolchain.toml`; `rustup show` installs it.
+
+**Miri takes a crate list, never `--workspace`.** It interprets rather than runs,
+so its cost follows the code put under it, and only `unsafe` or a deliberate race
+gives it anything to find. Measured: `escapement-core` contains no `unsafe` at
+all and costs 36 s against the protocol's 23, because its tests push 48 000
+samples through a sine one sample at a time.
+
+CI runs all three. Miri and Loom are jobs beside the ordinary checks rather than
+steps inside them, so they add waiting time only if they turn out to be the
+slowest thing — they pay in runner minutes instead. Mutation testing runs
+`--in-diff` against the base branch: a full run grows as (number of mutants) x
+(time to run the tests) and would not stay affordable, while a diff-scoped one
+follows the size of the change (measured on this branch: 18 mutants instead of
+144). Mutants that survive by construction rather than by a gap in the tests are
+listed in `.cargo/mutants.toml`, one narrow regex each.
 
 ## Invariants that break things silently
 

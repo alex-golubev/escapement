@@ -7,4 +7,7 @@
 [toolchain]
 channel = "nightly-2026-08-24"
 targets = ["wasm32-unknown-unknown"]
-components = ["rustfmt", "clippy", "rust-src"]
+# `miri` is here rather than installed by CI because it is part of how this
+# project is checked, not a personal preference — see CLAUDE.md. `loom` is a
+# crate and `cargo-mutants` a host binary, so neither belongs in this list.
+components = ["rustfmt", "clippy", "rust-src", "miri"]
