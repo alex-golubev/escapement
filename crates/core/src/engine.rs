@@ -140,11 +140,33 @@ mod tests {
     #[test]
     fn starting_makes_sound_and_stopping_takes_it_away() {
         let mut engine = Engine::new(RATE);
+
         engine.start();
+        assert!(engine.playing());
         assert!(peak(&quantum(&mut engine)) > 0.0);
 
         engine.stop();
+        assert!(!engine.playing());
         assert_eq!(peak(&quantum(&mut engine)), 0.0);
+    }
+
+    /// That the engine hands a frequency on to the oscillator rather than
+    /// keeping it — the counting is `Sine`'s business and tested there, so what
+    /// this asks is only whether the value arrives.
+    #[test]
+    fn a_new_frequency_reaches_the_oscillator() {
+        let mut engine = Engine::new(RATE);
+        engine.start();
+        engine.set_frequency(200.0);
+
+        let mut one_second = [0.0f32; 48_000];
+        engine.process(&mut one_second);
+
+        let rising = one_second
+            .windows(2)
+            .filter(|pair| pair[0] <= 0.0 && pair[1] > 0.0)
+            .count();
+        assert_eq!(rising, 200);
     }
 
     /// A block written under an earlier command must not be readable through

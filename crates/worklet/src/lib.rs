@@ -106,3 +106,66 @@ pub extern "C" fn escapement_process() {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use escapement_protocol::{Command, CommandKind, Layout, Producer, Subscriber};
+
+    use super::*;
+
+    /// Reads the output buffer out into a value of its own.
+    ///
+    /// A borrow of it cannot be held across [`escapement_process`], which takes
+    /// `&mut` to the same words — that is the aliasing the module is careful
+    /// about, and a test is not exempt from it.
+    fn output() -> std::vec::Vec<f32> {
+        let ptr = escapement_output_ptr();
+        let len = escapement_output_len();
+
+        // SAFETY: those two describe `OUTPUT`, a `static` of exactly `len`
+        // initialized `f32`. Nothing else is borrowing it here: the module is
+        // between calls to `escapement_process`.
+        unsafe { core::slice::from_raw_parts(ptr, len) }.to_vec()
+    }
+
+    /// The module as `worklet.js` uses it, over the module's own statics: init,
+    /// take the region's address, read the header, send a command into it,
+    /// render, read the state back.
+    ///
+    /// One test rather than several, and that is the whole safety argument —
+    /// these statics are the module's only copy, and `cargo test` runs tests on
+    /// several threads. A second test touching them would race with this one.
+    /// Everything that does not need them lives in `processor.rs`, which is
+    /// handed its memory instead.
+    #[test]
+    fn the_module_answers_through_its_entry_points() {
+        escapement_init(48_000.0);
+
+        // SAFETY: the exported pointer is the base of `REGION`, a `static` of
+        // exactly this many cells that never moves.
+        let cells = unsafe { Pointers::new(escapement_region_ptr().cast(), LAYOUT.words()) };
+        let seen = Layout::read_header(&cells).expect("init did not write a header");
+
+        escapement_process();
+        assert!(
+            output().iter().all(|sample| *sample == 0.0),
+            "a transport nobody started made a sound"
+        );
+
+        let mut interface = Producer::new(cells, seen.commands());
+        interface.push(&Command::now(CommandKind::Start)).unwrap();
+
+        escapement_process();
+        assert!(
+            output().iter().any(|sample| *sample != 0.0),
+            "Start did not reach the engine"
+        );
+
+        let state = Subscriber::new(cells, seen.state())
+            .read()
+            .expect("the writer was not in the way");
+        assert!(state.playing);
+        assert_eq!(state.quanta, 2);
+        assert_eq!(state.commands_applied, 1);
+    }
+}
