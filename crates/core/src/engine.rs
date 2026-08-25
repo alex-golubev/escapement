@@ -105,9 +105,8 @@ impl Engine {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::fixtures::{rising_zero_crossings, RATE, RATE_HZ};
     use crate::RENDER_QUANTUM;
-
-    const RATE: f32 = 48_000.0;
 
     fn quantum(engine: &mut Engine) -> [f32; RENDER_QUANTUM] {
         let mut block = [0.0f32; RENDER_QUANTUM];
@@ -159,14 +158,10 @@ mod tests {
         engine.start();
         engine.set_frequency(200.0);
 
-        let mut one_second = [0.0f32; 48_000];
+        let mut one_second = [0.0f32; RATE_HZ];
         engine.process(&mut one_second);
 
-        let rising = one_second
-            .windows(2)
-            .filter(|pair| pair[0] <= 0.0 && pair[1] > 0.0)
-            .count();
-        assert_eq!(rising, 200);
+        assert_eq!(rising_zero_crossings(&one_second), 200);
     }
 
     /// A block written under an earlier command must not be readable through

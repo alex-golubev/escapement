@@ -63,11 +63,12 @@ impl Sine {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::fixtures::{rising_zero_crossings, RATE, RATE_HZ};
     use crate::RENDER_QUANTUM;
 
     #[test]
     fn stays_inside_full_scale() {
-        let mut sine = Sine::new(440.0, 48_000.0);
+        let mut sine = Sine::new(440.0, RATE);
         let mut block = [0.0f32; RENDER_QUANTUM];
         for _ in 0..100 {
             sine.process(&mut block);
@@ -79,7 +80,7 @@ mod tests {
 
     #[test]
     fn starts_at_zero_and_rises() {
-        let mut sine = Sine::new(440.0, 48_000.0);
+        let mut sine = Sine::new(440.0, RATE);
         let mut block = [0.0f32; 4];
         sine.process(&mut block);
         assert_eq!(block[0], 0.0);
@@ -88,30 +89,23 @@ mod tests {
 
     #[test]
     fn completes_a_period() {
-        let mut sine = Sine::new(1.0, 48_000.0);
-        let mut one_second = [0.0f32; 48_000];
+        let mut sine = Sine::new(1.0, RATE);
+        let mut one_second = [0.0f32; RATE_HZ];
         sine.process(&mut one_second);
         assert!(sine.phase.abs() < 1e-3, "phase drifted to {}", sine.phase);
     }
 
-    fn rising_zero_crossings(block: &[f32]) -> usize {
-        block
-            .windows(2)
-            .filter(|pair| pair[0] <= 0.0 && pair[1] > 0.0)
-            .count()
-    }
-
     #[test]
     fn has_the_frequency_asked_for() {
-        let mut sine = Sine::new(100.0, 48_000.0);
-        let mut one_second = [0.0f32; 48_000];
+        let mut sine = Sine::new(100.0, RATE);
+        let mut one_second = [0.0f32; RATE_HZ];
         sine.process(&mut one_second);
         assert_eq!(rising_zero_crossings(&one_second), 100);
     }
 
     #[test]
     fn a_new_frequency_takes_effect_without_resetting_the_phase() {
-        let mut sine = Sine::new(100.0, 48_000.0);
+        let mut sine = Sine::new(100.0, RATE);
         let mut block = [0.0f32; 100];
         sine.process(&mut block);
         let phase = sine.phase;
@@ -119,7 +113,7 @@ mod tests {
         sine.set_frequency(200.0);
         assert_eq!(sine.phase, phase, "changing the frequency moved the phase");
 
-        let mut one_second = [0.0f32; 48_000];
+        let mut one_second = [0.0f32; RATE_HZ];
         sine.process(&mut one_second);
         assert_eq!(rising_zero_crossings(&one_second), 200);
     }
@@ -129,10 +123,10 @@ mod tests {
     #[test]
     fn a_frequency_that_is_not_one_leaves_the_last_good_one_standing() {
         for bad in [f32::NAN, 0.0, -440.0, f32::INFINITY] {
-            let mut sine = Sine::new(100.0, 48_000.0);
+            let mut sine = Sine::new(100.0, RATE);
             sine.set_frequency(bad);
 
-            let mut one_second = [0.0f32; 48_000];
+            let mut one_second = [0.0f32; RATE_HZ];
             sine.process(&mut one_second);
             assert_eq!(
                 rising_zero_crossings(&one_second),
@@ -147,11 +141,11 @@ mod tests {
     /// is the frequency that was working.
     #[test]
     fn a_frequency_at_or_above_nyquist_is_refused_rather_than_produced() {
-        for unreachable in [24_000.0, 40_000.0] {
-            let mut sine = Sine::new(100.0, 48_000.0);
+        for unreachable in [RATE / 2.0, RATE] {
+            let mut sine = Sine::new(100.0, RATE);
             sine.set_frequency(unreachable);
 
-            let mut one_second = [0.0f32; 48_000];
+            let mut one_second = [0.0f32; RATE_HZ];
             sine.process(&mut one_second);
             assert_eq!(
                 rising_zero_crossings(&one_second),

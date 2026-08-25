@@ -15,6 +15,9 @@
 #[cfg(test)]
 extern crate std;
 
+#[cfg(test)]
+mod fixtures;
+
 mod engine;
 mod sine;
 
@@ -25,12 +28,7 @@ pub use sine::Sine;
 /// of it.
 pub const RENDER_QUANTUM: usize = 128;
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn render_quantum_is_spec_mandated() {
-        assert_eq!(RENDER_QUANTUM, 128);
-    }
-}
+// The spec's number, not a tuning knob, so changing it has to be deliberate
+// enough to edit twice. Stated the way the protocol states its wire sizes: at
+// compile time, where nothing can filter it out of a run.
+const _: () = assert!(RENDER_QUANTUM == 128);

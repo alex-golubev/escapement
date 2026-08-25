@@ -17,7 +17,7 @@ reading that document risks silently invalidating one of them. Section numbers
 
 ```sh
 cargo test --workspace                              # tests
-cargo test -p escapement-core render_quantum        # a single test
+cargo test -p escapement-core nyquist               # a single test
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all --check                             # CI enforces this
 cargo build --workspace --target wasm32-unknown-unknown --release
