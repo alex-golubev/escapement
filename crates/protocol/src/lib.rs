@@ -9,7 +9,7 @@
 //!
 //! - a **queue** ([`ring`]) for commands: ordered, lossless, drained by the
 //!   reader;
-//! - a **latest value** ([`state`]) for meters and the playhead: written every
+//! - a **latest value** ([`state`]) for meters and the clock: written every
 //!   quantum, read once a frame, skipped values do not exist as a concept;
 //! - **double buffering** for the project snapshot — not here yet, slice 2.
 //!

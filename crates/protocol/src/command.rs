@@ -41,7 +41,9 @@ impl Command {
 pub enum CommandKind {
     /// Run the transport from wherever it stands.
     Start,
-    /// Stop it, leaving the playhead where it is.
+    /// Stop the transport, leaving its position where it is. The engine's
+    /// clock ([`EngineState::clock`](crate::EngineState::clock)) is not the
+    /// transport's and keeps running; what stops is the sound.
     Stop,
     /// Slice 1 only: the engine is one oscillator. Goes when a graph arrives and
     /// parameters get addresses.

@@ -27,10 +27,21 @@ const ATTEMPTS: usize = 4;
 /// Everything the interface polls rather than is told.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct EngineState {
-    /// Samples since the engine started.
-    pub playhead: u64,
-    /// Quanta processed. Divided by `playhead` it is the block size actually
-    /// being delivered, which is how a dropout shows up.
+    /// Samples the engine has produced since it started.
+    ///
+    /// Monotonic, and what [`Command::when`](crate::Command::when) is measured
+    /// against — so it is the clock the interface schedules by, not a position
+    /// on a timeline. A transport position joins this block when there is a
+    /// timeline to have one; naming this one `playhead` would put two different
+    /// numbers under one word.
+    pub clock: u64,
+    /// Callbacks the host has made.
+    ///
+    /// Read against the host's own clock (`AudioContext.currentTime`) it is how
+    /// a dropout shows up: a missed callback stops both fields here while the
+    /// host's clock carries on. In the worklet it is [`EngineState::clock`]
+    /// divided by the render quantum; the offline render for export drives the
+    /// same engine in blocks of its own choosing, and there the two part.
     pub quanta: u64,
     /// Peak of the last quantum, full scale.
     pub peak: f32,
@@ -52,7 +63,7 @@ impl EngineState {
     pub const WORDS: usize = 8;
 
     fn encode(&self, into: &mut [u32]) {
-        put_u64(into, 0, self.playhead);
+        put_u64(into, 0, self.clock);
         put_u64(into, 2, self.quanta);
         into[4] = self.peak.to_bits();
         into[5] = u32::from(self.playing);
@@ -62,7 +73,7 @@ impl EngineState {
 
     fn decode(from: &[u32]) -> Self {
         Self {
-            playhead: get_u64(from, 0),
+            clock: get_u64(from, 0),
             quanta: get_u64(from, 2),
             peak: f32::from_bits(from[4]),
             playing: from[5] != 0,

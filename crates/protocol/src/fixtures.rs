@@ -21,7 +21,7 @@ pub(crate) const STUCK: core::time::Duration =
 /// block reads as.
 pub(crate) fn sample(n: u64) -> EngineState {
     EngineState {
-        playhead: n * 128,
+        clock: n * 128,
         quanta: n,
         peak: n as f32,
         playing: n % 2 == 1,
