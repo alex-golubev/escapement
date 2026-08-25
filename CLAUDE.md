@@ -87,6 +87,17 @@ the cause.
   A fence has no effect any single-interleaving test can observe, so Loom is the
   only thing covering them — mutation testing reports both as surviving, and
   that is expected rather than a gap.
+- **Test modules carry two `cfg` attributes, never one `all(...)`.**
+  `#[cfg(test)]` and `#[cfg(not(loom))]` on separate lines. `cargo-mutants`
+  parses the source without evaluating `cfg` and recognises only a bare
+  `#[cfg(test)]` as test code, so written as `#[cfg(all(test, not(loom)))]` it
+  mutates modules an ordinary build never compiles — `access/loom.rs`,
+  `access/testing.rs`, `interleavings.rs` — and reports those mutants as
+  surviving. Measured on cargo-mutants 27.1.0, which is current: 147 mutants
+  becomes 182. There is no option for it — `--exclude` matches files and
+  `--exclude-re` mutant names, neither knows about `cfg` — and the collapsed
+  form compiles and passes CI, so nothing but this note is in the way of
+  tidying it up.
 - **The render quantum is 128 samples and cannot be changed.** Anything wanting
   larger windows (FFT, time-stretch) buffers internally across quanta.
 - **The transport must be drivable from outside** — the engine accepts "start at
@@ -105,6 +116,7 @@ understand before editing:
 | Model | `model` | CRDT project document (Loro), undo/redo, sequencer, automation |
 | Workers | — | Disk streaming, decoding, waveform peaks, warp analysis |
 | UI | `app`, `render` | Leptos panels; WebGL2 canvas for playlist and piano roll |
+| RT **and** UI | `protocol` | The shared region itself — header, command ring, state block. The one crate linked into both wasm modules, so both ends decode what the other encoded (§3) |
 
 **Two separate wasm instances.** The worklet has its own linear memory and cannot
 see the UI thread's. All exchange crosses `SharedArrayBuffer` ring buffers, even

@@ -554,10 +554,14 @@ on the UI side cost nothing measurable.
 linked modules, each with its own static layout and its own allocator. Pointed at
 the same memory, their data segments and heaps collide.
 
-⚠️ Consequence for the build. `--max-memory` in `.cargo/config.toml` is currently
-one provisional value for the whole target. It cannot stay that way: the worklet's
-memory is also the transport, and §1 wants it fixed and sized once, with no
-`memory.grow`. Split it per crate before the ring buffer is written.
+✅ Consequence for the build, settled. `--max-memory` cannot be one value for the
+whole target: the worklet's memory is also the transport, and §1 wants it fixed
+and sized once, with no `memory.grow`. `rustflags` in `.cargo/config.toml` apply
+to every crate built for the target and cannot tell the two apart, so the memory
+link args live per crate in `crates/*/build.rs` — the worklet fixed at 32 MiB
+(`--initial-memory` equal to `--max-memory`), the interface free to grow. CI
+checks both, and that shared memory is actually shared: `+atomics` alone links a
+*private* memory and fails only in the browser.
 
 ### The technique without which meters stutter
 
@@ -567,6 +571,98 @@ memory is also the transport, and §1 wants it fixed and sized once, with no
 
 Meters at 60 fps through `postMessage` are a guaranteed stall. Messages carry only
 infrequent things: user commands and structural changes to the model.
+
+### What lives in that memory
+
+Written once, in `escapement-protocol`, and used by both ends — the worklet
+through pointers, the interface through `Atomics` over a typed view. Only the
+access differs; the encoding is one piece of code, which is the whole gain from
+there being no TypeScript.
+
+Everything is addressed in **32-bit words**, never bytes. `Atomics` index a view
+by element, so words remove a class of alignment mistakes on the outside and
+remove byte order from the encoding on both.
+
+| Words | What | Written by | Read by |
+|---|---|---|---|
+| 0–31 | header — magic, version, offsets, capacities | worklet, once before publishing the address | interface, once at the handshake |
+| 32–… | command ring | interface | worklet, drained before each quantum |
+| …–end | state block | worklet, after each quantum | interface, once a frame |
+
+**Three mechanisms, not one, because the traffic has three shapes.** Treating
+them as one thing is the mistake this section exists to prevent:
+
+- a **queue** for commands — ordered, lossless, drained by the reader. Slots are
+  fixed and small, so a message can neither straddle the end of the ring nor
+  carry a length in front of it. Nothing that is *data* goes through here at all:
+  a sample buffer or a graph is published elsewhere and referred to by a command.
+  A ring that grows a large slot is a ring being used for the wrong thing.
+- a **latest value** for meters, playhead and transport — written every quantum,
+  read once a frame, skipped values not a concept. A meter shows the level now,
+  not the levels that have been.
+- **double buffering** for the project snapshot — slice 2, below, and not built
+  yet.
+
+Overflow is deliberately **not** a protocol state. A full ring is refused, and
+the interface — which keeps its own queue in its own memory and drains a frame's
+worth at a time — answers that with "next frame". The alternative is dropping or
+overwriting commands, which is a lost transport change rather than a late one.
+
+#### The header describes itself, and carries a version
+
+Not constants compiled into both halves. **The browser fetches and caches the two
+modules separately**, so a fresh interface meeting a stale worklet out of cache
+is an ordinary afternoon in development — and a shared constant parts company
+silently, as a misread rather than as a message. The version in the header turns
+it into one at the handshake.
+
+The handshake is a single `postMessage` at startup: the worklet instantiates,
+reads its exports, and sends the memory and the header offset to the main thread.
+The ban on `postMessage` is about frame rate, not startup. And since the
+worklet's memory is fixed, the views over it are created once and live forever.
+
+The one thing a header cannot describe is the memory holding it, so that is the
+one claim checked against something other than the header — the reader compares
+the region described against the words it can actually reach. Without that check
+a header claiming more memory than exists is well formed by every other measure,
+and fails at the first access instead, pointing at the ring rather than at the
+handshake.
+
+#### Frame-rate state is a generation counter, not double buffering
+
+The technique above says *where* those values go; this is *how*. The writer bumps
+a counter to odd, writes the payload, bumps it to even. The reader takes the
+counter, the payload, and the counter again: odd or changed means take it again.
+**The writer never waits** — which is the entire requirement on the audio thread.
+
+Double buffering is worse here. It does not save a slow reader — two frames on
+and the writer is back in the same buffer — so honesty needs three, for a payload
+of a dozen words. The project snapshot below is the same problem the other way
+round, which is why it gets the other mechanism.
+
+⚠️ A race on **non**-atomic access is undefined behaviour in Rust's model even
+when the generation counter filters the torn read out afterwards. So on the Rust
+side the payload is read and written through relaxed atomics: on wasm that is the
+same load instruction with no barrier, free at run time, but in the language it
+is no longer a race. On the interface side it is one view copy plus two `Atomics`
+on the counter — JavaScript has no undefined behaviour, the divergence is
+allowed, and the retry catches it.
+
+#### No engine → interface ring yet
+
+What the engine actually has to report upward — meters, position, transport —
+belongs in the latest-value cell; dropouts and "how many commands were applied"
+are counters in the same block; acknowledgement of commands is the ring's tail,
+which already exists. Real events, meaning notes recorded from a controller,
+arrive when recording does, and that is deferred in §2.2.
+
+The primitive is written to work both ways round. An instance in this direction
+gets created when there is something to put in it.
+
+> The orderings here are not checked by reasoning. Loom enumerates the
+> interleavings, Miri looks for undefined behaviour and data races, and
+> cargo-mutants checks that the tests would notice if any of it stopped working.
+> `CLAUDE.md` has the commands and the traps.
 
 ### A state snapshot for the audio thread
 
