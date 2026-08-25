@@ -24,6 +24,8 @@ cargo build --workspace --target wasm32-unknown-unknown --release
 python3 tools/check-shared-memory.py target/wasm32-unknown-unknown/release/*.wasm
 python3 tools/check-shared-memory.py --fixed target/wasm32-unknown-unknown/release/escapement_worklet.wasm
 
+tools/miri.sh                                       # undefined behaviour, data races
+tools/miri.sh -p escapement-protocol                # just the one crate
 cargo mutants -p escapement-protocol --timeout 10   # do the tests test anything
 
 trunk serve      # dev server on :8080, serves the required COOP/COEP headers
@@ -67,6 +69,13 @@ the cause.
   regardless, so growth would buy nothing. Note this is *not* about stale views —
   growing a **shared** memory keeps them valid, unlike a private one. CI checks it
   with `--fixed`.
+- **`build-std` and `cargo miri` collide.** `build-std` engages whenever
+  `--target` is passed, and `cargo miri` passes one — for the host. Miri builds
+  its own sysroot as well, and the two fight over `core`. It fails inside
+  `compiler_builtins` with hundreds of "cannot find `Some` in this scope", which
+  points nowhere near the cause. Cargo finds `.cargo/config.toml` by walking up
+  from the *working directory*, not from the manifest, so `tools/miri.sh` runs
+  from outside the repository and points cargo back at it.
 - **The render quantum is 128 samples and cannot be changed.** Anything wanting
   larger windows (FFT, time-stretch) buffers internally across quanta.
 - **The transport must be drivable from outside** — the engine accepts "start at
