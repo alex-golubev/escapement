@@ -12,9 +12,23 @@ tracking down everyone who ever sent a patch.
 A CLA leaves copyright with the author of the change and grants the project broad
 rights, including relicensing. It is not an assignment of copyright.
 
-> **Not set up yet:** a CLA check bot (cla-assistant or equivalent) needs to be
-> connected to this repository **before the first external PR**. Until then,
-> external changes cannot be accepted.
+The agreement is [CLA.md](CLA.md). It is the Apache Individual Contributor
+License Agreement v2.0 with three changes: the counterparty is the maintainer
+rather than a foundation, the Apache "public benefit" undertaking is removed
+because it would sit awkwardly against the right to relicense, and a clause is
+added allowing the agreement to move to a company later formed to hold the
+project.
+
+## How to sign
+
+1. Read [CLA.md](CLA.md).
+2. Comment on your pull request with exactly this line:
+
+   > I have read the Escapement Individual Contributor License Agreement v1.0 and
+   > I agree to it.
+
+Sign once. It covers your present and future contributions, so later pull
+requests need nothing further.
 
 ## Dependency licenses
 
