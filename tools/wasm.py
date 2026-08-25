@@ -9,8 +9,6 @@ Not a module for anything outside this directory. Both callers are run as
 `python3 tools/<name>.py`, which is what puts this directory first on the path.
 """
 
-import sys
-
 MAGIC = b"\0asm"
 
 
@@ -39,13 +37,3 @@ def sections(buf):
         yield section_id, i, end
         i = end
 
-
-def advise(*lines):
-    """What to do about a failure — on stderr, and after the per-file report.
-
-    Apart from those lines because it is advice about the run rather than about
-    any one file, and because the wrong advice on a silent build problem costs
-    more than none.
-    """
-    sys.stdout.flush()
-    print("\n" + "\n".join(lines), file=sys.stderr)

@@ -1,16 +1,9 @@
 //! What the engine tells the interface, at frame rate.
 //!
-//! Not a queue. The engine writes every quantum, the interface reads every
-//! frame, and the values in between were never wanted — a meter shows the level
-//! now, not the levels that have been. So this is one cell holding the latest
-//! value, guarded by a generation counter (a *seqlock*): the writer never waits,
-//! which is the whole requirement on the audio thread, and the reader detects a
-//! torn read and takes it again.
-//!
-//! Double buffering would not do here. It does not save a slow reader — two
-//! frames on and the writer is back in the same buffer — so it wants three, for
-//! a payload of a dozen words. Slice 2's project snapshot is the other way
-//! round, and will get the other mechanism.
+//! One cell holding the latest value, guarded by a generation counter — a
+//! *seqlock*. The writer never waits, which is the whole requirement on the
+//! audio thread, and the reader detects a torn read and takes it again. Why
+//! this and not double buffering is §3.
 
 use crate::access::Cells;
 use crate::{get_u64, put_u64};
@@ -27,21 +20,16 @@ const ATTEMPTS: usize = 4;
 /// Everything the interface polls rather than is told.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct EngineState {
-    /// Samples the engine has produced since it started.
-    ///
-    /// Monotonic, and what [`Command::when`](crate::Command::when) is measured
-    /// against — so it is the clock the interface schedules by, not a position
-    /// on a timeline. A transport position joins this block when there is a
-    /// timeline to have one; naming this one `playhead` would put two different
-    /// numbers under one word.
+    /// Samples the engine has produced since it started. Monotonic, and what
+    /// [`Command::when`](crate::Command::when) is measured against — a clock to
+    /// schedule by, not a position on a timeline. A transport position joins
+    /// this block when there is a timeline to have one.
     pub clock: u64,
-    /// Callbacks the host has made.
-    ///
-    /// Read against the host's own clock (`AudioContext.currentTime`) it is how
-    /// a dropout shows up: a missed callback stops both fields here while the
-    /// host's clock carries on. In the worklet it is [`EngineState::clock`]
-    /// divided by the render quantum; the offline render for export drives the
-    /// same engine in blocks of its own choosing, and there the two part.
+    /// Callbacks the host has made. Against the host's own clock
+    /// (`AudioContext.currentTime`) this is how a dropout shows up: a missed
+    /// callback stops it while the host's clock carries on. Not
+    /// [`EngineState::clock`] divided by the quantum — the offline render drives
+    /// the same engine in blocks of its own choosing.
     pub quanta: u64,
     /// Peak of the last quantum, full scale.
     pub peak: f32,

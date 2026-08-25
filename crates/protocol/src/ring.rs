@@ -1,10 +1,7 @@
 //! A queue in shared memory: one producer, one consumer, no locks.
 //!
-//! Carries control and never data. A slot is small and fixed, so a message can
-//! neither straddle the end of the ring nor need a length in front of it; a
-//! sample buffer or a graph does not travel through here at all, it is published
-//! elsewhere and referred to by a command. [`MAX_SLOT_WORDS`] is that rule made
-//! checkable.
+//! Carries control and never data (§3), and [`MAX_SLOT_WORDS`] is that rule
+//! made checkable.
 //!
 //! Traffic is tens of items per second in bursts, not thousands, so the usual
 //! tricks for a hot ring — caching the far index, batching the publishing — would
@@ -112,9 +109,8 @@ impl RingLayout {
     }
 }
 
-/// The ring was full. Not a protocol state: the interface keeps its own queue in
-/// its own memory and drains a frame's worth at a time, so the answer to this is
-/// always "next frame".
+/// The ring was full. Not a protocol state (§3): the answer is always "next
+/// frame".
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Full;
 

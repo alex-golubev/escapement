@@ -1,12 +1,10 @@
-//! Audio core: graph, nodes, mixer, DSP.
+//! Audio core: graph, nodes, mixer, DSP. Runs on the real-time thread, under
+//! the rules CLAUDE.md lists for it.
 //!
-//! Runs on the real-time thread: no allocation, locks, panics, I/O or logging on
-//! the processing path. Allocation is allowed only while building the graph.
-//!
-//! `no_std` is what turns the first of those from discipline into a compiler
-//! error: with no allocator in this crate's graph there is nothing here to
-//! allocate with. It costs one dependency — `f32::sin` lives in `std` — and on
-//! wasm that costs nothing at all, see `Cargo.toml`.
+//! `no_std` is what turns the no-allocation half of those from discipline into
+//! a compiler error: with no allocator in this crate's graph there is nothing
+//! here to allocate with. It costs one dependency — `f32::sin` lives in `std` —
+//! and on wasm that costs nothing at all, see `Cargo.toml`.
 
 #![no_std]
 
@@ -28,7 +26,6 @@ pub use sine::Sine;
 /// of it.
 pub const RENDER_QUANTUM: usize = 128;
 
-// The spec's number, not a tuning knob, so changing it has to be deliberate
-// enough to edit twice. Stated the way the protocol states its wire sizes: at
-// compile time, where nothing can filter it out of a run.
+// The spec's number, not a tuning knob: changing it has to be deliberate
+// enough to edit twice.
 const _: () = assert!(RENDER_QUANTUM == 128);

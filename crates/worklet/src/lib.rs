@@ -6,16 +6,13 @@
 //! is no `fetch` in here (§1).
 //!
 //! `worklet.js` is a shim over the entry points below: it moves bytes and never
-//! touches a sample. The output block keeps two of its own rather than being
-//! described by the header, because the side that needs it is `worklet.js`
-//! itself, every quantum, on this thread — putting it in the header would mean
-//! parsing the header in JavaScript, which is the one thing the protocol exists
-//! to avoid (§4). It never crosses a thread boundary; the region does.
+//! touches a sample. The output block gets two exports of its own rather than a
+//! place in the header, because the side that needs it is `worklet.js` itself,
+//! every quantum, on this thread — and the header is the one thing JavaScript
+//! must never parse (§4). It never crosses a thread boundary; the region does.
 //!
-//! Three statics and five entry points that only delegate, and that is a rule
-//! rather than a coincidence. A `static` exists once per process and
-//! `escapement_init` cannot be undone, so anything with behaviour in it here
-//! could be tested once and never again. Behaviour lives in `module.rs` and
+//! Three statics and five entry points that only delegate, which is a rule and
+//! not a coincidence — CLAUDE.md says why. Behaviour lives in `module.rs` and
 //! `processor.rs`, which are handed their memory instead of reaching for this.
 
 use core::cell::UnsafeCell;
@@ -32,14 +29,12 @@ use processor::LAYOUT;
 
 /// The shared region: header, command ring, state block.
 ///
-/// Real atomics and no wrapper, unlike the two below — this is the one thing
-/// here that two threads genuinely touch, and it is the whole reason the
-/// module's memory is shared. All zeros, so it costs `.bss` and not a data
-/// segment: measured at 58 bytes of module for 8 KiB of region.
+/// Real atomics and no wrapper, unlike the two below: this is the one thing
+/// here that two threads genuinely touch. All zeros, so it costs `.bss` and not
+/// a data segment.
 ///
-/// It never moves. The memory is fixed at link time (`build.rs`), so there is
-/// no `memory.grow` to relocate anything, which is what [`Pointers`] is
-/// promised.
+/// It never moves — the memory is fixed at link time (`build.rs`), which is
+/// what [`Pointers`] is promised.
 static REGION: [AtomicU32; LAYOUT.words()] = [const { AtomicU32::new(0) }; LAYOUT.words()];
 
 /// For what the audio thread alone touches.
@@ -58,11 +53,10 @@ unsafe impl Sync for SingleThreaded<[f32; RENDER_QUANTUM]> {}
 
 static MODULE: SingleThreaded<Module> = SingleThreaded(UnsafeCell::new(Module::new()));
 
-/// The block the host reads. Its own `static` rather than a field of [`Module`],
-/// and that is 513 measured bytes rather than tidiness: `Option<Processor>` is
-/// `None` by one non-zero byte — a niche in the transport's `bool` — and one
-/// non-zero byte takes a whole `static` out of `.bss` into a data segment,
-/// these 512 zeros with it.
+/// The block the host reads. Its own `static` rather than a field of [`Module`]:
+/// `Option<Processor>` is `None` by one non-zero byte, and one non-zero byte
+/// takes a whole `static` out of `.bss` into a data segment — these 512 zeros
+/// with it.
 static OUTPUT: SingleThreaded<[f32; RENDER_QUANTUM]> =
     SingleThreaded(UnsafeCell::new([0.0; RENDER_QUANTUM]));
 
@@ -105,8 +99,8 @@ pub extern "C" fn escapement_output_len() -> usize {
     RENDER_QUANTUM
 }
 
-/// Silence until [`escapement_init`] has run — a missed init must not be a panic
-/// on the audio thread.
+/// One quantum into the block at [`escapement_output_ptr`], silent until
+/// [`escapement_init`] has run.
 #[no_mangle]
 pub extern "C" fn escapement_process() {
     // SAFETY: see `SingleThreaded`. Two distinct statics, so the two `&mut`
@@ -135,17 +129,13 @@ mod tests {
         unsafe { core::slice::from_raw_parts(ptr, len) }.to_vec()
     }
 
-    /// The wiring, and only the wiring: that the five entry points reach the
-    /// same two statics, that the address handed out is the region the header
-    /// went into, that rendering lands in the block whose address the host
-    /// holds, and that what one call leaves the next call finds.
+    /// The wiring, and only the wiring: that the entry points reach the same
+    /// statics, that the address handed out is the region the header went into,
+    /// that rendering lands in the block whose address the host holds, and that
+    /// what one call leaves the next call finds.
     ///
-    /// One test rather than several, and that is what the delegation above buys
-    /// rather than a rule imposed on top of it. These statics are one copy per
-    /// process, `escapement_init` cannot be undone, and `cargo test` runs tests
-    /// on several threads — a second test here would race this one, and nothing
-    /// would say so, Miri included: it runs the tests one at a time. There is
-    /// nothing to put in a second one, because behaviour lives in `module.rs`.
+    /// One test, and nothing enforces that — CLAUDE.md. What keeps it true is
+    /// that there is nothing here to put in a second one.
     #[test]
     fn the_module_answers_through_its_entry_points() {
         escapement_init(48_000.0);

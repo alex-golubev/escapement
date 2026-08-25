@@ -5,17 +5,12 @@
 //! (ARCHITECTURE.md §3). Only the access differs — everything below is written
 //! once and used by both ends.
 //!
-//! Three mechanisms, not one, because the traffic has three shapes:
+//! Three mechanisms because the traffic has three shapes, and §3 is where that
+//! argument lives: [`ring`] is the queue for commands, [`state`] the latest
+//! value for meters and the clock, and the project snapshot's double buffering
+//! arrives with slice 2.
 //!
-//! - a **queue** ([`ring`]) for commands: ordered, lossless, drained by the
-//!   reader;
-//! - a **latest value** ([`state`]) for meters and the clock: written every
-//!   quantum, read once a frame, skipped values do not exist as a concept;
-//! - **double buffering** for the project snapshot — not here yet, slice 2.
-//!
-//! Everything is addressed in 32-bit words rather than bytes. `Atomics` index a
-//! view by element, so words remove a class of alignment mistakes on the outside
-//! and remove byte order from the encoding on both.
+//! Everything is addressed in 32-bit words rather than bytes (§3).
 
 #![no_std]
 // Exactly one module is allowed to break this, and it is named where it is let
@@ -35,13 +30,8 @@ extern crate std;
 mod fixtures;
 
 // Two attributes rather than one `all(...)`, here and at every test module in
-// this crate. `cargo-mutants` parses the source without evaluating `cfg` and
-// recognises only a bare `#[cfg(test)]` as test code; spelled
-// `#[cfg(all(test, loom))]` it mutates modules an ordinary build never compiles
-// and reports the mutants as surviving. Measured on 27.1.0: collapsing them
-// crate-wide takes 147 mutants to 182. Nothing else can tell the two forms
-// apart — the collapsed one compiles and passes CI — so this is the one place
-// the crate is written for a tool rather than for the compiler.
+// this crate. Written for `cargo-mutants` rather than for the compiler, which
+// is the one place that is true — CLAUDE.md has the reason and the count.
 #[cfg(test)]
 #[cfg(loom)]
 mod interleavings;
@@ -255,11 +245,8 @@ impl Layout {
             return Err(HandshakeError::Shape);
         }
 
-        // The one thing a header cannot describe is the memory holding it, so it
-        // is the one thing checked against something other than the header. A
-        // region that overruns its memory is otherwise perfectly well formed,
-        // and fails at the first access instead — where it points at the ring
-        // rather than at the handshake.
+        // The one claim in the header that nothing inside it can contradict, so
+        // it is the one checked against the memory instead (§3).
         let available = cells.words();
         if words > available {
             return Err(HandshakeError::TooLarge { words, available });

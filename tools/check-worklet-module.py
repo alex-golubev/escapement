@@ -27,7 +27,8 @@ Usage:  tools/check-worklet-module.py <file.wasm> [<file.wasm> ...]
 
 import sys
 
-from wasm import advise, sections, uleb
+from report import advise
+from wasm import sections, uleb
 
 SECTION_CUSTOM = 0
 

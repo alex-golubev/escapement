@@ -35,13 +35,9 @@ use core::sync::atomic::{fence, Ordering};
 /// cannot honour a weaker request; a parameter it silently ignored would be a
 /// lie. Named methods let it satisfy all four honestly, by being stronger.
 pub trait Cells {
-    /// How many words this reaches.
-    ///
-    /// The handshake is what wants it. A header describes where everything sits,
-    /// and the one thing it cannot describe is the memory it was found in — so
-    /// without this, a header claiming a region larger than the memory holding
-    /// it reads back as valid and fails at the first access instead
-    /// ([`Layout::read_header`](crate::Layout::read_header)).
+    /// How many words this reaches. The handshake is what wants it: a header
+    /// cannot describe the memory it was found in, so this is what
+    /// [`Layout::read_header`](crate::Layout::read_header) checks it against.
     fn words(&self) -> usize;
 
     /// A load with no ordering of its own — on wasm, an ordinary load.
@@ -76,13 +72,9 @@ pub trait Cells {
 
     /// Everything before this is finished before any store that follows it.
     ///
-    /// A fence is thread-wide rather than about one word, so it sits here only
-    /// because this is where the memory model lives — and instrumented atomics
-    /// need instrumented fences, or the model explores interleavings the real
-    /// fence forbids and reports them as failures.
-    ///
-    /// Not overridable, and not covered by the ordinary suite: a fence has no
-    /// effect a single-interleaving test can see. `loom` is what checks it.
+    /// A fence is thread-wide rather than about one word, and sits here because
+    /// this is where the memory model lives. Not overridable, and `loom` is the
+    /// only thing that checks it — CLAUDE.md says why to both.
     fn fence_release(&self) {
         fence(Ordering::Release);
     }

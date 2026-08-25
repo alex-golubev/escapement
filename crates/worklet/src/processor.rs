@@ -13,11 +13,9 @@ use escapement_protocol::{
 
 /// Slots in the command ring.
 ///
-/// Sized for a burst, not for a quantum: the interface keeps its own queue in
-/// its own memory and drains a frame's worth into here at a time
-/// (ARCHITECTURE.md §3), so what this has to absorb is a frame plus whatever
-/// the engine has not taken yet. Loading a project is the case that fills it.
-/// 256 slots is 8 KiB of a 32 MiB memory, and 58 bytes of module — measured.
+/// Sized for a burst, not for a quantum (§3): a frame's worth of commands plus
+/// whatever the engine has not taken yet, and loading a project is the case
+/// that fills it. 256 slots is 8 KiB of a 32 MiB memory.
 pub(crate) const COMMAND_SLOTS: u32 = 256;
 
 /// Where the header, the ring and the state block sit. `const`, so a capacity

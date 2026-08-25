@@ -26,22 +26,16 @@ impl Sine {
     }
 
     /// Ignores a frequency this oscillator cannot produce: the last good value
-    /// stands.
+    /// stands. The value crossed a boundary from a module that may be a
+    /// different build, and there is nothing on the audio thread to report an
+    /// error to.
     ///
-    /// This runs on the audio thread, with a value that crossed a boundary from
-    /// a module that may be a different build. There is nothing here to report
-    /// an error to and nothing to panic into, so the choice is between a bad
-    /// value and the previous one. A `NaN` would poison the phase permanently —
-    /// every sample after it is `NaN`, and no later command can undo that.
+    /// Each clause earns its place. `NaN` would poison the phase permanently,
+    /// and no later command could undo it. At exactly Nyquist the samples land
+    /// on 0, π, 2π and the tone is silence, so clamping to it would answer "too
+    /// high" with something indistinguishable from a broken engine.
     ///
-    /// Nyquist is refused rather than clamped to, and that is not fussiness: at
-    /// exactly half the sample rate the samples land on 0, π, 2π and the tone
-    /// is silence. Clamping would answer "too high" with something
-    /// indistinguishable from a broken engine, where holding the previous
-    /// frequency keeps a sound that says what happened.
-    ///
-    /// A division, and so not for the per-sample loop; once per command is what
-    /// this is for.
+    /// Divides, so not for the per-sample loop.
     pub fn set_frequency(&mut self, hz: f32) {
         if hz.is_finite() && hz > 0.0 && hz < self.sample_rate_hz / 2.0 {
             self.step = hz / self.sample_rate_hz;

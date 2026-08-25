@@ -24,6 +24,7 @@ cargo build --workspace --target wasm32-unknown-unknown --release
 python3 tools/check-shared-memory.py target/wasm32-unknown-unknown/release/*.wasm
 python3 tools/check-shared-memory.py --fixed target/wasm32-unknown-unknown/release/escapement_worklet.wasm
 python3 tools/check-worklet-module.py target/wasm32-unknown-unknown/release/escapement_worklet.wasm
+python3 tools/check-comment-drift.py            # is a reason written down twice
 
 tools/miri.sh -p escapement-protocol -p escapement-worklet   # undefined behaviour, data races
 RUSTFLAGS="--cfg loom" cargo test -p escapement-protocol   # memory orderings
@@ -141,6 +142,30 @@ the cause.
   larger windows (FFT, time-stretch) buffers internally across quanta.
 - **The transport must be drivable from outside** — the engine accepts "start at
   position P at host time T", not only "play now". Needed for follow mode later.
+
+## Where a reason goes
+
+Four permanent homes, and a reason belongs to exactly one. Without the rule each
+one lands in the nearest, which is always the comment — that is where you are
+typing — and the code fills up with the project's history.
+
+| The reason is | Home |
+|---|---|
+| this must not be done, it breaks silently | this file |
+| the product is shaped this way, and here is what was rejected | `ARCHITECTURE.md` |
+| this is how we found out — a measurement, an experiment, a failed attempt | the commit message |
+| this is what you need in order to edit this line | the comment |
+
+So a comment does not carry the number that justified a choice already made, does
+not narrate the change that introduced it, and does not retell a section it could
+point at — the `ARCHITECTURE.md §3` idiom is there for that.
+
+`tools/check-comment-drift.py` gates the half a script can check: prose living in
+both a comment and one of the two documents. Two copies part company silently,
+and the stale one is the copy people read while working. The density and the
+longest blocks it prints after that gate nothing — there is no honest threshold
+for a judgement, and the number is there so "are we growing" is one command
+rather than a fresh script. It was 39% the day the rule was written.
 
 ## Architecture
 
