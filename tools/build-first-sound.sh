@@ -7,8 +7,9 @@ cd "$(dirname "$0")/.."
 
 cargo build -p escapement-worklet --target wasm32-unknown-unknown --release
 
-# +atomics alone links a private memory and fails only in the browser.
-python3 tools/check-shared-memory.py target/wasm32-unknown-unknown/release/escapement_worklet.wasm
+# +atomics alone links a private memory and fails only in the browser; a growable
+# memory would leave memory.grow reachable from the audio thread (§1).
+python3 tools/check-shared-memory.py --fixed target/wasm32-unknown-unknown/release/escapement_worklet.wasm
 
 mkdir -p dist
 cp web/first-sound.html dist/index.html

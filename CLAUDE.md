@@ -22,6 +22,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all --check                             # CI enforces this
 cargo build --workspace --target wasm32-unknown-unknown --release
 python3 tools/check-shared-memory.py target/wasm32-unknown-unknown/release/*.wasm
+python3 tools/check-shared-memory.py --fixed target/wasm32-unknown-unknown/release/escapement_worklet.wasm
 
 trunk serve      # dev server on :8080, serves the required COOP/COEP headers
 ```
@@ -56,6 +57,14 @@ the cause.
   `--max-memory`). Dropping those link args still builds, still produces valid
   wasm, and fails only in the browser — pointing at the wasm rather than at the
   flag. `tools/check-shared-memory.py` guards this in CI.
+- **The worklet's memory is fixed and the UI's grows**, so their link args live in
+  `crates/*/build.rs`, not in `.cargo/config.toml` — `rustflags` there apply to
+  every crate built for the target and cannot tell the two apart. `memory.grow` is
+  not bounded and a quantum is 2.7 ms, so the worklet links `--initial-memory`
+  equal to `--max-memory` (§1); shared memory reserves its maximum up front
+  regardless, so growth would buy nothing. Note this is *not* about stale views —
+  growing a **shared** memory keeps them valid, unlike a private one. CI checks it
+  with `--fixed`.
 - **The render quantum is 128 samples and cannot be changed.** Anything wanting
   larger windows (FFT, time-stretch) buffers internally across quanta.
 - **The transport must be drivable from outside** — the engine accepts "start at
@@ -93,8 +102,9 @@ is closed source; the engine is open.
 
 ## Build configuration worth knowing
 
-- `.cargo/config.toml` enables `+simd128` and `+atomics,+bulk-memory,+mutable-globals`,
-  plus `--shared-memory` / `--max-memory` as link args. The toolchain is a **pinned
+- `.cargo/config.toml` enables `+simd128` and `+atomics,+bulk-memory,+mutable-globals`
+  for the whole target — they change the ABI, so every crate in the link must agree.
+  Memory link args are per crate in `crates/*/build.rs`. The toolchain is a **pinned
   dated nightly** — atomics-enabled wasm needs std rebuilt from source
   (`build-std`), which is nightly-only. The pin is dated on purpose: CI runs clippy
   with `-D warnings`, and a floating nightly reddens untouched trees.

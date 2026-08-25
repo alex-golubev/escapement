@@ -36,3 +36,7 @@ jobs:
       # +atomics alone links a private memory and fails only in the browser.
       - name: Shared memory is actually shared
         run: python3 tools/check-shared-memory.py target/wasm32-unknown-unknown/release/*.wasm
+
+      # memory.grow is unbounded, and a quantum at 48 kHz is 2.7 ms (§1).
+      - name: The worklet's memory cannot grow
+        run: python3 tools/check-shared-memory.py --fixed target/wasm32-unknown-unknown/release/escapement_worklet.wasm

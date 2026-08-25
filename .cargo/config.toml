@@ -11,11 +11,11 @@ rustflags = [
 
     # The target-feature flags alone are not enough: they make atomic
     # instructions available but still emit a private, unshared memory. Shared
-    # memory has to be asked of the linker, and it is only legal with a declared
-    # maximum. Provisional size — revisit per crate (§1 wants a fixed memory and
-    # no memory.grow on the worklet).
-    "-C", "link-arg=--shared-memory",
-    "-C", "link-arg=--max-memory=1073741824",
+    # memory has to be asked of the linker — but not from here. rustflags apply
+    # to every crate built for the target, and the two modules want different
+    # memories: the worklet's is fixed (§1), the UI's grows. The link args live
+    # in crates/*/build.rs, which can say it per crate. Target features stay
+    # here: they change the ABI and must be uniform across the whole link.
 ]
 
 [unstable]
