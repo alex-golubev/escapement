@@ -5,6 +5,10 @@
 # Trunk
 /dist
 
+# cargo-mutants
+/mutants.out/
+/mutants.out.old/
+
 # IDE
 .idea/
 .vscode/

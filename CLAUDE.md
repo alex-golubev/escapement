@@ -24,6 +24,8 @@ cargo build --workspace --target wasm32-unknown-unknown --release
 python3 tools/check-shared-memory.py target/wasm32-unknown-unknown/release/*.wasm
 python3 tools/check-shared-memory.py --fixed target/wasm32-unknown-unknown/release/escapement_worklet.wasm
 
+cargo mutants -p escapement-protocol --timeout 10   # do the tests test anything
+
 trunk serve      # dev server on :8080, serves the required COOP/COEP headers
 ```
 

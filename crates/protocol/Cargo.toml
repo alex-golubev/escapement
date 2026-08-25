@@ -1,0 +1,12 @@
+[package]
+name = "escapement-protocol"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license-file.workspace = true
+publish.workspace = true
+
+# The audio thread depends on this crate, so it stays `no_std`: nothing here can
+# reach for an allocator by accident.
+[dependencies]
+

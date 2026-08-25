@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/core",
     "crates/model",
+    "crates/protocol",
     "crates/worklet",
     "crates/render",
     "crates/app",
@@ -22,6 +23,7 @@ publish = false
 [workspace.dependencies]
 escapement-core = { path = "crates/core" }
 escapement-model = { path = "crates/model" }
+escapement-protocol = { path = "crates/protocol" }
 escapement-render = { path = "crates/render" }
 
 [profile.release]

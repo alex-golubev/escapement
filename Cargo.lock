@@ -19,6 +19,10 @@ name = "escapement-model"
 version = "0.0.0"
 
 [[package]]
+name = "escapement-protocol"
+version = "0.0.0"
+
+[[package]]
 name = "escapement-render"
 version = "0.0.0"
 
