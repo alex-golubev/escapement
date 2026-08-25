@@ -125,6 +125,18 @@ the cause.
   `--exclude-re` mutant names, neither knows about `cfg` — and the collapsed
   form compiles and passes CI, so nothing but this note is in the way of
   tidying it up.
+- **The worklet's entry points hold no behaviour, only delegation.** A `static`
+  exists once per process and `escapement_init` cannot be undone, so anything
+  with a branch in it there can be tested once and never again — measured: with
+  the `Some`/`None` of `escapement_process` still in `lib.rs`, a `panic!()` in
+  the silence arm passed the entire suite, and cargo-mutants did not see it
+  either. So behaviour lives in `module.rs` and `processor.rs`, which are handed
+  their memory, and `lib.rs` keeps three statics and five one-line exports with a
+  single test over them. That test cannot be joined by a second: `cargo test`
+  runs `#[test]`s on several threads and they would race — two failures in
+  twenty runs, measured — and **Miri does not cover this class at all**, since
+  `cargo miri test` runs the tests one at a time. Nothing enforces the rule; what
+  keeps it true is that there is nothing left in `lib.rs` worth a second test.
 - **The render quantum is 128 samples and cannot be changed.** Anything wanting
   larger windows (FFT, time-stretch) buffers internally across quanta.
 - **The transport must be drivable from outside** — the engine accepts "start at

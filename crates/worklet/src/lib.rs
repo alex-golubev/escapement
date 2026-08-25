@@ -6,11 +6,17 @@
 //! is no `fetch` in here (§1).
 //!
 //! `worklet.js` is a shim over the entry points below: it moves bytes and never
-//! touches a sample. The output buffer keeps two of its own rather than being
+//! touches a sample. The output block keeps two of its own rather than being
 //! described by the header, because the side that needs it is `worklet.js`
 //! itself, every quantum, on this thread — putting it in the header would mean
 //! parsing the header in JavaScript, which is the one thing the protocol exists
 //! to avoid (§4). It never crosses a thread boundary; the region does.
+//!
+//! Three statics and five entry points that only delegate, and that is a rule
+//! rather than a coincidence. A `static` exists once per process and
+//! `escapement_init` cannot be undone, so anything with behaviour in it here
+//! could be tested once and never again. Behaviour lives in `module.rs` and
+//! `processor.rs`, which are handed their memory instead of reaching for this.
 
 use core::cell::UnsafeCell;
 use core::sync::atomic::AtomicU32;
@@ -18,9 +24,11 @@ use core::sync::atomic::AtomicU32;
 use escapement_core::RENDER_QUANTUM;
 use escapement_protocol::Pointers;
 
+mod module;
 mod processor;
 
-use processor::{Processor, LAYOUT};
+use module::Module;
+use processor::LAYOUT;
 
 /// The shared region: header, command ring, state block.
 ///
@@ -34,17 +42,27 @@ use processor::{Processor, LAYOUT};
 /// promised.
 static REGION: [AtomicU32; LAYOUT.words()] = [const { AtomicU32::new(0) }; LAYOUT.words()];
 
-/// For what the audio thread alone touches: what the `extern "C"` entry points
-/// reach sequentially on one thread, never two. `worklet.js` reads [`OUTPUT`]
-/// inside the same `process()` call that filled it.
+/// For what the audio thread alone touches.
+///
+/// A `static` because the C ABI has nowhere to hang state between calls, and
+/// behind an `UnsafeCell` rather than atomics because the entry points reach it
+/// sequentially, on one thread, and nothing else in the module has an address
+/// for it. `worklet.js` reads [`OUTPUT`] inside the same `process()` call that
+/// filled it.
 struct SingleThreaded<T>(UnsafeCell<T>);
 
-// SAFETY: see above — the `extern "C"` entry points are called sequentially,
-// from the audio thread, and nothing else in the module has an address for
-// either of these.
-unsafe impl<T> Sync for SingleThreaded<T> {}
+// SAFETY: see above. Two named impls rather than one blanket over every `T`,
+// which would promise this for types the argument has never seen.
+unsafe impl Sync for SingleThreaded<Module> {}
+unsafe impl Sync for SingleThreaded<[f32; RENDER_QUANTUM]> {}
 
-static ENGINE: SingleThreaded<Option<Processor>> = SingleThreaded(UnsafeCell::new(None));
+static MODULE: SingleThreaded<Module> = SingleThreaded(UnsafeCell::new(Module::new()));
+
+/// The block the host reads. Its own `static` rather than a field of [`Module`],
+/// and that is 513 measured bytes rather than tidiness: `Option<Processor>` is
+/// `None` by one non-zero byte — a niche in the transport's `bool` — and one
+/// non-zero byte takes a whole `static` out of `.bss` into a data segment,
+/// these 512 zeros with it.
 static OUTPUT: SingleThreaded<[f32; RENDER_QUANTUM]> =
     SingleThreaded(UnsafeCell::new([0.0; RENDER_QUANTUM]));
 
@@ -62,7 +80,7 @@ pub extern "C" fn escapement_init(sample_rate_hz: f32) {
     let cells = unsafe { Pointers::new(REGION.as_ptr(), REGION.len()) };
 
     // SAFETY: see `SingleThreaded`.
-    unsafe { *ENGINE.0.get() = Some(Processor::new(cells, sample_rate_hz)) };
+    unsafe { (*MODULE.0.get()).init(cells, sample_rate_hz) };
 }
 
 /// Where the shared region starts, as an offset into `memory.buffer`. Stable
@@ -91,14 +109,9 @@ pub extern "C" fn escapement_output_len() -> usize {
 /// on the audio thread.
 #[no_mangle]
 pub extern "C" fn escapement_process() {
-    // SAFETY: see `SingleThreaded`.
-    unsafe {
-        let out = &mut *OUTPUT.0.get();
-        match (*ENGINE.0.get()).as_mut() {
-            Some(engine) => engine.process(out),
-            None => out.fill(0.0),
-        }
-    }
+    // SAFETY: see `SingleThreaded`. Two distinct statics, so the two `&mut`
+    // do not alias.
+    unsafe { (*MODULE.0.get()).process(&mut *OUTPUT.0.get()) };
 }
 
 #[cfg(test)]
@@ -107,7 +120,7 @@ mod tests {
 
     use super::*;
 
-    /// Reads the output buffer out into a value of its own.
+    /// Reads the output block out into a value of its own.
     ///
     /// A borrow of it cannot be held across [`escapement_process`], which takes
     /// `&mut` to the same words — that is the aliasing the module is careful
@@ -116,35 +129,32 @@ mod tests {
         let ptr = escapement_output_ptr();
         let len = escapement_output_len();
 
-        // SAFETY: those two describe `OUTPUT`, a `static` of exactly `len`
+        // SAFETY: those two describe the module's output block, exactly `len`
         // initialized `f32`. Nothing else is borrowing it here: the module is
         // between calls to `escapement_process`.
         unsafe { core::slice::from_raw_parts(ptr, len) }.to_vec()
     }
 
-    /// The module as `worklet.js` uses it, over the module's own statics: init,
-    /// take the region's address, read the header, send a command into it,
-    /// render, read the state back.
+    /// The wiring, and only the wiring: that the five entry points reach the
+    /// same two statics, that the address handed out is the region the header
+    /// went into, that rendering lands in the block whose address the host
+    /// holds, and that what one call leaves the next call finds.
     ///
-    /// One test rather than several, and that is the whole safety argument —
-    /// these statics are the module's only copy, and `cargo test` runs tests on
-    /// several threads. A second test touching them would race with this one.
-    /// Everything that does not need them lives in `processor.rs`, which is
-    /// handed its memory instead.
+    /// One test rather than several, and that is what the delegation above buys
+    /// rather than a rule imposed on top of it. These statics are one copy per
+    /// process, `escapement_init` cannot be undone, and `cargo test` runs tests
+    /// on several threads — a second test here would race this one, and nothing
+    /// would say so, Miri included: it runs the tests one at a time. There is
+    /// nothing to put in a second one, because behaviour lives in `module.rs`.
     #[test]
     fn the_module_answers_through_its_entry_points() {
         escapement_init(48_000.0);
+        assert_eq!(escapement_output_len(), RENDER_QUANTUM);
 
         // SAFETY: the exported pointer is the base of `REGION`, a `static` of
         // exactly this many cells that never moves.
         let cells = unsafe { Pointers::new(escapement_region_ptr().cast(), LAYOUT.words()) };
         let seen = Layout::read_header(&cells).expect("init did not write a header");
-
-        escapement_process();
-        assert!(
-            output().iter().all(|sample| *sample == 0.0),
-            "a transport nobody started made a sound"
-        );
 
         let mut interface = Producer::new(cells, seen.commands());
         interface.push(&Command::now(CommandKind::Start)).unwrap();
@@ -152,14 +162,15 @@ mod tests {
         escapement_process();
         assert!(
             output().iter().any(|sample| *sample != 0.0),
-            "Start did not reach the engine"
+            "Start did not reach the block the host reads"
         );
 
+        escapement_process();
         let state = Subscriber::new(cells, seen.state())
             .read()
             .expect("the writer was not in the way");
         assert!(state.playing);
-        assert_eq!(state.quanta, 2);
+        assert_eq!(state.quanta, 2, "the module did not survive between calls");
         assert_eq!(state.commands_applied, 1);
     }
 }
