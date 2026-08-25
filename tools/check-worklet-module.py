@@ -18,7 +18,7 @@ The signal is not subtle. A single `Vec` in `process` took the module from
 6891 to 26 318 bytes and brought in `dlmalloc`, `__rust_alloc`, `rust_oom` and
 the panic formatting machinery behind them.
 
-Names are matched exactly rather than by the substring `alloc`, because this
+Whole symbol names are matched rather than the substring `alloc`, because this
 project allocates voices: `voice_allocation` in the sampler (ARCHITECTURE.md
 §5) is not a heap.
 
@@ -26,6 +26,8 @@ Usage:  tools/check-worklet-module.py <file.wasm> [<file.wasm> ...]
 """
 
 import sys
+
+from wasm import advise, sections, uleb
 
 SECTION_CUSTOM = 0
 
@@ -46,17 +48,6 @@ ALLOCATOR_SYMBOLS = (
 )
 
 
-def uleb(buf, i):
-    result = shift = 0
-    while True:
-        byte = buf[i]
-        i += 1
-        result |= (byte & 0x7F) << shift
-        shift += 7
-        if not byte & 0x80:
-            return result, i
-
-
 def name_section(buf):
     """The custom section holding symbol names, or None if the module has none.
 
@@ -64,19 +55,11 @@ def name_section(buf):
     without them cannot be checked at all — `strip` in a profile would produce
     exactly that, and silently passing is the one answer that must not happen.
     """
-    if buf[:4] != b"\0asm":
-        raise ValueError("not a wasm module")
-    i = 8
-    while i < len(buf):
-        section_id = buf[i]
-        i += 1
-        size, i = uleb(buf, i)
-        end = i + size
+    for section_id, start, end in sections(buf):
         if section_id == SECTION_CUSTOM:
-            length, j = uleb(buf, i)
+            length, j = uleb(buf, start)
             if buf[j : j + length] == b"name":
                 return buf[j + length : end]
-        i = end
     return None
 
 
@@ -110,11 +93,6 @@ def main(argv):
     if unchecked:
         advise("Symbol names were stripped from the module. Check `strip` in Cargo.toml.")
     return 1 if (allocates or unchecked) else 0
-
-
-def advise(*lines):
-    sys.stdout.flush()
-    print("\n" + "\n".join(lines), file=sys.stderr)
 
 
 if __name__ == "__main__":

@@ -19,6 +19,8 @@ Usage:  tools/check-shared-memory.py [--fixed] <file.wasm> [<file.wasm> ...]
 
 import sys
 
+from wasm import advise, sections, uleb
+
 PAGE = 64 * 1024
 SECTION_IMPORT = 2
 SECTION_MEMORY = 5
@@ -29,17 +31,6 @@ def size(pages):
     """Pages are 64 KiB; rounding a small one down to `0 MiB` reads as a bug."""
     kib = pages * PAGE // 1024
     return f"{kib // 1024} MiB" if kib >= 1024 else f"{kib} KiB"
-
-
-def uleb(buf, i):
-    result = shift = 0
-    while True:
-        byte = buf[i]
-        i += 1
-        result |= (byte & 0x7F) << shift
-        shift += 7
-        if not byte & 0x80:
-            return result, i
 
 
 def limits(buf, i):
@@ -59,23 +50,15 @@ def memories(buf):
     reports that as "declares no linear memory", a red build indistinguishable
     from the real failure this script exists to catch.
     """
-    if buf[:4] != b"\0asm":
-        raise ValueError("not a wasm module")
-    i = 8
-    while i < len(buf):
-        section_id = buf[i]
-        i += 1
-        size, i = uleb(buf, i)
-        end = i + size
-
+    for section_id, start, _end in sections(buf):
         if section_id == SECTION_MEMORY:
-            count, j = uleb(buf, i)
+            count, j = uleb(buf, start)
             for _ in range(count):
                 limit, j = limits(buf, j)
                 yield ("defined", *limit)
 
         elif section_id == SECTION_IMPORT:
-            count, j = uleb(buf, i)
+            count, j = uleb(buf, start)
             for _ in range(count):
                 for _name in range(2):
                     length, j = uleb(buf, j)
@@ -94,8 +77,6 @@ def memories(buf):
                     j += 2
                 else:
                     raise ValueError(f"unknown import kind {kind}")
-
-        i = end
 
 
 def main(argv):
@@ -133,8 +114,7 @@ def main(argv):
                 continue
             print(f"FAIL {path}: {reason} ({detail})")
 
-    # Two different failures with two different fixes, and the wrong advice on a
-    # silent build problem costs more than none.
+    # Two different failures with two different fixes.
     if not_shared:
         advise(
             "Check that crates/*/build.rs still pass --shared-memory and",
@@ -147,11 +127,6 @@ def main(argv):
             "crates/worklet/build.rs.",
         )
     return 1 if (not_shared or grows) else 0
-
-
-def advise(*lines):
-    sys.stdout.flush()
-    print("\n" + "\n".join(lines), file=sys.stderr)
 
 
 if __name__ == "__main__":
