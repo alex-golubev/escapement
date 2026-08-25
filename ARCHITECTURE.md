@@ -522,6 +522,43 @@ The gain from Leptos is that **the protocol is written once in Rust** and used b
 both ends — rather than duplicated in TypeScript, where two implementations must
 agree and nothing checks that they do.
 
+### Whose memory the rings live in
+
+The two paragraphs above skip a step. Wasm can address **only its own** linear
+memory: a pointer is an offset from its base, and no instruction reaches outside
+it. So a `SharedArrayBuffer` allocated alongside the two modules is unreachable
+from Rust on either side — it can be touched only from JavaScript, through a typed
+view and `Atomics`. Read literally, that puts JavaScript on the audio path and
+cancels §6's "the protocol is written once in Rust".
+
+What resolves it: a module linked with `--shared-memory` **is** backed by a
+`SharedArrayBuffer` — `memory.buffer` is one. The rings need no buffer of their
+own. They live inside the linear memory of one of the two modules, which then
+addresses them with ordinary Rust pointers; the other side reaches them from
+outside, through `js_sys::Atomics` over typed views. The only question is which
+module gets the fast side.
+
+> **Decision: the rings live in the worklet's linear memory, and the worklet
+> exports it.**
+
+| Side | Access | Frequency |
+|---|---|---|
+| Audio (owner) | raw pointers, no JavaScript | every quantum — thousands per second |
+| UI | `js_sys::Atomics` over typed views | per frame — tens per second |
+
+The asymmetry is the entire argument: the side that cannot afford JavaScript is
+the side that does not have to cross into it. Tens of `Atomics` calls per second
+on the UI side cost nothing measurable.
+
+**Rejected — both modules importing one shared memory.** They are separately
+linked modules, each with its own static layout and its own allocator. Pointed at
+the same memory, their data segments and heaps collide.
+
+⚠️ Consequence for the build. `--max-memory` in `.cargo/config.toml` is currently
+one provisional value for the whole target. It cannot stay that way: the worklet's
+memory is also the transport, and §1 wants it fixed and sized once, with no
+`memory.grow`. Split it per crate before the ring buffer is written.
+
 ### The technique without which meters stutter
 
 > Anything updating at frame rate — meter levels, playhead position, transport
