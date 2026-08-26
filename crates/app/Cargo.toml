@@ -17,6 +17,9 @@ wasm-bindgen = "0.2"
 # Only the check below wants these, and only a browser can run it: whether the
 # memory came out shared is not a question a build can answer.
 [dev-dependencies]
+# The test below has to play the engine's part — write a header, drain the ring,
+# publish a state block — and that is the protocol's own machinery.
+escapement-protocol.workspace = true
 js-sys = "0.3"
 wasm-bindgen-test = "0.3"
 # leptos = "*"

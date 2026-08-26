@@ -61,6 +61,7 @@ name = "escapement-app"
 version = "0.0.0"
 dependencies = [
  "escapement-model",
+ "escapement-protocol",
  "escapement-render",
  "escapement-view",
  "js-sys",

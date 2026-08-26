@@ -173,3 +173,69 @@ mod browser {
         );
     }
 }
+
+// Two attributes rather than one `all(...)`, as everywhere else here.
+#[cfg(test)]
+#[cfg(target_arch = "wasm32")]
+mod wiring {
+    use escapement_protocol::{Consumer, Layout, Publisher};
+    use escapement_view::{EngineState, View};
+    use js_sys::SharedArrayBuffer;
+    use wasm_bindgen_test::wasm_bindgen_test;
+
+    use super::*;
+
+    /// The wiring, and only the wiring: that the exports reach the same `LINK`,
+    /// that what they queue leaves through it, and that what the engine
+    /// publishes comes back.
+    ///
+    /// One test, and it cannot be joined by a second — the same reason the
+    /// worklet's `lib.rs` gives. `LINK` is a `thread_local!` that exists once
+    /// and `connect` cannot be undone, so a second test here would be reaching
+    /// into whatever the first one left behind.
+    #[wasm_bindgen_test]
+    fn the_exports_reach_the_region_and_back() {
+        const LAYOUT: Layout = Layout::new(8);
+        let buffer: JsValue = SharedArrayBuffer::new((LAYOUT.words() * 4) as u32).into();
+        let cells = View::new(&buffer, 0).expect("a shared buffer at zero");
+        LAYOUT.write_header(&cells);
+
+        connect(&buffer, 0).expect("a header is there");
+
+        start();
+        stop();
+        set_frequency(880.0);
+        set_gain(0.5);
+        poll().expect("a state block, even an unwritten one");
+
+        let mut engine = Consumer::<View, Command>::new(cells.clone(), LAYOUT.commands());
+        let sent: Vec<CommandKind> =
+            core::iter::from_fn(|| engine.pop().map(|c: Command| c.kind)).collect();
+        assert_eq!(
+            sent,
+            [
+                CommandKind::Start,
+                CommandKind::Stop,
+                CommandKind::SetFrequency(880.0),
+                CommandKind::SetGain(0.5),
+            ],
+            "the four command exports do not reach the ring in order"
+        );
+
+        let published = EngineState {
+            clock: 4096,
+            quanta: 32,
+            peak: 0.5,
+            playing: true,
+            commands_applied: 4,
+            commands_unknown: 0,
+        };
+        Publisher::new(cells, LAYOUT.state()).publish(&published);
+
+        let seen = poll().expect("what was just published");
+        assert!(seen.playing);
+        assert_eq!(seen.peak, 0.5);
+        assert_eq!(seen.applied, 4);
+        assert_eq!(seen.clock, 4096.0);
+    }
+}
