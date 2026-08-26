@@ -636,6 +636,11 @@ a header claiming more memory than exists is well formed by every other measure,
 and fails at the first access instead, pointing at the ring rather than at the
 handshake.
 
+That comparison happens twice, and the first is before anything has been read: a
+memory with no room for a header in it has nothing to be asked, and asking it
+anyway is a read outside the region — outside the worklet, not an error but an
+exception through whoever called.
+
 #### Frame-rate state is a generation counter, not double buffering
 
 The technique above says *where* those values go; this is *how*. The writer bumps

@@ -201,6 +201,14 @@ impl Layout {
     /// or the region described is not one this build can use — see
     /// [`HandshakeError`].
     pub fn read_header<C: Cells>(cells: &C) -> Result<Self, HandshakeError> {
+        // Before the first read, not beside the size check below it: every read
+        // here is unconditional, and one outside the region has no error to
+        // return on either side (CLAUDE.md).
+        let available = cells.words();
+        if available < HEADER_WORDS {
+            return Err(HandshakeError::TooSmall { available });
+        }
+
         let magic = cells.load_acquire(HEADER_MAGIC);
         if magic != MAGIC {
             return Err(HandshakeError::Magic { found: magic });
@@ -247,7 +255,6 @@ impl Layout {
 
         // The one claim in the header that nothing inside it can contradict, so
         // it is the one checked against the memory instead (§3).
-        let available = cells.words();
         if words > available {
             return Err(HandshakeError::TooLarge { words, available });
         }
@@ -263,6 +270,11 @@ impl Layout {
 /// Why a handshake did not produce a [`Layout`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HandshakeError {
+    /// There is no room for a header here at all, so nothing in one was read.
+    TooSmall {
+        /// Words actually reachable.
+        available: usize,
+    },
     /// Nothing has written a header here, or the address is wrong.
     Magic {
         /// What stood where the magic should have.
@@ -289,6 +301,10 @@ pub enum HandshakeError {
 impl fmt::Display for HandshakeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::TooSmall { available } => write!(
+                f,
+                "a header takes {HEADER_WORDS} words and {available} are reachable here"
+            ),
             Self::Magic { found } => {
                 write!(f, "no protocol header here (magic {found:#010x})")
             }
@@ -399,6 +415,19 @@ mod tests {
         );
     }
 
+    /// A memory this small has no header to be wrong about, so the check for
+    /// one has to come before the reads rather than after them.
+    #[test]
+    fn a_memory_too_small_for_a_header_is_refused_before_it_is_read() {
+        for available in [0, 1, HEADER_WORDS - 1] {
+            assert_eq!(
+                Layout::read_header(&Words::new(available)),
+                Err(HandshakeError::TooSmall { available }),
+                "{available} words were read as a header"
+            );
+        }
+    }
+
     /// The blocks must not overlap, and this is the case that reaches that
     /// check: a base inside the ring is plausible enough to pass the range test
     /// above it, where a wild one (`0`, `u32::MAX`) is turned away earlier and
@@ -422,6 +451,7 @@ mod tests {
                 found: 2,
                 expected: 1,
             },
+            HandshakeError::TooSmall { available: 4 },
             HandshakeError::Shape,
             HandshakeError::TooLarge {
                 words: 200,

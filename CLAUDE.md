@@ -169,6 +169,12 @@ the cause.
   twenty runs, measured — and **Miri does not cover this class at all**, since
   `cargo miri test` runs the tests one at a time. Nothing enforces the rule; what
   keeps it true is that there is nothing left in `lib.rs` worth a second test.
+- **A throw out of `Atomics` does not unwind.** `unwrap_throw` on a failed
+  `Atomics` call throws into JavaScript, and a JS exception crossing wasm frames
+  runs no destructors — a `RefCell` borrow open at the time is never given back,
+  and every frame after it panics on that borrow rather than on what went wrong.
+  So an index has to be known inside the region before it is used, which is why
+  `Layout::read_header` asks `Cells::words()` before it reads the magic.
 - **A hidden tab has no frames, so the interface stops sending.** Chrome pauses
   `requestAnimationFrame` in a tab that is not visible, and the interface's
   outbox is drained once a frame (§3) — so while the tab is hidden, commands

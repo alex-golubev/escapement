@@ -662,6 +662,26 @@ mod browser {
         );
     }
 
+    /// An address inside the memory but too near its end for a header: nothing
+    /// the view can refuse, since the words behind it really are reachable, and
+    /// a throw rather than an error if it reaches the read.
+    #[wasm_bindgen_test]
+    fn an_address_with_no_room_for_a_header_is_refused_rather_than_thrown() {
+        const END: usize = 256;
+        let buffer: JsValue = SharedArrayBuffer::new(END as u32).into();
+
+        for byte_offset in [END, END - BYTES] {
+            let mut link = Link::new();
+            assert!(
+                matches!(
+                    link.connect(&buffer, byte_offset),
+                    Err(ConnectError::Region(HandshakeError::TooSmall { .. }))
+                ),
+                "byte {byte_offset} was taken for a region"
+            );
+        }
+    }
+
     /// `reach` is tested on the host; this is the wiring between it and the
     /// constructor, which is what would otherwise let a throw out of
     /// `Uint32Array` past us.
