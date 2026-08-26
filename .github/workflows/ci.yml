@@ -4,6 +4,18 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Any branch, on demand, from the Actions tab.
+  #
+  # The button appears only once this file is on the **default** branch: a
+  # `workflow_dispatch` that exists only on a feature branch is offered
+  # nowhere, which reads as the trigger being broken rather than as not having
+  # landed yet.
+  workflow_dispatch:
+    inputs:
+      mutants:
+        description: "Also run the mutation jobs (slow — every mutant starts a browser)"
+        type: boolean
+        default: true
 
 # A new push to a pull request makes the run already in flight pointless.
 # Without this they pile up and every one of them runs to the end. Not on
@@ -14,6 +26,11 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  # What `--in-diff` measures a change against. A pull request names its own
+  # base; a manual run has none, and the branch it would have been opened
+  # against is the honest stand-in. Dispatched on the default branch itself the
+  # range is empty, which cargo-mutants reports and exits 0 on.
+  BASE_REF: ${{ github.base_ref || github.event.repository.default_branch }}
 
 # The checking jobs are separate jobs rather than more steps in `check`, so
 # they run at the same time as it: the wait on a pull request is the longest
@@ -183,12 +200,12 @@ jobs:
           RUSTFLAGS: --cfg loom
 
   # Whether the tests would notice if this code stopped working — but only for
-  # the lines the pull request touched. A full run is three minutes today and
+  # the lines the change touched. A full run is three minutes today and
   # grows as (number of mutants) x (time to run the tests), so it is the one
   # cost here that does not stay put as the project does. `--in-diff` makes it
   # follow the size of the change instead.
   mutants:
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' || inputs.mutants
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -211,8 +228,8 @@ jobs:
         with:
           tool: cargo-mutants
 
-      - name: What this pull request changed
-        run: git diff origin/${{ github.base_ref }}...HEAD > /tmp/pr.diff
+      - name: What this change touches
+        run: git diff "origin/${BASE_REF}...HEAD" > /tmp/pr.diff
 
       # Not -p: as other crates grow, a change in them should be held to the
       # same standard. Mutants that survive by construction rather than by a
@@ -233,7 +250,7 @@ jobs:
   # there, for the reason at the top of this file: separate jobs wait in
   # parallel and pay in runner minutes instead.
   mutants-browser:
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' || inputs.mutants
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -252,8 +269,8 @@ jobs:
         with:
           tool: cargo-mutants,wasm-bindgen-cli@0.2.127
 
-      - name: What this pull request changed
-        run: git diff origin/${{ github.base_ref }}...HEAD > /tmp/pr.diff
+      - name: What this change touches
+        run: git diff "origin/${BASE_REF}...HEAD" > /tmp/pr.diff
 
       # The target is what makes this run the browser tests, and it is also
       # what makes it run the ordinary ones: they carry an aliased attribute so
