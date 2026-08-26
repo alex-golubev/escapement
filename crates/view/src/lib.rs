@@ -56,9 +56,17 @@ impl View {
         let words = reach(byte_offset, byte_length)?;
 
         Ok(Self {
-            // Lossless: `reach` accepted the offset, so it is inside a buffer
-            // whose own length was a `u32`.
-            cells: Uint32Array::new_with_byte_offset(buffer, byte_offset as u32),
+            // With the length: given none, the constructor demands a whole
+            // number of words of the *buffer* rather than of the part `reach`
+            // measured, and answers a remainder by throwing.
+            //
+            // Lossless: `reach` accepted the offset, so it and the words it
+            // counted are inside a buffer whose own length was a `u32`.
+            cells: Uint32Array::new_with_byte_offset_and_length(
+                buffer,
+                byte_offset as u32,
+                words as u32,
+            ),
             words,
         })
     }
@@ -429,6 +437,20 @@ mod browser {
     fn a_view_reaches_what_lies_behind_its_offset() {
         assert_eq!(region(16).words(), 16);
         assert_eq!(region(1).words(), 1);
+    }
+
+    /// The other half of `a_partial_word_at_the_end_is_not_counted`: what
+    /// `reach` accepts the constructor has to accept too, and left to itself it
+    /// does not.
+    #[wasm_bindgen_test]
+    fn a_buffer_that_is_not_a_whole_number_of_words_is_still_reachable() {
+        const SPARE: usize = 2;
+        let buffer = SharedArrayBuffer::new((OFFSET + 4 * BYTES + SPARE) as u32);
+        let cells = View::new(&buffer.into(), OFFSET).expect("an aligned offset");
+
+        assert_eq!(cells.words(), 4, "the remainder was counted as a word");
+        cells.store_relaxed(3, 7);
+        assert_eq!(cells.load_relaxed(3), 7, "the last whole word");
     }
 
     /// The same shape as the `Pointers` test: neighbours are named, because a
