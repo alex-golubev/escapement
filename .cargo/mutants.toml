@@ -11,4 +11,9 @@ exclude_re = [
     # The halves of a `u64` occupy disjoint bits, so `|` and `^` are the same
     # operation there. No test can distinguish them, and none should try.
     "replace \\| with \\^ in get_u64",
+    # An entry point holding no behaviour, which is a rule here rather than an
+    # accident — CLAUDE.md says why, about the worklet's exports. `main` logs a
+    # line and returns; emptying it leaves nothing a test could have seen.
+    # Anchored to the file, because there will be other `main`s.
+    "crates/app/src/main\\.rs.*replace main with \\(\\)",
 ]

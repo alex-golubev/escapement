@@ -63,7 +63,9 @@ dependencies = [
  "escapement-model",
  "escapement-render",
  "escapement-view",
+ "js-sys",
  "wasm-bindgen",
+ "wasm-bindgen-test",
 ]
 
 [[package]]

@@ -1,6 +1,10 @@
 //! Memory layout for the UI module. See `crates/worklet/build.rs` for why this
 //! lives per crate.
 //!
+//! `rustc-link-arg` rather than `-bins`: a test target is neither, and the
+//! check that the memory came out shared has to run against a module linked
+//! the way this one is — otherwise it answers about a different build.
+//!
 //! The opposite of the worklet: this one grows. It holds the CRDT document,
 //! waveform peaks and undo history, none of which have a size known up front, and
 //! nothing here runs on the audio thread — `memory.grow` is allowed to cost.
@@ -22,15 +26,15 @@ fn main() {
         return;
     }
 
-    println!("cargo::rustc-link-arg-bins=--shared-memory");
-    println!("cargo::rustc-link-arg-bins=--max-memory={MAX_MEMORY_BYTES}");
+    println!("cargo::rustc-link-arg=--shared-memory");
+    println!("cargo::rustc-link-arg=--max-memory={MAX_MEMORY_BYTES}");
 
     // `wasm-bindgen` refuses a shared memory the module defines for itself: its
     // threading transform hands the same memory to workers, so it has to be
     // created outside and imported. The generated glue is what creates it.
-    println!("cargo::rustc-link-arg-bins=--import-memory");
+    println!("cargo::rustc-link-arg=--import-memory");
 
     for symbol in TLS_SYMBOLS {
-        println!("cargo::rustc-link-arg-bins=--export={symbol}");
+        println!("cargo::rustc-link-arg=--export={symbol}");
     }
 }

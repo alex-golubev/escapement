@@ -13,6 +13,12 @@ escapement-view.workspace = true
 # The interface module is the one that goes through `wasm-bindgen`, and the
 # probe below needs the handle to its own memory. MIT/Apache-2.0.
 wasm-bindgen = "0.2"
+
+# Only the check below wants these, and only a browser can run it: whether the
+# memory came out shared is not a question a build can answer.
+[dev-dependencies]
+js-sys = "0.3"
+wasm-bindgen-test = "0.3"
 # leptos = "*"
 
 [lints]

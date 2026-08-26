@@ -122,7 +122,7 @@ jobs:
       # The target is what selects the runner from .cargo/config.toml, and it is
       # also what engages build-std — wanted here, unlike under `cargo miri`.
       - name: Whether Atomics carry the protocol at all
-        run: cargo test -p escapement-view --target wasm32-unknown-unknown
+        run: cargo test -p escapement-view -p escapement-app --target wasm32-unknown-unknown
 
   # What the two-thread stress tests cannot check: that the orderings hold
   # under every interleaving the memory model permits, rather than under the
@@ -185,15 +185,17 @@ jobs:
       # same standard. Mutants that survive by construction rather than by a
       # gap are listed in .cargo/mutants.toml.
       #
-      # `escapement-view` is the exception, and by measurement rather than by
-      # taste: half of it is only reachable from a browser, so on this host run
-      # fourteen of its mutants survive with nothing wrong with them. The job
-      # below is where it is held to the standard instead. A regex in
+      # Two exceptions, both by measurement rather than by taste: what tests
+      # `escapement-view` and `escapement-app` is a browser, so on this host run
+      # their mutants survive with nothing wrong with them. The job below is
+      # where those two are held to the standard instead. A regex in
       # .cargo/mutants.toml would be the wrong home — that file is for mutants
       # that survive by construction, not for ones whose test this invocation
       # does not run.
       - name: Do the tests test the new code
-        run: cargo mutants --in-diff /tmp/pr.diff --timeout 10 --exclude 'crates/view/**'
+        run: >
+          cargo mutants --in-diff /tmp/pr.diff --timeout 10
+          --exclude 'crates/view/**' --exclude 'crates/app/**'
 
   # The other half of the job above. Its own job rather than a second step
   # there, for the reason at the top of this file: separate jobs wait in
@@ -230,5 +232,5 @@ jobs:
       # browser, not because the tests grew.
       - name: Do the tests test the new code, where only a browser can
         run: >
-          cargo mutants --in-diff /tmp/pr.diff -p escapement-view
+          cargo mutants --in-diff /tmp/pr.diff -p escapement-view -p escapement-app
           --cargo-arg=--target=wasm32-unknown-unknown --timeout 120
