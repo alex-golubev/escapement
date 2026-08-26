@@ -1,4 +1,8 @@
 [target.wasm32-unknown-unknown]
+# What runs a test binary built for this target. Only `escapement-view` has any:
+# its five `Cells` methods are `Atomics` calls, which no host test can reach.
+runner = "wasm-bindgen-test-runner"
+
 rustflags = [
     # 128-bit only. Autovectorization is unreliable, so hot loops need explicit
     # core::arch::wasm32 intrinsics.

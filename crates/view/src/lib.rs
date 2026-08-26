@@ -175,6 +175,14 @@ impl Cells for View {
 // crate — it runs against the protocol, which does not depend on this.
 #[cfg(test)]
 mod tests {
+    // `wasm-bindgen-test-runner` executes only what it generated, so an
+    // ordinary `#[test]` compiles for the target and never runs there.
+    // Aliasing the attribute is what makes these run in both places, and that
+    // is what lets one mutation run answer for the whole crate — measured:
+    // without it each of the two runs leaves the other's half alive, 14 and 2.
+    #[cfg(target_arch = "wasm32")]
+    use wasm_bindgen_test::wasm_bindgen_test as test;
+
     use super::*;
 
     /// A region at the very start and one that ends exactly at the end of the
@@ -237,5 +245,160 @@ mod tests {
     fn the_failure_is_an_error() {
         const fn assert_error<E: core::error::Error>() {}
         assert_error::<ViewError>();
+    }
+}
+
+// Two attributes rather than one `all(...)`, for the reason `escapement-protocol`
+// gives at every test module in it: `cargo-mutants` reads the source without
+// evaluating `cfg`, and only a bare `#[cfg(test)]` reads to it as test code.
+#[cfg(test)]
+#[cfg(target_arch = "wasm32")]
+mod browser {
+    use escapement_protocol::{
+        Command, CommandKind, Consumer, EngineState, Layout, Producer, Publisher, Subscriber,
+    };
+    use js_sys::SharedArrayBuffer;
+    use wasm_bindgen_test::{wasm_bindgen_test, wasm_bindgen_test_configure};
+
+    use super::*;
+
+    // A browser, not node: `Atomics` over a `SharedArrayBuffer` is the thing
+    // being checked, and node would answer for a different engine than the one
+    // this ships to. The runner serves with the isolation headers, so the
+    // buffer below is a real shared one rather than a stand-in.
+    wasm_bindgen_test_configure!(run_in_browser);
+
+    /// Non-zero, so that an offset dropped somewhere in the arithmetic cannot
+    /// give the same answer as one honoured.
+    const OFFSET: usize = 64;
+
+    fn region(words: usize) -> View {
+        let bytes = OFFSET + words * BYTES;
+        let buffer = SharedArrayBuffer::new(bytes as u32);
+        View::new(&buffer.into(), OFFSET).expect("a shared buffer and an aligned offset")
+    }
+
+    /// What no header can say about itself, and the one thing the handshake
+    /// checks against the memory instead (§3).
+    #[wasm_bindgen_test]
+    fn a_view_reaches_what_lies_behind_its_offset() {
+        assert_eq!(region(16).words(), 16);
+        assert_eq!(region(1).words(), 1);
+    }
+
+    /// The same shape as the `Pointers` test: neighbours are named, because a
+    /// write that lands one word over passes every check that only reads back
+    /// what it wrote.
+    #[wasm_bindgen_test]
+    fn each_word_is_its_own_cell() {
+        let cells = region(4);
+
+        cells.store_relaxed(1, 7);
+        cells.store_release(2, 9);
+
+        assert_eq!(cells.load_relaxed(1), 7);
+        assert_eq!(cells.load_acquire(2), 9);
+        assert_eq!(cells.load_relaxed(0), 0, "a neighbour was written");
+        assert_eq!(cells.load_relaxed(3), 0, "a neighbour was written");
+    }
+
+    /// `Atomics` speak `i32` and the region is `u32`. Nothing in between may
+    /// reinterpret them, so the word with the top bit set is the one to ask
+    /// about.
+    #[wasm_bindgen_test]
+    fn a_word_survives_the_signed_boundary() {
+        let cells = region(2);
+
+        cells.store_relaxed(0, u32::MAX);
+        cells.store_relaxed(1, 0x8000_0000);
+
+        assert_eq!(cells.load_relaxed(0), u32::MAX);
+        assert_eq!(cells.load_relaxed(1), 0x8000_0000);
+    }
+
+    /// The bulk paths are `Cells`'s own, spelled out of the five methods above
+    /// — this is what says they were spelled correctly over this backend.
+    #[wasm_bindgen_test]
+    fn a_block_lands_where_it_was_put() {
+        let cells = region(8);
+
+        cells.write_words(2, &[10, 20, 30]);
+        let mut read = [0u32; 3];
+        cells.read_words(2, &mut read);
+
+        assert_eq!(read, [10, 20, 30]);
+        assert_eq!(cells.load_relaxed(1), 0, "a neighbour was written");
+        assert_eq!(cells.load_relaxed(5), 0, "a neighbour was written");
+    }
+
+    /// The point of the whole crate: the protocol is one piece of code, and
+    /// this is the half of it that had never run over this access. Both halves
+    /// on one thread, which is not how it ships — what ships is checked by the
+    /// host tests and by `loom`. What only a browser can answer is whether
+    /// `Atomics` carry it at all.
+    #[wasm_bindgen_test]
+    fn the_protocol_travels_over_a_view() {
+        const LAYOUT: Layout = Layout::new(8);
+        let cells = region(LAYOUT.words());
+
+        LAYOUT.write_header(&cells);
+        let seen = Layout::read_header(&cells).expect("the header just written");
+        assert_eq!(seen, LAYOUT);
+
+        let mut interface = Producer::new(cells.clone(), seen.commands());
+        interface
+            .push(&Command::now(CommandKind::SetFrequency(440.0)))
+            .expect("an empty ring");
+        // Annotated because `pop` is the only thing naming the slot type here,
+        // and it returns an `Option` of whatever the ring was built for.
+        let taken: Command = Consumer::new(cells.clone(), seen.commands())
+            .pop()
+            .expect("what was just pushed");
+        assert_eq!(taken.kind, CommandKind::SetFrequency(440.0));
+
+        let published = EngineState {
+            clock: 1 << 40,
+            quanta: 7,
+            peak: 0.5,
+            playing: true,
+            commands_applied: 1,
+            commands_unknown: 0,
+        };
+        Publisher::new(cells.clone(), seen.state()).publish(&published);
+        assert_eq!(
+            Subscriber::new(cells, seen.state()).read(),
+            Some(published),
+            "the state block did not survive the crossing"
+        );
+    }
+
+    /// The handshake is handed whatever the page sends it, and a page is not a
+    /// type system.
+    #[wasm_bindgen_test]
+    fn a_value_that_is_not_a_buffer_is_refused() {
+        assert_eq!(
+            View::new(&JsValue::NULL, 0).unwrap_err(),
+            ViewError::NotABuffer
+        );
+    }
+
+    /// `reach` is tested on the host; this is the wiring between it and the
+    /// constructor, which is what would otherwise let a throw out of
+    /// `Uint32Array` past us.
+    #[wasm_bindgen_test]
+    fn a_bad_offset_is_refused_rather_than_thrown() {
+        let buffer: JsValue = SharedArrayBuffer::new(64).into();
+
+        assert_eq!(
+            View::new(&buffer, 3).unwrap_err(),
+            ViewError::Misaligned { byte_offset: 3 }
+        );
+        assert_eq!(
+            View::new(&buffer, 96).unwrap_err(),
+            ViewError::Outside {
+                byte_offset: 96,
+                byte_length: 64,
+            }
+        );
     }
 }

@@ -94,6 +94,36 @@ jobs:
       - name: Undefined behaviour and data races
         run: tools/miri.sh -p escapement-protocol -p escapement-worklet
 
+  # The half of `escapement-view` no host test can reach: its five `Cells`
+  # methods are `Atomics` calls, and there is no `Atomics` on the host. Chrome
+  # and ChromeDriver come with the runner image; the test runner serves with the
+  # isolation headers itself, so the buffer under the test is a real shared one.
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Toolchain
+        run: rustup show
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: browser
+
+      # Pinned, and the pin is not free-standing: `wasm-bindgen-test-runner`
+      # refuses a module built by a different version of the crate. It has to
+      # follow `wasm-bindgen` in Cargo.lock, and the error when it stops
+      # matching says so plainly.
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-bindgen-cli@0.2.127
+
+      # The target is what selects the runner from .cargo/config.toml, and it is
+      # also what engages build-std — wanted here, unlike under `cargo miri`.
+      - name: Whether Atomics carry the protocol at all
+        run: cargo test -p escapement-view --target wasm32-unknown-unknown
+
   # What the two-thread stress tests cannot check: that the orderings hold
   # under every interleaving the memory model permits, rather than under the
   # one that happened on this machine today.
@@ -154,5 +184,51 @@ jobs:
       # Not -p: as other crates grow, a change in them should be held to the
       # same standard. Mutants that survive by construction rather than by a
       # gap are listed in .cargo/mutants.toml.
+      #
+      # `escapement-view` is the exception, and by measurement rather than by
+      # taste: half of it is only reachable from a browser, so on this host run
+      # fourteen of its mutants survive with nothing wrong with them. The job
+      # below is where it is held to the standard instead. A regex in
+      # .cargo/mutants.toml would be the wrong home — that file is for mutants
+      # that survive by construction, not for ones whose test this invocation
+      # does not run.
       - name: Do the tests test the new code
-        run: cargo mutants --in-diff /tmp/pr.diff --timeout 10
+        run: cargo mutants --in-diff /tmp/pr.diff --timeout 10 --exclude 'crates/view/**'
+
+  # The other half of the job above. Its own job rather than a second step
+  # there, for the reason at the top of this file: separate jobs wait in
+  # parallel and pay in runner minutes instead.
+  mutants-browser:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Toolchain
+        run: rustup show
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: mutants-browser
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-mutants,wasm-bindgen-cli@0.2.127
+
+      - name: What this pull request changed
+        run: git diff origin/${{ github.base_ref }}...HEAD > /tmp/pr.diff
+
+      # The target is what makes this run the browser tests, and it is also
+      # what makes it run the ordinary ones: they carry an aliased attribute so
+      # that both halves run in both places. Without that, each of the two runs
+      # leaves the other's half alive — measured at fourteen and two.
+      #
+      # A longer timeout than the host job because every mutant starts a
+      # browser, not because the tests grew.
+      - name: Do the tests test the new code, where only a browser can
+        run: >
+          cargo mutants --in-diff /tmp/pr.diff -p escapement-view
+          --cargo-arg=--target=wasm32-unknown-unknown --timeout 120

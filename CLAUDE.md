@@ -25,6 +25,8 @@ python3 tools/check-shared-memory.py target/wasm32-unknown-unknown/release/*.was
 python3 tools/check-shared-memory.py --fixed target/wasm32-unknown-unknown/release/escapement_worklet.wasm
 python3 tools/check-worklet-module.py target/wasm32-unknown-unknown/release/escapement_worklet.wasm
 
+cargo test -p escapement-view --target wasm32-unknown-unknown   # Atomics, in a browser
+
 tools/miri.sh -p escapement-protocol -p escapement-worklet   # undefined behaviour, data races
 RUSTFLAGS="--cfg loom" cargo test -p escapement-protocol   # memory orderings
 cargo mutants -p escapement-protocol --timeout 10   # do the tests test anything
@@ -38,6 +40,14 @@ The toolchain — pinned nightly, wasm target, the `rust-src` component
 installs it, and nothing else is needed to build. Trunk is configured but not in
 the chain yet, so `trunk serve` gets you `web/index.html` — the empty Leptos
 client — rather than the slice above.
+
+The browser line is not a convenience: `escapement-view`'s five `Cells` methods
+are `Atomics` calls, and there is no `Atomics` on the host, so nothing else can
+reach them. It needs two host tools — `cargo +stable install wasm-bindgen-cli
+--version 0.2.127`, whose version must match the `wasm-bindgen` crate in
+`Cargo.lock`, and `brew install --cask chromedriver`, whose major version must
+match the installed Chrome. `.cargo/config.toml` names the runner; the runner
+serves with the isolation headers itself, so `SharedArrayBuffer` is real there.
 
 **Miri takes a crate list, never `--workspace`.** It interprets rather than runs,
 so its cost follows the code put under it, and only `unsafe` or a deliberate race

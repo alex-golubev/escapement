@@ -20,6 +20,12 @@ escapement-protocol.workspace = true
 js-sys = { version = "0.3", default-features = false }
 wasm-bindgen = { version = "0.2", default-features = false }
 
+# Only the browser half wants this, and only the browser can run it — the five
+# methods below `Cells` are `Atomics` calls and nothing else, so a host test
+# cannot reach them at all. MIT/Apache-2.0.
+[dev-dependencies]
+wasm-bindgen-test = "0.3"
+
 # Repeated from the workspace rather than inherited, as in `escapement-protocol`
 # and for its reason: this crate is one end of a contract between two separately
 # compiled modules, so a documented public item and a named error are the
