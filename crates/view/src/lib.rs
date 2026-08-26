@@ -12,11 +12,17 @@
 //! browser can check.
 
 use core::fmt;
+use std::collections::VecDeque;
 
 use js_sys::{Atomics, Reflect, Uint32Array};
 use wasm_bindgen::{JsValue, UnwrapThrowExt};
 
-use escapement_protocol::Cells;
+use escapement_protocol::{Cells, HandshakeError, Layout, Producer, Subscriber};
+
+// What a caller needs in order to say anything to the engine or read anything
+// back, so that reaching it is one import rather than two. The protocol's own
+// facade exists for the same reason.
+pub use escapement_protocol::{Command, CommandKind, EngineState};
 
 /// Bytes per word. The region is addressed in words on both sides (§3); this is
 /// the one place that has to know what a word costs, because the view is built
@@ -173,6 +179,147 @@ impl Cells for View {
 // One attribute, unlike the test modules in `escapement-protocol`: the second
 // one there keeps them out of the `loom` build, and `loom` never reaches this
 // crate — it runs against the protocol, which does not depend on this.
+/// The outside end of the shared region: what the interface holds, before and
+/// after there is a region to hold it to.
+///
+/// Built empty and connected later, because that is the order things happen in:
+/// an `AudioContext` starts only on a user gesture, so the interface is alive
+/// and can be clicked at for some time before the worklet exists. Commands sent
+/// in that time wait here and leave when it does (§3).
+///
+/// The worklet's mirror of this is its `Processor`.
+pub struct Link {
+    region: Option<Region>,
+    outbox: VecDeque<Command>,
+}
+
+/// The two halves that only exist once the handshake has happened.
+struct Region {
+    commands: Producer<View, Command>,
+    state: Subscriber<View>,
+}
+
+impl Link {
+    /// Not connected to anything yet, and already able to take commands.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            region: None,
+            outbox: VecDeque::new(),
+        }
+    }
+
+    /// The handshake: `buffer` is the worklet's `memory.buffer` and
+    /// `byte_offset` what `escapement_region_ptr` returned.
+    ///
+    /// Whatever is waiting stays waiting; the next [`Link::flush`] sends it.
+    ///
+    /// # Errors
+    ///
+    /// [`ConnectError`] — the address is not one a view can be built at, or
+    /// what is there is not a region this build can speak to. The link is left
+    /// unconnected and still takes commands.
+    pub fn connect(&mut self, buffer: &JsValue, byte_offset: usize) -> Result<(), ConnectError> {
+        let cells = View::new(buffer, byte_offset)?;
+        let layout = Layout::read_header(&cells)?;
+
+        self.region = Some(Region {
+            commands: Producer::new(cells.clone(), layout.commands()),
+            state: Subscriber::new(cells, layout.state()),
+        });
+        Ok(())
+    }
+
+    /// Whether the handshake has happened.
+    #[must_use]
+    pub fn is_connected(&self) -> bool {
+        self.region.is_some()
+    }
+
+    /// Takes a command. Cannot fail, and that is the point (§3).
+    ///
+    /// A full ring is not something a user action can be told about:
+    /// `Atomics.wait` is forbidden on the main thread, so the alternative to
+    /// queueing here is dropping what someone clicked. This queue is in memory
+    /// that grows, so it holds whatever it has to.
+    pub fn send(&mut self, command: Command) {
+        self.outbox.push_back(command);
+    }
+
+    /// Moves what fits into the ring, and returns how many went. Once a frame.
+    ///
+    /// A command can wait a frame. Worth remembering while debugging, and not
+    /// worth avoiding: the ring holds a frame's worth of traffic many times
+    /// over, so what usually waits is nothing.
+    pub fn flush(&mut self) -> usize {
+        let Some(region) = self.region.as_mut() else {
+            return 0;
+        };
+
+        let mut sent = 0;
+        while let Some(command) = self.outbox.front() {
+            if region.commands.push(command).is_err() {
+                break;
+            }
+            self.outbox.pop_front();
+            sent += 1;
+        }
+        sent
+    }
+
+    /// What the engine says about itself. `None` before the handshake, and also
+    /// when the writer was in the way every time — keep the previous frame's
+    /// values, the next frame is 16 ms away.
+    #[must_use]
+    pub fn state(&self) -> Option<EngineState> {
+        self.region.as_ref()?.state.read()
+    }
+
+    /// Commands still waiting for room, or for a region to put them in.
+    #[must_use]
+    pub fn pending(&self) -> usize {
+        self.outbox.len()
+    }
+}
+
+impl Default for Link {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Why a handshake did not connect a [`Link`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ConnectError {
+    /// No view could be built at that address.
+    Address(ViewError),
+    /// A view was built, and what it found is not a region this build can use.
+    Region(HandshakeError),
+}
+
+impl From<ViewError> for ConnectError {
+    fn from(error: ViewError) -> Self {
+        Self::Address(error)
+    }
+}
+
+impl From<HandshakeError> for ConnectError {
+    fn from(error: HandshakeError) -> Self {
+        Self::Region(error)
+    }
+}
+
+impl fmt::Display for ConnectError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Address(error) => write!(f, "{error}"),
+            Self::Region(error) => write!(f, "{error}"),
+        }
+    }
+}
+
+impl core::error::Error for ConnectError {}
+
 #[cfg(test)]
 mod tests {
     // `wasm-bindgen-test-runner` executes only what it generated, so an
@@ -254,9 +401,7 @@ mod tests {
 #[cfg(test)]
 #[cfg(target_arch = "wasm32")]
 mod browser {
-    use escapement_protocol::{
-        Command, CommandKind, Consumer, EngineState, Layout, Producer, Publisher, Subscriber,
-    };
+    use escapement_protocol::{Consumer, Layout, Producer, Publisher, Subscriber};
     use js_sys::SharedArrayBuffer;
     use wasm_bindgen_test::{wasm_bindgen_test, wasm_bindgen_test_configure};
 
@@ -370,6 +515,141 @@ mod browser {
             Some(published),
             "the state block did not survive the crossing"
         );
+    }
+
+    /// A region with a header in it, as the worklet leaves one, and the buffer
+    /// to reach it by — which is the pair a handshake is handed.
+    fn region_with_header(slots: u32) -> (JsValue, Layout) {
+        let layout = Layout::new(slots);
+        let bytes = OFFSET + layout.words() * BYTES;
+        let buffer: JsValue = SharedArrayBuffer::new(bytes as u32).into();
+
+        let cells = View::new(&buffer, OFFSET).expect("an aligned offset");
+        layout.write_header(&cells);
+        (buffer, layout)
+    }
+
+    fn engine(buffer: &JsValue, layout: Layout) -> Consumer<View, Command> {
+        let cells = View::new(buffer, OFFSET).expect("an aligned offset");
+        Consumer::new(cells, layout.commands())
+    }
+
+    /// The order things actually happen in: an `AudioContext` starts on a
+    /// gesture, so the interface is clickable before there is anywhere to put
+    /// what was clicked.
+    #[wasm_bindgen_test]
+    fn what_was_sent_before_the_handshake_still_arrives() {
+        let mut link = Link::new();
+        link.send(Command::now(CommandKind::Start));
+        link.send(Command::now(CommandKind::SetGain(0.25)));
+
+        assert_eq!(link.flush(), 0, "there is nowhere to flush to yet");
+        assert_eq!(link.pending(), 2);
+        assert!(!link.is_connected());
+        assert_eq!(link.state(), None, "no region, no state");
+
+        let (buffer, layout) = region_with_header(8);
+        link.connect(&buffer, OFFSET).expect("a header is there");
+
+        assert!(link.is_connected());
+        assert_eq!(link.flush(), 2);
+        assert_eq!(link.pending(), 0);
+
+        let mut engine = engine(&buffer, layout);
+        assert_eq!(engine.pop().map(|c| c.kind), Some(CommandKind::Start));
+        assert_eq!(
+            engine.pop().map(|c| c.kind),
+            Some(CommandKind::SetGain(0.25))
+        );
+    }
+
+    /// Р5, and the reason the queue exists at all: a full ring must delay a
+    /// user action, never lose it. `Atomics.wait` is forbidden on this thread,
+    /// so waiting for room is not among the options.
+    #[wasm_bindgen_test]
+    fn a_full_ring_delays_rather_than_drops() {
+        const SLOTS: u32 = 2;
+        let (buffer, layout) = region_with_header(SLOTS);
+
+        let mut link = Link::new();
+        link.connect(&buffer, OFFSET).expect("a header is there");
+        for step in 0..5u8 {
+            link.send(Command::now(CommandKind::SetFrequency(f32::from(step))));
+        }
+
+        assert_eq!(link.flush(), SLOTS as usize, "only what fits");
+        assert_eq!(link.pending(), 3);
+
+        let mut engine = engine(&buffer, layout);
+        assert_eq!(
+            engine.pop().map(|c| c.kind),
+            Some(CommandKind::SetFrequency(0.0))
+        );
+        assert_eq!(
+            engine.pop().map(|c| c.kind),
+            Some(CommandKind::SetFrequency(1.0))
+        );
+
+        assert_eq!(link.flush(), 2, "room for two more");
+        assert_eq!(link.pending(), 1);
+        assert_eq!(
+            engine.pop().map(|c| c.kind),
+            Some(CommandKind::SetFrequency(2.0)),
+            "and in the order they were sent"
+        );
+    }
+
+    /// What the engine publishes reaches the same value the interface polls.
+    #[wasm_bindgen_test]
+    fn the_state_block_reaches_the_link() {
+        let (buffer, layout) = region_with_header(8);
+        let mut link = Link::new();
+        link.connect(&buffer, OFFSET).expect("a header is there");
+
+        let published = EngineState {
+            clock: 96_000,
+            quanta: 750,
+            peak: 0.25,
+            playing: true,
+            commands_applied: 3,
+            commands_unknown: 0,
+        };
+        let cells = View::new(&buffer, OFFSET).expect("an aligned offset");
+        Publisher::new(cells, layout.state()).publish(&published);
+
+        assert_eq!(link.state(), Some(published));
+    }
+
+    /// A page can be pointed at the wrong address, and what it had queued is
+    /// not the address's fault.
+    #[wasm_bindgen_test]
+    fn a_refused_handshake_leaves_the_link_taking_commands() {
+        let mut link = Link::new();
+        link.send(Command::now(CommandKind::Start));
+
+        let empty: JsValue = SharedArrayBuffer::new(256).into();
+        assert!(matches!(
+            link.connect(&empty, 0),
+            Err(ConnectError::Region(HandshakeError::Magic { .. }))
+        ));
+        assert!(matches!(
+            link.connect(&empty, 3),
+            Err(ConnectError::Address(ViewError::Misaligned { .. }))
+        ));
+
+        assert!(!link.is_connected());
+        assert_eq!(link.pending(), 1, "what was waiting is still waiting");
+    }
+
+    /// These are read by a person looking at a page that will not start.
+    #[wasm_bindgen_test]
+    fn a_refusal_says_which_half_refused() {
+        for error in [
+            ConnectError::Address(ViewError::NotABuffer),
+            ConnectError::Region(HandshakeError::Shape),
+        ] {
+            assert!(format!("{error}").len() > 20, "{error:?} says nothing");
+        }
     }
 
     /// The handshake is handed whatever the page sends it, and a page is not a
