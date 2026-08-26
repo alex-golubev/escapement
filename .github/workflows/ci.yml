@@ -185,17 +185,16 @@ jobs:
       # same standard. Mutants that survive by construction rather than by a
       # gap are listed in .cargo/mutants.toml.
       #
-      # Two exceptions, both by measurement rather than by taste: what tests
-      # `escapement-view` and `escapement-app` is a browser, so on this host run
-      # their mutants survive with nothing wrong with them. The job below is
-      # where those two are held to the standard instead. A regex in
-      # .cargo/mutants.toml would be the wrong home — that file is for mutants
-      # that survive by construction, not for ones whose test this invocation
-      # does not run.
+      # Before the work rather than after it: the split this job is half of is
+      # only correct in pairs, and nothing about either half shows that.
+      - name: The two runs still add up
+        run: python3 tools/mutants.py check
+
+      # Which crates this run leaves to the job below, and why, is in
+      # tools/mutants.py — one place, so that what is checked above and what
+      # runs here cannot become two different things.
       - name: Do the tests test the new code
-        run: >
-          cargo mutants --in-diff /tmp/pr.diff --timeout 10
-          --exclude 'crates/view/**' --exclude 'crates/app/**'
+        run: python3 tools/mutants.py host --in-diff /tmp/pr.diff
 
   # The other half of the job above. Its own job rather than a second step
   # there, for the reason at the top of this file: separate jobs wait in
@@ -231,6 +230,4 @@ jobs:
       # A longer timeout than the host job because every mutant starts a
       # browser, not because the tests grew.
       - name: Do the tests test the new code, where only a browser can
-        run: >
-          cargo mutants --in-diff /tmp/pr.diff -p escapement-view -p escapement-app
-          --cargo-arg=--target=wasm32-unknown-unknown --timeout 120
+        run: python3 tools/mutants.py browser --in-diff /tmp/pr.diff

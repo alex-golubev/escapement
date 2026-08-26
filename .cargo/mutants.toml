@@ -3,6 +3,18 @@
 #
 # Kept narrow on purpose. A regex here silences a real bug just as happily as a
 # false alarm, so these match one mutation each and never a whole function.
+#
+# The bar for a new entry is one sentence: **no test could catch this, ever.**
+# Two things that sound like it and are not:
+#
+#   "the test for it lives in another job" — route it in `tools/mutants.py`
+#   instead, which is where the two runs are kept adding up to the whole.
+#
+#   "nobody has written that test yet" — that is the gap this tool exists to
+#   report, and silencing it here is turning the tool off.
+#
+# So the file only grows when something becomes genuinely uncatchable, which is
+# rare. If it is growing for other reasons, that is the thing to look at.
 exclude_re = [
     # A fence has no effect any single-interleaving test can observe. Loom is
     # what covers these two, and Loom is a separate job.

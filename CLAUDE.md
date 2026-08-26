@@ -30,6 +30,7 @@ cargo test -p escapement-view --target wasm32-unknown-unknown   # Atomics, in a 
 tools/miri.sh -p escapement-protocol -p escapement-worklet   # undefined behaviour, data races
 RUSTFLAGS="--cfg loom" cargo test -p escapement-protocol   # memory orderings
 cargo mutants -p escapement-protocol --timeout 10   # do the tests test anything
+tools/mutants.py check              # do its two runs still cover everything
 
 tools/build-first-sound.sh              # worklet + dist-first-sound/
 tools/dev-server.py dist-first-sound    # :8080 with the COOP/COEP headers
@@ -64,7 +65,17 @@ slowest thing — they pay in runner minutes instead. Mutation testing runs
 (time to run the tests) and would not stay affordable, while a diff-scoped one
 follows the size of the change (measured on this branch: 18 mutants instead of
 144). Mutants that survive by construction rather than by a gap in the tests are
-listed in `.cargo/mutants.toml`, one narrow regex each.
+listed in `.cargo/mutants.toml`, one narrow regex each — and the bar for adding
+one is in that file's own header.
+
+It takes **two runs, and they are only correct as a pair.** What tests
+`escapement-view` and `escapement-app` is a browser, so on a host run their
+mutants survive with nothing wrong with them; those two crates are left to a
+second run against the wasm target instead. Neither half shows that the other
+exists, which is how a third crate could later be dropped from one and never
+added to the other, and nothing would say so. `tools/mutants.py` owns the split
+and `tools/mutants.py check` is what asks whether the halves still add up —
+measured, not remembered: 187 + 28 against 215.
 
 ## Invariants that break things silently
 
