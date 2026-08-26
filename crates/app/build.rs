@@ -9,6 +9,12 @@
 /// and grows into this.
 const MAX_MEMORY_BYTES: usize = 1024 * 1024 * 1024;
 
+/// The linker synthesizes these for a shared memory and then drops them again,
+/// because nothing in the module refers to them. `wasm-bindgen` looks them up
+/// by name when it prepares a module for threading, so they have to survive the
+/// link — exporting them is what keeps them.
+const TLS_SYMBOLS: [&str; 4] = ["__wasm_init_tls", "__tls_size", "__tls_align", "__tls_base"];
+
 fn main() {
     println!("cargo::rerun-if-changed=build.rs");
 
@@ -18,4 +24,13 @@ fn main() {
 
     println!("cargo::rustc-link-arg-bins=--shared-memory");
     println!("cargo::rustc-link-arg-bins=--max-memory={MAX_MEMORY_BYTES}");
+
+    // `wasm-bindgen` refuses a shared memory the module defines for itself: its
+    // threading transform hands the same memory to workers, so it has to be
+    // created outside and imported. The generated glue is what creates it.
+    println!("cargo::rustc-link-arg-bins=--import-memory");
+
+    for symbol in TLS_SYMBOLS {
+        println!("cargo::rustc-link-arg-bins=--export={symbol}");
+    }
 }

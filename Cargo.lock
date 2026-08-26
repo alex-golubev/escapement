@@ -40,6 +40,7 @@ dependencies = [
  "escapement-model",
  "escapement-render",
  "escapement-view",
+ "wasm-bindgen",
 ]
 
 [[package]]

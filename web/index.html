@@ -4,7 +4,51 @@
     <meta charset="utf-8"/>
     <meta name="viewport" content="width=device-width, initial-scale=1"/>
     <title>Escapement</title>
-    <link data-trunk rel="rust" href="../crates/app/Cargo.toml"/>
+    <!-- data-wasm-opt="0" keeps a third tool out of the chain. wasm-opt runs
+         only on a release build anyway, but on a module with atomics, shared
+         memory and simd128 it has to be told about each of them, and turning it
+         on is worth a measurement of its own. -->
+    <link data-trunk rel="rust" href="../crates/app/Cargo.toml" data-wasm-opt="0"/>
+    <style>
+        body { font: 14px/1.5 ui-monospace, monospace; margin: 2rem; max-width: 40rem; }
+        pre { background: #f4f4f4; padding: 1rem; white-space: pre-wrap; }
+    </style>
 </head>
-<body></body>
+<body>
+<h1>Slice 1 — the interface module</h1>
+<p>Whether a module linked with a growable <b>shared</b> memory comes up at all
+    through <code>wasm-bindgen</code> and Trunk. Nothing else yet: no worklet, no
+    ring — this is the ground those stand on.</p>
+<pre id="log"></pre>
+
+<script type="module">
+    const log = document.getElementById("log");
+    const say = (line) => {
+        log.textContent += line + "\n";
+        console.log("[probe] " + line);
+    };
+
+    say(`crossOriginIsolated = ${crossOriginIsolated}`);
+    if (!crossOriginIsolated) {
+        say("!! not isolated — no SharedArrayBuffer, whatever the module says");
+    }
+
+    // Trunk initializes the module itself and hangs the exports here. Polled
+    // rather than awaited: its init script and this one are two modules, and
+    // nothing orders them.
+    const bindings = await new Promise((resolve) => {
+        const tick = () => (window.wasmBindings ? resolve(window.wasmBindings) : setTimeout(tick, 10));
+        tick();
+    });
+    say("exports reached: " + Object.keys(bindings).join(", "));
+
+    const memory = bindings.linear_memory();
+    const buffer = memory.buffer;
+    say(`memory.buffer is ${buffer.constructor.name}`);
+    say(`byteLength = ${buffer.byteLength} (${(buffer.byteLength / 1048576).toFixed(1)} MiB)`);
+    say(buffer instanceof SharedArrayBuffer
+        ? "OK — the interface module's memory is shared"
+        : "!! NOT shared — --shared-memory did not survive the chain");
+</script>
+</body>
 </html>
