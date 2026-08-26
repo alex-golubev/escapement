@@ -426,6 +426,13 @@ mod tests {
                 "{available} words were read as a header"
             );
         }
+
+        // The far side of the boundary, where a header fits exactly: read, and
+        // then refused for what is in it rather than for the room it had.
+        assert_eq!(
+            Layout::read_header(&Words::new(HEADER_WORDS)),
+            Err(HandshakeError::Magic { found: 0 })
+        );
     }
 
     /// The blocks must not overlap, and this is the case that reaches that
