@@ -899,6 +899,42 @@ handing over the binary.
 
 → The rule for all dependencies: **permissive by default**, GPL never.
 
+> **Decided 2026-08-26.** The rule above splits in two, because copyleft does.
+> **Whole-program copyleft — GPL, AGPL, SSPL — never**, for the reason already
+> given. **File-level copyleft — MPL, EPL, CDDL — is accepted**, and an
+> attribution page is its price.
+>
+> Forced by Loro, which depends on `im` unconditionally and brings `bitmaps` and
+> `sized-chunks` with it, all three under MPL-2.0. Dropping them means forking
+> Loro, which is out of proportion to what they cost.
+>
+> The two kinds differ in the unit of contagion, not in degree. MPL 1.7 defines a
+> Larger Work as one combining covered software with other material *"in a
+> separate file or files"*, and 3.3 permits distributing that Larger Work *"under
+> terms of Your choice"*. So those three crates keep their license and Escapement
+> keeps PolyForm. The GPL has no such clause, which is precisely why it stays
+> refused — the distinction is the whole reason this is a decision rather than an
+> exception.
+>
+> The price is 3.2(a), with 3.1 behind it: whoever receives the bundle must be
+> told, per package, that it is under MPL, where its source is, and where the
+> license text is. That is a page inside the product rather than a file in the
+> repository — the recipient of the executable form is a person with a browser,
+> who has no reason to know the repository exists. Generated from the dependency
+> tree at build time rather than written by hand: a hand-written list drifts as
+> dependencies change, and it drifts silently.
+>
+> One point is left open on purpose. MPL 3.2(b) permits sublicensing the
+> executable form under other terms *"provided that the license for the Executable
+> Form does not attempt to limit or alter the recipients' rights in the Source
+> Code Form"*. PolyForm restricts competing use of Escapement, not of `im`, which
+> remains available to the recipient under MPL untouched — so on a plain reading
+> there is no conflict. It is still a sentence worth a lawyer before the first
+> public build, and not one to settle here.
+>
+> Unlike the rest of this section, the rule no longer rests on remembering it.
+> `deny.toml` is the allow-list, and CI refuses a license that is not on it.
+
 #### What can be decided whenever
 
 Which license text actually goes into `LICENSE` — Apache, MIT, GPL, BSL. It blocks

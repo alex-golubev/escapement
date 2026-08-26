@@ -1,0 +1,55 @@
+# What may be linked into a bundle that is handed to a browser.
+#
+# Shipping wasm to a page is distribution of the program, so a dependency's
+# license is a constraint on the product's own — ARCHITECTURE.md §5.1 is where
+# that argument lives, and this file is the half of it a machine can check.
+
+[graph]
+all-features = true
+
+[licenses]
+# Three categories, and the bar for adding to each is different.
+#
+#   Permissive — no obligation beyond keeping the notice. Add freely.
+#
+#   File-level copyleft — the dependency's own files stay under it, the product
+#   does not (MPL 1.7 and 3.3). Costs an attribution page: 3.2(a) requires
+#   telling recipients where the source is. Add deliberately, and only after
+#   checking the license really is file-level rather than whole-program.
+#
+#   Whole-program copyleft — GPL, AGPL, SSPL. Never, at any version. It would
+#   take away exactly the right §5.1 exists to keep. There is no entry for this
+#   category because the list is an allow-list: leaving it out is the ban.
+allow = [
+    # Permissive.
+    "MIT",
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSL-1.0",
+    "Unlicense",
+    "Unicode-3.0",
+
+    # File-level copyleft. Arrives with Loro, which depends on `im`
+    # unconditionally, so this cannot be dropped without forking it.
+    "MPL-2.0",
+]
+
+# The default is 0.8, which accepts a license text that merely resembles one on
+# the list. A guess is the one answer this file must not give.
+confidence-threshold = 0.93
+
+# Our own crates carry `license-file` rather than `license` and are all
+# `publish = false`, so there is nothing here to check them against.
+private = { ignore = true }
+
+[bans]
+# Warn, not deny: the tree already carries two `thiserror` and two `getrandom`
+# majors through dependencies we do not control. This is a size signal, not a
+# rule — a rule here would be red on arrival and stay red.
+multiple-versions = "warn"
+
+[sources]
+# Everything comes from crates.io. A git dependency is not forbidden, it is
+# something to be decided on rather than to arrive with a `cargo add`.
+unknown-registry = "deny"
+unknown-git = "deny"

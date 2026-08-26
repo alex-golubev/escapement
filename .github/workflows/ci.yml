@@ -65,6 +65,39 @@ jobs:
         run: python3 tools/check-worklet-module.py target/wasm32-unknown-unknown/release/escapement_worklet.wasm
 
 
+  # Whether a dependency's license permits shipping it to a browser at all.
+  # Handing a wasm bundle to a page is distribution of the program (§5.1), so a
+  # whole-program copyleft dependency would take the product's own license with
+  # it. `deny.toml` is the allow-list, and the bar for adding to it is in that
+  # file's header.
+  #
+  # Its own job rather than a step in `check`: it answers in seconds and has
+  # nothing to do with the build, so a failure reads as "a license" instead of
+  # arriving twenty minutes into a wasm build.
+  #
+  # `advisories` is deliberately outside this gate. An advisory published
+  # upstream would turn an untouched tree red — the failure mode the dated
+  # nightly pin exists to avoid. It is worth running, but on a schedule or by
+  # hand, where it does not block a change that has nothing to do with it.
+  licenses:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      # `cargo metadata` reads rust-toolchain.toml like any other cargo call, so
+      # the pin is installed here too even though nothing is built.
+      - name: Toolchain
+        run: rustup show
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny
+
+      - name: What may be linked into a bundle
+        run: cargo deny check licenses bans sources
+
+
   # Undefined behaviour in the two places this project has any: the protocol's
   # one unsafe module, and the worklet's statics — plus whether the deliberate
   # race in the state block is the kind the language permits.

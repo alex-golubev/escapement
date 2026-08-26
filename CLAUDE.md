@@ -20,6 +20,7 @@ cargo test --workspace                              # tests
 cargo test -p escapement-core nyquist               # a single test
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all --check                             # CI enforces this
+cargo deny check licenses bans sources              # what may be shipped
 cargo build --workspace --target wasm32-unknown-unknown --release
 python3 tools/check-shared-memory.py target/wasm32-unknown-unknown/release/*.wasm
 python3 tools/check-shared-memory.py --fixed target/wasm32-unknown-unknown/release/escapement_worklet.wasm
@@ -112,9 +113,14 @@ the cause.
 - **`escapement-render` must not depend on the UI framework.** State in, mouse
   events out, no Leptos types in its public API. This is the only decision in the
   project that is deliberately kept reversible.
-- **No GPL/AGPL dependencies, ever.** Shipping a wasm bundle to a browser is
-  distribution, so a GPL dependency would force the whole product to be GPL. This
-  is why time-stretch is Signalsmith rather than Rubber Band.
+- **No whole-program copyleft, ever** — GPL, AGPL, SSPL. Shipping a wasm bundle
+  to a browser is distribution, so such a dependency would force the whole
+  product to follow it. This is why time-stretch is Signalsmith rather than
+  Rubber Band. File-level copyleft is a different category and is allowed:
+  MPL keeps its own files and leaves the product's license alone, at the cost
+  of an attribution page. `deny.toml` is the allow-list and carries the bar for
+  adding to it; the `licenses` job in CI is what makes this one of the few
+  invariants here that a machine checks rather than a person remembers.
 - **Positions are stored in musical time, never in samples.** Tempo is a map with
   ramps, not a number.
 - **Never send frame-rate data through `postMessage`.** Meters, playhead position
