@@ -25,7 +25,7 @@ python3 tools/check-shared-memory.py target/wasm32-unknown-unknown/release/*.was
 python3 tools/check-shared-memory.py --fixed target/wasm32-unknown-unknown/release/escapement_worklet.wasm
 python3 tools/check-worklet-module.py target/wasm32-unknown-unknown/release/escapement_worklet.wasm
 
-cargo test -p escapement-view --target wasm32-unknown-unknown   # Atomics, in a browser
+cargo test -p escapement-view -p escapement-app --target wasm32-unknown-unknown   # Atomics, in a browser
 
 tools/miri.sh -p escapement-protocol -p escapement-worklet   # undefined behaviour, data races
 RUSTFLAGS="--cfg loom" cargo test -p escapement-protocol   # memory orderings
@@ -45,11 +45,14 @@ opposite.
 
 The browser line is not a convenience: `escapement-view`'s five `Cells` methods
 are `Atomics` calls, and there is no `Atomics` on the host, so nothing else can
-reach them. It needs two host tools — `cargo +stable install wasm-bindgen-cli
---version 0.2.127`, whose version must match the `wasm-bindgen` crate in
-`Cargo.lock`, and `brew install --cask chromedriver`, whose major version must
-match the installed Chrome. `.cargo/config.toml` names the runner; the runner
-serves with the isolation headers itself, so `SharedArrayBuffer` is real there.
+reach them. Both crates are on that line, and the second for a reason of its
+own — whether `escapement-app`'s memory came out shared is answered by a module
+a browser has instantiated, and by nothing earlier. It needs two host tools —
+`cargo +stable install wasm-bindgen-cli --version 0.2.127`, whose version must
+match the `wasm-bindgen` crate in `Cargo.lock`, and `brew install --cask
+chromedriver`, whose major version must match the installed Chrome.
+`.cargo/config.toml` names the runner; the runner serves with the isolation
+headers itself, so `SharedArrayBuffer` is real there.
 
 **Miri takes a crate list, never `--workspace`.** It interprets rather than runs,
 so its cost follows the code put under it, and only `unsafe` or a deliberate race
@@ -75,8 +78,10 @@ mutants survive with nothing wrong with them; those two crates are left to a
 second run against the wasm target instead. Neither half shows that the other
 exists, which is how a third crate could later be dropped from one and never
 added to the other, and nothing would say so. `tools/mutants.py` owns the split
-and `tools/mutants.py check` is what asks whether the halves still add up —
-measured, not remembered: 187 + 28 against 215.
+and `tools/mutants.py check` is what asks whether the halves still add up: it
+prints all three counts and fails unless two of them make the third. The counts
+move with every commit that adds code, which is why they are measured there
+rather than remembered here.
 
 ## Invariants that break things silently
 

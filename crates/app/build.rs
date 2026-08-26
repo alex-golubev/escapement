@@ -9,8 +9,9 @@
 //! waveform peaks and undo history, none of which have a size known up front, and
 //! nothing here runs on the audio thread — `memory.grow` is allowed to cost.
 
-/// A ceiling, not a reservation: the module starts at whatever its data needs
-/// and grows into this.
+/// A ceiling, and — as CLAUDE.md says of the worklet's — address space a shared
+/// memory reserves up front either way. What grows is how much of it is real,
+/// and that starts at whatever the module's data needs.
 const MAX_MEMORY_BYTES: usize = 1024 * 1024 * 1024;
 
 /// The linker synthesizes these for a shared memory and then drops them again,

@@ -79,7 +79,7 @@ impl View {
         debug_assert!(word < self.words, "word {word} outside the region");
 
         // Lossless in both directions: the words are `u32` and `Atomics` speak
-        // `i32`, so the bits survive and only their reading changes. Р3 keeps
+        // `i32`, so the bits survive and only their reading changes. §3 keeps
         // every calculation on this side of the boundary for exactly this
         // reason — nothing in JavaScript ever does arithmetic on them.
         Atomics::load(&self.cells, word as u32).unwrap_throw() as u32
@@ -585,7 +585,7 @@ mod browser {
         );
     }
 
-    /// Р5, and the reason the queue exists at all: a full ring must delay a
+    /// §3, and the reason the queue exists at all: a full ring must delay a
     /// user action, never lose it. `Atomics.wait` is forbidden on this thread,
     /// so waiting for room is not among the options.
     #[wasm_bindgen_test]

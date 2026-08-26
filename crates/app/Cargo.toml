@@ -11,10 +11,10 @@ escapement-model.workspace = true
 escapement-render.workspace = true
 escapement-view.workspace = true
 # The interface module is the one that goes through `wasm-bindgen`, and the
-# probe below needs the handle to its own memory. MIT/Apache-2.0.
+# check below needs the handle to its own memory. MIT/Apache-2.0.
 wasm-bindgen = "0.2"
 
-# Only the check below wants these, and only a browser can run it: whether the
+# Only the tests below want these, and only a browser can run them: whether the
 # memory came out shared is not a question a build can answer.
 [dev-dependencies]
 # The test below has to play the engine's part — write a header, drain the ring,
@@ -22,7 +22,6 @@ wasm-bindgen = "0.2"
 escapement-protocol.workspace = true
 js-sys = "0.3"
 wasm-bindgen-test = "0.3"
-# leptos = "*"
 
 [lints]
 workspace = true

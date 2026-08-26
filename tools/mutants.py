@@ -61,13 +61,23 @@ def run(args):
 
 
 def listed(args):
-    """The mutants a run would test, as a set of the names cargo-mutants prints."""
+    """The mutants a run would test, as a set of the names cargo-mutants prints.
+
+    A run that could not answer leaves with 2, where a split that does not add
+    up leaves with 1: two different failures, and this tool exists to say which.
+    """
     done = subprocess.run(
         ["cargo", "mutants", "--list", *args],
         capture_output=True,
         text=True,
-        check=True,
+        check=False,
     )
+    if done.returncode != 0:
+        print(f"FAIL `cargo mutants --list` exited {done.returncode}, so the")
+        print("     split cannot be checked at all. It said:\n")
+        print(done.stderr.strip() or done.stdout.strip() or "(nothing)")
+        raise SystemExit(2)
+
     return {line for line in done.stdout.splitlines() if line.strip()}
 
 

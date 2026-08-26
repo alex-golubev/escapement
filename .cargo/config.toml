@@ -1,6 +1,7 @@
 [target.wasm32-unknown-unknown]
-# What runs a test binary built for this target. Only `escapement-view` has any:
-# its five `Cells` methods are `Atomics` calls, which no host test can reach.
+# What runs a test binary built for this target. `escapement-view` and
+# `escapement-app` have them: `Atomics` calls and a shared memory, neither of
+# which a host test can reach.
 runner = "wasm-bindgen-test-runner"
 
 rustflags = [

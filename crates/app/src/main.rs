@@ -126,10 +126,9 @@ fn send(kind: CommandKind) {
 
 /// This module's own `WebAssembly.Memory`.
 ///
-/// The page asks it whether the buffer behind it is a `SharedArrayBuffer` —
-/// which is the question. `--shared-memory` is checked at build time
-/// (`tools/check-shared-memory.py`), but whether the module then instantiates
-/// is not something a build can answer.
+/// Exported for the check below, its only caller. `--shared-memory` is checked
+/// at build time (`tools/check-shared-memory.py`), but whether the module then
+/// instantiates on a shared memory is not something a build can answer.
 #[wasm_bindgen]
 #[must_use]
 pub fn linear_memory() -> JsValue {
