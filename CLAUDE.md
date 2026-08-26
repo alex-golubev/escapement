@@ -251,12 +251,17 @@ is closed source; the engine is open.
   picks up the pinned nightly and builds the tool with it; trunk's dependency
   `lightningcss` does not compile there. Trunk is a host binary and has nothing
   to do with the wasm toolchain.
-- **One output directory, and Trunk owns it.** `dist` is cleared on every build,
-  so nothing may assemble anything of its own beside it — that arrangement made
-  `index.html` whichever of the two builders ran last, with the server saying
-  nothing. **Never run `trunk serve` and `trunk build` at once**: they fight over
-  the same directory, and what comes out is "error writing finalized HTML
-  output", which points nowhere near two Trunks.
+- **Two builders, one output directory, and Trunk owns it.** Trunk builds the
+  interface and clears `dist` on every build. The worklet is still built by a
+  script of its own — `tools/build-worklet.sh`, which is where its three checks
+  live — but Trunk runs it as a pre-build hook and copies the result in, rather
+  than the two assembling directories side by side. That is what keeps
+  `index.html` from being whichever builder ran last, which is what the earlier
+  arrangement of two directories was avoiding by other means.
+- **Two Trunks at once fight over `dist`.** A `trunk build` while `trunk serve`
+  is running fails with "error writing finalized HTML output", which names
+  neither Trunk nor the directory. Nothing to do with the worklet — stop the
+  server first.
 - COOP/COEP headers are mandatory for `SharedArrayBuffer`. Sent by `trunk serve`
   from `Trunk.toml` and by `tools/dev-server.py`; production hosting must send
   the same. Without them the failure looks like broken wasm rather than a missing
