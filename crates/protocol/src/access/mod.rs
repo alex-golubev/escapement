@@ -2,8 +2,10 @@
 //!
 //! This is the only thing that differs between them, so it is the only thing
 //! behind a trait. The worklet owns the memory and uses [`Pointers`]; the
-//! interface and the workers reach into it through a typed-array view, which
-//! lands here in slice 1 step 3.
+//! interface and the workers reach into it through a typed-array view, which is
+//! `escapement-view` and not here — it needs `js-sys`, and cargo unifies
+//! features across a workspace build, so a feature on this crate would have put
+//! `js-sys` in the worklet.
 
 #[cfg(test)]
 #[cfg(loom)]

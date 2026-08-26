@@ -30,6 +30,7 @@ Everything below it — clips, the mixer, the model — is still to be written.
 | `crates/core` | Audio core: graph, nodes, mixer, DSP. **Real-time safe, no allocation** |
 | `crates/model` | Project model: entities, musical time, CRDT document |
 | `crates/protocol` | What the two wasm modules say to each other through shared memory. **`no_std`, compiled into both** |
+| `crates/view` | The same region reached from outside it, through `Atomics`. **The half that needs JavaScript, kept where the worklet cannot link it** |
 | `crates/worklet` | wasm module for `AudioWorklet` |
 | `crates/render` | Canvas renderer for the playlist and piano roll. **Framework-agnostic** |
 | `crates/app` | Leptos client |

@@ -59,8 +59,9 @@ jobs:
 
       # `no_std` on our crates stops at the crate boundary; this asks the
       # artifact instead, so a dependency allocating inside itself is caught
-      # too.
-      - name: No allocator on the audio thread
+      # too. Same pass answers whether anything imported, which is a module
+      # `worklet.js` cannot instantiate.
+      - name: Nothing imported and no allocator on the audio thread
         run: python3 tools/check-worklet-module.py target/wasm32-unknown-unknown/release/escapement_worklet.wasm
 
 

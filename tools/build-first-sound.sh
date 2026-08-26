@@ -17,7 +17,8 @@ cargo build -p escapement-worklet --target wasm32-unknown-unknown --release
 # memory would leave memory.grow reachable from the audio thread (§1).
 python3 tools/check-shared-memory.py --fixed target/wasm32-unknown-unknown/release/escapement_worklet.wasm
 
-# An allocator on the audio path is a dropout waiting for a busy moment (§1).
+# An allocator on the audio path is a dropout waiting for a busy moment (§1),
+# and an import is a module that will not instantiate at all.
 python3 tools/check-worklet-module.py target/wasm32-unknown-unknown/release/escapement_worklet.wasm
 
 mkdir -p "$OUT"

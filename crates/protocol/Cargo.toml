@@ -7,7 +7,9 @@ license-file.workspace = true
 publish.workspace = true
 
 # The audio thread depends on this crate, so it stays `no_std`: nothing here can
-# reach for an allocator by accident.
+# reach for an allocator by accident. The outside half's access lives in
+# `escapement-view` rather than behind a feature here — cargo unifies features
+# across a workspace build, so a feature would have put `js-sys` in the worklet.
 [dependencies]
 
 # Only under `--cfg loom`, so it is absent from every ordinary build and can
