@@ -579,6 +579,14 @@ through pointers, the interface through `Atomics` over a typed view. Only the
 access differs; the encoding is one piece of code, which is the whole gain from
 there being no TypeScript.
 
+The two accesses are **two crates, not two features of one**. The outside one
+needs `js-sys`, and a cargo feature is shared by everything in a workspace
+build — so a feature here put `js-sys` in the worklet, which cannot have it: a
+module with an import section is one `worklet.js` cannot instantiate at all.
+`escapement-view` therefore sits beside `escapement-protocol` and depends on it,
+and nothing the audio thread links can name JavaScript. This was settled by
+measuring rather than arguing; the numbers are in the commit that split it.
+
 Everything is addressed in **32-bit words**, never bytes. `Atomics` index a view
 by element, so words remove a class of alignment mistakes on the outside and
 remove byte order from the encoding on both.

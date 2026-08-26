@@ -261,6 +261,11 @@ is closed source; the engine is open.
   from `Trunk.toml` and by `tools/dev-server.py`; production hosting must send
   the same. Without them the failure looks like broken wasm rather than a missing
   header.
+- **wasm-opt is off** (`data-wasm-opt="0"` on the rust link in `web/index.html`).
+  It is a third tool after cargo and `wasm-bindgen` able to change the module
+  quietly, and on one carrying atomics, shared memory and simd128 it has to be
+  told about each of them or it refuses or strips. Turning it on is worth a
+  measurement of its own rather than a default.
 - `escapement-app` is built with `opt-level = "s"`; everything else with `3` + LTO.
 
 ## Work order

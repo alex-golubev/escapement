@@ -2,6 +2,12 @@
 # +atomics on wasm, and an atomics-enabled std has to be rebuilt from source
 # (build-std, see .cargo/config.toml). Both are nightly-only. ARCHITECTURE.md §1.
 #
+# A second reason arrived with the interface: under `target_feature = "atomics"`,
+# `js-sys` turns on `feature(thread_local)` and `feature(stdarch_wasm_atomic_wait)`
+# of its own accord. That flag is set for the whole target, so the interface does
+# not build on stable at all — dropping the pin is not a thing that can be
+# reconsidered later without dropping shared memory with it.
+#
 # Pinned to a date deliberately: CI runs clippy with -D warnings, and a floating
 # nightly turns every newly added lint into a red build on an untouched tree.
 [toolchain]
