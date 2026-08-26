@@ -5,9 +5,6 @@
 # Trunk
 /dist
 
-# tools/build-first-sound.sh — kept apart from Trunk's dist, which Trunk clears
-/dist-first-sound
-
 # cargo-mutants
 /mutants.out/
 /mutants.out.old/

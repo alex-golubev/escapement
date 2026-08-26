@@ -2,6 +2,14 @@
 target = "web/index.html"
 dist = "dist"
 
+# The worklet is built here rather than by a `data-trunk rel="rust"` link,
+# because it must come out as raw wasm with no glue around it. The script says
+# why, and runs the checks the audio thread's module has to pass.
+[[hooks]]
+stage = "pre_build"
+command = "sh"
+command_arguments = ["tools/build-worklet.sh"]
+
 [watch]
 ignore = ["dist", "target"]
 

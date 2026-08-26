@@ -18,10 +18,13 @@ Early development. There is no application yet — the first vertical slice
 and carries the command ring and the state block, which is what closed the
 question of whether that combination works at all.
 
-It makes no sound yet, and that is the design rather than a fault: the engine
-has a transport, and a transport that has not been started has not been started
-— the interface says when. Reaching the ring from the page is the next step.
-Everything below it — clips, the mixer, the model — is still to be written.
+It makes a sound: a page starts the transport, moves frequency and gain, and
+watches a meter — the commands crossing a ring in that memory, the meter read
+back out of a state block sixty times a second rather than sent. One
+`postMessage` in the life of the page, and it is the handshake.
+
+That closes slice 1's risk. Everything below it — clips, the mixer, the model —
+is still to be written.
 
 ## Layout
 
@@ -60,25 +63,26 @@ the wasm rather than at the missing linker flag.
 To run the current slice:
 
 ```sh
-tools/build-first-sound.sh              # worklet + dist-first-sound/
-tools/dev-server.py dist-first-sound    # http://127.0.0.1:8080
+trunk serve      # http://127.0.0.1:8080
 ```
 
-The page reports the handshake — cross-origin isolation, the render quantum, and
-where the shared region sits — and stays silent, for the reason under *Status*.
+Trunk builds the interface and, through a hook, the worklet beside it —
+`tools/build-worklet.sh`, which also runs the checks the audio thread's module
+has to pass. The worklet arrives as a copied asset rather than a second Trunk
+target, because it has to come out as raw wasm with no `wasm-bindgen` glue
+around it.
 
-`Trunk.toml` is configured but Trunk is deliberately out of the loop until the
-audio path is settled — a build tool in the chain is a second suspect when
-something breaks. That is also why the probe assembles `dist-first-sound/` of
-its own: `dist` is Trunk's, and Trunk clears it on every build. Install Trunk
-with **`cargo +stable install trunk`**: run inside the repository, plain
-`cargo install` picks up the pinned nightly, and trunk's `lightningcss`
+Install Trunk with **`cargo +stable install trunk`**: run inside the repository,
+plain `cargo install` picks up the pinned nightly, and trunk's `lightningcss`
 dependency does not compile there.
 
-Either server must send `COOP`/`COEP` headers, otherwise there is no
+`tools/dev-server.py dist` serves a finished build without Trunk in the way,
+which is what to reach for when something is broken and the question is who
+broke it.
+
+Both send the `COOP`/`COEP` headers, and both must: without them there is no
 `SharedArrayBuffer` and the failure looks like broken wasm rather than a missing
-header. Configured in `Trunk.toml` and in `tools/dev-server.py`; production
-hosting must send the same.
+header. Production hosting must send the same.
 
 ## License and rights
 

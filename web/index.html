@@ -4,51 +4,163 @@
     <meta charset="utf-8"/>
     <meta name="viewport" content="width=device-width, initial-scale=1"/>
     <title>Escapement</title>
-    <!-- data-wasm-opt="0" keeps a third tool out of the chain. wasm-opt runs
-         only on a release build anyway, but on a module with atomics, shared
-         memory and simd128 it has to be told about each of them, and turning it
-         on is worth a measurement of its own. -->
+
+    <!-- data-wasm-opt="0" keeps a third tool out of the chain. It runs only on a
+         release build anyway, but on a module carrying atomics, shared memory and
+         simd128 it has to be told about each of them, and turning it on is worth
+         a measurement of its own. -->
     <link data-trunk rel="rust" href="../crates/app/Cargo.toml" data-wasm-opt="0"/>
+
+    <!-- Copied rather than built here: the worklet is raw wasm with no glue, and
+         a Trunk hook builds it. See tools/build-worklet.sh. -->
+    <link data-trunk rel="copy-file" href="worklet.js"/>
+    <link data-trunk rel="copy-file" href="../target/wasm32-unknown-unknown/release/escapement_worklet.wasm"/>
+
     <style>
-        body { font: 14px/1.5 ui-monospace, monospace; margin: 2rem; max-width: 40rem; }
+        body { font: 14px/1.6 ui-monospace, monospace; margin: 2rem; max-width: 44rem; }
+        button { font: inherit; padding: .4rem 1rem; margin-right: .5rem; }
+        label { display: block; margin: .6rem 0; }
+        input[type=range] { width: 20rem; vertical-align: middle; }
         pre { background: #f4f4f4; padding: 1rem; white-space: pre-wrap; }
+        .row { margin: 1rem 0; }
     </style>
 </head>
 <body>
-<h1>Slice 1 — the interface module</h1>
-<p>Whether a module linked with a growable <b>shared</b> memory comes up at all
-    through <code>wasm-bindgen</code> and Trunk. Nothing else yet: no worklet, no
-    ring — this is the ground those stand on.</p>
+<h1>Slice 1 — first sound</h1>
+<p>A Rust graph rendering quanta inside an <code>AudioWorklet</code>, driven from
+    this page through a command ring in the worklet's own linear memory. The
+    readout below is not sent here — it is read out of a state block, sixty times
+    a second (ARCHITECTURE.md §3).</p>
+
+<div class="row">
+    <button id="audio">Start the audio context</button>
+    <button id="play" disabled>Play</button>
+    <button id="halt" disabled>Stop</button>
+</div>
+
+<div class="row">
+    <label>frequency <input id="hz" type="range" min="55" max="1760" step="1" value="440" disabled/> <span id="hz-value">440 Hz</span></label>
+    <label>gain <input id="gain" type="range" min="0" max="100" step="1" value="20" disabled/> <span id="gain-value">0.20</span></label>
+</div>
+
+<pre id="state">not connected</pre>
 <pre id="log"></pre>
 
 <script type="module">
     const log = document.getElementById("log");
     const say = (line) => {
         log.textContent += line + "\n";
-        console.log("[probe] " + line);
+        console.log("[escapement] " + line);
     };
 
-    say(`crossOriginIsolated = ${crossOriginIsolated}`);
     if (!crossOriginIsolated) {
-        say("!! not isolated — no SharedArrayBuffer, whatever the module says");
+        say("!! not isolated — no SharedArrayBuffer. The server is not sending COOP/COEP.");
     }
 
-    // Trunk initializes the module itself and hangs the exports here. Polled
-    // rather than awaited: its init script and this one are two modules, and
-    // nothing orders them.
-    const bindings = await new Promise((resolve) => {
+    // Trunk initializes the module and hangs its exports here. Polled rather
+    // than awaited: its init script and this one are two modules, and nothing
+    // orders them.
+    const engine = await new Promise((resolve) => {
         const tick = () => (window.wasmBindings ? resolve(window.wasmBindings) : setTimeout(tick, 10));
         tick();
     });
-    say("exports reached: " + Object.keys(bindings).join(", "));
 
-    const memory = bindings.linear_memory();
-    const buffer = memory.buffer;
-    say(`memory.buffer is ${buffer.constructor.name}`);
-    say(`byteLength = ${buffer.byteLength} (${(buffer.byteLength / 1048576).toFixed(1)} MiB)`);
-    say(buffer instanceof SharedArrayBuffer
-        ? "OK — the interface module's memory is shared"
-        : "!! NOT shared — --shared-memory did not survive the chain");
+    const audio = document.getElementById("audio");
+    const play = document.getElementById("play");
+    const halt = document.getElementById("halt");
+    const hz = document.getElementById("hz");
+    const gain = document.getElementById("gain");
+
+    audio.onclick = async () => {
+        audio.disabled = true;
+        try {
+            // Only startable from a gesture, which is why the interface lives
+            // for a while with commands queued and nowhere to put them (§3).
+            const ctx = new AudioContext();
+            say(`AudioContext sampleRate = ${ctx.sampleRate}`);
+
+            const bytes = await fetch("escapement_worklet.wasm").then((r) => r.arrayBuffer());
+            // Compiled out here: there is no fetch inside the worklet, and a
+            // compiled Module survives the structured clone into processorOptions.
+            const module = await WebAssembly.compile(bytes);
+            await ctx.audioWorklet.addModule("worklet.js");
+
+            const node = new AudioWorkletNode(ctx, "escapement", {
+                outputChannelCount: [1],
+                processorOptions: {module},
+            });
+
+            // The handshake, and the only message this page will ever receive.
+            // Everything at frame rate is read from the region instead.
+            node.port.onmessage = ({data}) => {
+                try {
+                    engine.connect(data.buffer, data.region);
+                } catch (error) {
+                    say("handshake refused: " + error);
+                    return;
+                }
+                say(`connected — region at byte ${data.region}, quantum ${data.quantum}`);
+                for (const control of [play, halt, hz, gain]) control.disabled = false;
+            };
+
+            node.connect(ctx.destination);
+        } catch (error) {
+            say("FAILED: " + error);
+            audio.disabled = false;
+        }
+    };
+
+    play.onclick = () => engine.start();
+    halt.onclick = () => engine.stop();
+
+    hz.oninput = () => {
+        document.getElementById("hz-value").textContent = `${hz.value} Hz`;
+        engine.set_frequency(Number(hz.value));
+    };
+    gain.oninput = () => {
+        const value = Number(gain.value) / 100;
+        document.getElementById("gain-value").textContent = value.toFixed(2);
+        engine.set_gain(value);
+    };
+
+    const state = document.getElementById("state");
+    const meter = (peak) => "#".repeat(Math.round(peak * 40)).padEnd(40, ".");
+    let frames = 0;
+
+    // A frame loop that stops is the worst way for this to fail: the readout
+    // freezes at a plausible value and the queue stops draining, with nothing
+    // said. So it says.
+    const frame = () => {
+        let now;
+        try {
+            // Sends whatever is queued and reads the block back, once a frame.
+            now = engine.poll();
+        } catch (error) {
+            say("the frame loop stopped: " + error);
+            state.textContent = "stopped — see the log";
+            return;
+        }
+        frames += 1;
+        if (!now) {
+            // Before the handshake, and on a frame the writer was in the way
+            // for. The heartbeat still has to show, or a stopped loop and a
+            // quiet engine look exactly alike.
+            state.textContent = `waiting     frame ${frames}`;
+        } else {
+            state.textContent =
+                `transport   ${now.playing ? "playing" : "stopped"}\n` +
+                `clock       ${now.clock} samples\n` +
+                `quanta      ${now.quanta}\n` +
+                `peak        ${now.peak.toFixed(3)}  ${meter(now.peak)}\n` +
+                `applied     ${now.applied}   unknown ${now.unknown}   pending ${now.pending}\n` +
+                `frame       ${frames}`;
+            // Owns memory on the Rust side. Sixty of these a second is not a
+            // thing to leave to a finalizer.
+            now.free();
+        }
+        requestAnimationFrame(frame);
+    };
+    requestAnimationFrame(frame);
 </script>
 </body>
 </html>

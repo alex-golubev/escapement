@@ -32,15 +32,16 @@ RUSTFLAGS="--cfg loom" cargo test -p escapement-protocol   # memory orderings
 cargo mutants -p escapement-protocol --timeout 10   # do the tests test anything
 tools/mutants.py check              # do its two runs still cover everything
 
-tools/build-first-sound.sh              # worklet + dist-first-sound/
-tools/dev-server.py dist-first-sound    # :8080 with the COOP/COEP headers
+trunk serve                     # :8080 — the slice, worklet built by a hook
+tools/dev-server.py dist        # the same build with Trunk out of the way
 ```
 
 The toolchain — pinned nightly, wasm target, the `rust-src` component
 `build-std` needs, and `miri` — comes from `rust-toolchain.toml`; `rustup show`
-installs it, and nothing else is needed to build. Trunk is configured but not in
-the chain yet, so `trunk serve` gets you `web/index.html` — the empty Leptos
-client — rather than the slice above.
+installs it, and nothing else is needed to build. Trunk is in the chain now and
+owns `dist`; `tools/build-worklet.sh` runs as its pre-build hook, because the
+worklet has to come out as raw wasm and Trunk's rust pipeline gives the
+opposite.
 
 The browser line is not a convenience: `escapement-view`'s five `Cells` methods
 are `Atomics` calls, and there is no `Atomics` on the host, so nothing else can
@@ -168,6 +169,14 @@ the cause.
   twenty runs, measured — and **Miri does not cover this class at all**, since
   `cargo miri test` runs the tests one at a time. Nothing enforces the rule; what
   keeps it true is that there is nothing left in `lib.rs` worth a second test.
+- **A hidden tab has no frames, so the interface stops sending.** Chrome pauses
+  `requestAnimationFrame` in a tab that is not visible, and the interface's
+  outbox is drained once a frame (§3) — so while the tab is hidden, commands
+  queue and nothing leaves. They go when it comes back. Harmless for a person,
+  who is not clicking at a tab they cannot see; not harmless for anything that
+  ever sends on a timer, which would appear to work and silently not. Measured:
+  0 frames in 800 ms hidden, 60 a second visible. The audio thread is unaffected
+  — it runs off the audio clock, not off frames.
 - **The render quantum is 128 samples and cannot be changed.** Anything wanting
   larger windows (FFT, time-stretch) buffers internally across quanta.
 - **The transport must be drivable from outside** — the engine accepts "start at
@@ -242,14 +251,16 @@ is closed source; the engine is open.
   picks up the pinned nightly and builds the tool with it; trunk's dependency
   `lightningcss` does not compile there. Trunk is a host binary and has nothing
   to do with the wasm toolchain.
-- **The slice 1 probe and Trunk do not share an output directory.** Trunk owns
-  `dist` and clears it on every build; `tools/build-first-sound.sh` assembles
-  `dist-first-sound/` by hand. One directory would make `index.html` whichever of
-  the two ran last, with `tools/dev-server.py` serving it and saying nothing.
-- COOP/COEP headers are mandatory for `SharedArrayBuffer`. Sent by
-  `tools/dev-server.py`, which is what serves the probe today, and configured in
-  `Trunk.toml` for when Trunk takes over; production hosting must send the same.
-  Without them the failure looks like broken wasm rather than a missing header.
+- **One output directory, and Trunk owns it.** `dist` is cleared on every build,
+  so nothing may assemble anything of its own beside it — that arrangement made
+  `index.html` whichever of the two builders ran last, with the server saying
+  nothing. **Never run `trunk serve` and `trunk build` at once**: they fight over
+  the same directory, and what comes out is "error writing finalized HTML
+  output", which points nowhere near two Trunks.
+- COOP/COEP headers are mandatory for `SharedArrayBuffer`. Sent by `trunk serve`
+  from `Trunk.toml` and by `tools/dev-server.py`; production hosting must send
+  the same. Without them the failure looks like broken wasm rather than a missing
+  header.
 - `escapement-app` is built with `opt-level = "s"`; everything else with `3` + LTO.
 
 ## Work order
