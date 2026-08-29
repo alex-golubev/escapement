@@ -6,9 +6,12 @@ rust-version.workspace = true
 license-file.workspace = true
 publish.workspace = true
 
-# None, and that is the point: this type is named by a crate that runs on the
-# audio thread, so anything arriving here arrives there too.
+# One, and it is the same one and for the same reason `escapement-core` carries
+# it: a tempo ramp is a logarithm and its inverse an exponential (§2.5), and
+# both are `std` methods. Anything arriving here arrives on the audio thread, so
+# the bar is that: MIT/Apache-2.0, no allocation, no dependencies of its own.
 [dependencies]
+libm = "0.2"
 
 [lints]
 workspace = true

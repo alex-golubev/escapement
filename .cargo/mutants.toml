@@ -28,4 +28,18 @@ exclude_re = [
     # line and returns; emptying it leaves nothing a test could have seen.
     # Anchored to the file, because there will be other `main`s.
     "crates/app/src/main\\.rs.*replace main with \\(\\)",
+    # A tempo map's two forms meet at the boundary between them: at zero
+    # quarters a steady stretch has run for `period * 0` and a ramp for
+    # `scale * ln(1)`, which are both zero. The guard picking between them can
+    # therefore include its boundary or exclude it and compute the same number.
+    # That they agree is the property making the map continuous, so this pair
+    # says the design is right rather than that a test is missing.
+    "crates/time/src/tempo\\.rs.*replace < with <= in Segment::elapsed",
+    "crates/time/src/tempo\\.rs.*replace < with <= in Segment::quarters_after",
+    # The crossover below which a ramp is built flat compares a difference of
+    # two tempi against a fraction of one of them, and no pair of `f64` tempi
+    # makes those exactly equal — the threshold does not land on the grid the
+    # differences live on. With the boundary unreachable, including it or not
+    # is the same comparison. Measured; the commit that added this has the scan.
+    "crates/time/src/tempo\\.rs.*replace > with >= in build",
 ]
