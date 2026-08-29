@@ -459,6 +459,46 @@ Mandatory from day one:
 > The only cure is rewriting the core. Same "now or never" category as §2.4 on
 > CRDTs.
 
+> **Decided 2026-08-29.** Of the two representations offered above, **PPQ** — a
+> position is an integer count of ticks, at **5 765 760 ticks to the quarter**
+> (2^7 · 3^2 · 5 · 7 · 11 · 13).
+>
+> Precision did not decide it. The two differ there by hundredths of a
+> millisecond, and the error does not accumulate: positions are absolute, so the
+> hundredth copy of a pattern lands exactly as far out as the first. **The
+> document decided it.** A rational position is a pair, and (3,2) and (6,4) are
+> different pairs holding the same number — so two people placing a note on the
+> same beat can write two different values, which is the failure §2.4 chose Loro
+> to avoid. Normalizing on construction fixes that and leaves an invariant which
+> must then hold through serialization, across the network, and in a client
+> version not yet written. An integer tick is canonical by construction and has
+> no such invariant to break.
+>
+> Two smaller reasons point the same way. Rational addition multiplies
+> denominators, so it needs reduction — and on the audio thread, checked
+> arithmetic with invented behaviour on overflow, where `escapement-core` may
+> not panic. And the conversion running every quantum is samples to position,
+> which has one natural answer on a fixed grid and none at all without one.
+>
+> **Rejected: `f64` beats**, as Ableton and Reaper store it. Not among the two
+> above, and worse than either here — a third of a beat is not representable at
+> all, and equality of positions is precisely what the document needs.
+>
+> The resolution is generous on purpose, and the asymmetry is the argument: a
+> finer grid is always reachable from a coarser one by multiplication, while a
+> coarser one has already lost what it cannot hold. MIDI's usual values and FL's
+> — 96, 480, 960 — all divide it exactly, so nothing is lost on import. At `i64`
+> the ceiling is around a trillion quarter notes, and the cost in the document
+> is a few bytes per position.
+>
+> **What this closes is the document, not the type.** The door shuts when the
+> first project is saved, and §7's slice 2 puts two stages before that: the type
+> in use with no document, then entities as plain structs with no CRDT beneath
+> them. So the position is a type with a private field and nothing outside its
+> crate doing arithmetic on the raw integer — the same cheap insurance §4 buys
+> for the renderer. Worth revisiting once, before Loro goes underneath; after
+> that it is a migration.
+
 ### 2.6. Project model entities — FL-shaped
 
 The reference is FL Studio, and it differs from Ableton **not cosmetically but in
