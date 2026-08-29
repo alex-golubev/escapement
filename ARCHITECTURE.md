@@ -499,6 +499,53 @@ Mandatory from day one:
 > for the renderer. Worth revisiting once, before Loro goes underneath; after
 > that it is a migration.
 
+> **Decided 2026-08-29.** A tempo ramp is **linear in beats per minute**, not in
+> the period those beats imply.
+>
+> Not a matter of taste: a ramp is a curve either way, and only one of the two
+> can be the straight one. The same two tempo marks over the same eight bars —
+> 60 to 180 — part by three and three quarter seconds depending on which. That
+> is a different place in the song, not a different shade of a curve.
+>
+> Precision did not decide this one either, though it was expected to. The
+> closed form for a linear-bpm ramp is a logarithm and its inverse an
+> exponential, which looked like a threat to the sample-accurate conversion
+> demanded above. Measured, the round trip through samples costs about 2 x 10^-8
+> of a sample, and the linear-period form is no better. The objection was
+> withdrawn rather than answered.
+>
+> What decides it is that the curve is **drawn**. Tempo is a parameter in beats
+> per minute, automated like any other, and an automation curve interpolates its
+> parameter — so a straight line between two tempo marks is straight in beats
+> per minute. Make the period linear instead and the line someone drew is no
+> longer the tempo but a curve nobody asked for. The same rule that settled the
+> representation above: the data means what it says.
+>
+> **Rejected: linear in the period.** It integrates to a quadratic rather than a
+> logarithm and inverts through a square root rather than an exponential, which
+> is marginally cheaper and buys nothing — `escapement-core` already carries
+> `libm` for the oscillator.
+>
+> **A segment with no ramp in it is a second formula, not an edge case.** The
+> integral of a period over position takes one form while the tempo moves and
+> another while it stands still, and the moving one divides by the rate of
+> change. At a rate of zero that is not an error to be handled: `f64` division
+> does not trap, so it gives an infinity, the infinity meets a logarithm of one,
+> and the result is a NaN — which compares false to everything, sorts nowhere,
+> and saturates to tick zero on its way to an integer. The start of the project,
+> silently — the value the oscillator in `escapement-core` already refuses for
+> the same reason.
+>
+> So the two kinds of segment are told apart **when the map is built**, in the
+> model, where allocating and deciding are both allowed; the audio thread reads
+> which form applies instead of comparing a float against a threshold. A
+> threshold does exist — the logarithmic form loses precision well before the
+> rate reaches zero — and choosing where it falls is not a judgement to make
+> once per quantum.
+>
+> The time-signature map is not interpolated at all. A signature steps at a bar
+> line; there is no ramp from 4/4 to 7/8 to have an opinion about.
+
 ### 2.6. Project model entities — FL-shaped
 
 The reference is FL Studio, and it differs from Ableton **not cosmetically but in
