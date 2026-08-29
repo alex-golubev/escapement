@@ -92,6 +92,10 @@ name = "escapement-render"
 version = "0.0.0"
 
 [[package]]
+name = "escapement-time"
+version = "0.0.0"
+
+[[package]]
 name = "escapement-view"
 version = "0.0.0"
 dependencies = [
