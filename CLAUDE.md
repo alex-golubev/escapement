@@ -71,6 +71,7 @@ session:
 | `protocol.md` | `crates/protocol`, `crates/view` | Nothing at frame rate through `postMessage`; no cargo feature on the crate both modules link; the fences Loom must see; two `cfg` attributes and never one `all(...)`; why a throw out of `Atomics` is not an error you can catch |
 | `interface.md` | `crates/app`, `crates/render`, `crates/view` | `escapement-render` stays free of the UI framework; a hidden tab sends nothing; neither crate is tested anywhere but a browser |
 | `musical-time.md` | `crates/time`, `crates/model`, `crates/core` | Positions in musical time, tempo as a map with ramps |
+| `model.md` | `crates/model` | The document is a CRDT from the first struct; reordering through a movable list; a pattern is referenced, not copied; undo belongs to its author; what stays out of the document |
 | `wasm-build.md` | `crates/*/build.rs`, `.cargo/config.toml`, `Trunk.toml`, `web/` | `+atomics` is not shared memory; fixed memory against growing; `build-std` against `cargo miri`; and the rest of the build configuration |
 | `licenses.md` | `Cargo.toml`, `deny.toml` | No whole-program copyleft, ever |
 | `checks.md` | `tools/`, `.github/workflows/` | What Miri, Loom and the two mutation runs cost, and why they are shaped that way |
