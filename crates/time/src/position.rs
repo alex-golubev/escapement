@@ -105,11 +105,12 @@ impl Span {
 }
 
 // Saturating throughout, and not a matter of taste. `escapement-core` may not
-// panic on the processing path (CLAUDE.md), which rules out the checked
-// arithmetic that panics in a debug build; wrapping would answer "past the end
-// of time" with "the distant past", which is worse than staying at the end. And
-// the clamp is unreachable in any case: at this resolution an `i64` holds some
-// 1.6 x 10^12 quarter notes, twenty-five thousand years at 120 bpm.
+// panic on the processing path (`.claude/rules/rt-safety.md`), which rules out
+// the checked arithmetic that panics in a debug build; wrapping would answer
+// "past the end of time" with "the distant past", which is worse than staying
+// at the end. And the clamp is unreachable in any case: at this resolution an
+// `i64` holds some 1.6 x 10^12 quarter notes, twenty-five thousand years at
+// 120 bpm.
 impl Add<Span> for Position {
     type Output = Self;
 

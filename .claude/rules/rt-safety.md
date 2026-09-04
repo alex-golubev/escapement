@@ -1,6 +1,7 @@
 ---
 paths:
   - "crates/core/**"
+  - "crates/time/**"
   - "crates/worklet/**"
 ---
 
@@ -12,9 +13,10 @@ Enforced by nothing but discipline. Violating these tends to fail far from the c
   I/O or logging on the processing path. Allocation is allowed only while building
   the graph, before playback. Adding a dependency that allocates internally breaks
   this invisibly — which is why the allocation half is checked twice, from both
-  ends. `escapement-core` and `escapement-protocol` are `no_std`, so nothing in
-  them can *name* a heap; and `tools/check-worklet-module.py` reads the built
-  module for one, which is the half that reaches inside dependencies.
+  ends. `escapement-core`, `escapement-time` and `escapement-protocol` are
+  `no_std`, so nothing in them can *name* a heap; and
+  `tools/check-worklet-module.py` reads the built module for one, which is the
+  half that reaches inside dependencies.
   The worklet crate itself cannot be `no_std`: a `cdylib` without `std` wants its
   own `#[panic_handler]`, the dev profile's unwinding panics are unsupported
   without `std`, and the host `.dylib` then fails to link for want of a libc.
