@@ -12,8 +12,9 @@
 //! must never parse (§4). It never crosses a thread boundary; the region does.
 //!
 //! Three statics and five entry points that only delegate, which is a rule and
-//! not a coincidence — CLAUDE.md says why. Behaviour lives in `module.rs` and
-//! `processor.rs`, which are handed their memory instead of reaching for this.
+//! not a coincidence — `.claude/rules/rt-safety.md` says why. Behaviour lives
+//! in `module.rs` and `processor.rs`, which are handed their memory instead of
+//! reaching for this.
 
 use core::cell::UnsafeCell;
 use core::sync::atomic::AtomicU32;
@@ -134,8 +135,8 @@ mod tests {
     /// that rendering lands in the block whose address the host holds, and that
     /// what one call leaves the next call finds.
     ///
-    /// One test, and nothing enforces that — CLAUDE.md. What keeps it true is
-    /// that there is nothing here to put in a second one.
+    /// One test, and nothing enforces that — `.claude/rules/rt-safety.md`. What
+    /// keeps it true is that there is nothing here to put in a second one.
     #[test]
     fn the_module_answers_through_its_entry_points() {
         escapement_init(48_000.0);

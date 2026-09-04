@@ -47,14 +47,14 @@ owns `dist`; `tools/build-worklet.sh` runs as its pre-build hook, because the
 worklet has to come out as raw wasm and Trunk's rust pipeline gives the
 opposite.
 
-The browser line is not a convenience: `escapement-view`'s five `Cells` methods
-are `Atomics` calls, and there is no `Atomics` on the host, so nothing else can
-reach them. Both crates are on that line, and the second for a reason of its
-own — whether `escapement-app`'s memory came out shared is answered by a module
-a browser has instantiated, and by nothing earlier. It needs two host tools —
-`cargo +stable install wasm-bindgen-cli --version 0.2.127`, whose version must
-match the `wasm-bindgen` crate in `Cargo.lock`, and `brew install --cask
-chromedriver`, whose major version must match the installed Chrome.
+The browser line is not a convenience: `escapement-view` reaches the region with
+`Atomics` over a typed array, and there is no `Atomics` on the host, so nothing
+else can reach it. Both crates are on that line, and the second for a reason of
+its own — whether `escapement-app`'s memory came out shared is answered by a
+module a browser has instantiated, and by nothing earlier. It needs two host
+tools — `cargo +stable install wasm-bindgen-cli --version 0.2.127`, whose
+version must match the `wasm-bindgen` crate in `Cargo.lock`, and `brew install
+--cask chromedriver`, whose major version must match the installed Chrome.
 `.cargo/config.toml` names the runner; the runner serves with the isolation
 headers itself, so `SharedArrayBuffer` is real there.
 

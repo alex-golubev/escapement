@@ -18,7 +18,8 @@ paths:
   ever sends on a timer, which would appear to work and silently not. Measured:
   0 frames in 800 ms hidden, 60 a second visible. The audio thread is unaffected
   — it runs off the audio clock, not off frames.
-- **Nothing on the host reaches these crates.** `escapement-view`'s five `Cells`
-  methods are `Atomics` calls, and `escapement-app`'s memory is only shared once
-  a browser has instantiated the module. A change here is unverified until the
+- **Nothing on the host reaches these crates.** `escapement-view` implements
+  `Cells` over a typed array — four of its five methods are `Atomics` calls and
+  the fifth the array's length — and `escapement-app`'s memory is only shared
+  once a browser has instantiated the module. A change here is unverified until the
   browser line in `CLAUDE.md` has run.

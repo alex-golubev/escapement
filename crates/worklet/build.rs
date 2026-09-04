@@ -1,6 +1,6 @@
 //! Memory layout for the worklet module. Per crate rather than in
-//! `.cargo/config.toml`, and fixed rather than growable — CLAUDE.md carries
-//! both arguments.
+//! `.cargo/config.toml`, and fixed rather than growable —
+//! `.claude/rules/wasm-build.md` carries both arguments.
 //!
 //! `initial == maximum` is what makes it fixed: growth past the maximum fails.
 

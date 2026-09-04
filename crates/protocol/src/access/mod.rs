@@ -76,7 +76,7 @@ pub trait Cells {
     ///
     /// A fence is thread-wide rather than about one word, and sits here because
     /// this is where the memory model lives. Not overridable, and `loom` is the
-    /// only thing that checks it — CLAUDE.md says why to both.
+    /// only thing that checks it — `.claude/rules/protocol.md` says why to both.
     fn fence_release(&self) {
         fence(Ordering::Release);
     }

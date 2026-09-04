@@ -223,7 +223,7 @@ jobs:
 
       # A prebuilt binary. `cargo install` inside the repository picks up the
       # pinned nightly, and building a host tool with it is neither wanted nor
-      # reliable (CLAUDE.md).
+      # reliable (`.claude/rules/wasm-build.md`).
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-mutants

@@ -72,11 +72,24 @@ python3 tools/mutants.py host --in-diff /tmp/pr.diff   # after: git diff origin/
 Surviving mutants on `Cells::fence_release` and `fence_acquire` are expected —
 `.claude/rules/protocol.md` says why.
 
+`cargo-mutants` is a host tool of its own, and `+stable` for the reason in
+`.claude/rules/wasm-build.md`:
+
+```sh
+cargo +stable install cargo-mutants
+```
+
+Without it the step fails as `error: no such command: mutants` — the runner
+rather than the code, like a missing chromedriver above.
+
 ## 5. Licenses, when a dependency changed
 
 ```sh
 cargo deny check licenses bans sources
 ```
+
+`cargo +stable install cargo-deny` if it is not there — the runner again, not
+the code.
 
 ## Reporting
 

@@ -1,5 +1,5 @@
 //! Audio core: graph, nodes, mixer, DSP. Runs on the real-time thread, under
-//! the rules CLAUDE.md lists for it.
+//! the rules in `.claude/rules/rt-safety.md`.
 //!
 //! `no_std` is what turns the no-allocation half of those from discipline into
 //! a compiler error: with no allocator in this crate's graph there is nothing

@@ -30,8 +30,9 @@ extern crate std;
 mod fixtures;
 
 // Two attributes rather than one `all(...)`, here and at every test module in
-// this crate. Written for `cargo-mutants` rather than for the compiler, which
-// is the one place that is true — CLAUDE.md has the reason and the count.
+// this crate. Written for `cargo-mutants` rather than for the compiler, which is
+// the one place that is true — `.claude/rules/protocol.md` has the reason and
+// the count.
 #[cfg(test)]
 #[cfg(loom)]
 mod interleavings;
@@ -203,7 +204,7 @@ impl Layout {
     pub fn read_header<C: Cells>(cells: &C) -> Result<Self, HandshakeError> {
         // Before the first read, not beside the size check below it: every read
         // here is unconditional, and one outside the region has no error to
-        // return on either side (CLAUDE.md).
+        // return on either side (`.claude/rules/protocol.md`).
         let available = cells.words();
         if available < HEADER_WORDS {
             return Err(HandshakeError::TooSmall { available });

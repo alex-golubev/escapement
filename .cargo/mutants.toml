@@ -1,5 +1,6 @@
 # Mutants that survive by construction rather than by a gap in the tests. Each
-# one was checked by hand before being listed; the reasoning is in CLAUDE.md.
+# one was checked by hand before being listed; the reasoning is in the rule
+# governing the code it silences, under `.claude/rules/`.
 #
 # Kept narrow on purpose. A regex here silences a real bug just as happily as a
 # false alarm, so these match one mutation each and never a whole function.
@@ -24,8 +25,9 @@ exclude_re = [
     # operation there. No test can distinguish them, and none should try.
     "replace \\| with \\^ in get_u64",
     # An entry point holding no behaviour, which is a rule here rather than an
-    # accident — CLAUDE.md says why, about the worklet's exports. `main` logs a
-    # line and returns; emptying it leaves nothing a test could have seen.
+    # accident — `.claude/rules/rt-safety.md` says why, about the worklet's
+    # exports. `main` logs a line and returns; emptying it leaves nothing a test
+    # could have seen.
     # Anchored to the file, because there will be other `main`s.
     "crates/app/src/main\\.rs.*replace main with \\(\\)",
     # A tempo map's two forms meet at the boundary between them: at zero
