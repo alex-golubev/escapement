@@ -10,6 +10,8 @@
 #[cfg(test)]
 mod fixtures;
 
+mod asset;
 mod id;
 
+pub use asset::{Asset, AssetHash};
 pub use id::{Entropy, Id};

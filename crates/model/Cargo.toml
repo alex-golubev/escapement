@@ -8,5 +8,9 @@ publish.workspace = true
 [dependencies]
 # loro = "*"
 
+# For `SampleRate`, which an audio file needs to say how long it is: the frames
+# in a file are counted at the file's own rate and at nothing else (§2.5).
+escapement-time.workspace = true
+
 [lints]
 workspace = true
