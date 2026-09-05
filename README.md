@@ -73,9 +73,19 @@ has to pass. The worklet arrives as a copied asset rather than a second Trunk
 target, because it has to come out as raw wasm with no `wasm-bindgen` glue
 around it.
 
-Install Trunk with **`cargo +stable install trunk`**: run inside the repository,
-plain `cargo install` picks up the pinned nightly, and trunk's `lightningcss`
-dependency does not compile there.
+Trunk and `cargo-deny`, which checks the dependency rule below, are host tools,
+and both want **both** flags:
+
+```sh
+cargo +stable install --locked trunk
+cargo +stable install --locked cargo-deny
+```
+
+Neither flag is optional, and they fail differently. Without `+stable`, a
+`cargo install` run inside the repository builds the tool on the pinned nightly.
+Without `--locked`, cargo discards the `Cargo.lock` the tool ships and resolves
+its dependencies afresh — trunk's `lightningcss` then does not compile at all,
+and the errors name a library the command never mentioned.
 
 `tools/dev-server.py dist` serves a finished build without Trunk in the way,
 which is what to reach for when something is broken and the question is who
