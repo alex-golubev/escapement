@@ -23,6 +23,7 @@ use std::collections::BTreeMap;
 
 use escapement_time::{Position, Span};
 
+use crate::bounded::within;
 use crate::mixer::Channel;
 use crate::Id;
 
@@ -74,11 +75,7 @@ impl Velocity {
     /// rather than clamped, as a pan is and for the same reason.
     #[must_use]
     pub fn new(fraction: f32) -> Option<Self> {
-        if fraction.is_finite() && (0.0..=1.0).contains(&fraction) {
-            Some(Self(fraction))
-        } else {
-            None
-        }
+        within(fraction, 0.0..=1.0).map(Self)
     }
 
     /// How hard, as a fraction of as hard as it goes.

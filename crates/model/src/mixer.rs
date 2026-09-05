@@ -13,6 +13,7 @@
 //! solo is how one person is listening right now, and it belongs with the zoom
 //! and the playhead outside the document (§2.4).
 
+use crate::bounded::within;
 use crate::{AssetHash, Id};
 
 /// How loud, as a multiplier on the signal.
@@ -72,11 +73,7 @@ impl Pan {
     /// mix.
     #[must_use]
     pub fn new(position: f32) -> Option<Self> {
-        if position.is_finite() && (-1.0..=1.0).contains(&position) {
-            Some(Self(position))
-        } else {
-            None
-        }
+        within(position, -1.0..=1.0).map(Self)
     }
 
     /// Where between the two ends.
