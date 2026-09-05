@@ -17,6 +17,8 @@ mod id;
 pub mod mixer;
 pub mod pattern;
 pub mod playlist;
+pub mod project;
 
 pub use asset::{Asset, AssetHash, Frames};
 pub use id::{Entropy, Id};
+pub use project::Project;
