@@ -618,6 +618,46 @@ Mandatory from day one:
 > is accent and drawing rather than time: it wants a field this type does not
 > have, and adding one moves no bar line.
 
+> **Decided 2026-09-05.** A position converts to **the sample it falls in** —
+> `floor(seconds x rate)` — and the sample rate is a parameter of the
+> conversion, never a field of the map.
+>
+> **Two sample counts exist and they are not the same number.** The engine's
+> clock counts samples since the engine was built: unsigned, monotonic, running
+> whether or not the transport is. A converted position counts samples from the
+> timeline's origin, and it is signed, because a count-in sits before bar one.
+> Different origins, different types, and nothing may quietly turn one into the
+> other.
+>
+> **The rate is not part of the tempo map**, because the map is physical — it
+> answers in seconds — and because the offline render for export (§7) drives the
+> same engine at a rate of its own choosing. A map that knew the rate could not
+> serve both, and the one place where the multiplier and the rounding live is a
+> type that carries the rate rather than the map.
+>
+> The rounding is not a preference among three. Sample *n* covers the half-open
+> interval from `n/rate` to `(n+1)/rate`, so "which sample is this moment in"
+> has exactly one answer, and `floor` is it.
+>
+> **Rejected: truncation toward zero**, which is what an unguarded cast does.
+> The scale is signed for the count-in, and truncation folds the two samples
+> either side of the origin into one of double width — so everything before bar
+> one lands a sample late, silently, in the region the sign exists for.
+>
+> **Rejected: the nearest sample.** It moves the boundary to the middle of a
+> sample, and the question every block asks — is this event inside `[start,
+> end)` — then admits an event whose position is before the block began.
+>
+> **The two directions are not each other's inverse, and that is not a defect to
+> repair.** A tick is a fraction of a sample: 240 of them at 48 kHz and 120
+> quarters to the minute. Going the other way lands on the nearest tick, which
+> can sit just behind a sample boundary, and `floor` then answers with the
+> sample before. What holds is monotonicity and an error below one sample; an
+> exact round trip is not available and pretending otherwise would cost a second
+> rounding rule. The scheduler's question — the first sample **not before** a
+> position — is a different question, and it gets its own name on the day the
+> sequencer asks it rather than a rounding mode today.
+
 ### 2.6. Project model entities — FL-shaped
 
 The reference is FL Studio, and it differs from Ableton **not cosmetically but in
@@ -835,6 +875,43 @@ gets created when there is something to put in it.
 > interleavings, Miri looks for undefined behaviour and data races, and
 > cargo-mutants checks that the tests would notice if any of it stopped working.
 > `CLAUDE.md` has the commands and the traps.
+
+#### When a command takes effect
+
+> **Decided 2026-09-05.** A command's moment is a **sample count on the engine's
+> clock**, not a musical position. Musical time crosses this boundary as the
+> payload of the commands that carry a place in the song, never as their
+> schedule.
+>
+> The requirement this comes from already separates the two: *start at position
+> P at time T*. P is where in the song the transport should land; T is when the
+> instruction takes effect. `when` is T, and it is a question about the audio
+> device rather than about music.
+>
+> Three things follow, and each is enough on its own. The audio thread cannot
+> resolve a musical moment without the tempo map, and the map does not cross
+> this boundary yet — a musical `when` would make every command undeliverable
+> until it does. Resolving one costs a search and a logarithm, per command per
+> quantum, against an integer comparison. And `0` already means *as soon as it
+> is seen*, a sentinel that works only because zero is not a moment the clock
+> will reach again; on a musical scale zero is bar one, a position people
+> actually use.
+>
+> **The objection is that the tempo may change between sending and firing**, and
+> it holds only against a long horizon. This is not one: the ring is drained
+> before every quantum, so the horizon is a block or two. The long horizon
+> belongs to the sequencer, which the split below puts on the model thread with
+> the document.
+>
+> **Rejected: a tagged moment** — samples or a position, told apart by a
+> discriminant. It buys a branch on the audio thread and complicates a decode
+> deliberately built so that it cannot fail.
+>
+> A consequence rather than a doubt: should the sequencer later move onto the
+> audio thread — where most DAWs end up, because a descheduled worker cannot
+> deliver a sample-accurate event — `when` does not change, since the schedule
+> of an instruction stays physical. What changes is that the tempo map has to
+> cross the boundary regardless.
 
 ### A state snapshot for the audio thread
 

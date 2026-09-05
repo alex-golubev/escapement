@@ -58,3 +58,26 @@ paths:
 - **What this closes is the document, not the type** (§2.5). Both shapes stay
   revisitable until the first project is saved. Once Loro is underneath the
   entities, changing either is a migration.
+- **A position converts to the sample it falls in — `floor`, never a cast**
+  (§2.5). Sample *n* covers `[n/rate, (n+1)/rate)`, so which sample holds a
+  moment has one answer rather than three. A cast truncates toward zero, and the
+  scale is signed for the count-in: that folds the samples either side of the
+  origin into one of double width, and everything before bar one lands a sample
+  late without saying so. The nearest sample is wrong differently — it moves the
+  boundary into the middle of a sample, and a block then admits an event that
+  starts before it.
+- **Two sample counts exist, and turning one into the other is a bug** (§2.5).
+  The engine's clock counts from when the engine was built: unsigned, monotonic,
+  running whether or not the transport is. A converted position counts from the
+  timeline's origin and is signed. Different origins, and the compiler will not
+  catch a swap that the names have to.
+- **The sample rate is a parameter of the conversion, not a field of a map or a
+  document** (§2.5). The map answers in seconds because seconds are physical,
+  and the offline render for export drives the same engine at a rate of its own.
+  One type carries the rate, the multiplier and the rounding; nothing else
+  multiplies by a rate.
+- **The two directions are not each other's inverse.** A tick is a fraction of a
+  sample, the way back lands on the nearest tick, and `floor` after that can
+  answer with the sample before. Monotonicity and an error under one sample are
+  what hold — a test asking for an exact round trip is asking for a second
+  rounding rule.
