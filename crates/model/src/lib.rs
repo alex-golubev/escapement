@@ -12,6 +12,7 @@ mod fixtures;
 
 mod asset;
 mod id;
+pub mod mixer;
 
 pub use asset::{Asset, AssetHash};
 pub use id::{Entropy, Id};
