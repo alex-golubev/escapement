@@ -4,3 +4,12 @@
 //!
 //! See ARCHITECTURE.md §2.4-2.6 for the entity shapes, the time model and why
 //! neither can be changed later.
+
+#![forbid(unsafe_code)]
+
+#[cfg(test)]
+mod fixtures;
+
+mod id;
+
+pub use id::{Entropy, Id};
