@@ -31,6 +31,7 @@ is still to be written.
 | Crate | Purpose |
 |---|---|
 | `crates/core` | Audio core: graph, nodes, mixer, DSP. **Real-time safe, no allocation** |
+| `crates/time` | Musical time: a position in ticks, the tempo map and the bar map. **`no_std`, no allocation, read on either thread** |
 | `crates/model` | Project model: entities, musical time, CRDT document |
 | `crates/protocol` | What the two wasm modules say to each other through shared memory. **`no_std`, compiled into both** |
 | `crates/view` | The same region reached from outside it, through `Atomics`. **The half that needs JavaScript, kept where the worklet cannot link it** |

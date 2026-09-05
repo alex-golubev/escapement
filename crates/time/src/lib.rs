@@ -1,5 +1,5 @@
 //! Musical time: where something sits on the timeline, how far it is from
-//! something else, and what either is in seconds.
+//! something else, what either is in seconds, and which bar and beat that is.
 //!
 //! Positions are held in musical time and never in samples (ARCHITECTURE.md
 //! §2.5), which makes these types ones both ends need: `escapement-core`
@@ -12,10 +12,19 @@
 //! representation stays revisitable only for as long as nothing outside this
 //! crate does arithmetic on the raw integer.
 //!
-//! Nothing here allocates, so [`tempo::build`] writes into a buffer the caller
-//! owns. That is what lets the expensive half of a tempo map be worked out in
-//! the model, where a `Vec` is allowed, and the cheap half be read on the audio
-//! thread, where it is not.
+//! Nothing here allocates, so [`tempo::build`] and [`meter::build`] write into a
+//! buffer the caller owns. That is what lets the expensive half of a map be
+//! worked out in the model, where a `Vec` is allowed, and the cheap half be read
+//! on the audio thread, where it is not.
+//!
+//! **Two maps, and they do not consult each other.** [`tempo`] turns a position
+//! into seconds; [`meter`] turns it into a bar and a beat. What keeps them apart
+//! is that tempo counts quarter notes whatever the signature says (§2.5) — so
+//! the word `beat` means one thing in one module and another in the other, and
+//! that is the whole of their independence rather than an oversight. Both are
+//! reached through their module for the same reason: `tempo::Mark` and
+//! `meter::Mark` are different marks, and a crate root holding one of each would
+//! have to invent names for what the modules already name.
 
 #![no_std]
 // Nothing here needs it, unlike `escapement-protocol`, which has one module
@@ -72,8 +81,8 @@ const _: () = {
     );
 };
 
+pub mod meter;
 mod position;
 pub mod tempo;
 
 pub use position::{Position, Span};
-pub use tempo::{BuildError, Curve, Mark, Segment, TempoMap};
