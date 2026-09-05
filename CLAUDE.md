@@ -26,6 +26,7 @@ python3 tools/check-shared-memory.py target/wasm32-unknown-unknown/release/*.was
 python3 tools/check-shared-memory.py --fixed target/wasm32-unknown-unknown/release/escapement_worklet.wasm
 python3 tools/check-worklet-module.py target/wasm32-unknown-unknown/release/escapement_worklet.wasm
 
+python3 tools/chromedriver.py                        # a driver matching this Chrome
 cargo test -p escapement-view -p escapement-app --target wasm32-unknown-unknown   # Atomics, in a browser
 
 tools/miri.sh -p escapement-protocol -p escapement-worklet   # undefined behaviour, data races
@@ -52,11 +53,16 @@ The browser line is not a convenience: `escapement-view` reaches the region with
 else can reach it. Both crates are on that line, and the second for a reason of
 its own — whether `escapement-app`'s memory came out shared is answered by a
 module a browser has instantiated, and by nothing earlier. It needs two host
-tools — `cargo +stable install wasm-bindgen-cli --version 0.2.127`, whose
-version must match the `wasm-bindgen` crate in `Cargo.lock`, and `brew install
---cask chromedriver`, whose major version must match the installed Chrome.
-`.cargo/config.toml` names the runner; the runner serves with the isolation
-headers itself, so `SharedArrayBuffer` is real there.
+things. One is `cargo +stable install wasm-bindgen-cli --version 0.2.127`,
+whose version must match the `wasm-bindgen` crate in `Cargo.lock`. The other is
+a driver, and `tools/chromedriver.py` is how it arrives: Chrome refuses a
+session to a driver of another major version, and homebrew's cask is disabled
+over the Gatekeeper check, so there is nothing to ask for it but Google. That
+script reads the installed Chrome and fetches the driver that matches, into
+`target/`. `.cargo/config.toml` names the runner and points `CHROMEDRIVER` at
+what the script wrote, so an ad-hoc signed binary never reaches PATH; the runner
+serves with the isolation headers itself, so `SharedArrayBuffer` is real
+there.
 
 ## Invariants that break things silently
 

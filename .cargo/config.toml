@@ -23,6 +23,13 @@ rustflags = [
     # here: they change the ABI and must be uniform across the whole link.
 ]
 
+# Where `tools/chromedriver.py` leaves the driver. Without this the runner
+# searches PATH, and the driver is deliberately not on it: Google ships it
+# ad-hoc signed, with no publisher behind it and no checksum to check it
+# against, so it lives with build output instead.
+[env]
+CHROMEDRIVER = { value = "target/chromedriver/chromedriver", relative = true }
+
 [unstable]
 # The shipped std is precompiled without atomics and will not link against
 # atomics-enabled crates. Rebuilding it from source is the only route; needs the
