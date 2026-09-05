@@ -14,13 +14,19 @@ members = [
 [workspace.package]
 version = "0.0.0"
 edition = "2021"
-rust-version = "1.82"
 authors = ["Alex Golubev"]
 repository = "https://github.com/alex-golubev/escapement"
 license-file = "LICENSE"
 # Nothing here goes to crates.io: the license is not an OSI one and the
 # crates are parts of one application, not reusable libraries.
 publish = false
+
+# No `rust-version`, deliberately. It is a promise to a consumer building with
+# an older compiler, and there is no such consumer: `rust-toolchain.toml` pins a
+# nightly because shared memory needs one, so nothing here builds on stable at
+# all. What the field does instead is tell clippy which standard library APIs
+# are off limits — a real restriction, bought with a promise nobody is owed.
+# Put one back only alongside a reason, and a way to check it.
 
 [workspace.dependencies]
 escapement-core = { path = "crates/core" }

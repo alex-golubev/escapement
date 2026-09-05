@@ -23,12 +23,8 @@ impl SampleRate {
     /// `NaN` reaches the oscillator's Nyquist check as a comparison false
     /// whatever it is given, so every frequency is quietly ignored and the tone
     /// holds a step no later command can change.
-    ///
-    /// Not `const`: the guard reads plainly as it stands, and `f64::is_finite`
-    /// is only usable in a const context above the workspace's MSRV. Nothing
-    /// builds a rate at compile time to pay for that with a cleverer predicate.
     #[must_use]
-    pub fn new(hz: f64) -> Option<Self> {
+    pub const fn new(hz: f64) -> Option<Self> {
         if hz.is_finite() && hz > 0.0 {
             Some(Self(hz))
         } else {

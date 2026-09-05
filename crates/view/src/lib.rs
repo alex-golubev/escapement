@@ -98,7 +98,7 @@ impl View {
 /// mistake hides, and what is left around it is five calls that a browser has
 /// to answer for anyway.
 fn reach(byte_offset: usize, byte_length: usize) -> Result<usize, ViewError> {
-    if byte_offset % BYTES != 0 {
+    if !byte_offset.is_multiple_of(BYTES) {
         return Err(ViewError::Misaligned { byte_offset });
     }
     if byte_offset > byte_length {
