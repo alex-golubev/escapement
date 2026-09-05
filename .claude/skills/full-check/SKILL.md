@@ -40,17 +40,21 @@ cargo test -p escapement-view -p escapement-app --target wasm32-unknown-unknown
 ```
 
 The only thing that reaches `escapement-view`'s `Atomics` calls and the question
-of whether `escapement-app`'s memory came out shared. Needs two host tools
-installed:
+of whether `escapement-app`'s memory came out shared. Needs a host tool and a
+driver:
 
 ```sh
 cargo +stable install wasm-bindgen-cli --version 0.2.127   # must match Cargo.lock
-brew install --cask chromedriver                           # major must match Chrome
+python3 tools/chromedriver.py                              # must match the Chrome installed
 ```
 
-If chromedriver is missing or its major version does not match the installed
-Chrome, this step fails on the runner rather than on the code — say so and move
-on rather than editing anything.
+The driver is not on PATH and is not meant to be: `.cargo/config.toml` points
+`CHROMEDRIVER` at what that script leaves in `target/`, so a `cargo clean` takes
+it along with everything else and the script has to run again. Do not reach for
+homebrew — its cask is disabled over the Gatekeeper check.
+
+A failure naming the driver or the browser is the runner rather than the code —
+say so and move on rather than editing anything.
 
 ## 4. Undefined behaviour, orderings, and whether the tests test anything
 
@@ -88,8 +92,9 @@ rather than the code, like a missing chromedriver above.
 cargo deny check licenses bans sources
 ```
 
-`cargo +stable install cargo-deny` if it is not there — the runner again, not
-the code.
+`cargo +stable install --locked cargo-deny` if it is not there — the runner
+again, not the code. The flag is not decoration: without it `cargo install`
+discards the lockfile the tool ships, and that is what `trunk` fails on.
 
 ## Reporting
 
