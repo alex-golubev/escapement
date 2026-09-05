@@ -20,8 +20,10 @@ Usage:  tools/mutants.py host [extra args...]      # everything but those two
         tools/mutants.py check                     # do the two add up
 """
 
+import os
 import subprocess
 import sys
+from pathlib import Path
 
 # Package name and the path its mutants are named by — cargo-mutants filters
 # packages by the first and files by the second, and the two runs need one each.
@@ -56,8 +58,35 @@ def browser_args():
     return out
 
 
-def run(args):
-    return subprocess.call(["cargo", "mutants", *args])
+def browser_env():
+    """The environment a browser run needs, and why it cannot come from config.
+
+    cargo-mutants builds in a copy of the tree, and `.cargo/config.toml` points
+    `CHROMEDRIVER` at a path relative to the directory holding `.cargo` — which
+    in a copy is the copy, where `target/` was never carried across. An absolute
+    path to the driver this tree has is what the copy can still reach. Cargo
+    leaves an environment variable that is already set alone, so this wins over
+    the config without the config having to know about it.
+
+    A `CHROMEDRIVER` already in the environment is somebody saying which driver
+    to use, and it is left exactly as it is — including the checking, which
+    would otherwise refuse a run over the absence of a file nothing was going
+    to open.
+    """
+    if "CHROMEDRIVER" in os.environ:
+        return None
+
+    driver = Path(__file__).resolve().parent.parent / "target/chromedriver/chromedriver"
+    if not driver.exists():
+        print(f"FAIL no driver at {driver}")
+        print("     `python3 tools/chromedriver.py` puts one there.")
+        raise SystemExit(2)
+
+    return {**os.environ, "CHROMEDRIVER": str(driver)}
+
+
+def run(args, env=None):
+    return subprocess.call(["cargo", "mutants", *args], env=env)
 
 
 def listed(args):
@@ -121,7 +150,7 @@ def main(argv):
     if mode == "host":
         return run(host_args() + extra)
     if mode == "browser":
-        return run(browser_args() + extra)
+        return run(browser_args() + extra, browser_env())
 
     print(f"unknown mode {mode!r}")
     return 2
