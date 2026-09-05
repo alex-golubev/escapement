@@ -169,6 +169,14 @@ jobs:
         with:
           tool: wasm-bindgen-cli@0.2.127
 
+      # `.cargo/config.toml` names the driver rather than trusting PATH, so the
+      # file it names has to exist here too: the image's own chromedriver is no
+      # longer what answers. Worth the download for its own sake — this job
+      # stops depending on the image shipping a driver whose major matches the
+      # Chrome beside it.
+      - name: A driver matching this runner's Chrome
+        run: python3 tools/chromedriver.py
+
       # The target is what selects the runner from .cargo/config.toml, and it is
       # also what engages build-std — wanted here, unlike under `cargo miri`.
       - name: Whether Atomics carry the protocol at all
@@ -271,6 +279,14 @@ jobs:
 
       - name: What this change touches
         run: git diff "origin/${BASE_REF}...HEAD" > /tmp/pr.diff
+
+      # `.cargo/config.toml` names the driver rather than trusting PATH, so the
+      # file it names has to exist here too: the image's own chromedriver is no
+      # longer what answers. Worth the download for its own sake — this job
+      # stops depending on the image shipping a driver whose major matches the
+      # Chrome beside it.
+      - name: A driver matching this runner's Chrome
+        run: python3 tools/chromedriver.py
 
       # The target is what makes this run the browser tests, and it is also
       # what makes it run the ordinary ones: they carry an aliased attribute so
