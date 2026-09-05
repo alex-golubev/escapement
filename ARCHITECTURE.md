@@ -546,6 +546,78 @@ Mandatory from day one:
 > The time-signature map is not interpolated at all. A signature steps at a bar
 > line; there is no ramp from 4/4 to 7/8 to have an opinion about.
 
+> **Decided 2026-09-05.** A tempo is **quarter notes per minute**, whatever the
+> time signature says. The signature gets no vote in it.
+>
+> That is what keeps the two maps independent, and the independence is the whole
+> argument. Let a beat be the signature's denominator instead — the notation
+> reading, where 6/8 at 120 is counted in dotted quarters — and every conversion
+> from a position to seconds has to consult the signature map first. Worse, a
+> signature change then moves every later moment in the song in time: edit one
+> bar into 7/8 halfway through and the audio after it slides. Nobody editing a
+> signature is asking for that.
+>
+> The convention agrees and so does the interchange format: MIDI stores tempo as
+> microseconds per quarter note, in a message that knows nothing about the
+> signature beside it. A file that comes in at 120 goes out at 120.
+>
+> **Rejected: the beat the denominator implies.** It is the musician's reading of
+> the word, and the wrong one to build on — it couples two maps that otherwise
+> never have to meet.
+>
+> The price is one collision of vocabulary, worth naming because it reads as a
+> mistake: `beat` in the tempo map is a quarter note, `beat` in the bar map is
+> one unit of the denominator. They are different things on purpose, and the day
+> they become the same thing is the day the maps stop being independent.
+
+> **Decided 2026-09-05.** A signature mark is addressed by **the bar it starts
+> at**, never by a position. Where that bar falls in ticks is counted from the
+> origin.
+>
+> The map lives in the CRDT document (§2.4), so the question is not which reads
+> better but which survives a merge. Take a project in 4/4: one person changes
+> the opening signature to 7/8 while another adds a signature at bar 5. Addressed
+> by position, that second mark sits at tick 92 252 160 — but under 7/8 the bar
+> lines stand 20 180 160 ticks apart, and that tick is 4.571 bars in, which is not
+> a bar line at all. Both replicas converge, on a document that will not build.
+> Addressed by a bar, the same two edits merge into four bars of 7/8 followed by
+> whatever was put at bar 5: perhaps not what either person pictured, but a
+> project that opens.
+>
+> The same argument as the tick above, one level up — take the representation in
+> which the invalid state cannot be written down, because the alternative is an
+> invariant that has to survive serialization, the network, and a client version
+> nobody has written yet.
+>
+> **Rejected: addressed by position, validated when the map is built.** That
+> validation is exactly the invariant a merge breaks. **Rejected: addressed by
+> position, repaired on load** — it moves somebody's edit silently, and where it
+> moves to depends on which client opened the file.
+>
+> Three consequences, which are the design rather than details of it.
+>
+> **The document keys its marks; it does not list them.** Two people can put a
+> signature at bar 5, and a map cannot have two marks in one place. Keyed by bar,
+> the duplicate cannot be spelled at all and the CRDT settles the conflict per
+> key. The tempo map goes the same way, keyed by position.
+>
+> **Bars count from one and keep counting backwards.** A count-in sits before the
+> first bar — which is why a position is signed — so bar zero and the ones below
+> it hold the first signature, the rule the tempo map already follows behind its
+> first mark.
+>
+> **Nothing in the bar map is floating point.** A bar is a whole number of ticks,
+> the running total is exact, and a position that goes out as a bar and a beat
+> comes back the tick it was. The constraint that buys it lands on the
+> denominator, which has to divide a whole note: the resolution grants every
+> power of two through 512, and thirds, fifths, sevenths, elevenths and
+> thirteenths besides. A signature outside that is refused rather than rounded.
+>
+> And a beat in the display is **one unit of the denominator** — 6/8 has six of
+> them. The grouping a compound signature is felt in, 6/8 as two dotted quarters,
+> is accent and drawing rather than time: it wants a field this type does not
+> have, and adding one moves no bar line.
+
 ### 2.6. Project model entities — FL-shaped
 
 The reference is FL Studio, and it differs from Ableton **not cosmetically but in
