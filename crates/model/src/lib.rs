@@ -16,6 +16,7 @@ mod bounded;
 mod id;
 pub mod mixer;
 pub mod pattern;
+pub mod playlist;
 
-pub use asset::{Asset, AssetHash};
+pub use asset::{Asset, AssetHash, Frames};
 pub use id::{Entropy, Id};

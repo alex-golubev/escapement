@@ -49,6 +49,34 @@ impl fmt::Debug for AssetHash {
     }
 }
 
+/// A count of frames in a file, counted from the file's own start.
+///
+/// A type rather than a number, and that is §2.5 made structural: two sample
+/// counts already exist and swapping them is a bug, and this is a third with a
+/// zero and a rate of its own. Spelled as a `Span` of ticks, a trim into a file
+/// would be stretched by whatever the project tempo happened to be — silently,
+/// and with no stretching code anywhere to blame for it. Warping is what
+/// relates this count to the timeline, and it is slice 4's to build.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Frames(u64);
+
+impl Frames {
+    /// The start of the file, and the length of one holding nothing.
+    pub const ZERO: Self = Self(0);
+
+    /// From a count.
+    #[must_use]
+    pub const fn new(count: u64) -> Self {
+        Self(count)
+    }
+
+    /// The count.
+    #[must_use]
+    pub const fn count(self) -> u64 {
+        self.0
+    }
+}
+
 /// What the document knows about a file: enough to list it, draw it and say how
 /// long it is.
 ///
@@ -59,7 +87,7 @@ impl fmt::Debug for AssetHash {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Asset {
     name: String,
-    frames: u64,
+    frames: Frames,
     rate: SampleRate,
     // Of the file, not of the project. `.claude/rules/musical-time.md` keeps a
     // rate out of the document because the *conversion's* rate is a parameter —
@@ -75,7 +103,7 @@ impl Asset {
     /// A file of no frames is allowed through: an empty recording is a real
     /// thing to have imported, and it draws and plays as the silence it is.
     #[must_use]
-    pub fn new(name: String, frames: u64, rate: SampleRate, channels: u16) -> Option<Self> {
+    pub fn new(name: String, frames: Frames, rate: SampleRate, channels: u16) -> Option<Self> {
         if channels == 0 {
             return None;
         }
@@ -100,7 +128,7 @@ impl Asset {
     /// file holds two samples per frame, and the timeline elsewhere counts
     /// samples of one channel.
     #[must_use]
-    pub fn frames(&self) -> u64 {
+    pub fn frames(&self) -> Frames {
         self.frames
     }
 
@@ -126,7 +154,7 @@ impl Asset {
     #[must_use]
     pub fn seconds(&self) -> f64 {
         self.rate
-            .seconds_at(i64::try_from(self.frames).unwrap_or(i64::MAX))
+            .seconds_at(i64::try_from(self.frames.count()).unwrap_or(i64::MAX))
     }
 }
 
@@ -147,7 +175,7 @@ mod tests {
     }
 
     fn asset(frames: u64) -> Asset {
-        Asset::new("loop.wav".to_owned(), frames, rate(), 2).expect("stereo is audio")
+        Asset::new("loop.wav".to_owned(), Frames::new(frames), rate(), 2).expect("stereo is audio")
     }
 
     #[test]
@@ -192,15 +220,26 @@ mod tests {
     }
 
     #[test]
+    fn a_count_of_frames_survives_the_round_trip() {
+        assert_eq!(Frames::new(48_000).count(), 48_000);
+        assert_eq!(Frames::ZERO.count(), 0);
+        assert_eq!(Frames::new(u64::MAX).count(), u64::MAX);
+        assert!(Frames::ZERO < Frames::new(1), "a file grows forwards");
+    }
+
+    #[test]
     fn a_file_with_no_channels_is_not_audio() {
-        assert_eq!(Asset::new("silence".to_owned(), 48_000, rate(), 0), None);
+        assert_eq!(
+            Asset::new("silence".to_owned(), Frames::new(48_000), rate(), 0),
+            None
+        );
     }
 
     #[test]
     fn a_file_of_no_frames_is_still_a_file() {
-        let empty = Asset::new("empty".to_owned(), 0, rate(), 1).expect("mono is audio");
+        let empty = Asset::new("empty".to_owned(), Frames::ZERO, rate(), 1).expect("mono is audio");
 
-        assert_eq!(empty.frames(), 0);
+        assert_eq!(empty.frames(), Frames::ZERO);
         assert_eq!(empty.seconds(), 0.0);
     }
 
@@ -209,7 +248,7 @@ mod tests {
         let asset = asset(96_000);
 
         assert_eq!(asset.name(), "loop.wav");
-        assert_eq!(asset.frames(), 96_000);
+        assert_eq!(asset.frames(), Frames::new(96_000));
         assert_eq!(asset.rate(), rate());
         assert_eq!(asset.channels(), 2);
     }
@@ -223,7 +262,7 @@ mod tests {
 
         let slow = Asset::new(
             "slow".to_owned(),
-            48_000,
+            Frames::new(48_000),
             SampleRate::new(24_000.0).unwrap(),
             2,
         )
