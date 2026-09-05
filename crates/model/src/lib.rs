@@ -4,3 +4,22 @@
 //!
 //! See ARCHITECTURE.md §2.4-2.6 for the entity shapes, the time model and why
 //! neither can be changed later.
+
+#![forbid(unsafe_code)]
+
+#[cfg(test)]
+mod fixtures;
+
+mod asset;
+pub mod automation;
+mod bounded;
+mod id;
+pub mod mixer;
+pub mod pattern;
+pub mod playlist;
+pub mod project;
+pub mod timeline;
+
+pub use asset::{Asset, AssetHash, Frames};
+pub use id::{Entropy, Id};
+pub use project::Project;

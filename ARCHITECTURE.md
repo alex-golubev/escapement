@@ -658,6 +658,16 @@ Mandatory from day one:
 > position — is a different question, and it gets its own name on the day the
 > sequencer asks it rather than a rounding mode today.
 
+> **Decided 2026-09-05.** An audio clip's trim into its source is a **third
+> count, in the source's own frames**, and never a musical span.
+>
+> Two sample counts already exist and turning one into the other is a bug
+> (above). A point inside a file is a third: its zero is the start of the file,
+> its rate is the file's own, and nothing relates it to the timeline until the
+> clip is warped, which is what slice 4 builds (§7). Spell the trim as a span of
+> ticks and every audio clip is stretched by whatever the project tempo happens
+> to be — with no stretching code anywhere to blame for it.
+
 ### 2.6. Project model entities — FL-shaped
 
 The reference is FL Studio, and it differs from Ableton **not cosmetically but in
@@ -697,6 +707,94 @@ go anywhere.
 All three concern the project model, which per §2.4 must be CRDT-compatible from
 day one. So **both shapes are fixed at the same time**, before the first line of
 the model is written.
+
+> **Decided 2026-09-05.** An edge that must have exactly one end lives as a
+> **register on the many side**, never as a list on the one side. A channel
+> holds the insert it feeds; a clip holds the lane it sits on.
+>
+> The three entities above are distinct, but the arrow between two of them is
+> many-to-one: several channels share an insert, and no channel is in two. Put
+> the edge on the insert instead, as a list of the channels it takes, and that
+> stops being true the moment two people move one channel to two different
+> inserts — the merge keeps both, and a channel feeding two inserts is a state
+> the audio graph has no reading of. As a register the same pair of edits
+> converges on one of the two, which is a choice somebody made rather than a
+> state nobody can mean.
+>
+> Genuine many-to-many appears only between inserts, where a send is an entity
+> of its own. Deferred, and with it the question of a cycle — which on the audio
+> thread is not a wrong mix but a call that does not return.
+
+> **Decided 2026-09-05.** The document is a **movable list only where the order
+> is itself the data**, and a **map keyed by identity everywhere else**.
+>
+> Lanes, channels and inserts are ordered because a person arranged them, and
+> preserving that arrangement under a concurrent reorder is the whole reason
+> Loro was taken over Yrs (§2.4). Clips, notes and automation points are not
+> ordered at all; they have a position. Hold them in a list and every insertion
+> has to be merged at an index that means nothing, so two people adding a note
+> to the same bar conflict over a place neither of them chose. Held in a map
+> they cannot conflict, and moving a note is editing two registers.
+>
+> The two maps of §2.5 arrived here from the other end and with a sharper
+> reason: `build` refuses two marks in one place, so a list of marks can hold a
+> document that stops opening.
+
+> **Decided 2026-09-05.** An entity's identity is **128 random bits**, minted
+> locally, behind an opaque type — a private field and two methods at the
+> serialization boundary, as `Position` has (§2.5).
+>
+> A counter needs somebody to hand out the numbers, and §2.4 promises a document
+> that survives a wifi drop: two people offline both reach four, and the merge
+> is one entry carrying the fields of two patterns with nothing left to record
+> that there were two. A pair of "who I am" and a private counter repairs that
+> and halves the key — about eleven characters against twenty-two, a hundred
+> kilobytes on ten thousand notes — but the counter has to survive a reload, and
+> a counter that does not produces the same unrepairable collision in silence.
+> Randomness has no state to get wrong.
+>
+> **Rejected: Loro's own identifiers.** They save writing any of this, and they
+> make the entities unable to exist without Loro — while §7 puts them as plain
+> structs one stage *before* it, precisely so that slice 2 tests the bet instead
+> of assuming it.
+>
+> **An asset is the exception: its identity is the hash of its bytes** (§2.4).
+> Mint one and the same loop imported by two people becomes two entries, which
+> is the deduplication of a content-addressed store thrown away at the only
+> point where it was free.
+>
+> What the opaque type buys is a change of shape up to the first saved project;
+> after that it is a migration, the same door §2.5 describes. So the weight is
+> worth measuring in slice 2, while the door is still open.
+
+> **Decided 2026-09-05.** A **dangling reference is a legal state of the
+> document**, and every read of one answers with an absence rather than a value.
+>
+> A deletes a pattern while B places its twenty-first instance. Both edits are
+> legal, both merge, and the result is a clip pointing at nothing. No CRDT
+> prevents this — the two edits never met — so the model does not pretend it
+> cannot happen: resolving a reference returns an option, the sequencer skips
+> what does not resolve, and the interface draws the hole.
+>
+> **A channel whose insert is gone is silent, and does not fall back to the
+> master.** A merge that reroutes audio nobody rerouted is worse than one that
+> stops it where somebody can hear that it stopped.
+>
+> This is a decision about every read site rather than about a type, which is
+> why it belongs here. Found later, it is a signature change through the whole
+> model.
+
+> **Decided 2026-09-05.** The document carries **its own version number**, from
+> the first struct.
+>
+> §3 puts a version in the header of the shared region because a fresh reader
+> meeting a stale writer otherwise parts company as a misread rather than as a
+> message. A project outlives a client version by years, so the same argument
+> applies with more force. Every shape §2.5 and this section leave revisitable
+> shuts at the first saved project, and what makes that door openable again is a
+> document that says which shape it was written in. One integer now; it cannot
+> be added later, because the documents that would need it are exactly the ones
+> already written.
 
 ---
 

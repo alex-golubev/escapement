@@ -55,6 +55,20 @@ paths:
   bar, tempi by position. A merge can put two marks in one place, and neither
   `build` takes two — under a list that duplicate is representable, and what it
   produces is a project that stops opening.
+- **The mark that opens each map is a field of the document, not an entry in
+  it.** Both builders refuse marks that do not start at the beginning — the
+  origin for tempo, the first bar for signatures — so an opening mark held as an
+  entry is one that a merge can move or delete, and what that produces is a
+  project that will not open, for both people, because they converged on it. As
+  a field there is nothing to delete; with a tempo refused at the door for not
+  being one, no document that can be written produces a map that refuses to
+  build.
+- **An audio clip's trim into its source is a third count, in the source's own
+  frames** (§2.5). Two sample counts already exist and swapping them is a bug;
+  a point inside a file has the file's zero and the file's rate, and nothing
+  ties it to the timeline until slice 4 warps the clip. Spelled as a span of
+  ticks, every audio clip is stretched by whatever the project tempo happens to
+  be, and no stretching code exists to blame for it.
 - **What this closes is the document, not the type** (§2.5). Both shapes stay
   revisitable until the first project is saved. Once Loro is underneath the
   entities, changing either is a migration.
