@@ -22,6 +22,7 @@ use crate::automation::Automation;
 use crate::mixer::{Channel, Insert};
 use crate::pattern::Pattern;
 use crate::playlist::{Clip, Lane};
+use crate::timeline::Timeline;
 use crate::{Asset, AssetHash, Id};
 
 /// Which shape the document was written in.
@@ -71,6 +72,10 @@ impl Version {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Parts {
     pub name: String,
+    /// What the project's clock does. Not a collection, and the one part of the
+    /// document that cannot be empty: a timeline with no tempo is a map that
+    /// refuses to build (§2.5).
+    pub timeline: Timeline,
     /// The insert everything is finally heard through. A name like any other:
     /// it can be one nothing answers to, and then the project is silent.
     pub master: Id<Insert>,
@@ -89,6 +94,7 @@ impl Parts {
     pub fn new(name: String, master: Id<Insert>) -> Self {
         Self {
             name,
+            timeline: Timeline::default(),
             master,
             inserts: Vec::new(),
             channels: Vec::new(),
@@ -138,6 +144,12 @@ impl Project {
     #[must_use]
     pub fn name(&self) -> &str {
         &self.parts.name
+    }
+
+    /// The tempo and the signature, and where they change.
+    #[must_use]
+    pub fn timeline(&self) -> &Timeline {
+        &self.parts.timeline
     }
 
     /// The name of the insert everything is heard through.
@@ -283,6 +295,9 @@ mod tests {
     use crate::fixtures::Counter;
     use crate::mixer::{ChannelSource, Gain, Pan};
     use crate::playlist::ClipSource;
+    use crate::timeline::Tempo;
+    use escapement_time::meter::Meter;
+    use escapement_time::tempo::Curve;
     use escapement_time::SampleRate;
 
     const SAMPLE: AssetHash = AssetHash::from_bytes([1; 32]);
@@ -409,6 +424,28 @@ mod tests {
         let song = song();
         let old = Project::at_version(behind, Parts::new("Old".to_owned(), song.master));
         assert_eq!(old.version(), behind);
+    }
+
+    /// Read through the project rather than built and inspected, because that
+    /// is how anything but a test will reach it — and a `timeline` handing back
+    /// the default one passed every other test here.
+    #[test]
+    fn the_clock_comes_back_through_the_document() {
+        let song = song();
+        let mut parts = Parts::new("Waltz".to_owned(), song.master);
+        parts.timeline = Timeline::new(
+            Tempo::new(90.0, Curve::Hold).expect("a tempo is a tempo"),
+            Meter::new(3, 4).expect("three quarters is a signature"),
+        );
+        let project = Project::new(parts);
+
+        assert_eq!(project.timeline().tempo().beats_per_minute(), 90.0);
+        assert_eq!(project.timeline().meter().numerator(), 3);
+        assert_eq!(
+            song.project.timeline().tempo().beats_per_minute(),
+            120.0,
+            "and a project nobody set one on opens at the usual tempo"
+        );
     }
 
     #[test]

@@ -18,6 +18,7 @@ pub mod mixer;
 pub mod pattern;
 pub mod playlist;
 pub mod project;
+pub mod timeline;
 
 pub use asset::{Asset, AssetHash, Frames};
 pub use id::{Entropy, Id};
