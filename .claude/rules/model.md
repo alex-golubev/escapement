@@ -21,10 +21,36 @@ and §2.5 names what shuts the door on them: the first saved project.
   arrives as a bug from nowhere long after the edit that caused it.
 - **A pattern is referenced, never copied** (§2.6). A playlist instance points at
   the pattern, so editing it changes all twenty places it plays. The shape holds
-  on either side: a channel, a track and a mixer insert are three entities in a
-  many-to-many relation rather than one fused thing, and playlist lanes are
-  visual rather than routing. A copy at any of the three is what makes the model
+  on either side: a channel, a track and a mixer insert are three entities
+  rather than one fused thing, and playlist lanes are visual rather than
+  routing. A copy at any of the three is what makes the model
   Ableton-shaped, and unpicking that later is the rewrite §2.6 exists to avoid.
+- **An edge with one end is a register on the many side, never a list on the
+  one side** (§2.6). A channel holds the insert it feeds and a clip holds its
+  lane; an insert listing its channels merges two people's moves into a channel
+  feeding two inserts, which the audio graph has no reading of. The many-to-many
+  that does exist is a send between inserts, and it brings the cycle with it.
+- **A movable list only where the order is the data; a map keyed by identity
+  everywhere else** (§2.6). Lanes, channels and inserts were arranged by a
+  person. Clips, notes and automation points have a position instead, and in a
+  list every insertion merges at an index none of them chose. The two maps of
+  §2.5 are the same rule reached from the other end.
+- **Identity is 128 random bits behind an opaque type — except an asset's, which
+  is the hash of its bytes** (§2.6, §2.4). A counter needs somebody to hand out
+  numbers, and two people offline both reach four; a peer and a private counter
+  halve the key and buy a collision the day the counter does not survive a
+  reload. Minting an asset an identity of its own throws away the deduplication
+  a content-addressed store gives for free.
+- **A dangling reference is legal, and every read of one returns an absence**
+  (§2.6). A deletes a pattern while B places its twenty-first instance; nothing
+  prevents it, because the two edits never met. Resolution answers with an
+  option, the sequencer skips what does not resolve, and a channel whose insert
+  is gone falls silent rather than to the master — a merge that reroutes audio
+  nobody rerouted is worse than one that stops it audibly.
+- **The document carries its own version, from the first struct** (§2.6). The
+  header of the shared region carries one for a weaker version of the same
+  reason (§3); a project outlives a client by years. It cannot be added later,
+  because the documents that would need it are the ones already written.
 - **Undo belongs to its author, and comes from Loro.** "Undo my last action" is
   not "undo the last action" — a known hard problem, and one that looks easy
   right up until a second person is in the document (§3). Whether Loro has an
