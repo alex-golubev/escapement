@@ -73,6 +73,7 @@ dependencies = [
 name = "escapement-core"
 version = "0.0.0"
 dependencies = [
+ "escapement-time",
  "libm",
 ]
 
@@ -114,6 +115,7 @@ version = "0.0.0"
 dependencies = [
  "escapement-core",
  "escapement-protocol",
+ "escapement-time",
 ]
 
 [[package]]

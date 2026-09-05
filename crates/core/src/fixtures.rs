@@ -8,8 +8,10 @@
 /// second of it, which is what makes a crossing count a frequency.
 pub(crate) const RATE_HZ: usize = 48_000;
 
-/// The same rate, as the oscillator takes it.
-pub(crate) const RATE: f32 = RATE_HZ as f32;
+/// The same rate, as everything in this crate takes it.
+pub(crate) fn rate() -> escapement_time::SampleRate {
+    escapement_time::SampleRate::new(RATE_HZ as f64).expect("the tests chose a rate")
+}
 
 /// Over a block of [`RATE_HZ`] samples this is the frequency in hertz, and the
 /// only way to ask an oscillator what it is doing from outside.

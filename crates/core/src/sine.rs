@@ -1,3 +1,5 @@
+use escapement_time::SampleRate;
+
 /// A sine oscillator.
 ///
 /// Phase is counted in **turns** rather than radians, so wrapping a period is a
@@ -9,17 +11,21 @@ pub struct Sine {
     step: f32,
     /// Kept because the frequency can change while playing, and rebuilding the
     /// oscillator to change it would reset the phase — which is a click.
+    ///
+    /// Narrowed from the [`SampleRate`] that arrives, because everything below
+    /// is `f32` audio arithmetic. What the type bought has already been spent by
+    /// then: a rate that is not one cannot reach this field.
     sample_rate_hz: f32,
 }
 
 impl Sine {
     /// Build the graph with this, not the processing path — it divides.
     #[must_use]
-    pub fn new(frequency_hz: f32, sample_rate_hz: f32) -> Self {
+    pub fn new(frequency_hz: f32, rate: SampleRate) -> Self {
         let mut sine = Self {
             phase: 0.0,
             step: 0.0,
-            sample_rate_hz,
+            sample_rate_hz: rate.hz() as f32,
         };
         sine.set_frequency(frequency_hz);
         sine
@@ -30,8 +36,9 @@ impl Sine {
     /// different build, and there is nothing on the audio thread to report an
     /// error to.
     ///
-    /// Each clause earns its place. `NaN` would poison the phase permanently,
-    /// and no later command could undo it. At exactly Nyquist the samples land
+    /// Each clause earns its place — the rate is checked where it is built, but
+    /// the frequency is not. `NaN` would poison the phase permanently, and no
+    /// later command could undo it. At exactly Nyquist the samples land
     /// on 0, π, 2π and the tone is silence, so clamping to it would answer "too
     /// high" with something indistinguishable from a broken engine.
     ///
@@ -57,12 +64,12 @@ impl Sine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fixtures::{rising_zero_crossings, RATE, RATE_HZ};
+    use crate::fixtures::{rate, rising_zero_crossings, RATE_HZ};
     use crate::RENDER_QUANTUM;
 
     #[test]
     fn stays_inside_full_scale() {
-        let mut sine = Sine::new(440.0, RATE);
+        let mut sine = Sine::new(440.0, rate());
         let mut block = [0.0f32; RENDER_QUANTUM];
         for _ in 0..100 {
             sine.process(&mut block);
@@ -74,7 +81,7 @@ mod tests {
 
     #[test]
     fn starts_at_zero_and_rises() {
-        let mut sine = Sine::new(440.0, RATE);
+        let mut sine = Sine::new(440.0, rate());
         let mut block = [0.0f32; 4];
         sine.process(&mut block);
         assert_eq!(block[0], 0.0);
@@ -83,7 +90,7 @@ mod tests {
 
     #[test]
     fn completes_a_period() {
-        let mut sine = Sine::new(1.0, RATE);
+        let mut sine = Sine::new(1.0, rate());
         let mut one_second = [0.0f32; RATE_HZ];
         sine.process(&mut one_second);
         assert!(sine.phase.abs() < 1e-3, "phase drifted to {}", sine.phase);
@@ -91,7 +98,7 @@ mod tests {
 
     #[test]
     fn has_the_frequency_asked_for() {
-        let mut sine = Sine::new(100.0, RATE);
+        let mut sine = Sine::new(100.0, rate());
         let mut one_second = [0.0f32; RATE_HZ];
         sine.process(&mut one_second);
         assert_eq!(rising_zero_crossings(&one_second), 100);
@@ -99,7 +106,7 @@ mod tests {
 
     #[test]
     fn a_new_frequency_takes_effect_without_resetting_the_phase() {
-        let mut sine = Sine::new(100.0, RATE);
+        let mut sine = Sine::new(100.0, rate());
         let mut block = [0.0f32; 100];
         sine.process(&mut block);
         let phase = sine.phase;
@@ -117,7 +124,7 @@ mod tests {
     #[test]
     fn a_frequency_that_is_not_one_leaves_the_last_good_one_standing() {
         for bad in [f32::NAN, 0.0, -440.0, f32::INFINITY] {
-            let mut sine = Sine::new(100.0, RATE);
+            let mut sine = Sine::new(100.0, rate());
             sine.set_frequency(bad);
 
             let mut one_second = [0.0f32; RATE_HZ];
@@ -135,8 +142,9 @@ mod tests {
     /// is the frequency that was working.
     #[test]
     fn a_frequency_at_or_above_nyquist_is_refused_rather_than_produced() {
-        for unreachable in [RATE / 2.0, RATE] {
-            let mut sine = Sine::new(100.0, RATE);
+        let hz = rate().hz() as f32;
+        for unreachable in [hz / 2.0, hz] {
+            let mut sine = Sine::new(100.0, rate());
             sine.set_frequency(unreachable);
 
             let mut one_second = [0.0f32; RATE_HZ];

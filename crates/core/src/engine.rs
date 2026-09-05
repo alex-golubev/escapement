@@ -1,3 +1,5 @@
+use escapement_time::SampleRate;
+
 use crate::Sine;
 
 /// Roughly -14 dB, for headphones. The mixer replaces it.
@@ -24,10 +26,15 @@ pub struct Engine {
 impl Engine {
     /// Stopped, because a transport that has not been started has not been
     /// started — the interface says when (ARCHITECTURE.md §2.4).
+    ///
+    /// Takes a [`SampleRate`] rather than a number: this is where the engine
+    /// meets the clock (§2.5), and the rate arrives from a host that is not this
+    /// program. Refusing one that is not a rate has to happen before anything
+    /// divides by it, and nothing further in has an error to report.
     #[must_use]
-    pub fn new(sample_rate_hz: f32) -> Self {
+    pub fn new(rate: SampleRate) -> Self {
         Self {
-            sine: Sine::new(DEFAULT_FREQUENCY_HZ, sample_rate_hz),
+            sine: Sine::new(DEFAULT_FREQUENCY_HZ, rate),
             gain: DEFAULT_GAIN,
             playing: false,
             clock: 0,
@@ -105,7 +112,7 @@ impl Engine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fixtures::{rising_zero_crossings, RATE, RATE_HZ};
+    use crate::fixtures::{rate, rising_zero_crossings, RATE_HZ};
     use crate::RENDER_QUANTUM;
 
     fn quantum(engine: &mut Engine) -> [f32; RENDER_QUANTUM] {
@@ -120,14 +127,14 @@ mod tests {
 
     #[test]
     fn a_new_engine_is_stopped_and_silent() {
-        let mut engine = Engine::new(RATE);
+        let mut engine = Engine::new(rate());
         assert!(!engine.playing());
         assert_eq!(peak(&quantum(&mut engine)), 0.0);
     }
 
     #[test]
     fn the_clock_runs_whether_or_not_the_transport_does() {
-        let mut engine = Engine::new(RATE);
+        let mut engine = Engine::new(rate());
         quantum(&mut engine);
         assert_eq!(engine.clock(), RENDER_QUANTUM as u64);
 
@@ -138,7 +145,7 @@ mod tests {
 
     #[test]
     fn starting_makes_sound_and_stopping_takes_it_away() {
-        let mut engine = Engine::new(RATE);
+        let mut engine = Engine::new(rate());
 
         engine.start();
         assert!(engine.playing());
@@ -154,7 +161,7 @@ mod tests {
     /// this asks is only whether the value arrives.
     #[test]
     fn a_new_frequency_reaches_the_oscillator() {
-        let mut engine = Engine::new(RATE);
+        let mut engine = Engine::new(rate());
         engine.start();
         engine.set_frequency(200.0);
 
@@ -168,7 +175,7 @@ mod tests {
     /// a later one: `process` overwrites rather than mixes.
     #[test]
     fn a_stopped_engine_overwrites_what_was_in_the_block() {
-        let mut engine = Engine::new(RATE);
+        let mut engine = Engine::new(rate());
         let mut block = [0.5f32; RENDER_QUANTUM];
         engine.process(&mut block);
         assert_eq!(peak(&block), 0.0);
@@ -176,7 +183,7 @@ mod tests {
 
     #[test]
     fn the_gain_scales_the_output() {
-        let mut engine = Engine::new(RATE);
+        let mut engine = Engine::new(rate());
         engine.start();
         engine.set_gain(1.0);
         let loud = peak(&quantum(&mut engine));
@@ -192,8 +199,8 @@ mod tests {
     /// a thing to compare across blocks.
     #[test]
     fn a_gain_that_is_not_one_leaves_the_last_good_one_standing() {
-        let mut untouched = Engine::new(RATE);
-        let mut poisoned = Engine::new(RATE);
+        let mut untouched = Engine::new(rate());
+        let mut poisoned = Engine::new(rate());
         untouched.start();
         poisoned.start();
 
@@ -208,7 +215,7 @@ mod tests {
 
     #[test]
     fn the_gain_is_held_between_silence_and_unity() {
-        let mut engine = Engine::new(RATE);
+        let mut engine = Engine::new(rate());
         engine.start();
 
         engine.set_gain(10.0);
@@ -223,8 +230,8 @@ mod tests {
     /// stop and start.
     #[test]
     fn stopping_and_starting_again_continues_where_it_left_off() {
-        let mut uninterrupted = Engine::new(RATE);
-        let mut stopped = Engine::new(RATE);
+        let mut uninterrupted = Engine::new(rate());
+        let mut stopped = Engine::new(rate());
         uninterrupted.start();
         stopped.start();
         quantum(&mut uninterrupted);

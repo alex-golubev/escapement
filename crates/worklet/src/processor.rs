@@ -10,6 +10,7 @@ use escapement_core::Engine;
 use escapement_protocol::{
     Command, CommandKind, Consumer, EngineState, Layout, Pointers, Publisher,
 };
+use escapement_time::SampleRate;
 
 /// Slots in the command ring.
 ///
@@ -52,11 +53,11 @@ impl Processor {
     ///
     /// Nothing may read the region until this returns: the magic goes down last
     /// and with release ordering, and it is what the other side waits for.
-    pub(crate) fn new(cells: Pointers, sample_rate_hz: f32) -> Self {
+    pub(crate) fn new(cells: Pointers, rate: SampleRate) -> Self {
         LAYOUT.write_header(&cells);
 
         Self {
-            engine: Engine::new(sample_rate_hz),
+            engine: Engine::new(rate),
             commands: Consumer::new(cells, LAYOUT.commands()),
             state: Publisher::new(cells, LAYOUT.state()),
             quanta: 0,
@@ -140,7 +141,9 @@ mod tests {
 
     use super::*;
 
-    const RATE: f32 = 48_000.0;
+    fn rate() -> SampleRate {
+        SampleRate::new(48_000.0).expect("48 kHz is a rate")
+    }
 
     /// Both halves over one allocation, reached the way the worklet reaches its
     /// static — `Pointers` is what ships, so the test drives the access path
@@ -173,7 +176,7 @@ mod tests {
             // as long as this value can reach them.
             let cells = unsafe { Pointers::new(words.as_ptr(), words.len()) };
 
-            let processor = Processor::new(cells, RATE);
+            let processor = Processor::new(cells, rate());
 
             // Through the header rather than through `LAYOUT`, because that is
             // what the other side has: it is handed an address and reads the
@@ -212,7 +215,7 @@ mod tests {
         // SAFETY: as in `Probe::new`; `words` outlives this scope's use of it.
         let cells = unsafe { Pointers::new(words.as_ptr(), words.len()) };
 
-        let _processor = Processor::new(cells, RATE);
+        let _processor = Processor::new(cells, rate());
 
         assert_eq!(Layout::read_header(&cells), Ok(LAYOUT));
     }

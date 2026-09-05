@@ -9,6 +9,7 @@
 //! unreachable by every test in this crate until it moved here.
 
 use escapement_protocol::Pointers;
+use escapement_time::SampleRate;
 
 use crate::processor::Processor;
 
@@ -29,8 +30,19 @@ impl Module {
     /// Nothing may read `cells` until this returns, and nothing may be handed
     /// its address before that — the magic goes down last, and it is what the
     /// other side waits for.
+    ///
+    /// A rate that is not one leaves the module without an engine and therefore
+    /// without a header. The number comes from the host rather than from this
+    /// program, and the magic is the promise that something is rendering behind
+    /// it: silence behind a good header is indistinguishable from a stopped
+    /// transport, while a handshake that never completes says where to look. The
+    /// other side already has a word for that (`HandshakeError::Magic`), and no
+    /// word for "the engine was built on a rate of NaN".
     pub(crate) fn init(&mut self, cells: Pointers, sample_rate_hz: f32) {
-        self.engine = Some(Processor::new(cells, sample_rate_hz));
+        let Some(rate) = SampleRate::new(f64::from(sample_rate_hz)) else {
+            return;
+        };
+        self.engine = Some(Processor::new(cells, rate));
     }
 
     /// One quantum, and `out` is overwritten either way.
@@ -105,6 +117,32 @@ mod tests {
         Module::new().init(cells(&words), RATE);
 
         assert_eq!(Layout::read_header(&cells(&words)), Ok(LAYOUT));
+    }
+
+    /// The host's number, and the one case where it is not a rate. Silence and
+    /// no header, rather than an engine dividing by it — and every value
+    /// separately, since one guard covering three of four passes a test that
+    /// tries only the fourth.
+    #[test]
+    fn a_rate_that_is_not_one_leaves_the_module_without_an_engine() {
+        for bad in [f32::NAN, f32::INFINITY, 0.0, -RATE] {
+            let words = words();
+            let mut module = Module::new();
+            module.init(cells(&words), bad);
+
+            assert_eq!(
+                Layout::read_header(&cells(&words)),
+                Err(HandshakeError::Magic { found: 0 }),
+                "{bad} was promised an engine"
+            );
+
+            let mut block = [0.5f32; RENDER_QUANTUM];
+            module.process(&mut block);
+            assert!(
+                block.iter().all(|sample| *sample == 0.0),
+                "{bad} left the previous quantum in the block"
+            );
+        }
     }
 
     /// That an initialized module renders through the engine rather than down

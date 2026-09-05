@@ -18,5 +18,11 @@ publish.workspace = true
 [dependencies]
 libm = "0.2"
 
+# Where the engine meets the clock (`.claude/rules/musical-time.md`): a sample
+# rate is a validated type rather than a number travelling by convention, and
+# the conversions the sequencer will need are already there. `no_std`, no
+# allocation, and its own dependency is the `libm` above.
+escapement-time.workspace = true
+
 [lints]
 workspace = true

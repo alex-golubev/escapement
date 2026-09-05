@@ -1,5 +1,6 @@
 //! Musical time: where something sits on the timeline, how far it is from
-//! something else, what either is in seconds, and which bar and beat that is.
+//! something else, what either is in seconds or in samples, and which bar and
+//! beat that is.
 //!
 //! Positions are held in musical time and never in samples (ARCHITECTURE.md
 //! §2.5), which makes these types ones both ends need: `escapement-core`
@@ -16,6 +17,12 @@
 //! buffer the caller owns. That is what lets the expensive half of a map be
 //! worked out in the model, where a `Vec` is allowed, and the cheap half be read
 //! on the audio thread, where it is not.
+//!
+//! Samples are the one thing here that is not musical, and [`SampleRate`] is
+//! where they are reached — one type carrying the multiplier and the rounding,
+//! so that nothing else multiplies by a rate (§2.5). It is apart from the maps
+//! because both of them answer in seconds, which are physical: the offline
+//! render for export drives the same engine at a rate of its own.
 //!
 //! **Two maps, and they do not consult each other.** [`tempo`] turns a position
 //! into seconds; [`meter`] turns it into a bar and a beat. What keeps them apart
@@ -83,6 +90,8 @@ const _: () = {
 
 pub mod meter;
 mod position;
+mod rate;
 pub mod tempo;
 
 pub use position::{Position, Span};
+pub use rate::SampleRate;

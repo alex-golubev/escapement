@@ -13,5 +13,9 @@ crate-type = ["cdylib", "rlib"]
 escapement-core.workspace = true
 escapement-protocol.workspace = true
 
+# For `SampleRate` alone: the host hands this module a number, and this is the
+# boundary where a number that is not a rate has to be turned away.
+escapement-time.workspace = true
+
 [lints]
 workspace = true
