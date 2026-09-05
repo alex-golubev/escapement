@@ -9,6 +9,11 @@ paths:
 - **Never send frame-rate data through `postMessage`.** Meters, playhead position
   and transport state go into a fixed `SharedArrayBuffer` region that the UI polls
   each frame. Messages carry only user commands and structural model changes.
+- **`Command.when` is a sample count on the engine's clock, never a musical
+  position** (§3). A position crosses as the payload of a command that carries a
+  place in the song — "start at position P at time T" is two values, and `when`
+  is T. The audio thread has no tempo map to resolve a musical moment with, and
+  `0` already means *as soon as it is seen*, which on a musical scale is bar one.
 - **Never put a cargo feature on `escapement-protocol`.** Features unify across a
   workspace build, so one added for the interface arrives in the worklet's copy
   too, and the worklet's module must import nothing. The measurement is in

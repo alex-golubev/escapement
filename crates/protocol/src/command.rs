@@ -17,9 +17,17 @@ const SET_GAIN: u32 = 4;
 /// outside — "start at position P at time T", not only "play now"
 /// (ARCHITECTURE.md §2.4). The engine ignores `when` until there is a clock to
 /// compare it against.
+///
+/// That phrasing is two values, and only one of them is here. `when` is T, a
+/// moment on the engine's clock; P is where in the song, and it crosses as the
+/// payload of the commands that need one, never as their schedule (§3).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Command {
-    /// Samples since the engine started. `0` means as soon as it is seen.
+    /// Samples since the engine started, and never a musical position (§3).
+    ///
+    /// `0` means as soon as it is seen — a sentinel that works because zero is
+    /// not a moment this clock will reach again. On a musical scale it would be
+    /// bar one, which is a position people use.
     pub when: u64,
     /// What to do then.
     pub kind: CommandKind,
