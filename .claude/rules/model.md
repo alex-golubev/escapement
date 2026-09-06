@@ -30,6 +30,13 @@ and §2.5 names what shuts the door on them: the first saved project.
   lane; an insert listing its channels merges two people's moves into a channel
   feeding two inserts, which the audio graph has no reading of. The many-to-many
   that does exist is a send between inserts, and it brings the cycle with it.
+- **An entity is a map of registers, one per field, never one value** (§2.6).
+  Two people change different fields of one channel far more often than they
+  change the same one, and a whole-entity value keeps only the later writer.
+  Measured: registers cost 1.6x the saved document and a little over twice the
+  memory, and 2.6x *less* traffic while a curve is drawn. How often the
+  document is committed does not reach the wire at all, so the rate the
+  interface draws at is nobody else's business.
 - **A movable list only where the order is the data; a map keyed by identity
   everywhere else** (§2.6). Lanes, channels and inserts were arranged by a
   person. Clips, notes and automation points have a position instead, and in a
@@ -40,13 +47,22 @@ and §2.5 names what shuts the door on them: the first saved project.
   numbers, and two people offline both reach four; a peer and a private counter
   halve the key and buy a collision the day the counter does not survive a
   reload. Minting an asset an identity of its own throws away the deduplication
-  a content-addressed store gives for free.
+  a content-addressed store gives for free. In the document it is spelled as 22
+  base64 characters, and it is stored once per *occurrence* rather than once per
+  entity — every reference between entities is a name, so a clip carries three.
 - **A dangling reference is legal, and every read of one returns an absence**
   (§2.6). A deletes a pattern while B places its twenty-first instance; nothing
   prevents it, because the two edits never met. Resolution answers with an
   option, the sequencer skips what does not resolve, and a channel whose insert
   is gone falls silent rather than to the master — a merge that reroutes audio
   nobody rerouted is worse than one that stops it audibly.
+- **A field no constructor accepts makes its entity absent, and the timeline is
+  the exception** (§2.6). A gain out of range or a denominator that does not
+  divide a whole note comes from a bug or a damaged file rather than from a
+  merge, and absence is a state every read site already handles. The timeline
+  cannot be absent, so an unreadable tempo or signature falls back to the
+  default instead — refusing to open the document is the one outcome none of
+  these rules permit.
 - **The document carries its own version, from the first struct** (§2.6). The
   header of the shared region carries one for a weaker version of the same
   reason (§3); a project outlives a client by years. It cannot be added later,

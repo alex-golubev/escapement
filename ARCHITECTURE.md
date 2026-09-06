@@ -796,6 +796,77 @@ the model is written.
 > be added later, because the documents that would need it are exactly the ones
 > already written.
 
+> **Decided 2026-09-06.** An entity in the document is a **map of registers, one
+> per field**, never one value holding the whole entity.
+>
+> Two people at one mixer change different things about one channel far more
+> often than they change the same thing, and a whole-entity value cannot keep
+> both: the merge picks a writer, and the other edit is gone with nothing left
+> to say it was made. Per field both survive, and the pair that genuinely
+> collides converges the way a register always does. The identity block above
+> already assumes this where it says moving a note is editing two registers;
+> this makes it the rule for every entity rather than for that one.
+>
+> **The price is memory, and it falls the opposite way from the fear.** §2.4
+> names automation as where naive CRDT use explodes "in memory and traffic".
+> Measured: registers cost 1.6x the saved document and a little over twice the
+> memory, and 2.6x *less* traffic while a curve is drawn — a moved point sends
+> the field that moved rather than the point that holds it. Only one of the two
+> axes gets worse, and it is the one with room.
+>
+> **Rejected: the whole entity as one value.** It is smaller, and it loses
+> edits.
+>
+> A consequence worth having: how often the document is committed does not
+> reach the wire. A drag exports the same bytes committed once at the end as
+> committed after every point, so the rate a curve is drawn at is the
+> interface's business and nobody else's.
+
+> **Decided 2026-09-06.** A field the document holds but no constructor accepts
+> takes its entity with it: **the entity reads as absent.**
+>
+> A gain outside its range, a denominator that does not divide a whole note, a
+> tempo of zero. Nothing writing through this model produces one — every edit
+> takes a type that was checked when it was constructed, and a merge chooses
+> between two values that were both legal when written — so the source is a
+> bug, a damaged file, or a client version the version number already turns
+> away. What matters is therefore not preventing it but what the reader does,
+> and one answer costs nothing at all: absence is a state every read site
+> already handles, because a dangling reference is legal (above). Refusing the
+> document instead is the failure this whole section is written to avoid.
+>
+> **The timeline is the exception, because absence is not available to it.** It
+> is the one part of the document that cannot be empty, so a tempo or a
+> signature that will not read falls back to the default rather than taking the
+> clock away with it. That is the guarantee the opening marks already carry, met
+> from the other side: no document that can be written yields a map that
+> refuses to build.
+>
+> **Rejected: clamping into range.** It invents a value nobody wrote and hides
+> the bug that wrote the other one, and where it lands depends on which client
+> opened the file — the objection that already rejected repairing a signature on
+> load (§2.5).
+
+> **Decided 2026-09-06.** Identity stays 128 random bits, spelled in the
+> document as **22 base64 characters**. The weight left to be measured above is
+> measured.
+>
+> Ten thousand notes: halving the width, which is what the peer and counter buy,
+> saves 19% of the saved document; changing only the alphabet at full width — 32
+> hexadecimal characters against 22 — costs 2.1%. The width is worth something
+> and the spelling is not, which leaves the spelling to be chosen on legibility.
+>
+> **The estimate above was low by half, for a structural reason.** It counted a
+> key once. A key is stored once per occurrence, and every reference between
+> entities is a name: a note carries its own and its channel's, a clip its own
+> and its lane's and its source's. The multiplier is the number of references,
+> so it grows with the shape of the document rather than with the count of
+> things in it.
+>
+> Nineteen per cent does not buy back what the counter costs. One that fails to
+> survive a reload gives the same unrepairable collision in the same silence,
+> and the door this measurement was to be taken through stays where it is.
+
 ---
 
 ## 3. Boundaries
