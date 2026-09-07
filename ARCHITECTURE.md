@@ -92,7 +92,7 @@ monitoring works around it. Full analysis in **§2.2**.
 | 2.1 | Worklet or worker | 🔵 Recommendation: graph in the worklet |
 | 2.2 | Latency / live recording | ✅ **Decided:** target is samples, live recording deferred |
 | 2.3 | Plugins | 🔵 Recommendation: own ABI + WAM 2.0 |
-| 2.4 | Collaboration | ✅ **Decided:** multiplayer is required → CRDT (**Loro**) from day one |
+| 2.4 | Collaboration | ✅ **Decided:** multiplayer is required → CRDT (**Yrs**) from day one |
 | 2.5 | Musical time model | ✅ Mandatory from day one (follows from 2.2) |
 | 2.6 | Project model entities | ✅ FL-shaped — cannot be unpicked later |
 
@@ -353,36 +353,97 @@ Incidentally: **live jamming does not contradict §2.2 on latency** if it is
 loop-based and bar-quantized — everything lands on bar boundaries and 30 ms
 bothers nobody. This is how Endlesss worked.
 
-#### ✅ Chosen: Loro
+#### ✅ Chosen: Yrs
 
 | Candidate | Verdict |
 |---|---|
-| **Loro** | ✅ **Taking it.** Rust-native, **explicit movable lists** |
-| Yrs (Yjs port) | Ready-made ecosystem, but weak list moves |
+| **Yrs** (Yjs port) | ✅ **Taking it.** A quarter of the bundle, permissive throughout, a format with several implementations |
+| Loro | Rust-native, and the only one of the three with an explicit move. Rejected 2026-09-07, below |
 | Automerge | Mature, but heavier on memory |
 
-**The deciding criterion is movable lists.** In a DAW, tracks and effect chain
-order get reordered constantly. Most CRDTs model "move" as "delete + insert": if
-two people reorder the same track simultaneously, the result can be **two identical
-tracks or none at all**. It looks like a bug out of nowhere and is hard to track
-down.
+**The criterion that was named first is movable lists.** In a DAW, tracks and
+effect chain order get reordered constantly. Most CRDTs model "move" as
+"delete + insert": if two people reorder the same track simultaneously, the
+result can be **two identical tracks or none at all**. It looks like a bug out of
+nowhere and is hard to track down. Only Loro answers it with an operation.
 
-The remaining criteria — wasm bundle size and memory on a large document (thousands
-of notes and automation points) — get verified in slice 2 (§7).
+It was named before §2.6 decided which collections are ordered at all, and it
+stopped deciding once the two were put side by side and measured.
 
-#### ⚠️ What Loro costs us
+> **Decided 2026-09-07.** **Yrs**, and what it does not have — an operation for
+> moving an element — is bought back by holding the order **as a rank inside the
+> entity** rather than as a place in a list (§2.6).
+>
+> Measured under this build — `build-std`, `+atomics`, shared memory, then
+> `wasm-opt -Oz` and brotli, which is what a browser is actually sent. The
+> document is 32 channels, 32 inserts, 16 lanes, 8 patterns of 500 notes, 200
+> clips and 4 curves of 500 points, written in the shapes §2.6 fixes.
+>
+> | | added to the bundle | project on the wire | live heap |
+> |---|---|---|---|
+> | Yrs 0.27 | **+146 KiB** | **152 KiB** | 10.5 MiB |
+> | Loro 1.16 | **+630 KiB** | 264 KiB | 9.4 MiB |
+>
+> The weight is the visible difference and it is not the argument. Three things
+> are.
+>
+> **The movable list had shrunk to three collections.** §2.6 puts lanes,
+> channels and inserts in a list because a person arranged them, and everything
+> there are thousands of — clips, notes, automation points, both time maps — in
+> a map keyed by identity. So Loro's one exclusive feature covers three
+> collections of tens of items, and the rank covers them at the cost named
+> below. The criterion above predates that decision by twelve days.
+>
+> **What the missing move actually costs is not duplicates.** Two people
+> dragging one track under delete-plus-insert do produce the duplicate §2.4
+> named, and a reader can collapse it. The sharper failure has no reader-side
+> repair: a list holds entities, an entity is a map of registers, and
+> re-inserting it means building a **new** map — so a concurrent edit to the old
+> one lands on a tombstone and is gone. Over 2000 random rounds of two replicas
+> each moving and editing, the list shape lost **432 of 3474 edits**; both
+> replicas converged on every one of them, so a convergence property would have
+> passed. With the rank, the same 2000 rounds lost **none**.
+>
+> **The retreat is asymmetric, and that is what settles it.** Leaving Loro means
+> rewriting the model, which §2.4 has said from the start. Finding the rank
+> insufficient means migrating three small collections, because the order is a
+> field we own — the same insurance §2.6 bought by minting our own identities
+> instead of taking the library's, and the reason that block is now load-bearing
+> rather than fastidious.
+>
+> **Rejected: Loro.** It is right by construction on the one thing this trades
+> away, and that is worth saying plainly: taking Yrs means owning a rank
+> generator and its properties, roughly a hundred and fifty lines, where Loro
+> ships them tested. It also has the more compact update encoding (475 KiB of
+> full history against 704) and shallow snapshots, which a project accumulating
+> years of history will eventually want. What it does not have is a second
+> implementation of its format, and §2.6 requires a document that opens years
+> after the client that wrote it.
+>
+> **What does not separate them.** Author-scoped undo — both have it, measured
+> on both. Automation — a 600-edit drag costs 15 bytes an edit on the wire and
+> kilobytes an edit in heap **on both**, so the soft lock below is needed either
+> way and is not an argument for either library.
 
-Yrs would have provided a ready ecosystem; Loro does not. Added to the scope:
+#### ⚠️ What Yrs costs us
 
-- **sync transport** — a websocket relay, written by us (Yjs ships one);
-- **presence protocol** — cursors and "who is where", written by us (Yjs ships
-  awareness). Not hard in itself: ephemeral state, no persistence;
-- **young-library risk** — fewer production deployments, smaller community. This is
-  a deliberate bet, and it sits in the project model, meaning that migrating later
-  equals rewriting the model.
+One thing, and it is not the ecosystem:
 
-One item to verify explicitly in slice 2: **is there an undo manager scoped to the
-author** (§3). If not, that is a significant amount of extra work.
+- **the rank generator is ours** — a key between two keys, lengthened when there
+  is no room, suffixed with the peer so two people filling one gap do not mint
+  the same key. Off-the-shelf implementations exist; the properties are ours to
+  test either way, because this is the piece holding up the invariant in
+  `.claude/rules/model.md` that no list in the document may hold an entity.
+
+Against that, what a Yjs-compatible format brings: a **sync transport** that can
+start from an existing Rust server rather than an empty file, a **presence
+protocol** already defined (`sync::awareness`, `sync::protocol`), and a wire
+format with more than one implementation behind it.
+
+> The line this section used to carry — that Yjs ships awareness and Loro does
+> not — stopped being true: Loro has `awareness` and an `EphemeralStore` of its
+> own. Neither ships a relay. What Yrs still has and Loro does not is somebody
+> else's relay already written.
 
 #### ⚠️ Automation curves — the stress test that breaks everything
 
@@ -428,9 +489,9 @@ Cursors, selections, "who is holding this track". Ephemeral state, no persistenc
 needed — just broadcast it over the same transport. The most visible effect for the
 least money in the whole of multiplayer.
 
-With Loro the protocol is ours to write (with Yjs it would have been ready — see
-"what Loro costs us"), but it is an easy job precisely because it is ephemeral:
-losing that state costs nothing.
+The protocol is defined for us (`sync::awareness`), and the job would have been
+easy in any case precisely because it is ephemeral: losing that state costs
+nothing.
 
 #### Offline for free
 
@@ -468,8 +529,8 @@ Mandatory from day one:
 > hundredth copy of a pattern lands exactly as far out as the first. **The
 > document decided it.** A rational position is a pair, and (3,2) and (6,4) are
 > different pairs holding the same number — so two people placing a note on the
-> same beat can write two different values, which is the failure §2.4 chose Loro
-> to avoid. Normalizing on construction fixes that and leaves an invariant which
+> same beat can write two different values, which is the class of failure §2.4
+> exists to avoid. Normalizing on construction fixes that and leaves an invariant which
 > must then hold through serialization, across the network, and in a client
 > version not yet written. An integer tick is canonical by construction and has
 > no such invariant to break.
@@ -496,8 +557,8 @@ Mandatory from day one:
 > in use with no document, then entities as plain structs with no CRDT beneath
 > them. So the position is a type with a private field and nothing outside its
 > crate doing arithmetic on the raw integer — the same cheap insurance §4 buys
-> for the renderer. Worth revisiting once, before Loro goes underneath; after
-> that it is a migration.
+> for the renderer. Worth revisiting once, before the CRDT goes underneath;
+> after that it is a migration.
 
 > **Decided 2026-08-29.** A tempo ramp is **linear in beats per minute**, not in
 > the period those beats imply.
@@ -729,8 +790,8 @@ the model is written.
 > is itself the data**, and a **map keyed by identity everywhere else**.
 >
 > Lanes, channels and inserts are ordered because a person arranged them, and
-> preserving that arrangement under a concurrent reorder is the whole reason
-> Loro was taken over Yrs (§2.4). Clips, notes and automation points are not
+> preserving that arrangement under a concurrent reorder is what §2.4 weighed
+> the libraries on. Clips, notes and automation points are not
 > ordered at all; they have a position. Hold them in a list and every insertion
 > has to be merged at an index that means nothing, so two people adding a note
 > to the same bar conflict over a place neither of them chose. Held in a map
@@ -739,6 +800,29 @@ the model is written.
 > The two maps of §2.5 arrived here from the other end and with a sharper
 > reason: `build` refuses two marks in one place, so a list of marks can hold a
 > document that stops opening.
+
+> **Decided 2026-09-07.** An ordered collection is a **map keyed by identity
+> whose entities carry a rank**, and there is **no list in the document at
+> all**. Reading one in order is sorting by rank, ties broken by identity;
+> moving something is writing one register.
+>
+> This replaces "a movable list" in the block above with the same guarantee
+> spelled differently, and it follows §2.4 taking a library with no move
+> operation. Without a move, a reorder is a delete and an insert; the entity is
+> a map of registers, so the insert has to build a **new** map, and whatever
+> somebody else was writing to the old one lands on a tombstone. Measured: 432
+> of 3474 edits gone over 2000 random rounds, with both replicas agreeing every
+> time. As a rank the same 2000 rounds lose nothing, because the operation that
+> loses them cannot be spelled.
+>
+> What makes this cheap rather than a concession is that §2.6 had already put
+> everything numerous in a map. Three collections change shape — lanes,
+> channels, inserts — and the document comes out **more** uniform than it was:
+> every collection is a map, and order is a field like gain is a field.
+>
+> The rank is an opaque type, as `Position` and the identity are, and it is
+> the one place in the document where a value's *ordering* is its meaning —
+> so it is compared, never parsed, and never read as a number.
 
 > **Decided 2026-09-05.** An entity's identity is **128 random bits**, minted
 > locally, behind an opaque type — a private field and two methods at the
@@ -753,10 +837,12 @@ the model is written.
 > a counter that does not produces the same unrepairable collision in silence.
 > Randomness has no state to get wrong.
 >
-> **Rejected: Loro's own identifiers.** They save writing any of this, and they
-> make the entities unable to exist without Loro — while §7 puts them as plain
-> structs one stage *before* it, precisely so that slice 2 tests the bet instead
-> of assuming it.
+> **Rejected: the library's own identifiers.** They save writing any of this,
+> and they make the entities unable to exist without the CRDT — while §7 puts
+> them as plain structs one stage *before* it, precisely so that slice 2 tests
+> the bet instead of assuming it. The bet was tested and the library changed
+> (§2.4, 2026-09-07); this is the block that made that a swap rather than a
+> rewrite.
 >
 > **An asset is the exception: its identity is the hash of its bytes** (§2.4).
 > Mint one and the same loop imported by two people becomes two entries, which
@@ -1084,7 +1170,7 @@ gets created when there is something to put in it.
 
 ### A state snapshot for the audio thread
 
-The model thread (where Loro lives) prepares an **immutable snapshot** of whatever
+The model thread (where Yrs lives) prepares an **immutable snapshot** of whatever
 audio rendering needs and publishes it to the audio thread through double buffering
 in the SAB. The audio thread always reads a consistent snapshot and never waits.
 
@@ -1117,12 +1203,16 @@ The split is no longer by language but **by thread**:
 In multiplayer, undo is **local**: undo *my* last action, not the last action
 overall. This is a known hard problem.
 
-**Take the undo manager from Loro**, do not write your own — the line "Rust:
-undo/redo" above looks simple right up until a second person appears in the
-document.
+**Take the undo manager from the CRDT library**, do not write your own — the
+line "Rust: undo/redo" above looks simple right up until a second person appears
+in the document.
 
-⚠️ Whether Loro has author-scoped undo at all — **verify in slice 2** (§7). If it
-does not, that is a significant amount of work currently accounted for nowhere.
+✅ Whether it exists at all was the open question here, and it is answered:
+measured on both candidates in the 2026-09-07 comparison (§2.4), and both revert
+only the local author's edits while a remote edit made in the meantime survives.
+Yrs scopes it by transaction origin, so **every transaction the interface opens
+has to carry ours** — an unmarked one is not undoable, which is a silent hole
+rather than a failure.
 
 **Across boundaries — commands and events, not objects.**
 
@@ -1149,7 +1239,7 @@ state is expensive, and the cost is not abstract:
 - schema drift between the Rust model and the TypeScript types, caught at runtime.
 
 With Leptos **that boundary disappears for the UI**: the interface reads the model
-directly, in the same linear memory. Loro is used as an ordinary Rust library. One
+directly, in the same linear memory. Yrs is used as an ordinary Rust library. One
 build, one type system, from the engine to the button.
 
 Alternatives rejected: React works but pays the same boundary cost; Svelte and Solid
@@ -1328,6 +1418,24 @@ handing over the binary.
 > who has no reason to know the repository exists. Generated from the dependency
 > tree at build time rather than written by hand: a hand-written list drifts as
 > dependencies change, and it drifts silently.
+
+> **Amended 2026-09-07.** The dependency that forced this left with Loro (§2.4).
+> The Yrs tree is MIT and Apache-2.0 throughout: `cargo deny check licenses`
+> passes with `MPL-2.0` struck from the allow-list, checked before the entry was
+> removed.
+>
+> **The distinction above stands; the allow-list does not keep an entry nothing
+> uses.** File-level copyleft is still admissible and is added back the day
+> something is worth taking under it, with the attribution page as its price —
+> the argument was general and the decision was not a one-off exception. What
+> the entry costs while unused is the wrong signal: an allow-list is read as a
+> statement about what the product contains.
+>
+> **The attribution page does not go away with it.** MIT and Apache-2.0 require
+> the notice too, so it was always owed; 3.2(a)'s link to the source was the
+> sharpest version of an obligation the tree already carried, not the only one.
+> What does go away is the open question of 3.2(b) against PolyForm, which no
+> longer has anything to be asked about.
 >
 > One point is left open on purpose. MPL 3.2(b) permits sublicensing the
 > executable form under other terms *"provided that the license for the Executable
@@ -1355,7 +1463,7 @@ decision.
 > value sits in the service and the engine can be given away. It is the other way
 > round. The engine — graph, DSP, sampler with voice allocation, warp, CRDT model,
 > WebGL2 renderer — is years of work; the relay is a websocket server broadcasting
-> Loro updates, plus asset storage and accounts, and that is weeks. Apache would
+> document updates, plus asset storage and accounts, and that is weeks. Apache would
 > hand a competitor the expensive half and leave them the cheap half to build.
 >
 > Shield rather than Noncommercial, and the reason is specific to a DAW.
@@ -1464,7 +1572,7 @@ Runs the entire risky platform path end to end:
 
 Closes risk 1: **does the Rust + AudioWorklet combination work at all.**
 
-### Slice 2 — CRDT on Loro (can run in parallel with slice 1)
+### Slice 2 — CRDT on Yrs (can run in parallel with slice 1)
 
 ```
 two browsers, one timeline
@@ -1480,18 +1588,23 @@ What it must confirm:
 
 | Check | Why |
 |---|---|
-| **Movable lists** | Reorder a track from both sides at once without producing a duplicate. This is why Loro was chosen |
-| **Author-scoped undo** | Whether it exists at all. If not, that is significant work accounted for nowhere (§3) |
-| **Automation curves** | Where a naive CRDT explodes in memory and traffic. Worth prototyping early |
-| Bundle size and memory | The remaining criteria from §2.4 |
+| **The rank** | Reorder a track from both sides at once, while a third edit lands on it, and lose nothing. This is what §2.4 traded the movable list for, and the one place the trade can fail |
+| **Automation curves** | Where a naive CRDT explodes in memory and traffic. Measured at kilobytes of heap per edit on both candidates, so the soft lock is in scope rather than optional (§2.4) |
+| **Transaction origins** | Every write the interface makes carries ours, or it is not undoable and nothing says so (§3) |
+| Memory on a large document | The criterion §2.4 measured on a synthetic project; confirm it on a real one |
 
-Additionally in scope — what Loro does not provide out of the box (§2.4):
+Additionally in scope (§2.4):
 
-- sync transport (websocket relay);
-- presence protocol for cursors.
+- **the rank generator**, and its properties: any sequence of moves on two
+  replicas gives both the same order, and no two peers mint one key. This is the
+  first thing `proptest` is for;
+- sync transport (websocket relay), which can start from an existing Rust
+  implementation of the Yjs protocol rather than from nothing;
+- presence, on top of `sync::awareness`.
 
-> The "one week" estimate referred to comparing libraries. With our own transport
-> and presence the slice is bigger — plan realistically.
+> The "one week" estimate referred to comparing libraries. That comparison is
+> done (§2.4, 2026-09-07), and what remains is the transport, presence and the
+> rank — the slice is bigger than a week, so plan realistically.
 
 ### Slice 3 — patterns
 

@@ -14,11 +14,20 @@ and §2.5 names what shuts the door on them: the first saved project.
   undo/redo is a core rewrite (§2.4), and the model that would have to be
   rewritten is precisely the one that works perfectly for one person. Multiplayer
   is the axis this product is differentiated on, not a feature waiting its turn.
-- **Reordering goes through Loro's movable list, never delete-then-insert.** That
-  list is the whole reason Loro was taken over Yrs (§2.4), and reaching for an
-  ordinary list gives the reason up while still compiling. Two people reordering
-  one track under delete-plus-insert end with two identical tracks or none, which
-  arrives as a bug from nowhere long after the edit that caused it.
+- **No list in the document holds an entity, ever.** Order lives as a rank
+  inside the entity and a collection is always a map keyed by identity (§2.6,
+  2026-09-07). Yrs has no move operation, so a list would be reordered by
+  deleting and re-inserting; the entity is a map of registers, the insert builds
+  a *new* map, and whatever somebody else was writing to the old one lands on a
+  tombstone. Measured: 432 of 3474 edits gone over 2000 random rounds — and both
+  replicas agreed on every one, so a convergence test passes while the document
+  is wrong. Reaching for a list gives this up while still compiling.
+- **A rank is compared, never parsed.** It is an opaque type like `Position` and
+  the identity, its ordering *is* its meaning, and reading it as a number invents
+  an arithmetic the merge does not have. Minting one needs a key strictly between
+  two keys, a longer key when there is no room, and the peer on the end so two
+  people filling one gap do not agree on a key by accident. Ties in the sort are
+  broken by identity, or two replicas draw the same document in two orders.
 - **A pattern is referenced, never copied** (§2.6). A playlist instance points at
   the pattern, so editing it changes all twenty places it plays. The shape holds
   on either side: a channel, a track and a mixer insert are three entities
@@ -37,11 +46,11 @@ and §2.5 names what shuts the door on them: the first saved project.
   memory, and 2.6x *less* traffic while a curve is drawn. How often the
   document is committed does not reach the wire at all, so the rate the
   interface draws at is nobody else's business.
-- **A movable list only where the order is the data; a map keyed by identity
-  everywhere else** (§2.6). Lanes, channels and inserts were arranged by a
-  person. Clips, notes and automation points have a position instead, and in a
-  list every insertion merges at an index none of them chose. The two maps of
-  §2.5 are the same rule reached from the other end.
+- **A rank only where the order is the data; nothing but identity everywhere
+  else** (§2.6). Lanes, channels and inserts were arranged by a person and carry
+  a rank. Clips, notes and automation points have a position instead, and a rank
+  on them would be a second ordering to keep true. The two maps of §2.5 are the
+  same rule reached from the other end.
 - **Identity is 128 random bits behind an opaque type — except an asset's, which
   is the hash of its bytes** (§2.6, §2.4). A counter needs somebody to hand out
   numbers, and two people offline both reach four; a peer and a private counter
@@ -67,12 +76,14 @@ and §2.5 names what shuts the door on them: the first saved project.
   header of the shared region carries one for a weaker version of the same
   reason (§3); a project outlives a client by years. It cannot be added later,
   because the documents that would need it are the ones already written.
-- **Undo belongs to its author, and comes from Loro.** "Undo my last action" is
-  not "undo the last action" — a known hard problem, and one that looks easy
-  right up until a second person is in the document (§3). Whether Loro has an
-  author-scoped undo manager at all is a slice 2 question (§7), to be answered
-  before anything is built on the assumption that it does: if it does not, that
-  is a significant amount of work currently accounted for nowhere.
+- **Undo belongs to its author, and comes from the library.** "Undo my last
+  action" is not "undo the last action" — a known hard problem, and one that
+  looks easy right up until a second person is in the document (§3). Yrs has it,
+  measured (§2.4), and it is scoped by **transaction origin**: a write made in a
+  transaction that does not carry ours is simply not on the undo stack. Nothing
+  reports that, so every transaction the model opens on the user's behalf tags
+  itself, and the ones that must not be undoable — applying a remote update —
+  are the exception that has to be deliberate.
 - **Ephemeral state stays out of the document, and so do bytes.** Zoom, scroll,
   selection, playhead, cursors and presence are per-user; so is solo, while mute
   is shared (§2.4). A playhead in the CRDT turns every frame into an operation

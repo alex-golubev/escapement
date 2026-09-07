@@ -14,7 +14,10 @@ all-features = true
 #
 #   File-level copyleft — the dependency's own files stay under it, the product
 #   does not (MPL 1.7 and 3.3). Costs an attribution page: 3.2(a) requires
-#   telling recipients where the source is. Add deliberately, and only after
+#   telling recipients where the source is. Admissible, and there is nothing
+#   under it in the tree today (§5.1, 2026-09-07) — an allow-list is read as a
+#   statement about what the product contains, so the entry comes back with the
+#   dependency that needs it, not before. Add deliberately, and only after
 #   checking the license really is file-level rather than whole-program.
 #
 #   Whole-program copyleft — GPL, AGPL, SSPL. Never, at any version. It would
@@ -28,10 +31,6 @@ allow = [
     "BSL-1.0",
     "Unlicense",
     "Unicode-3.0",
-
-    # File-level copyleft. Arrives with Loro, which depends on `im`
-    # unconditionally, so this cannot be dropped without forking it.
-    "MPL-2.0",
 ]
 
 # The default is 0.8, which accepts a license text that merely resembles one on

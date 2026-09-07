@@ -77,7 +77,7 @@ session:
 | `protocol.md` | `crates/protocol`, `crates/view` | Nothing at frame rate through `postMessage`; no cargo feature on the crate both modules link; the fences Loom must see; two `cfg` attributes and never one `all(...)`; why a throw out of `Atomics` is not an error you can catch |
 | `interface.md` | `crates/app`, `crates/render`, `crates/view` | `escapement-render` stays free of the UI framework; a hidden tab sends nothing; neither crate is tested anywhere but a browser |
 | `musical-time.md` | `crates/time`, `crates/model`, `crates/core` | Positions in musical time, tempo as a map with ramps |
-| `model.md` | `crates/model` | The document is a CRDT from the first struct; reordering through a movable list; a pattern is referenced, not copied; undo belongs to its author; what stays out of the document |
+| `model.md` | `crates/model` | The document is a CRDT from the first struct; no list holds an entity, order is a rank; a pattern is referenced, not copied; undo belongs to its author; what stays out of the document |
 | `wasm-build.md` | `crates/*/build.rs`, `.cargo/config.toml`, `Trunk.toml`, `web/` | `+atomics` is not shared memory; fixed memory against growing; `build-std` against `cargo miri`; and the rest of the build configuration |
 | `licenses.md` | `Cargo.toml`, `deny.toml` | No whole-program copyleft, ever |
 | `checks.md` | `tools/`, `.github/workflows/` | What Miri, Loom and the two mutation runs cost, and why they are shaped that way |
@@ -117,7 +117,7 @@ understand before editing:
 | Thread | Crate | Responsibility |
 |---|---|---|
 | RT (AudioWorklet) | `core`, `worklet` | Audio graph, DSP, mixer, sample playback, stretch synthesis |
-| Model | `model` | CRDT project document (Loro), undo/redo, sequencer, automation |
+| Model | `model` | CRDT project document (Yrs), undo/redo, sequencer, automation |
 | Workers | — | Disk streaming, decoding, waveform peaks, warp analysis |
 | UI | `app`, `render` | Leptos panels; WebGL2 canvas for playlist and piano roll |
 | RT **and** UI | `protocol` | The shared region itself — header, command ring, state block. The one crate linked into both wasm modules, so both ends decode what the other encoded (§3) |
@@ -132,9 +132,11 @@ The model thread publishes an immutable snapshot to the audio thread via double
 buffering, so the RT thread never waits and never reads mutating structures.
 
 **Multiplayer is the product's axis of differentiation**, not a feature. The project
-model is a CRDT from day one; the network layer comes later. Loro was chosen for
-explicit movable lists — reordering tracks concurrently under a naive list CRDT
-duplicates or loses them.
+model is a CRDT from day one; the network layer comes later. Yrs was chosen over
+Loro on weight, licensing and a format with more than one implementation (§2.4,
+2026-09-07). It has no move operation, so **order is a rank inside the entity and
+no list in the document holds one** — reordering by delete-plus-insert duplicates
+entities and silently drops concurrent edits to them.
 
 The sync service (relay, asset storage, accounts) is **not in this repository** and
 is closed source; the engine is open.
@@ -142,7 +144,7 @@ is closed source; the engine is open.
 ## Work order
 
 Four vertical slices, each closing one risk (`ARCHITECTURE.md` §7): audio path →
-CRDT on Loro → patterns → warp. Slices 1 and 2 can run in parallel. The pattern
+CRDT on Yrs → patterns → warp. Slices 1 and 2 can run in parallel. The pattern
 model outranks warping because patterns are the product's identity.
 
 ## Branches
