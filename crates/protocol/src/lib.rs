@@ -81,12 +81,15 @@ pub const MAGIC: u32 = 0x4553_4350;
 /// that into a message instead of a silent misread.
 pub const VERSION: u32 = 2;
 
-/// A region is a control block, not a heap.
+/// The ceiling on a region, and what keeps every offset read out of a header
+/// inside 32-bit arithmetic: `usize` is 32 bits on the target, and a base of
+/// `u32::MAX` would overflow the first sum it takes part in. A host test cannot
+/// catch that — there `usize` is 64 bits and the same sum simply fits.
 ///
-/// The ceiling is what keeps every offset read out of a header inside 32-bit
-/// arithmetic: `usize` is 32 bits on the target, and a base of `u32::MAX` would
-/// overflow the first sum it takes part in. A host test cannot catch that — there
-/// `usize` is 64 bits and the same sum simply fits.
+/// A region is not a heap, which is a different claim from a region being
+/// small: [`audio`] is megabytes of one, and nothing allocates in there either.
+/// Every section is sized once, at build time, by the side that owns the
+/// memory. What this ceiling protects is the arithmetic.
 pub const MAX_REGION_WORDS: usize = 1 << 24;
 
 /// Words reserved for the header. Generous on purpose: it is described by

@@ -23,10 +23,16 @@ watches a meter — the commands crossing a ring in that memory, the meter read
 back out of a state block sixty times a second rather than sent. One
 `postMessage` in the life of the page, and it is the handshake.
 
+It also plays a file. One dropped on the page is decoded there, written into
+the worklet's own memory — a section of the same region, because §3 keeps data
+out of the ring — and named by one command; the engine plays those frames
+instead of the oscillator. There is no clip yet, because there is no position
+for one to sit at.
+
 That closes slice 1's risk. What is written beyond it is the model's vocabulary
 — musical time as a type, and the project entities as plain structs with no CRDT
-underneath them yet (§2.5, §2.6). Clips, the mixer and the document itself are
-still to come.
+underneath them yet (§2.5, §2.6). The timeline, the mixer, WAV export and the
+document itself are still to come.
 
 ## Layout
 
