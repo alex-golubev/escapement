@@ -39,6 +39,14 @@
 </div>
 
 <div class="row">
+    <label>audio file <input id="file" type="file" accept="audio/*" disabled/></label>
+    <p>Decoded on this page and copied into the worklet's own memory, then named
+        by one command through the ring. The frames never travel as a message:
+        §3 keeps data out of the ring, so what crosses is where they already
+        are. With none loaded the engine is the oscillator below.</p>
+</div>
+
+<div class="row">
     <label>frequency <input id="hz" type="range" min="55" max="1760" step="1" value="440" disabled/> <span id="hz-value">440 Hz</span></label>
     <label>gain <input id="gain" type="range" min="0" max="100" step="1" value="20" disabled/> <span id="gain-value">0.20</span></label>
 </div>
@@ -70,13 +78,20 @@
     const halt = document.getElementById("halt");
     const hz = document.getElementById("hz");
     const gain = document.getElementById("gain");
+    const file = document.getElementById("file");
+
+    // Both kept past the handler that makes them: the file picker below needs
+    // the context to decode at the engine's rate, and the memory to write the
+    // frames into. The typed array it builds is not the view the protocol uses.
+    let ctx = null;
+    let memory = null;
 
     audio.onclick = async () => {
         audio.disabled = true;
         try {
             // Only startable from a gesture, which is why the interface lives
             // for a while with commands queued and nowhere to put them (§3).
-            const ctx = new AudioContext();
+            ctx = new AudioContext();
             say(`AudioContext sampleRate = ${ctx.sampleRate}`);
 
             const bytes = await fetch("escapement_worklet.wasm").then((r) => r.arrayBuffer());
@@ -99,8 +114,10 @@
                     say("handshake refused: " + error);
                     return;
                 }
+                memory = data.buffer;
                 say(`connected — region at byte ${data.region}, quantum ${data.quantum}`);
-                for (const control of [play, halt, hz, gain]) control.disabled = false;
+                say(`audio buffer — ${engine.audio_length() / 1048576} MiB at byte ${engine.audio_offset()}`);
+                for (const control of [play, halt, hz, gain, file]) control.disabled = false;
             };
 
             node.connect(ctx.destination);
@@ -108,6 +125,44 @@
             say("FAILED: " + error);
             audio.disabled = false;
         }
+    };
+
+    file.onchange = async () => {
+        const chosen = file.files[0];
+        if (!chosen || memory === null) return;
+
+        let decoded;
+        try {
+            // On the context, so it comes back at the rate the worklet was
+            // built with — there is no resampling in the engine, and until
+            // slice 4 warps a clip there is nothing that would do it.
+            decoded = await ctx.decodeAudioData(await chosen.arrayBuffer());
+        } catch (error) {
+            say("could not decode that: " + error);
+            return;
+        }
+
+        const channels = decoded.numberOfChannels;
+        const room = engine.audio_length() / 4;
+        const frames = Math.min(decoded.length, Math.floor(room / channels));
+        if (frames < decoded.length) {
+            say(`trimmed to ${frames} of ${decoded.length} frames — the buffer holds ${room} words`);
+        }
+
+        // Interleaved on the way in, because that is how the engine reads a
+        // frame: one addition per sample rather than one per channel.
+        const buffer = new Float32Array(memory, engine.audio_offset(), room);
+        for (let channel = 0; channel < channels; channel += 1) {
+            const side = decoded.getChannelData(channel);
+            for (let frame = 0; frame < frames; frame += 1) {
+                buffer[frame * channels + channel] = side[frame];
+            }
+        }
+
+        // Last, and that is the whole ordering: the frames are already there,
+        // and the ring's release is what carries them to the other thread (§3).
+        engine.use_audio(0, frames, channels);
+        say(`${chosen.name} — ${frames} frames, ${channels} channels, ${(frames / decoded.sampleRate).toFixed(2)} s`);
     };
 
     play.onclick = () => engine.start();

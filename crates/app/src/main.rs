@@ -71,6 +71,46 @@ pub fn set_gain(gain: f32) {
     send(CommandKind::SetGain(gain));
 }
 
+/// Where the audio buffer starts in the worklet's `memory.buffer`, in bytes,
+/// and how many bytes it holds. `undefined` before the handshake.
+///
+/// The page builds a `Float32Array` on those two and writes the frames in
+/// itself. That is deliberate and not a shortcut: what publishes them is
+/// [`use_audio`], which goes through the ring afterwards, so the copy needs no
+/// ordering of its own (ARCHITECTURE.md §3).
+#[wasm_bindgen]
+#[must_use]
+pub fn audio_offset() -> Option<u32> {
+    LINK.with_borrow(|link| {
+        link.audio_byte_offset()
+            .and_then(|at| u32::try_from(at).ok())
+    })
+}
+
+/// See [`audio_offset`].
+#[wasm_bindgen]
+#[must_use]
+pub fn audio_length() -> Option<u32> {
+    LINK.with_borrow(|link| {
+        link.audio_byte_length()
+            .and_then(|len| u32::try_from(len).ok())
+    })
+}
+
+/// Tells the engine what the page has just written into that buffer:
+/// `frames` frames of `channels` channels, interleaved, `offset` words in.
+///
+/// The frames have to be there first. A descriptor naming more than the buffer
+/// holds is refused by the engine, which leaves it on the oscillator.
+#[wasm_bindgen]
+pub fn use_audio(offset: u32, frames: u32, channels: u32) {
+    send(CommandKind::Audio {
+        offset,
+        frames,
+        channels,
+    });
+}
+
 /// Once a frame: sends what has been waiting, and reads back what the engine
 /// says about itself.
 ///
@@ -194,7 +234,7 @@ mod wiring {
     /// into whatever the first one left behind.
     #[wasm_bindgen_test]
     fn the_exports_reach_the_region_and_back() {
-        const LAYOUT: Layout = Layout::new(8);
+        const LAYOUT: Layout = Layout::new(8, 64);
         let buffer: JsValue = SharedArrayBuffer::new((LAYOUT.words() * 4) as u32).into();
         let cells = View::new(&buffer, 0).expect("a shared buffer at zero");
         LAYOUT.write_header(&cells);
