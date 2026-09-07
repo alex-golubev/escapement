@@ -19,9 +19,9 @@ and §2.5 names what shuts the door on them: the first saved project.
   2026-09-07). Yrs has no move operation, so a list would be reordered by
   deleting and re-inserting; the entity is a map of registers, the insert builds
   a *new* map, and whatever somebody else was writing to the old one lands on a
-  tombstone. Measured: 432 of 3474 edits gone over 2000 random rounds — and both
-  replicas agreed on every one, so a convergence test passes while the document
-  is wrong. Reaching for a list gives this up while still compiling.
+  tombstone. **Both replicas converge on that**, so a convergence property — the
+  first thing anyone writes here — passes while the document is wrong. Reaching
+  for a list gives this up while still compiling; §2.6 has how often, measured.
 - **A rank is compared, never parsed.** It is an opaque type like `Position` and
   the identity, its ordering *is* its meaning, and reading it as a number invents
   an arithmetic the merge does not have. Minting one needs a key strictly between
@@ -41,11 +41,11 @@ and §2.5 names what shuts the door on them: the first saved project.
   that does exist is a send between inserts, and it brings the cycle with it.
 - **An entity is a map of registers, one per field, never one value** (§2.6).
   Two people change different fields of one channel far more often than they
-  change the same one, and a whole-entity value keeps only the later writer.
-  Measured: registers cost 1.6x the saved document and a little over twice the
-  memory, and 2.6x *less* traffic while a curve is drawn. How often the
-  document is committed does not reach the wire at all, so the rate the
-  interface draws at is nobody else's business.
+  change the same one, and a whole-entity value keeps only the later writer —
+  silently, and in a field nobody was arguing over. What registers cost against
+  that was measured and accepted in §2.6. How often the document is committed
+  does not reach the wire at all, so the rate the interface draws at is nobody
+  else's business.
 - **A rank only where the order is the data; nothing but identity everywhere
   else** (§2.6). Lanes, channels and inserts were arranged by a person and carry
   a rank. Clips, notes and automation points have a position instead, and a rank

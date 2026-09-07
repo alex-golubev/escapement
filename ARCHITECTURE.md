@@ -29,8 +29,9 @@ cosmetic detail — FL differs from Ableton in the *shape of its data*, and that
 shapes the project model (§2.6). The product's identity is **patterns, the step
 sequencer, the piano roll and the playlist**, not warping.
 
-But there are **six decisions that must be made before the first line of code** —
-none of them can be replayed after the fact (see §2).
+Six decisions had to be made before the first line of code, because none of them
+can be replayed after the fact. All six are taken; §2 holds them and §8 says
+which two remain recommendations rather than decisions.
 
 Native Web Audio nodes (`BiquadFilterNode`, `GainNode` and friends) are useless
 for a DAW:
@@ -1550,8 +1551,10 @@ project model on which every other slice stands.
 Risk 3 appeared after §2.6 and **also overtook warping**: patterns are the
 product's identity, warping is a supporting function (§5).
 
-> **The CRDT library must be chosen before slice 1 writes the project model.**
-> The network can come later; the shape of the data cannot.
+> **The CRDT library had to be chosen before the project model was written.**
+> The network can come later; the shape of the data cannot. Chosen twice, in the
+> end: Loro in §2.4 on the movable list, then Yrs once §2.6 had shrunk what the
+> movable list was for — and both times before the model held a document.
 
 ### Slice 1 — the audio path
 

@@ -35,10 +35,10 @@ paths:
   `#[cfg(test)]` as test code, so written as `#[cfg(all(test, not(loom)))]` it
   mutates modules an ordinary build never compiles — `access/loom.rs`,
   `access/testing.rs`, `interleavings.rs` — and reports those mutants as
-  surviving. Measured on cargo-mutants 27.1.0: 147 mutants becomes 182. There is no option for it — `--exclude` matches files and
-  `--exclude-re` mutant names, neither knows about `cfg` — and the collapsed
-  form compiles and passes CI, so nothing but this note is in the way of
-  tidying it up.
+  surviving. Measured on cargo-mutants 27.1.0: 147 mutants becomes 182. There is
+  no option for it — `--exclude` matches files and `--exclude-re` mutant names,
+  neither knows about `cfg` — and the collapsed form compiles and passes CI, so
+  nothing but this note is in the way of tidying it up.
 - **A throw out of `Atomics` does not unwind.** `unwrap_throw` on a failed
   `Atomics` call throws into JavaScript, and a JS exception crossing wasm frames
   runs no destructors — a `RefCell` borrow open at the time is never given back,

@@ -32,10 +32,13 @@ requests need nothing further.
 
 ## Dependency licenses
 
-Every new dependency gets its license checked. **GPL and AGPL are refused, with
-no exceptions.** The reason is in the README.
+Every new dependency gets its license checked, and CI is what checks it. **GPL,
+AGPL and SSPL are refused, with no exceptions** — the reason is in the README.
 
-Permissive licenses (MIT, Apache-2.0, BSD, ISC, MPL-2.0) are fine.
+The list that decides is `deny.toml`, and it is the only copy: a second list in
+prose drifts from it silently. It also carries the bar for adding to it, which
+differs by category — file-level copyleft such as MPL-2.0 is admissible but
+costs an attribution page, so it is added deliberately rather than in passing.
 
 ## Crate discipline
 

@@ -4,9 +4,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Read ARCHITECTURE.md first
 
-This repo is currently a **skeleton with no implementation**. Nearly all of its
-substance lives in `ARCHITECTURE.md` (~1000 lines): the decisions, the reasoning,
-and — importantly — which decisions are irreversible.
+Slice 1's audio path runs and the project entities are written; everything else
+is still ahead. Most of this repository's substance is not in the code but in
+`ARCHITECTURE.md` (~1700 lines): the decisions, the reasoning, and — importantly
+— which decisions are irreversible.
 
 Several choices are explicitly one-way doors (CRDT-shaped project model, FL-shaped
 entities, musical time, RT-safe engine). Making a design choice here without
@@ -161,5 +162,7 @@ the meaning — `chore/wasm-shared-memory`, not `chore/build-fixes`.
 
 ## Contributions
 
-External changes require a signed CLA, and the CLA bot is **not set up yet** — see
-`CONTRIBUTING.md`. Until it is, external PRs cannot be accepted.
+External changes require a signed CLA. The procedure is manual and works —
+`CONTRIBUTING.md` has it, and the agreement is `CLA.md` — but **the bot that
+would check it is not set up**, so nothing stops an unsigned pull request from
+being merged except somebody looking. Until it exists, that somebody has to.

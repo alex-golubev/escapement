@@ -12,7 +12,7 @@ Architectural decisions and the reasoning behind them live in
 
 ## Status
 
-Early development. There is no application yet — the first vertical slice
+Early development. There is no DAW yet — the first vertical slice
 (ARCHITECTURE.md §7) is under way. A Rust graph renders quanta inside an
 `AudioWorklet`, out of a wasm module whose linear memory is shared with the page
 and carries the command ring and the state block, which is what closed the
@@ -23,8 +23,10 @@ watches a meter — the commands crossing a ring in that memory, the meter read
 back out of a state block sixty times a second rather than sent. One
 `postMessage` in the life of the page, and it is the handshake.
 
-That closes slice 1's risk. Everything below it — clips, the mixer, the model —
-is still to be written.
+That closes slice 1's risk. What is written beyond it is the model's vocabulary
+— musical time as a type, and the project entities as plain structs with no CRDT
+underneath them yet (§2.5, §2.6). Clips, the mixer and the document itself are
+still to come.
 
 ## Layout
 
@@ -32,7 +34,7 @@ is still to be written.
 |---|---|
 | `crates/core` | Audio core: graph, nodes, mixer, DSP. **Real-time safe, no allocation** |
 | `crates/time` | Musical time: a position in ticks, the tempo and bar maps, and the one place a sample rate multiplies anything. **`no_std`, no allocation, read on either thread** |
-| `crates/model` | Project model: entities, musical time, CRDT document |
+| `crates/model` | Project model: the entities, and the CRDT document they will live in |
 | `crates/protocol` | What the two wasm modules say to each other through shared memory. **`no_std`, compiled into both** |
 | `crates/view` | The same region reached from outside it, through `Atomics`. **The half that needs JavaScript, kept where the worklet cannot link it** |
 | `crates/worklet` | wasm module for `AudioWorklet` |
@@ -116,9 +118,11 @@ most people as the opposite of what it is.
 
 Two rules follow:
 
-1. **Permissively licensed dependencies only.** Never GPL: shipping a wasm bundle
-   to the browser is distribution of the program, so a GPL dependency would force
-   the entire product to be released under the GPL.
+1. **Never whole-program copyleft.** Shipping a wasm bundle to the browser is
+   distribution of the program, so a GPL, AGPL or SSPL dependency would force the
+   entire product to be released under it. File-level copyleft is a separate
+   category and is admissible at the cost of an attribution page; `deny.toml` is
+   the list that decides, and CI checks it.
 2. **Contributions require a signed CLA.** The contributor keeps copyright and
    grants the project a broad, irrevocable, sublicensable licence — that is what
    keeps relicensing possible later. See [CONTRIBUTING.md](CONTRIBUTING.md).
