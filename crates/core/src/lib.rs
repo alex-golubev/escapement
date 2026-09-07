@@ -17,9 +17,11 @@ extern crate std;
 mod fixtures;
 
 mod engine;
+mod player;
 mod sine;
 
 pub use engine::Engine;
+pub use player::{Player, Samples};
 pub use sine::Sine;
 
 /// Render quantum fixed by the Web Audio spec. Internal block sizes are multiples

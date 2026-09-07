@@ -22,8 +22,12 @@ use core::sync::atomic::AtomicU32;
 use escapement_core::RENDER_QUANTUM;
 use escapement_protocol::Pointers;
 
+#[cfg(test)]
+mod fixtures;
+
 mod module;
 mod processor;
+mod samples;
 
 use module::Module;
 use processor::LAYOUT;
@@ -75,7 +79,7 @@ pub extern "C" fn escapement_init(sample_rate_hz: f32) {
     let cells = unsafe { Pointers::new(REGION.as_ptr(), REGION.len()) };
 
     // SAFETY: see `SingleThreaded`.
-    unsafe { (*MODULE.0.get()).init(cells, sample_rate_hz) };
+    unsafe { (*MODULE.0.get()).init(cells, LAYOUT, sample_rate_hz) };
 }
 
 /// Where the shared region starts, as an offset into `memory.buffer`. Stable

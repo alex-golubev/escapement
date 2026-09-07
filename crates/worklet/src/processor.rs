@@ -8,9 +8,11 @@
 
 use escapement_core::Engine;
 use escapement_protocol::{
-    Command, CommandKind, Consumer, EngineState, Layout, Pointers, Publisher,
+    AudioLayout, Command, CommandKind, Consumer, EngineState, Layout, Pointers, Publisher,
 };
 use escapement_time::SampleRate;
+
+use crate::samples::Published;
 
 /// Slots in the command ring.
 ///
@@ -19,10 +21,20 @@ use escapement_time::SampleRate;
 /// that fills it. 256 slots is 8 KiB of a 32 MiB memory.
 pub(crate) const COMMAND_SLOTS: u32 = 256;
 
-/// Where the header, the ring and the state block sit. `const`, so a capacity
-/// that is not a power of two is a compile error rather than a panic on the
-/// audio thread.
-pub(crate) const LAYOUT: Layout = Layout::new(COMMAND_SLOTS);
+/// Words in the audio buffer: 4 MiB of a 32 MiB memory, which at 48 kHz holds
+/// about eleven seconds of stereo or twice that in mono.
+///
+/// A loop rather than a song, and deliberately: this buffer is slice 1 standing
+/// in for streaming, and what replaces it reads from OPFS through a worker (§5)
+/// instead of holding the whole of anything. Sized here rather than in the
+/// protocol because it is a fact about this module's memory — the protocol
+/// describes whatever it is told, and the header is what tells the other side.
+pub(crate) const AUDIO_WORDS: usize = 1 << 20;
+
+/// Where the header, the ring, the state block and the frames sit. `const`, so
+/// a capacity that is not a power of two, or a region above the protocol's
+/// ceiling, is a compile error rather than a panic on the audio thread.
+pub(crate) const LAYOUT: Layout = Layout::new(COMMAND_SLOTS, AUDIO_WORDS);
 
 /// Commands applied per quantum.
 ///
@@ -42,6 +54,14 @@ pub(crate) struct Processor {
     engine: Engine,
     commands: Consumer<Pointers, Command>,
     state: Publisher<Pointers>,
+    /// Kept as well as handed to the two above, because a descriptor names a
+    /// place in this memory and the frames have to be read from somewhere.
+    cells: Pointers,
+    /// Where in it. The ceiling a descriptor is checked against.
+    audio: AudioLayout,
+    /// What the interface last published, or nothing it could publish. `None`
+    /// leaves the engine on the oscillator (`escapement-core`).
+    samples: Option<Published<Pointers>>,
     quanta: u64,
     applied: u32,
     unknown: u32,
@@ -49,17 +69,25 @@ pub(crate) struct Processor {
 
 impl Processor {
     /// Writes the header into `cells`, which must be a region of at least
-    /// [`LAYOUT`]`.words()` words that nothing else has touched.
+    /// `layout.words()` words that nothing else has touched.
     ///
     /// Nothing may read the region until this returns: the magic goes down last
     /// and with release ordering, and it is what the other side waits for.
-    pub(crate) fn new(cells: Pointers, rate: SampleRate) -> Self {
-        LAYOUT.write_header(&cells);
+    ///
+    /// The layout is handed in rather than reached for, which is the same
+    /// argument as the memory it describes. What ships is [`LAYOUT`]; a test
+    /// that had to allocate one of those would be allocating four megabytes of
+    /// atomics per test, and Miri would then walk them one at a time.
+    pub(crate) fn new(cells: Pointers, layout: Layout, rate: SampleRate) -> Self {
+        layout.write_header(&cells);
 
         Self {
             engine: Engine::new(rate),
-            commands: Consumer::new(cells, LAYOUT.commands()),
-            state: Publisher::new(cells, LAYOUT.state()),
+            commands: Consumer::new(cells, layout.commands()),
+            state: Publisher::new(cells, layout.state()),
+            audio: layout.audio(),
+            cells,
+            samples: None,
             quanta: 0,
             applied: 0,
             unknown: 0,
@@ -76,7 +104,7 @@ impl Processor {
     /// which is telemetry disagreeing with itself.
     pub(crate) fn process(&mut self, out: &mut [f32]) {
         self.take_commands();
-        self.engine.process(out);
+        self.engine.process(self.samples.as_ref(), out);
         self.quanta = self.quanta.wrapping_add(1);
 
         self.state.publish(&EngineState {
@@ -110,6 +138,16 @@ impl Processor {
             CommandKind::Stop => self.engine.stop(),
             CommandKind::SetFrequency(hz) => self.engine.set_frequency(hz),
             CommandKind::SetGain(gain) => self.engine.set_gain(gain),
+            // A descriptor the buffer cannot hold leaves `None` here, which is
+            // the oscillator rather than a refusal with nowhere to go. It is
+            // audible, which is the most this side can offer.
+            CommandKind::Audio {
+                offset,
+                frames,
+                channels,
+            } => {
+                self.samples = Published::new(self.cells, self.audio, offset, frames, channels);
+            }
             // Counted rather than refused: the two halves have parted company,
             // and the interface is the only side that can do anything about it.
             CommandKind::Unknown(_) => self.unknown = self.unknown.wrapping_add(1),
@@ -137,9 +175,12 @@ mod tests {
     use core::sync::atomic::AtomicU32;
 
     use escapement_core::RENDER_QUANTUM;
-    use escapement_protocol::{Full, Producer, Subscriber};
+    use escapement_protocol::{Cells, Full, Producer, Subscriber};
 
     use super::*;
+    // Explicit, so it wins over the glob above: `super` has the layout that
+    // ships, and every test here wants the one a region can be allocated of.
+    use crate::fixtures::{cells, words, LAYOUT};
 
     fn rate() -> SampleRate {
         SampleRate::new(48_000.0).expect("48 kHz is a rate")
@@ -152,31 +193,19 @@ mod tests {
         processor: Processor,
         interface: Producer<Pointers, Command>,
         watcher: Subscriber<Pointers>,
+        /// The region itself, for the one thing that does not go through the
+        /// ring: the page writes frames straight into the buffer.
+        cells: Pointers,
         /// `Pointers` carries no lifetime — it cannot, the worklet's region
         /// outlives everything — so this is what keeps the borrow checker
         /// holding the words still for as long as the probe can reach them.
         region: PhantomData<&'a [AtomicU32]>,
     }
 
-    /// The words a region sits in. Held by the test rather than by [`Probe`],
-    /// and lent to it: a `Box` moved after its pointer was taken is no longer
-    /// at the address that pointer holds, which Miri named as undefined
-    /// behaviour on the first run of this file. Leaking it instead trades that
-    /// for a leak Miri also reports, so the borrow is the answer — and it is
-    /// what the worklet has too, where the region is a `static` that outlives
-    /// everything reaching it.
-    fn words() -> Box<[AtomicU32]> {
-        (0..LAYOUT.words()).map(|_| AtomicU32::new(0)).collect()
-    }
-
     impl<'a> Probe<'a> {
         fn new(words: &'a [AtomicU32]) -> Self {
-            // SAFETY: `words` is exactly `len` initialized, aligned cells, and
-            // the lifetime on `Self` is what keeps them alive and unmoved for
-            // as long as this value can reach them.
-            let cells = unsafe { Pointers::new(words.as_ptr(), words.len()) };
-
-            let processor = Processor::new(cells, rate());
+            let cells = cells(words);
+            let processor = Processor::new(cells, LAYOUT, rate());
 
             // Through the header rather than through `LAYOUT`, because that is
             // what the other side has: it is handed an address and reads the
@@ -187,12 +216,29 @@ mod tests {
                 processor,
                 interface: Producer::new(cells, seen.commands()),
                 watcher: Subscriber::new(cells, seen.state()),
+                cells,
                 region: PhantomData,
             }
         }
 
         fn send(&mut self, kind: CommandKind) -> Result<(), Full> {
             self.interface.push(&Command::now(kind))
+        }
+
+        /// Puts frames in the buffer and then names them, in that order,
+        /// which is the order the page does it in and the whole of what makes
+        /// the ring's release enough (§3).
+        fn publish(&mut self, samples: &[f32], channels: u32) -> Result<(), Full> {
+            let base = LAYOUT.audio().base();
+            for (word, sample) in samples.iter().enumerate() {
+                self.cells.store_relaxed(base + word, sample.to_bits());
+            }
+
+            self.send(CommandKind::Audio {
+                offset: 0,
+                frames: samples.len() as u32 / channels,
+                channels,
+            })
         }
 
         fn quantum(&mut self) -> [f32; RENDER_QUANTUM] {
@@ -212,10 +258,9 @@ mod tests {
     #[test]
     fn the_header_the_worklet_writes_is_the_one_the_other_side_reads() {
         let words = words();
-        // SAFETY: as in `Probe::new`; `words` outlives this scope's use of it.
-        let cells = unsafe { Pointers::new(words.as_ptr(), words.len()) };
+        let cells = cells(&words);
 
-        let _processor = Processor::new(cells, rate());
+        let _processor = Processor::new(cells, LAYOUT, rate());
 
         assert_eq!(Layout::read_header(&cells), Ok(LAYOUT));
     }
@@ -345,5 +390,50 @@ mod tests {
         let state = probe.state();
         assert_eq!(state.clock, 1024);
         assert_eq!(state.quanta, 1);
+    }
+
+    /// The frames travel as data in a place of their own and only their
+    /// description goes through the ring, which is §3's rule about what a ring
+    /// carries. What this asks is whether the engine finds them where it was
+    /// told they were.
+    #[test]
+    fn frames_written_into_the_buffer_are_what_is_heard() {
+        let words = words();
+        let mut probe = Probe::new(&words);
+
+        probe
+            .send(CommandKind::SetGain(1.0))
+            .expect("an empty ring");
+        probe.send(CommandKind::Start).expect("an empty ring");
+        probe.publish(&[0.5; 8], 1).expect("an empty ring");
+
+        let block = probe.quantum();
+        assert_eq!(block[..8], [0.5; 8], "the frames were not found");
+        assert_eq!(peak(&block[8..]), 0.0, "the source ran past its end");
+    }
+
+    /// A descriptor crosses a memory the interface also writes to, so one
+    /// naming more than the buffer holds is a shape this side has to answer
+    /// for. It answers by refusing it, which leaves the oscillator playing —
+    /// and the point of the test is that the answer is not a read outside the
+    /// region.
+    #[test]
+    fn a_descriptor_larger_than_the_buffer_is_refused() {
+        let words = words();
+        let mut probe = Probe::new(&words);
+
+        probe.send(CommandKind::Start).expect("an empty ring");
+        probe
+            .send(CommandKind::Audio {
+                offset: 0,
+                frames: u32::MAX,
+                channels: 2,
+            })
+            .expect("an empty ring");
+
+        assert!(
+            peak(&probe.quantum()) > 0.0,
+            "the engine went silent rather than staying on the oscillator"
+        );
     }
 }
