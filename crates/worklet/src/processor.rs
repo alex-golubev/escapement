@@ -31,6 +31,17 @@ pub(crate) const COMMAND_SLOTS: u32 = 256;
 /// describes whatever it is told, and the header is what tells the other side.
 pub(crate) const AUDIO_WORDS: usize = 1 << 20;
 
+// A second of stereo at 48 kHz, which is the least this is worth having at.
+// Here rather than in a test because every test builds its region from the
+// fixtures' layout instead, so nothing over there would notice a buffer of no
+// words at all — a region that still builds, a header that still reads back,
+// and an engine that can never be given a frame.
+//
+// No ceiling beside it: `build.rs` links the memory and
+// `tools/check-shared-memory.py` reads it back, and a copy of that number here
+// would be a second thing to keep true.
+const _: () = assert!(AUDIO_WORDS >= 48_000 * 2);
+
 /// Where the header, the ring, the state block and the frames sit. `const`, so
 /// a capacity that is not a power of two, or a region above the protocol's
 /// ceiling, is a compile error rather than a panic on the audio thread.

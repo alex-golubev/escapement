@@ -84,3 +84,97 @@ impl<C: Cells> Samples for Published<C> {
         )
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use escapement_protocol::{Cells, Pointers};
+
+    use super::*;
+    use crate::fixtures::{cells, words, LAYOUT};
+
+    /// Puts `values` at the start of the audio buffer, the way the page does.
+    fn written(cells: Pointers, values: &[f32]) {
+        let base = LAYOUT.audio().base();
+        for (word, value) in values.iter().enumerate() {
+            cells.store_relaxed(base + word, value.to_bits());
+        }
+    }
+
+    /// Interleaved: the channels of one frame are neighbours, and one channel
+    /// of two frames is a stride apart. Every value differs from every other,
+    /// so a mistake in that arithmetic reads back some other sample rather than
+    /// the one it wanted.
+    #[test]
+    fn a_frame_holds_its_channels_side_by_side() {
+        let region = words();
+        let cells = cells(&region);
+        written(cells, &[1.0, 2.0, 3.0, 4.0]);
+
+        let published =
+            Published::new(cells, LAYOUT.audio(), 0, 2, 2).expect("two stereo frames fit");
+
+        assert_eq!(published.frames(), 2);
+        assert_eq!(published.channels(), 2);
+        assert_eq!(published.sample(0, 0), 1.0);
+        assert_eq!(published.sample(0, 1), 2.0);
+        assert_eq!(published.sample(1, 0), 3.0);
+        assert_eq!(published.sample(1, 1), 4.0);
+    }
+
+    /// The offset is words into the buffer and not frames, which is what lets
+    /// a second source sit behind the first.
+    #[test]
+    fn an_offset_is_counted_in_words() {
+        let region = words();
+        let cells = cells(&region);
+        written(cells, &[1.0, 2.0, 3.0]);
+
+        let published = Published::new(cells, LAYOUT.audio(), 2, 1, 1).expect("one frame fits");
+
+        assert_eq!(published.sample(0, 0), 3.0);
+    }
+
+    /// Silence rather than a read outside the region — and both indices,
+    /// because a guard on either one alone would let the other through.
+    #[test]
+    fn an_index_outside_the_source_is_silence() {
+        let region = words();
+        let cells = cells(&region);
+        written(cells, &[1.0, 2.0]);
+
+        let published = Published::new(cells, LAYOUT.audio(), 0, 2, 1).expect("two frames fit");
+
+        assert_eq!(published.sample(0, 0), 1.0);
+        assert_eq!(published.sample(2, 0), 0.0, "a frame past the end");
+        assert_eq!(published.sample(0, 1), 0.0, "a channel that is not there");
+    }
+
+    /// A descriptor crosses a memory the interface writes to as well, so each
+    /// of these arrives as an ordinary afternoon rather than as an attack. Two
+    /// of them overflow the arithmetic that would otherwise have caught them,
+    /// which is why the sum and the product are both checked.
+    #[test]
+    fn a_descriptor_the_buffer_cannot_hold_is_refused() {
+        let region = words();
+        let cells = cells(&region);
+        let audio = LAYOUT.audio();
+        let room = u32::try_from(audio.words()).expect("a test buffer");
+
+        assert!(
+            Published::new(cells, audio, 0, u32::MAX, u32::MAX).is_none(),
+            "the product of the two overflows"
+        );
+        assert!(
+            Published::new(cells, audio, u32::MAX, 1, 1).is_none(),
+            "the offset overflows the sum"
+        );
+        assert!(
+            Published::new(cells, audio, 0, room, 2).is_none(),
+            "twice the room the buffer has"
+        );
+        assert!(
+            Published::new(cells, audio, 0, room, 1).is_some(),
+            "exactly the room the buffer has"
+        );
+    }
+}

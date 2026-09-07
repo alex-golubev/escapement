@@ -104,6 +104,25 @@ mod tests {
     use super::*;
     use crate::fixtures::Recorded;
 
+    /// A source saying it has frames and no channels — which [`Recorded`]
+    /// cannot spell, and a descriptor arriving from the other side of the
+    /// region can.
+    struct Malformed;
+
+    impl Samples for Malformed {
+        fn frames(&self) -> usize {
+            4
+        }
+
+        fn channels(&self) -> usize {
+            0
+        }
+
+        fn sample(&self, _frame: usize, _channel: usize) -> f32 {
+            1.0
+        }
+    }
+
     #[test]
     fn plays_a_source_one_frame_at_a_time() {
         let mut player = Player::new();
@@ -137,6 +156,19 @@ mod tests {
         assert!(player.finished(&Recorded::new(&[0.1, 0.2], 1)));
     }
 
+    /// Asked of a source rather than remembered, so it answers about the
+    /// source it is given — a longer one has more to play even where the
+    /// player has not moved.
+    #[test]
+    fn a_player_partway_through_a_source_is_not_finished() {
+        let mut player = Player::new();
+        let mut out = [0.0f32; 2];
+        player.process(&Recorded::new(&[0.1, 0.2, 0.3, 0.4], 1), &mut out);
+
+        assert!(!player.finished(&Recorded::new(&[0.1, 0.2, 0.3, 0.4], 1)));
+        assert!(player.finished(&Recorded::new(&[0.1, 0.2], 1)));
+    }
+
     #[test]
     fn a_block_carries_on_where_the_last_one_stopped() {
         let source = Recorded::new(&[0.1, 0.2, 0.3, 0.4], 1);
@@ -159,11 +191,15 @@ mod tests {
     /// answer is silence, and the point of the test is that it is not an
     /// infinity: a frame divided by no channels at all is what would produce
     /// one.
+    ///
+    /// [`Malformed`] rather than a source of no samples, so that this stands
+    /// on the channel count alone — one with nothing in it has no frames left
+    /// either, and would be turned away by the other half of the same guard.
     #[test]
     fn a_source_of_no_channels_is_silent_rather_than_an_infinity() {
         let mut player = Player::new();
         let mut out = [0.9f32; 4];
-        player.process(&Recorded::new(&[0.1, 0.2], 0), &mut out);
+        player.process(&Malformed, &mut out);
 
         assert_eq!(out, [0.0; 4]);
     }

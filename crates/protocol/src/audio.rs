@@ -55,3 +55,21 @@ impl AudioLayout {
         self.base + self.words
     }
 }
+
+#[cfg(test)]
+#[cfg(not(loom))]
+mod tests {
+    use super::*;
+
+    /// A base and a size that are both non-zero and different from each other,
+    /// so that an end reached by any other arithmetic on the two lands
+    /// somewhere else rather than on the same answer.
+    #[test]
+    fn a_buffer_ends_a_size_after_its_base() {
+        let audio = AudioLayout::new(100, 7);
+
+        assert_eq!(audio.base(), 100);
+        assert_eq!(audio.words(), 7);
+        assert_eq!(audio.end(), 107);
+    }
+}
