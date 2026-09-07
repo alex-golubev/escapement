@@ -225,7 +225,8 @@ mod wiring {
     use super::*;
 
     /// The wiring, and only the wiring: that the exports reach the same `LINK`,
-    /// that what they queue leaves through it, and that what the engine
+    /// that what they queue leaves through it, that the two which answer with a
+    /// place in the region answer with the right one, and that what the engine
     /// publishes comes back.
     ///
     /// One test, and it cannot be joined by a second — the same reason the
@@ -241,10 +242,26 @@ mod wiring {
 
         connect(&buffer, 0).expect("a header is there");
 
+        // Where the page would build its `Float32Array`. Both are read out of
+        // the header rather than computed here twice, and both are far enough
+        // from zero and one that an export answering with a constant is not
+        // answering with these.
+        assert_eq!(
+            audio_offset(),
+            Some((LAYOUT.audio().base() * 4) as u32),
+            "the frames are not where the header puts them"
+        );
+        assert_eq!(
+            audio_length(),
+            Some((LAYOUT.audio().words() * 4) as u32),
+            "the buffer is not the size the header gives it"
+        );
+
         start();
         stop();
         set_frequency(880.0);
         set_gain(0.5);
+        use_audio(2, 3, 4);
         poll().expect("a state block, even an unwritten one");
 
         let mut engine = Consumer::<View, Command>::new(cells.clone(), LAYOUT.commands());
@@ -257,8 +274,13 @@ mod wiring {
                 CommandKind::Stop,
                 CommandKind::SetFrequency(880.0),
                 CommandKind::SetGain(0.5),
+                CommandKind::Audio {
+                    offset: 2,
+                    frames: 3,
+                    channels: 4,
+                },
             ],
-            "the four command exports do not reach the ring in order"
+            "the five command exports do not reach the ring in order"
         );
 
         let published = EngineState {
