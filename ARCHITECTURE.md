@@ -1103,7 +1103,9 @@ That is the argument at the top of this section run backwards.
 small.** Four MiB of frames is eleven seconds of stereo at 48 kHz, sized once at
 build time, with nothing allocating inside it. The `.bss` is what makes that
 cheap: the module carrying it grew by about 1.2 KB, and none of that is the
-buffer.
+buffer. Four MiB is what a stand-in needs rather than what the section is worth,
+though: the graph, voice pools and stretch buffers are preallocated in the same
+32 MiB, and the number to weigh this against arrives with the first of them.
 
 Nothing orders the frames against the read except the ring. They are written
 before the command that names them is pushed, so the release on its tail and the
@@ -1112,8 +1114,20 @@ with an ordinary typed-array copy rather than word by word through `Atomics`.
 
 **This is slice 1 standing in for streaming**, and it holds a loop rather than a
 song. What replaces it is OPFS by hash, read in a worker (§5) — at which point
-the section stays and what changes is who fills it, and how much of a file is in
-it at a time.
+the section stays and three things about it change. Two are easy to see: who
+fills it, and how much of a file is in it at a time.
+
+**The third is the paragraph above, and it does not survive.** Frames written
+once, whole, before the command that names them is what makes the ring's release
+enough — which is the whole of why this buffer has no counter of its own and why
+it is not a fourth mechanism. A worker streaming into it writes continuously, in
+pieces, into words that are being read while it writes, and there is no single
+command left to hang the ordering on: it needs a write cursor and a read cursor
+carrying releases and acquires of their own. That does not reopen "the ring
+carries control, never data" — a ring of frames is not the ring of commands — but
+it does mean the claim at the top of this section is about the traffic slice 1
+has rather than about the section. The counter deliberately left out is what
+streaming brings back.
 
 #### The header describes itself, and carries a version
 
