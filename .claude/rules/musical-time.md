@@ -12,8 +12,8 @@ paths:
   not stored anywhere.
 - **A position is one integer of ticks — never a pair, never a float** (§2.5).
   A rational is two numbers spelling one position, `(3,2)` and `(6,4)`, so two
-  people placing a note on the same beat write different values: the failure
-  §2.4 chose Loro to avoid. Normalizing on construction only turns it into an
+  people placing a note on the same beat write different values: the class of
+  failure §2.4 exists to avoid. Normalizing on construction only turns it into an
   invariant that must then survive serialization, the network and a client
   version not yet written. The resolution is generous for the same reason — a
   finer grid is reachable from a coarser one by multiplication, and a coarser one
@@ -70,7 +70,7 @@ paths:
   ticks, every audio clip is stretched by whatever the project tempo happens to
   be, and no stretching code exists to blame for it.
 - **What this closes is the document, not the type** (§2.5). Both shapes stay
-  revisitable until the first project is saved. Once Loro is underneath the
+  revisitable until the first project is saved. Once the CRDT is underneath the
   entities, changing either is a migration.
 - **A position converts to the sample it falls in — `floor`, never a cast**
   (§2.5). Sample *n* covers `[n/rate, (n+1)/rate)`, so which sample holds a

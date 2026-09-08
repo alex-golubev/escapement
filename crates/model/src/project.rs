@@ -2,9 +2,9 @@
 //!
 //! **Ordered where the order is the data, keyed everywhere else** (§2.6). The
 //! inserts, the channels and the lanes were arranged by a person, so they are
-//! held in the order they were arranged in — which is what Loro's movable list
-//! will be underneath, and the reason it was taken over Yrs (§2.4). Patterns,
-//! clips, curves and assets have no order at all; they are found by name.
+//! held in the order they were arranged in — which underneath is a rank each
+//! one carries, because the document holds no list at all (§2.6, 2026-09-07).
+//! Patterns, clips, curves and assets have no order; they are found by name.
 //!
 //! **The order is where they live, not a second list beside them.** An order
 //! kept apart from the entities is a second thing to keep true, and a merge
@@ -67,8 +67,8 @@ impl Version {
 /// Public fields and no methods, on purpose. A project has readers only, and a
 /// `with_clip` on it would be a way to change the document that is not the
 /// document — the second source of truth `model.md` exists to prevent. Filling
-/// this in is how the document layer projects Loro's state into a value, and
-/// how a test writes a project down.
+/// this in is how the document layer projects the CRDT's state into a value,
+/// and how a test writes a project down.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Parts {
     pub name: String,
