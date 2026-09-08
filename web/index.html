@@ -86,6 +86,16 @@
     let ctx = null;
     let memory = null;
 
+    // The buffer is used in halves, alternating. The engine reads the words the
+    // live descriptor names for as long as it plays them, so the only words a
+    // second file may go into are the ones it is not reading (§3). `sent` is
+    // the last publication this page handed out and `accepted` the last one the
+    // engine echoed back; while they differ, the half before the last one is
+    // still being read.
+    let half = 0;
+    let sent = 0;
+    let accepted = 0;
+
     audio.onclick = async () => {
         audio.disabled = true;
         try {
@@ -127,9 +137,33 @@
         }
     };
 
-    file.onchange = async () => {
-        const chosen = file.files[0];
-        if (!chosen || memory === null) return;
+    // Resolves once the engine has echoed `publication` back, which is when it
+    // has stopped reading the half the one before it named.
+    //
+    // Measured in frames rather than in milliseconds, because what carries a
+    // command out of this page and an echo back into it is the frame loop, and
+    // a page that is not being drawn runs neither — a hidden tab sends nothing
+    // (`.claude/rules/interface.md`). A clock would call that a broken engine;
+    // it is a tab nobody is looking at.
+    const echoed = (publication, frames = 30) => new Promise((resolve) => {
+        const look = () => {
+            if (accepted === publication) resolve(true);
+            else if (frames-- <= 0) resolve(false);
+            else requestAnimationFrame(look);
+        };
+        look();
+    });
+
+    const publish = async (chosen) => {
+        // Before the frames are written and not after they are published: the
+        // half about to be written is the one the publication before last
+        // named, and the engine is off it only once the echo says so. Waiting
+        // here also puts the wait where somebody is looking at the page,
+        // having just picked a file.
+        if (sent !== accepted && !(await echoed(sent))) {
+            say(`the engine is still on publication ${accepted} of ${sent} — not writing over what it is reading`);
+            return;
+        }
 
         let decoded;
         try {
@@ -144,9 +178,14 @@
 
         const channels = decoded.numberOfChannels;
         const room = engine.audio_length() / 4;
-        const frames = Math.min(decoded.length, Math.floor(room / channels));
+        // Half the buffer per publication, so a file is about five seconds of
+        // stereo rather than eleven. That is what the alternating costs, and a
+        // loop is what this buffer is for until streaming replaces it (§3).
+        const words = Math.floor(room / 2);
+        const at = half * words;
+        const frames = Math.min(decoded.length, Math.floor(words / channels));
         if (frames < decoded.length) {
-            say(`trimmed to ${frames} of ${decoded.length} frames — the buffer holds ${room} words`);
+            say(`trimmed to ${frames} of ${decoded.length} frames — half the buffer is ${words} words`);
         }
 
         // Interleaved on the way in, because that is how the engine reads a
@@ -155,14 +194,30 @@
         for (let channel = 0; channel < channels; channel += 1) {
             const side = decoded.getChannelData(channel);
             for (let frame = 0; frame < frames; frame += 1) {
-                buffer[frame * channels + channel] = side[frame];
+                buffer[at + frame * channels + channel] = side[frame];
             }
         }
 
         // Last, and that is the whole ordering: the frames are already there,
         // and the ring's release is what carries them to the other thread (§3).
-        const publication = engine.use_audio(0, frames, channels);
-        say(`${chosen.name} — publication ${publication}, ${frames} frames, ${channels} channels, ${(frames / decoded.sampleRate).toFixed(2)} s`);
+        sent = engine.use_audio(at, frames, channels);
+        half = 1 - half;
+        say(`${chosen.name} — publication ${sent}, ${frames} frames, ${channels} channels, ${(frames / decoded.sampleRate).toFixed(2)} s`);
+    };
+
+    file.onchange = async () => {
+        const chosen = file.files[0];
+        if (!chosen || memory === null) return;
+
+        // Held for the whole publication, not just the decode: picking a second
+        // file while this one is still being written would be the very race the
+        // halves are here to avoid.
+        file.disabled = true;
+        try {
+            await publish(chosen);
+        } finally {
+            file.disabled = false;
+        }
     };
 
     play.onclick = () => engine.start();
@@ -202,6 +257,7 @@
             // quiet engine look exactly alike.
             state.textContent = `waiting     frame ${frames}`;
         } else {
+            accepted = now.publication;
             state.textContent =
                 `transport   ${now.playing ? "playing" : "stopped"}\n` +
                 `clock       ${now.clock} samples\n` +

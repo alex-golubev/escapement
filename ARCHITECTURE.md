@@ -1112,6 +1112,15 @@ before the command that names them is pushed, so the release on its tail and the
 acquire on the far side carry them — which is why the interface fills the buffer
 with an ordinary typed-array copy rather than word by word through `Atomics`.
 
+**Ordering is not ownership, and the second one needs a number.** A publication
+carries one, and the state block carries the publication the engine is playing
+from, so the interface can tell when the words it published last stopped being
+read. That is what makes a *second* file publishable at all: into the half of
+the buffer that is not live, and never over the half that is. The echo doubles
+as the refusal message, because a descriptor the engine turns away leaves it
+where it was — which says both that one was refused and which words are still
+its own.
+
 **This is slice 1 standing in for streaming**, and it holds a loop rather than a
 song. What replaces it is OPFS by hash, read in a worker (§5) — at which point
 the section stays and three things about it change. Two are easy to see: who

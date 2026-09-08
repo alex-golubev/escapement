@@ -15,16 +15,26 @@ paths:
   is T. The audio thread has no tempo map to resolve a musical moment with, and
   `0` already means *as soon as it is seen*, which on a musical scale is bar one.
 - **The frames go into the audio buffer *before* the command that names them,
-  and nothing else orders them** (§3). The buffer has no counter and no
-  generation of its own, on purpose: what carries the frames across is the
-  release on the ring's tail and the acquire on the far side. Fill it after
-  sending, or reach it by any path that is not the ring, and both halves still
-  compile, the descriptor is still valid, and what plays is whatever was in
-  those words — most of the time the right thing, because the ring is drained a
-  quantum later. Reading a frame is a *relaxed* load rather than an ordinary
-  one for the same reason the state block's payload is: the other side writes
-  these words, and a race on a non-atomic access is undefined behaviour in
-  Rust's model even where every value it could return would have been fine.
+  and nothing else orders them** (§3). The buffer has no counter of its own, on
+  purpose: what carries the frames across is the release on the ring's tail and
+  the acquire on the far side. Fill it after sending, or reach it by any path
+  that is not the ring, and both halves still compile, the descriptor is still
+  valid, and what plays is whatever was in those words — most of the time the
+  right thing, because the ring is drained a quantum later. Reading a frame is a
+  *relaxed* load rather than an ordinary one for the same reason the state
+  block's payload is: the other side writes these words, and a race on a
+  non-atomic access is undefined behaviour in Rust's model even where every
+  value it could return would have been fine.
+- **Ordering is only half of it: the words a live descriptor covers belong to
+  the engine.** Publishing twice into the same words is not a missing release —
+  it is a second writer arriving while the first frames are still being read,
+  and it sounds like both files at once. So a publication carries a number, the
+  engine echoes back the one it is playing from
+  (`EngineState::audio_publication`), and **the interface writes into the half
+  of the buffer that is not live and waits for the echo before reusing the
+  other**. The echo is also how a refusal is reported: a descriptor the engine
+  turns away leaves it where it was, which says both *that* one was refused and
+  *which* words are still being read.
 - **A descriptor out of the region is checked before it is believed, and the
   check has two steps that can each overflow.** `usize` is 32 bits on the
   target, so a frame count times a channel count, and then an offset added to
