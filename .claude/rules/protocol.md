@@ -30,7 +30,12 @@ paths:
   target, so a frame count times a channel count, and then an offset added to
   that, reach past what it holds long before they reach the comparison that
   would have turned them away — both are `checked_`. A host test cannot catch
-  this: there `usize` is 64 bits and the same arithmetic simply fits.
+  this: there `usize` is 64 bits and the same arithmetic simply fits. The same
+  descriptor is checked against what a quantum can afford, which the buffer's
+  size does not bound: one frame costs a read per channel, so a single frame of
+  as many channels as the buffer has words is a million reads inside 2.7 ms.
+  `escapement-core`'s `MAX_SOURCE_CHANNELS` is that ceiling, and it lives there
+  because the budget is the engine's rather than the region's.
 - **Never put a cargo feature on `escapement-protocol`.** Features unify across a
   workspace build, so one added for the interface arrives in the worklet's copy
   too, and the worklet's module must import nothing. The measurement is in

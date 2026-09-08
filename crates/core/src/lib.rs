@@ -21,7 +21,7 @@ mod player;
 mod sine;
 
 pub use engine::Engine;
-pub use player::{Player, Samples};
+pub use player::{Player, Samples, MAX_SOURCE_CHANNELS};
 pub use sine::Sine;
 
 /// Render quantum fixed by the Web Audio spec. Internal block sizes are multiples

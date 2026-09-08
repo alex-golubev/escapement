@@ -1,3 +1,16 @@
+/// The most channels a source may have.
+///
+/// Not a limit on any format — a budget. One frame costs one read per channel,
+/// so a quantum costs the channel count times 128, and a descriptor crossing a
+/// memory the other half writes to may name as many channels as the buffer has
+/// words. A quantum at 48 kHz has 2.7 ms in it (ARCHITECTURE.md §1), which a
+/// million reads is not, and a mistake on the other side must not be able to
+/// ask for one.
+///
+/// Sixty-four is above anything `decodeAudioData` hands back and leaves the
+/// worst quantum at 8192 reads.
+pub const MAX_SOURCE_CHANNELS: usize = 64;
+
 /// Where a player's frames come from.
 ///
 /// A trait rather than a slice, which is what this crate takes everywhere else

@@ -5,7 +5,7 @@
 //! (ARCHITECTURE.md §3). This is the same seam the command decode sits on — the
 //! wire on one side, the engine on the other, and the translation here.
 
-use escapement_core::Samples;
+use escapement_core::{Samples, MAX_SOURCE_CHANNELS};
 use escapement_protocol::{AudioLayout, Cells};
 
 /// Frames the interface published, behind a descriptor that has been checked
@@ -19,12 +19,14 @@ pub(crate) struct Published<C> {
 }
 
 impl<C: Cells> Published<C> {
-    /// `None` for a descriptor naming more than the buffer holds.
+    /// `None` for a descriptor naming more than the buffer holds, or more
+    /// channels than a quantum can afford to average.
     ///
     /// Checked rather than trusted, for the reason `Layout::read_header`
     /// checks the header: it crossed a memory the other half also writes to,
     /// and further in there is nothing to report an error to. Refusing it here
-    /// leaves the engine on the oscillator, which is audible.
+    /// leaves the engine playing what it was playing, and the interface reads
+    /// that off the echo (§3).
     pub(crate) fn new(
         cells: C,
         layout: AudioLayout,
@@ -35,6 +37,13 @@ impl<C: Cells> Published<C> {
         let offset = offset as usize;
         let frames = frames as usize;
         let channels = channels as usize;
+
+        // The buffer's size does not bound this: one frame of very many
+        // channels fits in it and still costs a read per channel per sample
+        // out.
+        if channels > MAX_SOURCE_CHANNELS {
+            return None;
+        }
 
         // Checked both times: `usize` is 32 bits on the target, and two numbers
         // out of shared memory multiply to more than it holds long before they
@@ -147,6 +156,27 @@ mod tests {
         assert_eq!(published.sample(0, 0), 1.0);
         assert_eq!(published.sample(2, 0), 0.0, "a frame past the end");
         assert_eq!(published.sample(0, 1), 0.0, "a channel that is not there");
+    }
+
+    /// What the buffer holds and what a quantum can afford are two ceilings,
+    /// and this one is the second: a single frame of `MAX_SOURCE_CHANNELS + 1`
+    /// channels fits in the buffer with room to spare and still costs more
+    /// reads per block than the budget has.
+    #[test]
+    fn a_descriptor_of_more_channels_than_a_quantum_affords_is_refused() {
+        let region = words();
+        let cells = cells(&region);
+        let audio = LAYOUT.audio();
+        let most = u32::try_from(MAX_SOURCE_CHANNELS).expect("a channel count");
+
+        assert!(
+            Published::new(cells, audio, 0, 1, most + 1).is_none(),
+            "one channel above the budget"
+        );
+        assert!(
+            Published::new(cells, audio, 0, 1, most).is_some(),
+            "exactly the budget"
+        );
     }
 
     /// A descriptor crosses a memory the interface writes to as well, so each
