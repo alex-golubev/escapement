@@ -175,6 +175,11 @@ impl Processor {
                 {
                     self.samples = Some(samples);
                     self.publication = publication;
+                    // New material is played from its beginning. Without this
+                    // the cursor stays where the last source left it, which
+                    // for one that ran out is past the end — a file loaded
+                    // into a running transport, and silence.
+                    self.engine.rewind();
                 }
             }
             // Counted rather than refused: the two halves have parted company,
@@ -492,6 +497,33 @@ mod tests {
             probe.state().audio_publication,
             0,
             "a refused descriptor was echoed as if it had been taken"
+        );
+    }
+
+    /// A publication is new material, and the transport goes back to the start
+    /// for it. The first source here is shorter than a quantum, so by the time
+    /// the second arrives the cursor is past the end of the first — which is
+    /// the shape a page hits by loading a second file into a transport that is
+    /// still running.
+    #[test]
+    fn a_new_publication_is_played_from_its_beginning() {
+        let words = words();
+        let mut probe = Probe::new(&words);
+
+        probe
+            .send(CommandKind::SetGain(1.0))
+            .expect("an empty ring");
+        probe.send(CommandKind::Start).expect("an empty ring");
+        probe.publish(1, &[0.5; 8], 1).expect("an empty ring");
+        probe.quantum();
+
+        probe.publish(2, &[0.25; 8], 1).expect("an empty ring");
+        let block = probe.quantum();
+
+        assert_eq!(
+            block[..8],
+            [0.25; 8],
+            "the second publication carried on from where the first ran out"
         );
     }
 

@@ -45,15 +45,6 @@ impl Player {
         self.frame = 0;
     }
 
-    /// Whether there is anything left to play of `samples`.
-    ///
-    /// Asked of a source rather than remembered, because the source can be
-    /// replaced under a player that has not moved.
-    #[must_use]
-    pub fn finished<S: Samples>(&self, samples: &S) -> bool {
-        self.frame >= samples.frames()
-    }
-
     /// Fills `out` with the next block and falls silent at the end of the
     /// source.
     ///
@@ -153,20 +144,6 @@ mod tests {
         player.process(&Recorded::new(&[0.1, 0.2], 1), &mut out);
 
         assert_eq!(out, [0.1, 0.2, 0.0, 0.0]);
-        assert!(player.finished(&Recorded::new(&[0.1, 0.2], 1)));
-    }
-
-    /// Asked of a source rather than remembered, so it answers about the
-    /// source it is given — a longer one has more to play even where the
-    /// player has not moved.
-    #[test]
-    fn a_player_partway_through_a_source_is_not_finished() {
-        let mut player = Player::new();
-        let mut out = [0.0f32; 2];
-        player.process(&Recorded::new(&[0.1, 0.2, 0.3, 0.4], 1), &mut out);
-
-        assert!(!player.finished(&Recorded::new(&[0.1, 0.2, 0.3, 0.4], 1)));
-        assert!(player.finished(&Recorded::new(&[0.1, 0.2], 1)));
     }
 
     #[test]

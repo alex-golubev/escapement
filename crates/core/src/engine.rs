@@ -45,12 +45,26 @@ impl Engine {
 
     /// Run the transport from wherever it stands.
     ///
-    /// Which for a published sample is the beginning: there is one position to
-    /// start from until there is a timeline holding another. The oscillator is
-    /// not rewound with it, because its phase is a continuation rather than a
-    /// position — stopping and starting mid-tone must not click.
+    /// Which for a published sample is the beginning, because [`Engine::rewind`]
+    /// is what starting means while there is one position to start from.
     pub fn start(&mut self) {
         self.playing = true;
+        self.rewind();
+    }
+
+    /// Back to the beginning of what is being played.
+    ///
+    /// A transport method rather than one about the source, which is what lets
+    /// the worklet call it on a publication without knowing what a player is:
+    /// new material is played from its beginning, and the alternative is a
+    /// cursor left wherever the last source ran out — silence, with nothing
+    /// wrong anywhere. When there is a timeline this becomes a seek to its
+    /// start rather than the only position there is.
+    ///
+    /// The oscillator is not rewound with it: its phase is a continuation
+    /// rather than a position, and stopping and starting mid-tone must not
+    /// click.
+    pub fn rewind(&mut self) {
         self.player.rewind();
     }
 
