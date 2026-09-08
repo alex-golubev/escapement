@@ -79,7 +79,7 @@ pub const MAGIC: u32 = 0x4553_4350;
 /// The two modules are fetched and cached by the browser separately, so a new
 /// interface meeting a stale worklet is an ordinary afternoon. The version turns
 /// that into a message instead of a silent misread.
-pub const VERSION: u32 = 2;
+pub const VERSION: u32 = 3;
 
 /// The ceiling on a region, and what keeps every offset read out of a header
 /// inside 32-bit arithmetic: `usize` is 32 bits on the target, and a base of

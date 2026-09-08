@@ -43,12 +43,21 @@ pub struct EngineState {
     /// parted company — different builds behind one protocol version
     /// (ARCHITECTURE.md §3).
     pub commands_unknown: u32,
+    /// The publication the engine is playing frames from, echoed from
+    /// [`CommandKind::Audio`](crate::CommandKind::Audio). Zero until one has
+    /// been accepted.
+    ///
+    /// The interface knows what it published, so a descriptor that was refused
+    /// shows up as this staying where it was — which is both the diagnosis and
+    /// the permission: the words the named publication covers are the engine's
+    /// until this moves on to another one (§3).
+    pub audio_publication: u32,
 }
 
 impl EngineState {
-    /// Words on the wire. Eight, and the header carries it so that a half
+    /// Words on the wire. Nine, and the header carries it so that a half
     /// compiled against a different number is caught at the handshake.
-    pub const WORDS: usize = 8;
+    pub const WORDS: usize = 9;
 
     fn encode(&self, into: &mut [u32]) {
         put_u64(into, 0, self.clock);
@@ -57,6 +66,7 @@ impl EngineState {
         into[5] = u32::from(self.playing);
         into[6] = self.commands_applied;
         into[7] = self.commands_unknown;
+        into[8] = self.audio_publication;
     }
 
     fn decode(from: &[u32]) -> Self {
@@ -67,6 +77,7 @@ impl EngineState {
             playing: from[5] != 0,
             commands_applied: from[6],
             commands_unknown: from[7],
+            audio_publication: from[8],
         }
     }
 }

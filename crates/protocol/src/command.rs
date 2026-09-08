@@ -68,6 +68,15 @@ pub enum CommandKind {
     /// read — it crossed a memory the other half also writes to, and the engine
     /// has no error to answer with.
     Audio {
+        /// The interface's count of publications, echoed back in
+        /// [`EngineState::audio_publication`](crate::EngineState::audio_publication)
+        /// once this one has been accepted.
+        ///
+        /// What makes the buffer's words owned rather than only written in
+        /// order: until the echo names this publication, the engine is still
+        /// reading the words the last one named, and the interface may not
+        /// write there.
+        publication: u32,
         /// Words into the buffer at which the frames start.
         offset: u32,
         /// How many frames, which is not how many words: a frame is one sample
@@ -104,13 +113,15 @@ impl Slot for Command {
                 SET_GAIN
             }
             CommandKind::Audio {
+                publication,
                 offset,
                 frames,
                 channels,
             } => {
-                payload[0] = offset;
-                payload[1] = frames;
-                payload[2] = channels;
+                payload[0] = publication;
+                payload[1] = offset;
+                payload[2] = frames;
+                payload[3] = channels;
                 AUDIO
             }
             CommandKind::Unknown(code) => code,
@@ -128,9 +139,10 @@ impl Slot for Command {
             SET_FREQUENCY => CommandKind::SetFrequency(f32::from_bits(from[3])),
             SET_GAIN => CommandKind::SetGain(f32::from_bits(from[3])),
             AUDIO => CommandKind::Audio {
-                offset: from[3],
-                frames: from[4],
-                channels: from[5],
+                publication: from[3],
+                offset: from[4],
+                frames: from[5],
+                channels: from[6],
             },
             code => CommandKind::Unknown(code),
         };
@@ -157,6 +169,7 @@ mod tests {
             CommandKind::SetFrequency(440.0),
             CommandKind::SetGain(0.2),
             CommandKind::Audio {
+                publication: 4,
                 offset: 1,
                 frames: 2,
                 channels: 3,

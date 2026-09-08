@@ -73,6 +73,13 @@ pub(crate) struct Processor {
     /// What the interface last published, or nothing it could publish. `None`
     /// leaves the engine on the oscillator (`escapement-core`).
     samples: Option<Published<Pointers>>,
+    /// Which publication those frames came from, echoed to the interface.
+    ///
+    /// Zero until one has been accepted, and left where it is by one that was
+    /// not — which is the whole of how a refusal is reported, and what tells
+    /// the interface that the words it published last are still being read
+    /// (§3).
+    publication: u32,
     quanta: u64,
     applied: u32,
     unknown: u32,
@@ -99,6 +106,7 @@ impl Processor {
             audio: layout.audio(),
             cells,
             samples: None,
+            publication: 0,
             quanta: 0,
             applied: 0,
             unknown: 0,
@@ -125,6 +133,7 @@ impl Processor {
             playing: self.engine.playing(),
             commands_applied: self.applied,
             commands_unknown: self.unknown,
+            audio_publication: self.publication,
         });
     }
 
@@ -149,15 +158,24 @@ impl Processor {
             CommandKind::Stop => self.engine.stop(),
             CommandKind::SetFrequency(hz) => self.engine.set_frequency(hz),
             CommandKind::SetGain(gain) => self.engine.set_gain(gain),
-            // A descriptor the buffer cannot hold leaves `None` here, which is
-            // the oscillator rather than a refusal with nowhere to go. It is
-            // audible, which is the most this side can offer.
+            // A descriptor the buffer cannot hold changes nothing: what was
+            // playing goes on playing, and the echo stays behind the number the
+            // interface sent. Dropping a working source over a bad descriptor
+            // would be a silence with nobody to report it to — and the words
+            // the old descriptor names are still the engine's until the echo
+            // says otherwise.
             CommandKind::Audio {
+                publication,
                 offset,
                 frames,
                 channels,
             } => {
-                self.samples = Published::new(self.cells, self.audio, offset, frames, channels);
+                if let Some(samples) =
+                    Published::new(self.cells, self.audio, offset, frames, channels)
+                {
+                    self.samples = Some(samples);
+                    self.publication = publication;
+                }
             }
             // Counted rather than refused: the two halves have parted company,
             // and the interface is the only side that can do anything about it.
@@ -239,13 +257,19 @@ mod tests {
         /// Puts frames in the buffer and then names them, in that order,
         /// which is the order the page does it in and the whole of what makes
         /// the ring's release enough (§3).
-        fn publish(&mut self, samples: &[f32], channels: u32) -> Result<(), Full> {
+        fn publish(
+            &mut self,
+            publication: u32,
+            samples: &[f32],
+            channels: u32,
+        ) -> Result<(), Full> {
             let base = LAYOUT.audio().base();
             for (word, sample) in samples.iter().enumerate() {
                 self.cells.store_relaxed(base + word, sample.to_bits());
             }
 
             self.send(CommandKind::Audio {
+                publication,
                 offset: 0,
                 frames: samples.len() as u32 / channels,
                 channels,
@@ -416,11 +440,28 @@ mod tests {
             .send(CommandKind::SetGain(1.0))
             .expect("an empty ring");
         probe.send(CommandKind::Start).expect("an empty ring");
-        probe.publish(&[0.5; 8], 1).expect("an empty ring");
+        probe.publish(1, &[0.5; 8], 1).expect("an empty ring");
 
         let block = probe.quantum();
         assert_eq!(block[..8], [0.5; 8], "the frames were not found");
         assert_eq!(peak(&block[8..]), 0.0, "the source ran past its end");
+    }
+
+    /// The number the interface sent comes back, which is what lets it know
+    /// the engine has moved on to the words that publication named — and, a
+    /// buffer with two halves in it, that the other half is free again.
+    #[test]
+    fn an_accepted_publication_is_echoed_to_the_interface() {
+        let words = words();
+        let mut probe = Probe::new(&words);
+
+        assert_eq!(probe.state().audio_publication, 0, "nothing published yet");
+
+        probe.send(CommandKind::Start).expect("an empty ring");
+        probe.publish(7, &[0.5; 8], 1).expect("an empty ring");
+        probe.quantum();
+
+        assert_eq!(probe.state().audio_publication, 7);
     }
 
     /// A descriptor crosses a memory the interface also writes to, so one
@@ -436,6 +477,7 @@ mod tests {
         probe.send(CommandKind::Start).expect("an empty ring");
         probe
             .send(CommandKind::Audio {
+                publication: 1,
                 offset: 0,
                 frames: u32::MAX,
                 channels: 2,
@@ -445,6 +487,47 @@ mod tests {
         assert!(
             peak(&probe.quantum()) > 0.0,
             "the engine went silent rather than staying on the oscillator"
+        );
+        assert_eq!(
+            probe.state().audio_publication,
+            0,
+            "a refused descriptor was echoed as if it had been taken"
+        );
+    }
+
+    /// The refusal above with something already playing, which is the case that
+    /// costs something: dropping a source that works over a descriptor that
+    /// does not would be a silence with nobody to report it to. The echo
+    /// staying put is both the report and the interface's permission to leave
+    /// those words alone.
+    #[test]
+    fn a_refused_descriptor_leaves_the_publication_that_is_playing() {
+        let words = words();
+        let mut probe = Probe::new(&words);
+
+        probe
+            .send(CommandKind::SetGain(1.0))
+            .expect("an empty ring");
+        probe.send(CommandKind::Start).expect("an empty ring");
+        probe.publish(1, &[0.5; 8], 1).expect("an empty ring");
+        probe.quantum();
+
+        probe
+            .send(CommandKind::Audio {
+                publication: 2,
+                offset: 0,
+                frames: u32::MAX,
+                channels: 2,
+            })
+            .expect("an empty ring");
+        probe.send(CommandKind::Start).expect("an empty ring");
+
+        let block = probe.quantum();
+        assert_eq!(block[..8], [0.5; 8], "the frames that played were dropped");
+        assert_eq!(
+            probe.state().audio_publication,
+            1,
+            "the refused publication was echoed"
         );
     }
 }

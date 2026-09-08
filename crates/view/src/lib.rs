@@ -199,6 +199,9 @@ impl Cells for View {
 pub struct Link {
     region: Option<Region>,
     outbox: VecDeque<Command>,
+    /// Publications handed out so far. The interface's own count, because what
+    /// the engine answers with is this number back rather than one of its own.
+    publications: u32,
 }
 
 /// The two halves that only exist once the handshake has happened, and what
@@ -220,6 +223,7 @@ impl Link {
         Self {
             region: None,
             outbox: VecDeque::new(),
+            publications: 0,
         }
     }
 
@@ -260,6 +264,35 @@ impl Link {
     /// that grows, so it holds whatever it has to.
     pub fn send(&mut self, command: Command) {
         self.outbox.push_back(command);
+    }
+
+    /// Names frames already written into the audio buffer, and returns the
+    /// number given to that publication.
+    ///
+    /// The counter is here rather than in the caller so that there is one of
+    /// them: the number is only worth anything compared against
+    /// [`EngineState::audio_publication`], and two sides counting for
+    /// themselves would be comparing two different things. Zero is never handed
+    /// out — that is what the engine publishes before it has accepted anything.
+    ///
+    /// The frames have to be in the buffer before this is called, and the words
+    /// of the previous publication are not free until the echo has moved off it
+    /// (§3).
+    pub fn publish_audio(&mut self, offset: u32, frames: u32, channels: u32) -> u32 {
+        self.publications = match self.publications.wrapping_add(1) {
+            // Four billion files into one session, and the alternative is
+            // claiming nothing has been accepted while something is playing.
+            0 => 1,
+            next => next,
+        };
+
+        self.send(Command::now(CommandKind::Audio {
+            publication: self.publications,
+            offset,
+            frames,
+            channels,
+        }));
+        self.publications
     }
 
     /// Moves what fits into the ring, and returns how many went. Once a frame.
@@ -562,6 +595,7 @@ mod browser {
             playing: true,
             commands_applied: 1,
             commands_unknown: 0,
+            audio_publication: 2,
         };
         Publisher::new(cells.clone(), seen.state()).publish(&published);
         assert_eq!(
@@ -667,6 +701,7 @@ mod browser {
             playing: true,
             commands_applied: 3,
             commands_unknown: 0,
+            audio_publication: 5,
         };
         let cells = View::new(&buffer, OFFSET).expect("an aligned offset");
         Publisher::new(cells, layout.state()).publish(&published);
@@ -705,6 +740,40 @@ mod browser {
             cells.load_relaxed(base - 1),
             0,
             "the word before the buffer was written"
+        );
+    }
+
+    /// The interface counts publications and the engine echoes the count back,
+    /// so the two agree only if the numbering starts where the echo's "nothing
+    /// yet" ends.
+    #[wasm_bindgen_test]
+    fn publications_are_numbered_from_one() {
+        let (buffer, layout) = region_with_header(8);
+        let mut link = Link::new();
+        link.connect(&buffer, OFFSET).expect("a header is there");
+
+        assert_eq!(link.publish_audio(0, 4, 1), 1);
+        assert_eq!(link.publish_audio(8, 4, 1), 2);
+        link.flush();
+
+        let mut engine = engine(&buffer, layout);
+        assert_eq!(
+            engine.pop().map(|command| command.kind),
+            Some(CommandKind::Audio {
+                publication: 1,
+                offset: 0,
+                frames: 4,
+                channels: 1,
+            })
+        );
+        assert_eq!(
+            engine.pop().map(|command| command.kind),
+            Some(CommandKind::Audio {
+                publication: 2,
+                offset: 8,
+                frames: 4,
+                channels: 1,
+            })
         );
     }
 

@@ -75,7 +75,7 @@ fn the_ring_hands_items_over_in_order_under_every_interleaving() {
 ///
 /// Bounded, unlike the ring above, and the bound is not a formality: a relaxed
 /// load makes `loom` branch on every value it could return, and the payload is
-/// eight words. Unbounded, this model was still running after half an hour.
+/// nine words. Unbounded, this model was still running after half an hour.
 /// Three preemptions is the usual compromise — it is not a proof, but a real
 /// ordering bug that needs four context switches to show itself is rare.
 #[test]

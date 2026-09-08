@@ -161,8 +161,8 @@
 
         // Last, and that is the whole ordering: the frames are already there,
         // and the ring's release is what carries them to the other thread (§3).
-        engine.use_audio(0, frames, channels);
-        say(`${chosen.name} — ${frames} frames, ${channels} channels, ${(frames / decoded.sampleRate).toFixed(2)} s`);
+        const publication = engine.use_audio(0, frames, channels);
+        say(`${chosen.name} — publication ${publication}, ${frames} frames, ${channels} channels, ${(frames / decoded.sampleRate).toFixed(2)} s`);
     };
 
     play.onclick = () => engine.start();
@@ -208,6 +208,7 @@
                 `quanta      ${now.quanta}\n` +
                 `peak        ${now.peak.toFixed(3)}  ${meter(now.peak)}\n` +
                 `applied     ${now.applied}   unknown ${now.unknown}   pending ${now.pending}\n` +
+                `publication ${now.publication}\n` +
                 `frame       ${frames}`;
             // Owns memory on the Rust side. Sixty of these a second is not a
             // thing to leave to a finalizer.

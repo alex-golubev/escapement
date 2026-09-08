@@ -35,7 +35,8 @@ pub(crate) fn sample(n: u32) -> EngineState {
         peak: n as f32,
         playing: n % 2 == 1,
         commands_applied: n,
-        // A different multiple, so the last two words never agree either.
+        // Different multiples, so the last words never agree either.
         commands_unknown: n.wrapping_mul(3),
+        audio_publication: n.wrapping_mul(5),
     }
 }
