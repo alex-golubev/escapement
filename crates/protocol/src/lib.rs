@@ -153,6 +153,15 @@ impl Layout {
         // above, because this is the first place a buffer's size takes part in
         // the sum: the ring and the slot have ceilings of their own and the
         // buffer has none but this.
+        //
+        // In two steps and in this order, which is what `read_header` does with
+        // a header it did not write, and for the same reason: `usize` is 32
+        // bits on the target, so a size out of range carries the sum below past
+        // the comparison meant to catch it.
+        assert!(
+            audio_words <= MAX_REGION_WORDS,
+            "the audio buffer is above MAX_REGION_WORDS"
+        );
         assert!(
             audio.end() <= MAX_REGION_WORDS,
             "the region is above MAX_REGION_WORDS"
@@ -439,6 +448,16 @@ mod tests {
                 "word {word} = {value} was believed"
             );
         }
+    }
+
+    /// A size is checked before it takes part in the sum, because on the
+    /// target the sum is where it would disappear. The host cannot show that —
+    /// `usize` is 64 bits here and nothing wraps — so what this asks is which
+    /// of the two checks fires, which is the part that would be wrong.
+    #[test]
+    #[should_panic(expected = "the audio buffer is above MAX_REGION_WORDS")]
+    fn a_buffer_above_the_ceiling_is_refused_before_it_is_added_to() {
+        let _ = Layout::new(8, MAX_REGION_WORDS + 1);
     }
 
     /// The sections are laid end to end, and the header is what says so — a
