@@ -71,6 +71,45 @@ pub fn set_gain(gain: f32) {
     send(CommandKind::SetGain(gain));
 }
 
+/// Where the audio buffer starts in the worklet's `memory.buffer`, in bytes,
+/// and how many bytes it holds. `undefined` before the handshake.
+///
+/// The page builds a `Float32Array` on those two and writes the frames in
+/// itself. That is deliberate and not a shortcut: what publishes them is
+/// [`use_audio`], which goes through the ring afterwards, so the copy needs no
+/// ordering of its own (ARCHITECTURE.md §3).
+#[wasm_bindgen]
+#[must_use]
+pub fn audio_offset() -> Option<u32> {
+    LINK.with_borrow(|link| {
+        link.audio_byte_offset()
+            .and_then(|at| u32::try_from(at).ok())
+    })
+}
+
+/// See [`audio_offset`].
+#[wasm_bindgen]
+#[must_use]
+pub fn audio_length() -> Option<u32> {
+    LINK.with_borrow(|link| {
+        link.audio_byte_length()
+            .and_then(|len| u32::try_from(len).ok())
+    })
+}
+
+/// Tells the engine what the page has just written into that buffer:
+/// `frames` frames of `channels` channels, interleaved, `offset` words in.
+/// Returns the number given to this publication.
+///
+/// The frames have to be there first. A descriptor naming more than the buffer
+/// holds is refused, and a refusal shows up as [`Telemetry::publication`]
+/// staying behind the number returned here — which also says the words the
+/// last accepted publication named are still being read.
+#[wasm_bindgen]
+pub fn use_audio(offset: u32, frames: u32, channels: u32) -> u32 {
+    LINK.with_borrow_mut(|link| link.publish_audio(offset, frames, channels))
+}
+
 /// Once a frame: sends what has been waiting, and reads back what the engine
 /// says about itself.
 ///
@@ -93,6 +132,7 @@ pub fn poll() -> Option<Telemetry> {
             applied: state.commands_applied,
             unknown: state.commands_unknown,
             pending: link.pending() as u32,
+            publication: state.audio_publication,
         })
     })
 }
@@ -118,6 +158,9 @@ pub struct Telemetry {
     pub unknown: u32,
     /// Commands still waiting on this side, for room or for a region.
     pub pending: u32,
+    /// The publication the engine is playing frames from — what `use_audio`
+    /// returned, once it has been accepted. Behind that number means refused.
+    pub publication: u32,
 }
 
 fn send(kind: CommandKind) {
@@ -185,7 +228,8 @@ mod wiring {
     use super::*;
 
     /// The wiring, and only the wiring: that the exports reach the same `LINK`,
-    /// that what they queue leaves through it, and that what the engine
+    /// that what they queue leaves through it, that the two which answer with a
+    /// place in the region answer with the right one, and that what the engine
     /// publishes comes back.
     ///
     /// One test, and it cannot be joined by a second — the same reason the
@@ -194,17 +238,33 @@ mod wiring {
     /// into whatever the first one left behind.
     #[wasm_bindgen_test]
     fn the_exports_reach_the_region_and_back() {
-        const LAYOUT: Layout = Layout::new(8);
+        const LAYOUT: Layout = Layout::new(8, 64);
         let buffer: JsValue = SharedArrayBuffer::new((LAYOUT.words() * 4) as u32).into();
         let cells = View::new(&buffer, 0).expect("a shared buffer at zero");
         LAYOUT.write_header(&cells);
 
         connect(&buffer, 0).expect("a header is there");
 
+        // Where the page would build its `Float32Array`. Both are read out of
+        // the header rather than computed here twice, and both are far enough
+        // from zero and one that an export answering with a constant is not
+        // answering with these.
+        assert_eq!(
+            audio_offset(),
+            Some((LAYOUT.audio().base() * 4) as u32),
+            "the frames are not where the header puts them"
+        );
+        assert_eq!(
+            audio_length(),
+            Some((LAYOUT.audio().words() * 4) as u32),
+            "the buffer is not the size the header gives it"
+        );
+
         start();
         stop();
         set_frequency(880.0);
         set_gain(0.5);
+        assert_eq!(use_audio(2, 3, 4), 1, "the first publication is not one");
         poll().expect("a state block, even an unwritten one");
 
         let mut engine = Consumer::<View, Command>::new(cells.clone(), LAYOUT.commands());
@@ -217,8 +277,14 @@ mod wiring {
                 CommandKind::Stop,
                 CommandKind::SetFrequency(880.0),
                 CommandKind::SetGain(0.5),
+                CommandKind::Audio {
+                    publication: 1,
+                    offset: 2,
+                    frames: 3,
+                    channels: 4,
+                },
             ],
-            "the four command exports do not reach the ring in order"
+            "the five command exports do not reach the ring in order"
         );
 
         let published = EngineState {
@@ -228,6 +294,7 @@ mod wiring {
             playing: true,
             commands_applied: 4,
             commands_unknown: 0,
+            audio_publication: 1,
         };
         Publisher::new(cells, LAYOUT.state()).publish(&published);
 
@@ -236,5 +303,6 @@ mod wiring {
         assert_eq!(seen.peak, 0.5);
         assert_eq!(seen.applied, 4);
         assert_eq!(seen.clock, 4096.0);
+        assert_eq!(seen.publication, 1, "the echo did not come back");
     }
 }

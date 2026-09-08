@@ -1,6 +1,6 @@
 use escapement_time::SampleRate;
 
-use crate::Sine;
+use crate::{Player, Samples, Sine};
 
 /// Roughly -14 dB, for headphones. The mixer replaces it.
 const DEFAULT_GAIN: f32 = 0.2;
@@ -18,6 +18,7 @@ const DEFAULT_FREQUENCY_HZ: f32 = 440.0;
 /// (ARCHITECTURE.md §3).
 pub struct Engine {
     sine: Sine,
+    player: Player,
     gain: f32,
     playing: bool,
     clock: u64,
@@ -35,6 +36,7 @@ impl Engine {
     pub fn new(rate: SampleRate) -> Self {
         Self {
             sine: Sine::new(DEFAULT_FREQUENCY_HZ, rate),
+            player: Player::new(),
             gain: DEFAULT_GAIN,
             playing: false,
             clock: 0,
@@ -42,8 +44,28 @@ impl Engine {
     }
 
     /// Run the transport from wherever it stands.
+    ///
+    /// Which for a published sample is the beginning, because [`Engine::rewind`]
+    /// is what starting means while there is one position to start from.
     pub fn start(&mut self) {
         self.playing = true;
+        self.rewind();
+    }
+
+    /// Back to the beginning of what is being played.
+    ///
+    /// A transport method rather than one about the source, which is what lets
+    /// the worklet call it on a publication without knowing what a player is:
+    /// new material is played from its beginning, and the alternative is a
+    /// cursor left wherever the last source ran out — silence, with nothing
+    /// wrong anywhere. When there is a timeline this becomes a seek to its
+    /// start rather than the only position there is.
+    ///
+    /// The oscillator is not rewound with it: its phase is a continuation
+    /// rather than a position, and stopping and starting mid-tone must not
+    /// click.
+    pub fn rewind(&mut self) {
+        self.player.rewind();
     }
 
     /// Stop it. The clock below is the engine's and keeps running; what stops
@@ -75,12 +97,20 @@ impl Engine {
     /// Renders one block, and moves the clock by it whether or not the
     /// transport is running.
     ///
+    /// `samples` is what the interface has published, if anything: the engine
+    /// plays that when it is there and the oscillator when it is not. One
+    /// branch standing in for a graph, and it goes when the mixer arrives with
+    /// something to route between.
+    ///
     /// Overwrites every element of `out`; previous contents are not read. The
     /// length is the caller's, not a constant here — the offline render for
     /// export drives this same engine in blocks of its own choosing.
-    pub fn process(&mut self, out: &mut [f32]) {
+    pub fn process<S: Samples>(&mut self, samples: Option<&S>, out: &mut [f32]) {
         if self.playing {
-            self.sine.process(out);
+            match samples {
+                Some(samples) => self.player.process(samples, out),
+                None => self.sine.process(out),
+            }
             for sample in out.iter_mut() {
                 *sample *= self.gain;
             }
@@ -112,12 +142,17 @@ impl Engine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fixtures::{rate, rising_zero_crossings, RATE_HZ};
+    use crate::fixtures::{rate, rising_zero_crossings, Recorded, RATE_HZ};
     use crate::RENDER_QUANTUM;
+
+    /// Nothing published, spelled once: `None` needs a type even where there is
+    /// no value, and repeating the turbofish at every call site would read as
+    /// though the type mattered.
+    const NOTHING: Option<&Recorded> = None;
 
     fn quantum(engine: &mut Engine) -> [f32; RENDER_QUANTUM] {
         let mut block = [0.0f32; RENDER_QUANTUM];
-        engine.process(&mut block);
+        engine.process(NOTHING, &mut block);
         block
     }
 
@@ -166,7 +201,7 @@ mod tests {
         engine.set_frequency(200.0);
 
         let mut one_second = [0.0f32; RATE_HZ];
-        engine.process(&mut one_second);
+        engine.process(NOTHING, &mut one_second);
 
         assert_eq!(rising_zero_crossings(&one_second), 200);
     }
@@ -177,8 +212,44 @@ mod tests {
     fn a_stopped_engine_overwrites_what_was_in_the_block() {
         let mut engine = Engine::new(rate());
         let mut block = [0.5f32; RENDER_QUANTUM];
-        engine.process(&mut block);
+        engine.process(NOTHING, &mut block);
         assert_eq!(peak(&block), 0.0);
+    }
+
+    /// The published frames are what is heard, not the oscillator behind them.
+    /// A half-scale block at unity gain comes back at half scale; the tone it
+    /// replaced would come back at one.
+    #[test]
+    fn published_frames_are_played_instead_of_the_oscillator() {
+        let mut engine = Engine::new(rate());
+        engine.set_gain(1.0);
+        engine.start();
+
+        let samples = Recorded::new(&[0.5; RENDER_QUANTUM], 1);
+        let mut block = [0.0f32; RENDER_QUANTUM];
+        engine.process(Some(&samples), &mut block);
+
+        assert_eq!(block, [0.5; RENDER_QUANTUM]);
+    }
+
+    /// Starting is what rewinds the player, so a sample that has run out plays
+    /// again rather than leaving the transport running over silence. Until
+    /// there is a timeline there is one position to start from.
+    #[test]
+    fn starting_again_plays_a_finished_sample_from_its_beginning() {
+        let mut engine = Engine::new(rate());
+        engine.set_gain(1.0);
+        engine.start();
+
+        let samples = Recorded::new(&[0.5; 4], 1);
+        let mut block = [0.0f32; RENDER_QUANTUM];
+
+        engine.process(Some(&samples), &mut block);
+        assert_eq!(peak(&block[4..]), 0.0, "the sample ran past its end");
+
+        engine.start();
+        engine.process(Some(&samples), &mut block);
+        assert_eq!(peak(&block[..4]), 0.5, "starting did not rewind");
     }
 
     #[test]

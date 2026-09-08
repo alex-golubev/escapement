@@ -17,6 +17,14 @@ samples through a sine one sample at a time. The worklet costs 8 s and earned
 its place on the first run, on a test that took a pointer into a `Box` and then
 moved the `Box` — undefined behaviour that every ordinary run passed.
 
+**Loom's cost follows the payload, and not linearly.** The state block's model
+branches on every value a relaxed load could return, so a word added to
+`EngineState` is not a word added to the run: going from eight to nine took the
+crate's two models from 21 s to 48 s, measured either side of the commit that
+added the publication echo. `preemption_bound = 3` is what keeps it a number at
+all — unbounded, the same model was still running after half an hour. A tenth
+word is worth measuring before it is added rather than after.
+
 CI runs all three. Miri and Loom are jobs beside the ordinary checks rather than
 steps inside them, so they add waiting time only if they turn out to be the
 slowest thing — they pay in runner minutes instead. Mutation testing runs

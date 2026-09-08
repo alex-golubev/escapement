@@ -17,7 +17,7 @@ use std::collections::VecDeque;
 use js_sys::{Atomics, Reflect, Uint32Array};
 use wasm_bindgen::{JsValue, UnwrapThrowExt};
 
-use escapement_protocol::{Cells, HandshakeError, Layout, Producer, Subscriber};
+use escapement_protocol::{AudioLayout, Cells, HandshakeError, Layout, Producer, Subscriber};
 
 // What a caller needs in order to say anything to the engine or read anything
 // back, so that reaching it is one import rather than two. The protocol's own
@@ -199,12 +199,21 @@ impl Cells for View {
 pub struct Link {
     region: Option<Region>,
     outbox: VecDeque<Command>,
+    /// Publications handed out so far. The interface's own count, because what
+    /// the engine answers with is this number back rather than one of its own.
+    publications: u32,
 }
 
-/// The two halves that only exist once the handshake has happened.
+/// The two halves that only exist once the handshake has happened, and what
+/// the third one needs in order to be found.
 struct Region {
     commands: Producer<View, Command>,
     state: Subscriber<View>,
+    /// Where the region starts in the worklet's `memory.buffer`. Kept because
+    /// the frames go in through a typed array of their own, built on the buffer
+    /// rather than on the view — see [`Link::audio_byte_offset`].
+    byte_offset: usize,
+    audio: AudioLayout,
 }
 
 impl Link {
@@ -214,6 +223,7 @@ impl Link {
         Self {
             region: None,
             outbox: VecDeque::new(),
+            publications: 0,
         }
     }
 
@@ -234,6 +244,8 @@ impl Link {
         self.region = Some(Region {
             commands: Producer::new(cells.clone(), layout.commands()),
             state: Subscriber::new(cells, layout.state()),
+            byte_offset,
+            audio: layout.audio(),
         });
         Ok(())
     }
@@ -252,6 +264,35 @@ impl Link {
     /// that grows, so it holds whatever it has to.
     pub fn send(&mut self, command: Command) {
         self.outbox.push_back(command);
+    }
+
+    /// Names frames already written into the audio buffer, and returns the
+    /// number given to that publication.
+    ///
+    /// The counter is here rather than in the caller so that there is one of
+    /// them: the number is only worth anything compared against
+    /// [`EngineState::audio_publication`], and two sides counting for
+    /// themselves would be comparing two different things. Zero is never handed
+    /// out — that is what the engine publishes before it has accepted anything.
+    ///
+    /// The frames have to be in the buffer before this is called, and the words
+    /// of the previous publication are not free until the echo has moved off it
+    /// (§3).
+    pub fn publish_audio(&mut self, offset: u32, frames: u32, channels: u32) -> u32 {
+        self.publications = match self.publications.wrapping_add(1) {
+            // Four billion files into one session, and the alternative is
+            // claiming nothing has been accepted while something is playing.
+            0 => 1,
+            next => next,
+        };
+
+        self.send(Command::now(CommandKind::Audio {
+            publication: self.publications,
+            offset,
+            frames,
+            channels,
+        }));
+        self.publications
     }
 
     /// Moves what fits into the ring, and returns how many went. Once a frame.
@@ -281,6 +322,30 @@ impl Link {
     #[must_use]
     pub fn state(&self) -> Option<EngineState> {
         self.region.as_ref()?.state.read()
+    }
+
+    /// Where the audio buffer starts in the worklet's `memory.buffer`, in
+    /// bytes. `None` before the handshake.
+    ///
+    /// Bytes and not words, and from the buffer and not from the region,
+    /// because what asks is a `Float32Array` constructor and that is what one
+    /// takes. The frames go in through one of those rather than through this
+    /// crate's `Atomics`: a megabyte of frames is a megabyte of calls that way,
+    /// and there is nothing for them to order — what publishes them is the
+    /// command that names them, and it goes into the ring afterwards (§3).
+    #[must_use]
+    pub fn audio_byte_offset(&self) -> Option<usize> {
+        let region = self.region.as_ref()?;
+        Some(region.byte_offset + region.audio.base() * BYTES)
+    }
+
+    /// How many bytes that buffer holds. `None` before the handshake.
+    ///
+    /// The ceiling on what can be published, and the interface's to respect:
+    /// past it a typed array throws, and the engine refuses the descriptor.
+    #[must_use]
+    pub fn audio_byte_length(&self) -> Option<usize> {
+        Some(self.region.as_ref()?.audio.words() * BYTES)
     }
 
     /// Commands still waiting for room, or for a region to put them in.
@@ -505,7 +570,7 @@ mod browser {
     /// `Atomics` carry it at all.
     #[wasm_bindgen_test]
     fn the_protocol_travels_over_a_view() {
-        const LAYOUT: Layout = Layout::new(8);
+        const LAYOUT: Layout = Layout::new(8, 64);
         let cells = region(LAYOUT.words());
 
         LAYOUT.write_header(&cells);
@@ -530,6 +595,7 @@ mod browser {
             playing: true,
             commands_applied: 1,
             commands_unknown: 0,
+            audio_publication: 2,
         };
         Publisher::new(cells.clone(), seen.state()).publish(&published);
         assert_eq!(
@@ -542,7 +608,7 @@ mod browser {
     /// A region with a header in it, as the worklet leaves one, and the buffer
     /// to reach it by — which is the pair a handshake is handed.
     fn region_with_header(slots: u32) -> (JsValue, Layout) {
-        let layout = Layout::new(slots);
+        let layout = Layout::new(slots, 64);
         let bytes = OFFSET + layout.words() * BYTES;
         let buffer: JsValue = SharedArrayBuffer::new(bytes as u32).into();
 
@@ -635,11 +701,89 @@ mod browser {
             playing: true,
             commands_applied: 3,
             commands_unknown: 0,
+            audio_publication: 5,
         };
         let cells = View::new(&buffer, OFFSET).expect("an aligned offset");
         Publisher::new(cells, layout.state()).publish(&published);
 
         assert_eq!(link.state(), Some(published));
+    }
+
+    /// The page writes frames through a `Float32Array` built on the buffer,
+    /// while the engine reads words through the region — two views of one
+    /// memory, and this is the arithmetic that has to make them agree. An
+    /// offset dropped anywhere in it still reads back whatever it wrote, so
+    /// the test writes through one view and reads through the other.
+    #[wasm_bindgen_test]
+    fn the_audio_buffer_is_where_both_sides_agree_it_is() {
+        let (buffer, layout) = region_with_header(8);
+        let mut link = Link::new();
+        link.connect(&buffer, OFFSET).expect("a header is there");
+
+        let at = link.audio_byte_offset().expect("a connected link");
+        let length = link.audio_byte_length().expect("a connected link");
+        assert_eq!(length, layout.audio().words() * BYTES);
+
+        let frames = js_sys::Float32Array::new_with_byte_offset_and_length(
+            &buffer,
+            at as u32,
+            (length / BYTES) as u32,
+        );
+        frames.set_index(0, 0.5);
+        frames.set_index(1, -0.25);
+
+        let cells = View::new(&buffer, OFFSET).expect("an aligned offset");
+        let base = layout.audio().base();
+        assert_eq!(f32::from_bits(cells.load_relaxed(base)), 0.5);
+        assert_eq!(f32::from_bits(cells.load_relaxed(base + 1)), -0.25);
+        assert_eq!(
+            cells.load_relaxed(base - 1),
+            0,
+            "the word before the buffer was written"
+        );
+    }
+
+    /// The interface counts publications and the engine echoes the count back,
+    /// so the two agree only if the numbering starts where the echo's "nothing
+    /// yet" ends.
+    #[wasm_bindgen_test]
+    fn publications_are_numbered_from_one() {
+        let (buffer, layout) = region_with_header(8);
+        let mut link = Link::new();
+        link.connect(&buffer, OFFSET).expect("a header is there");
+
+        assert_eq!(link.publish_audio(0, 4, 1), 1);
+        assert_eq!(link.publish_audio(8, 4, 1), 2);
+        link.flush();
+
+        let mut engine = engine(&buffer, layout);
+        assert_eq!(
+            engine.pop().map(|command| command.kind),
+            Some(CommandKind::Audio {
+                publication: 1,
+                offset: 0,
+                frames: 4,
+                channels: 1,
+            })
+        );
+        assert_eq!(
+            engine.pop().map(|command| command.kind),
+            Some(CommandKind::Audio {
+                publication: 2,
+                offset: 8,
+                frames: 4,
+                channels: 1,
+            })
+        );
+    }
+
+    /// There is nowhere to put frames before the handshake, and saying so is
+    /// what stops the page building a typed array at byte zero.
+    #[wasm_bindgen_test]
+    fn there_is_no_audio_buffer_before_the_handshake() {
+        let link = Link::new();
+        assert_eq!(link.audio_byte_offset(), None);
+        assert_eq!(link.audio_byte_length(), None);
     }
 
     /// A page can be pointed at the wrong address, and what it had queued is

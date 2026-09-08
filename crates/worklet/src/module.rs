@@ -8,7 +8,7 @@
 //! behaviour a test can reach once and never again: the silence below was
 //! unreachable by every test in this crate until it moved here.
 
-use escapement_protocol::Pointers;
+use escapement_protocol::{Layout, Pointers};
 use escapement_time::SampleRate;
 
 use crate::processor::Processor;
@@ -38,11 +38,11 @@ impl Module {
     /// transport, while a handshake that never completes says where to look. The
     /// other side already has a word for that (`HandshakeError::Magic`), and no
     /// word for "the engine was built on a rate of NaN".
-    pub(crate) fn init(&mut self, cells: Pointers, sample_rate_hz: f32) {
+    pub(crate) fn init(&mut self, cells: Pointers, layout: Layout, sample_rate_hz: f32) {
         let Some(rate) = SampleRate::new(f64::from(sample_rate_hz)) else {
             return;
         };
-        self.engine = Some(Processor::new(cells, rate));
+        self.engine = Some(Processor::new(cells, layout, rate));
     }
 
     /// One quantum, and `out` is overwritten either way.
@@ -61,31 +61,13 @@ impl Module {
 
 #[cfg(test)]
 mod tests {
-    use core::sync::atomic::AtomicU32;
-
     use escapement_core::RENDER_QUANTUM;
-    use escapement_protocol::{Command, CommandKind, HandshakeError, Layout, Producer};
+    use escapement_protocol::{Command, CommandKind, HandshakeError, Producer};
 
     use super::*;
-    use crate::processor::LAYOUT;
+    use crate::fixtures::{cells, words, LAYOUT};
 
     const RATE: f32 = 48_000.0;
-
-    /// Held by the test rather than by the module: a `Box` moved after its
-    /// pointer was taken is no longer at the address that pointer holds, which
-    /// Miri named as undefined behaviour the first time this crate was put
-    /// under it.
-    fn words() -> Box<[AtomicU32]> {
-        (0..LAYOUT.words()).map(|_| AtomicU32::new(0)).collect()
-    }
-
-    /// `Pointers` is what ships, so the tests reach the region the way the
-    /// worklet does rather than through a stand-in.
-    fn cells(words: &[AtomicU32]) -> Pointers {
-        // SAFETY: `words` is exactly `len` initialized, aligned cells, and the
-        // caller holds them still for as long as the value is used.
-        unsafe { Pointers::new(words.as_ptr(), words.len()) }
-    }
 
     /// The case no test in this crate could reach while it lived in `lib.rs`:
     /// there, `init` had already run by the time anything could look, and it
@@ -114,7 +96,7 @@ mod tests {
             "a header before anything wrote one"
         );
 
-        Module::new().init(cells(&words), RATE);
+        Module::new().init(cells(&words), LAYOUT, RATE);
 
         assert_eq!(Layout::read_header(&cells(&words)), Ok(LAYOUT));
     }
@@ -128,7 +110,7 @@ mod tests {
         for bad in [f32::NAN, f32::INFINITY, 0.0, -RATE] {
             let words = words();
             let mut module = Module::new();
-            module.init(cells(&words), bad);
+            module.init(cells(&words), LAYOUT, bad);
 
             assert_eq!(
                 Layout::read_header(&cells(&words)),
@@ -151,7 +133,7 @@ mod tests {
     fn a_started_transport_reaches_the_block() {
         let words = words();
         let mut module = Module::new();
-        module.init(cells(&words), RATE);
+        module.init(cells(&words), LAYOUT, RATE);
 
         let seen = Layout::read_header(&cells(&words)).expect("init wrote a header");
         let mut interface = Producer::new(cells(&words), seen.commands());

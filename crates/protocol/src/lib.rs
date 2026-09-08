@@ -8,7 +8,9 @@
 //! Three mechanisms because the traffic has three shapes, and §3 is where that
 //! argument lives: [`ring`] is the queue for commands, [`state`] the latest
 //! value for meters and the clock, and the project snapshot's double buffering
-//! arrives with slice 2.
+//! arrives with slice 2. [`audio`] is not a fourth: it is the frames a command
+//! refers to, which the ring may not carry and which need no ordering of their
+//! own.
 //!
 //! Everything is addressed in 32-bit words rather than bytes (§3).
 
@@ -38,6 +40,7 @@ mod fixtures;
 mod interleavings;
 
 pub mod access;
+pub mod audio;
 pub mod command;
 pub mod ring;
 pub mod state;
@@ -47,6 +50,7 @@ pub mod state;
 // stay behind their modules: reaching for `ring::MAX_CAPACITY` should read like
 // reaching past the front door, because it is.
 pub use access::{Cells, Pointers};
+pub use audio::AudioLayout;
 pub use command::{Command, CommandKind};
 pub use ring::{Consumer, Full, Producer, RingLayout, Slot};
 pub use state::{BlockLayout, EngineState, Publisher, Subscriber};
@@ -75,14 +79,17 @@ pub const MAGIC: u32 = 0x4553_4350;
 /// The two modules are fetched and cached by the browser separately, so a new
 /// interface meeting a stale worklet is an ordinary afternoon. The version turns
 /// that into a message instead of a silent misread.
-pub const VERSION: u32 = 1;
+pub const VERSION: u32 = 3;
 
-/// A region is a control block, not a heap.
+/// The ceiling on a region, and what keeps every offset read out of a header
+/// inside 32-bit arithmetic: `usize` is 32 bits on the target, and a base of
+/// `u32::MAX` would overflow the first sum it takes part in. A host test cannot
+/// catch that — there `usize` is 64 bits and the same sum simply fits.
 ///
-/// The ceiling is what keeps every offset read out of a header inside 32-bit
-/// arithmetic: `usize` is 32 bits on the target, and a base of `u32::MAX` would
-/// overflow the first sum it takes part in. A host test cannot catch that — there
-/// `usize` is 64 bits and the same sum simply fits.
+/// A region is not a heap, which is a different claim from a region being
+/// small: [`audio`] is megabytes of one, and nothing allocates in there either.
+/// Every section is sized once, at build time, by the side that owns the
+/// memory. What this ceiling protects is the arithmetic.
 pub const MAX_REGION_WORDS: usize = 1 << 24;
 
 /// Words reserved for the header. Generous on purpose: it is described by
@@ -110,6 +117,8 @@ const HEADER_COMMANDS_CAPACITY: usize = 4;
 const HEADER_COMMANDS_SLOT_WORDS: usize = 5;
 const HEADER_STATE_BASE: usize = 6;
 const HEADER_STATE_WORDS: usize = 7;
+const HEADER_AUDIO_BASE: usize = 8;
+const HEADER_AUDIO_WORDS: usize = 9;
 
 /// Where everything sits inside the shared region.
 ///
@@ -121,25 +130,48 @@ pub struct Layout {
     words: usize,
     commands: RingLayout,
     state: BlockLayout,
+    audio: AudioLayout,
 }
 
 impl Layout {
-    /// `command_slots` must be a power of two; called in a `const` context, as
-    /// the owning side does, both this and the ceiling below are checked at
-    /// compile time.
+    /// `command_slots` must be a power of two, and `audio_words` sizes the
+    /// buffer the frames go in; called in a `const` context, as the owning side
+    /// does, all of this is checked at compile time.
     ///
     /// # Panics
     ///
-    /// If `command_slots` is not a power of two — outside a `const` context,
-    /// where the same mistake is a compile error.
+    /// If `command_slots` is not a power of two, or the three sections add up
+    /// to more than [`MAX_REGION_WORDS`] — outside a `const` context, where the
+    /// same mistakes are compile errors.
     #[must_use]
-    pub const fn new(command_slots: u32) -> Self {
+    pub const fn new(command_slots: u32, audio_words: usize) -> Self {
         let commands = RingLayout::new(HEADER_WORDS, command_slots, Command::WORDS);
         let state = BlockLayout::new(commands.end());
+        let audio = AudioLayout::new(state.end(), audio_words);
+
+        // The ceiling is checked here rather than only against the constants
+        // above, because this is the first place a buffer's size takes part in
+        // the sum: the ring and the slot have ceilings of their own and the
+        // buffer has none but this.
+        //
+        // In two steps and in this order, which is what `read_header` does with
+        // a header it did not write, and for the same reason: `usize` is 32
+        // bits on the target, so a size out of range carries the sum below past
+        // the comparison meant to catch it.
+        assert!(
+            audio_words <= MAX_REGION_WORDS,
+            "the audio buffer is above MAX_REGION_WORDS"
+        );
+        assert!(
+            audio.end() <= MAX_REGION_WORDS,
+            "the region is above MAX_REGION_WORDS"
+        );
+
         Self {
-            words: state.end(),
+            words: audio.end(),
             commands,
             state,
+            audio,
         }
     }
 
@@ -159,6 +191,12 @@ impl Layout {
     #[must_use]
     pub const fn state(&self) -> BlockLayout {
         self.state
+    }
+
+    /// Where the frames sit.
+    #[must_use]
+    pub const fn audio(&self) -> AudioLayout {
+        self.audio
     }
 
     /// Writes the header. The owning side calls this once, before publishing the
@@ -186,6 +224,8 @@ impl Layout {
         );
         cells.store_relaxed(HEADER_STATE_BASE, self.state.base() as u32);
         cells.store_relaxed(HEADER_STATE_WORDS, EngineState::WORDS as u32);
+        cells.store_relaxed(HEADER_AUDIO_BASE, self.audio.base() as u32);
+        cells.store_relaxed(HEADER_AUDIO_WORDS, self.audio.words() as u32);
         cells.store_relaxed(HEADER_VERSION, VERSION);
 
         // Last, and with release ordering: the magic is what the other side
@@ -228,6 +268,8 @@ impl Layout {
         let slot_words = cells.load_relaxed(HEADER_COMMANDS_SLOT_WORDS) as usize;
         let state_base = cells.load_relaxed(HEADER_STATE_BASE) as usize;
         let payload_words = cells.load_relaxed(HEADER_STATE_WORDS) as usize;
+        let audio_base = cells.load_relaxed(HEADER_AUDIO_BASE) as usize;
+        let audio_words = cells.load_relaxed(HEADER_AUDIO_WORDS) as usize;
 
         // The version says the two sides agree; this says the compiled types do.
         // They can part company without the version being touched — an edited
@@ -242,6 +284,11 @@ impl Layout {
             && capacity <= ring::MAX_CAPACITY
             && (HEADER_WORDS..MAX_REGION_WORDS).contains(&commands_base)
             && (HEADER_WORDS..MAX_REGION_WORDS).contains(&state_base)
+            && (HEADER_WORDS..MAX_REGION_WORDS).contains(&audio_base)
+            // Both halves of the sum below, so that it cannot carry past a
+            // 32-bit `usize` on the way to the comparison that would have
+            // caught it.
+            && audio_words <= MAX_REGION_WORDS
             && words <= MAX_REGION_WORDS;
 
         if !encodings_match || !sizes_are_sane {
@@ -250,7 +297,8 @@ impl Layout {
 
         let commands = RingLayout::new(commands_base, capacity, slot_words);
         let state = BlockLayout::new(state_base);
-        if state_base < commands.end() || words < state.end() {
+        let audio = AudioLayout::new(audio_base, audio_words);
+        if state_base < commands.end() || audio_base < state.end() || words < audio.end() {
             return Err(HandshakeError::Shape);
         }
 
@@ -264,6 +312,7 @@ impl Layout {
             words,
             commands,
             state,
+            audio,
         })
     }
 }
@@ -330,7 +379,7 @@ mod tests {
     use super::*;
     use crate::access::testing::Words;
 
-    const LAYOUT: Layout = Layout::new(8);
+    const LAYOUT: Layout = Layout::new(8, 64);
 
     fn written() -> Words {
         let words = Words::new(LAYOUT.words());
@@ -386,6 +435,9 @@ mod tests {
             (HEADER_STATE_BASE, 0),
             (HEADER_STATE_BASE, u32::MAX),
             (HEADER_STATE_WORDS, 0),
+            (HEADER_AUDIO_BASE, 0),
+            (HEADER_AUDIO_BASE, u32::MAX),
+            (HEADER_AUDIO_WORDS, u32::MAX),
             (HEADER_WORDS_TOTAL, 0),
         ] {
             let words = written();
@@ -396,6 +448,39 @@ mod tests {
                 "word {word} = {value} was believed"
             );
         }
+    }
+
+    /// A size is checked before it takes part in the sum, because on the
+    /// target the sum is where it would disappear. The host cannot show that —
+    /// `usize` is 64 bits here and nothing wraps — so what this asks is which
+    /// of the two checks fires, which is the part that would be wrong.
+    #[test]
+    #[should_panic(expected = "the audio buffer is above MAX_REGION_WORDS")]
+    fn a_buffer_above_the_ceiling_is_refused_before_it_is_added_to() {
+        let _ = Layout::new(8, MAX_REGION_WORDS + 1);
+    }
+
+    /// The sections are laid end to end, and the header is what says so — a
+    /// reader that assumed the order instead would find the frames wherever the
+    /// writer's constants happened to put them.
+    #[test]
+    fn the_sections_follow_one_another_without_a_gap_or_an_overlap() {
+        let layout = Layout::read_header(&written()).expect("the header was just written");
+
+        assert_eq!(layout.commands().base(), HEADER_WORDS);
+        assert_eq!(layout.state().base(), layout.commands().end());
+        assert_eq!(layout.audio().base(), layout.state().end());
+        assert_eq!(layout.words(), layout.audio().end());
+    }
+
+    /// A buffer that starts before the block in front of it is the one shape
+    /// the range checks cannot catch: every field is a plausible number on its
+    /// own, and only the order they sit in is wrong.
+    #[test]
+    fn frames_overlapping_the_block_before_them_are_refused() {
+        let words = written();
+        words.store_relaxed(HEADER_AUDIO_BASE, LAYOUT.state().base() as u32);
+        assert_eq!(Layout::read_header(&words), Err(HandshakeError::Shape));
     }
 
     /// The one claim in the header that nothing inside it can contradict. A

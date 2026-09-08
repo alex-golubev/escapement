@@ -1071,6 +1071,73 @@ the interface — which keeps its own queue in its own memory and drains a frame
 worth at a time — answers that with "next frame". The alternative is dropping or
 overwriting commands, which is a lost transport change rather than a late one.
 
+#### Where "elsewhere" is
+
+> **Decided 2026-09-07.** A sample buffer is **a fourth section of the region**,
+> described by two words of the header, filled by the interface through a typed
+> array of its own and named by a command.
+
+"Published elsewhere" above is a rule with no address in it, and the address is
+narrowed to one answer by things already decided.
+
+The worklet's memory is fixed at 32 MiB with no `memory.grow`, and there is no
+allocator in that module at all. So anything the audio thread reads is a
+`static` sized at build time, and the only question is which one.
+
+**Rejected — a `static` of its own, with exports like the output block's.** The
+linker chooses where those land, and an offset from the region's base to a
+neighbour it did not place is a number nothing can check; the one check a header
+cannot make about itself — the region against the memory it was found in — would
+not reach it either. And the line the worklet already draws points the other
+way: the output block has exports *because* it never crosses a thread boundary.
+Frames cross one.
+
+**Rejected — the frames as a command's payload.** `MAX_SLOT_WORDS` is the rule
+above made checkable, and raising it is not a tuning knob.
+
+**Rejected — a `SharedArrayBuffer` of its own beside the two modules.** Neither
+module can address one: a wasm pointer is an offset into its own linear memory.
+That is the argument at the top of this section run backwards.
+
+**A region is not a heap, and that is a different claim from a region being
+small.** Four MiB of frames is eleven seconds of stereo at 48 kHz, sized once at
+build time, with nothing allocating inside it. The `.bss` is what makes that
+cheap: the module carrying it grew by about 1.2 KB, and none of that is the
+buffer. Four MiB is what a stand-in needs rather than what the section is worth,
+though: the graph, voice pools and stretch buffers are preallocated in the same
+32 MiB, and the number to weigh this against arrives with the first of them.
+
+Nothing orders the frames against the read except the ring. They are written
+before the command that names them is pushed, so the release on its tail and the
+acquire on the far side carry them — which is why the interface fills the buffer
+with an ordinary typed-array copy rather than word by word through `Atomics`.
+
+**Ordering is not ownership, and the second one needs a number.** A publication
+carries one, and the state block carries the publication the engine is playing
+from, so the interface can tell when the words it published last stopped being
+read. That is what makes a *second* file publishable at all: into the half of
+the buffer that is not live, and never over the half that is. The echo doubles
+as the refusal message, because a descriptor the engine turns away leaves it
+where it was — which says both that one was refused and which words are still
+its own.
+
+**This is slice 1 standing in for streaming**, and it holds a loop rather than a
+song. What replaces it is OPFS by hash, read in a worker (§5) — at which point
+the section stays and three things about it change. Two are easy to see: who
+fills it, and how much of a file is in it at a time.
+
+**The third is the paragraph above, and it does not survive.** Frames written
+once, whole, before the command that names them is what makes the ring's release
+enough — which is the whole of why this buffer has no counter of its own and why
+it is not a fourth mechanism. A worker streaming into it writes continuously, in
+pieces, into words that are being read while it writes, and there is no single
+command left to hang the ordering on: it needs a write cursor and a read cursor
+carrying releases and acquires of their own. That does not reopen "the ring
+carries control, never data" — a ring of frames is not the ring of commands — but
+it does mean the claim at the top of this section is about the traffic slice 1
+has rather than about the section. The counter deliberately left out is what
+streaming brings back.
+
 #### The header describes itself, and carries a version
 
 Not constants compiled into both halves. **The browser fetches and caches the two
