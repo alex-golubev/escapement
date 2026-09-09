@@ -356,3 +356,44 @@ mod wiring {
         assert_eq!(seen.publication, 1, "the echo did not come back");
     }
 }
+
+// Two attributes rather than one `all(...)`, as everywhere else here.
+#[cfg(test)]
+#[cfg(target_arch = "wasm32")]
+mod exports {
+    use wasm_bindgen_test::wasm_bindgen_test;
+
+    use super::*;
+
+    /// What the render does is tested on the host, next to where it lives.
+    /// What this reaches is the boundary in front of it, which nothing else
+    /// crosses: a slice arriving from JavaScript and a `Vec<u8>` going back.
+    #[wasm_bindgen_test]
+    fn a_render_crosses_the_boundary_as_a_file() {
+        let Ok(file) = render_wav(&[0.5; 4], 1, 4, 48_000.0, 1.0, 440.0, true) else {
+            panic!("a rate, a length and a source");
+        };
+
+        assert_eq!(&file[..4], b"RIFF");
+        assert_eq!(file.len(), escapement_export::wav::HEADER_BYTES + 4 * 4);
+    }
+
+    /// And a refusal crosses it as text, which is the only thing the page can
+    /// put in front of somebody.
+    #[wasm_bindgen_test]
+    fn a_refusal_crosses_it_as_text() {
+        assert!(render_wav(&[], 0, 4, 0.0, 1.0, 440.0, true).is_err());
+    }
+
+    /// The page starts its controls at these. A wrapper handing over anything
+    /// but the engine's own numbers puts the controls back where they were —
+    /// agreeing with what is playing by coincidence.
+    #[wasm_bindgen_test]
+    fn the_defaults_are_the_engines() {
+        assert_eq!(default_gain(), escapement_core::DEFAULT_GAIN);
+        assert_eq!(
+            default_frequency_hz(),
+            escapement_core::DEFAULT_FREQUENCY_HZ
+        );
+    }
+}

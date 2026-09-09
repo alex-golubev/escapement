@@ -59,3 +59,49 @@ pub fn check<S: Samples>(over: &S, values: &[f32], channels: usize) {
         "an index the arithmetic behind it would wrap on"
     );
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A source that answers the arithmetic instead of the contract: past the
+    /// last whole frame there is a sample in the slice and this hands it over.
+    /// The mistake `Frames` carried until the suite above existed.
+    struct PastTheEnd<'a> {
+        samples: &'a [f32],
+        channels: usize,
+    }
+
+    impl Samples for PastTheEnd<'_> {
+        fn frames(&self) -> usize {
+            self.samples.len() / self.channels
+        }
+
+        fn channels(&self) -> usize {
+            self.channels
+        }
+
+        fn sample(&self, frame: usize, channel: usize) -> f32 {
+            self.samples
+                .get(frame * self.channels + channel)
+                .copied()
+                .unwrap_or(0.0)
+        }
+    }
+
+    /// The suite has to fail something. A `check` that asserts nothing is one
+    /// every implementation passes, and the two it holds together would drift
+    /// underneath it with every test still green — which is the whole of what
+    /// it was written to stop.
+    #[test]
+    #[should_panic(expected = "a frame past the end")]
+    fn an_implementation_that_reads_past_its_last_frame_is_caught() {
+        let samples = [1.0, 2.0, 3.0, 4.0, 5.0];
+        let over = PastTheEnd {
+            samples: &samples,
+            channels: 2,
+        };
+
+        check(&over, &samples, 2);
+    }
+}
