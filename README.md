@@ -32,8 +32,9 @@ for one to sit at.
 And it writes back out what it plays. The same engine runs outside real time,
 in blocks of its own choosing rather than the host's 128, and what comes out is a
 `.wav` — which is how slice 1 answers whether that engine is tied to the
-`AudioWorklet` at all. Two tests drive both paths over one source and compare
-them sample for sample.
+`AudioWorklet` at all. Two tests drive both paths — one over a published source
+of three channels, one over the oscillator, whose phase is the state most likely
+to notice how long a block is — and compare them sample for sample.
 
 That closes slice 1's risk. What is written beyond it is the model's vocabulary
 — musical time as a type, and the project entities as plain structs with no CRDT

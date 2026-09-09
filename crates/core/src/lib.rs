@@ -16,6 +16,9 @@ extern crate std;
 #[cfg(test)]
 mod fixtures;
 
+#[doc(hidden)]
+pub mod conformance;
+
 mod engine;
 mod frames;
 mod player;

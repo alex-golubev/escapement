@@ -109,25 +109,30 @@ mod tests {
         }
     }
 
-    /// Interleaved: the channels of one frame are neighbours, and one channel
-    /// of two frames is a stride apart. Every value differs from every other,
-    /// so a mistake in that arithmetic reads back some other sample rather than
-    /// the one it wanted.
+    /// The contract [`Frames`](escapement_core::Frames) is held to, over the
+    /// region — and holding both to one suite is the whole of what lets the two
+    /// render paths be compared at all.
+    ///
+    /// Lengths the channel count does not divide, so the word past the last
+    /// whole frame is written and must not be read: the case a guard on the
+    /// channel index alone lets through.
     #[test]
-    fn a_frame_holds_its_channels_side_by_side() {
-        let region = words();
-        let cells = cells(&region);
-        written(cells, &[1.0, 2.0, 3.0, 4.0]);
+    fn the_region_holds_the_samples_contract() {
+        for (values, channels) in [
+            (&[1.0, 2.0, 3.0, 4.0, 5.0][..], 1u32),
+            (&[1.0, 2.0, 3.0, 4.0, 5.0][..], 2),
+            (&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0][..], 3),
+        ] {
+            let region = words();
+            let cells = cells(&region);
+            written(cells, values);
 
-        let published =
-            Published::new(cells, LAYOUT.audio(), 0, 2, 2).expect("two stereo frames fit");
+            let frames = values.len() as u32 / channels;
+            let published = Published::new(cells, LAYOUT.audio(), 0, frames, channels)
+                .expect("the fixtures' buffer holds these");
 
-        assert_eq!(published.frames(), 2);
-        assert_eq!(published.channels(), 2);
-        assert_eq!(published.sample(0, 0), 1.0);
-        assert_eq!(published.sample(0, 1), 2.0);
-        assert_eq!(published.sample(1, 0), 3.0);
-        assert_eq!(published.sample(1, 1), 4.0);
+            escapement_core::conformance::check(&published, values, channels as usize);
+        }
     }
 
     /// The offset is words into the buffer and not frames, which is what lets
@@ -141,21 +146,6 @@ mod tests {
         let published = Published::new(cells, LAYOUT.audio(), 2, 1, 1).expect("one frame fits");
 
         assert_eq!(published.sample(0, 0), 3.0);
-    }
-
-    /// Silence rather than a read outside the region — and both indices,
-    /// because a guard on either one alone would let the other through.
-    #[test]
-    fn an_index_outside_the_source_is_silence() {
-        let region = words();
-        let cells = cells(&region);
-        written(cells, &[1.0, 2.0]);
-
-        let published = Published::new(cells, LAYOUT.audio(), 0, 2, 1).expect("two frames fit");
-
-        assert_eq!(published.sample(0, 0), 1.0);
-        assert_eq!(published.sample(2, 0), 0.0, "a frame past the end");
-        assert_eq!(published.sample(0, 1), 0.0, "a channel that is not there");
     }
 
     /// What the buffer holds and what a quantum can afford are two ceilings,

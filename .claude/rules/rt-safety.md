@@ -45,6 +45,17 @@ Enforced by nothing but discipline. Violating these tends to fail far from the c
   keeps it true is that there is nothing left in `lib.rs` worth a second test.
 - **The render quantum is 128 samples and cannot be changed.** Anything wanting
   larger windows (FFT, time-stretch) buffers internally across quanta.
+- **Every implementation of `Samples` is held to `conformance::check`, and a
+  new one joins it rather than growing tests of its own.** The trait is total —
+  an index it does not like is silence, not an error — and that contract is kept
+  in two crates at once: `Frames` over a slice, `Published` over the region.
+  Written apart they drift, and did: the argument for guarding the frame index
+  as well as the channel one was made in the worklet's tests and never reached
+  the other, which left the offline render able to read a trailing sample the
+  online path answers silence to. The suite is `escapement-core`'s `conformance`
+  module — `#[doc(hidden)] pub` and generic rather than behind a feature, for
+  the reason above, and so nothing of it reaches a module that does not call it.
+  The third implementation is coming, when frames stream from a worker (§5).
 - **Smoothing is measured in samples, never in blocks.** A gain ramp or a fade
   at a stop written "over one quantum" makes the engine's output depend on how
   long a block is, and the offline render for export chooses its own — so the
