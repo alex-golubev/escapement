@@ -13,9 +13,20 @@
 //! `lib.rs` carries.
 
 use std::cell::RefCell;
+use std::num::NonZeroUsize;
 
+use escapement_core::{Engine, Frames, Samples};
+use escapement_export::{render, wav};
+use escapement_time::SampleRate;
 use escapement_view::{Command, CommandKind, Link};
 use wasm_bindgen::prelude::*;
+
+/// What the offline render asks the engine for at a time.
+///
+/// Nothing here is due in 2.7 ms, so this is only about how often the loop goes
+/// round; the samples it produces are the same at any length, and two tests in
+/// `escapement-worklet` are what say so.
+const OFFLINE_BLOCK: NonZeroUsize = NonZeroUsize::new(4096).expect("a block length");
 
 #[wasm_bindgen]
 extern "C" {
@@ -163,6 +174,52 @@ pub struct Telemetry {
     pub publication: u32,
 }
 
+/// Renders what the engine would play, outside real time, and hands back a
+/// `.wav`.
+///
+/// The settings arrive as arguments rather than being read from the engine:
+/// the one that is playing lives in the worklet's memory, which this side
+/// cannot reach into. Until the document exists, the page is what knows both.
+///
+/// `source` is interleaved frames of `channels` channels, and one holding no
+/// whole frame means the oscillator — the same choice [`Engine::process`]
+/// takes, arriving as data rather than as a second entry point.
+///
+/// One channel out, because the engine has one: a source's channels are
+/// averaged and the oscillator is mono. The mixer is what gives this a second.
+///
+/// # Errors
+///
+/// If `rate` is not a sample rate, or the render is longer than a `.wav` can
+/// measure.
+#[wasm_bindgen]
+pub fn render_wav(
+    source: &[f32],
+    channels: usize,
+    samples: usize,
+    rate: f64,
+    gain: f32,
+    frequency_hz: f32,
+) -> Result<Vec<u8>, JsError> {
+    let rate = SampleRate::new(rate).ok_or_else(|| JsError::new("not a sample rate"))?;
+
+    let mut engine = Engine::new(rate);
+    engine.set_gain(gain);
+    engine.set_frequency(frequency_hz);
+    engine.start();
+
+    // Asked of the source rather than of the two numbers behind it: no
+    // channels and no samples are the same answer, and the engine's own choice
+    // is between frames and none.
+    let held = Frames::new(source, channels);
+    let playing = (held.frames() > 0).then_some(&held);
+
+    let mut rendered = vec![0.0f32; samples];
+    render(&mut engine, playing, OFFLINE_BLOCK, &mut rendered);
+
+    Ok(wav::encode(&rendered, 1, rate)?)
+}
+
 fn send(kind: CommandKind) {
     LINK.with_borrow_mut(|link| link.send(Command::now(kind)));
 }
@@ -304,5 +361,55 @@ mod wiring {
         assert_eq!(seen.applied, 4);
         assert_eq!(seen.clock, 4096.0);
         assert_eq!(seen.publication, 1, "the echo did not come back");
+    }
+}
+
+// Two attributes rather than one `all(...)`, as everywhere else here.
+#[cfg(test)]
+#[cfg(target_arch = "wasm32")]
+mod offline {
+    use wasm_bindgen_test::wasm_bindgen_test;
+
+    use super::*;
+
+    fn rendered(file: &[u8]) -> Vec<f32> {
+        file[58..]
+            .chunks_exact(4)
+            .map(|word| f32::from_le_bytes(word.try_into().expect("four bytes")))
+            .collect()
+    }
+
+    /// An empty source is the oscillator, which is the one branch here that is
+    /// not delegation.
+    #[wasm_bindgen_test]
+    fn an_empty_source_renders_the_oscillator() {
+        let Ok(file) = render_wav(&[], 0, 64, 48_000.0, 1.0, 440.0) else {
+            panic!("a rate, a length and no source");
+        };
+
+        assert_eq!(&file[..4], b"RIFF");
+        assert_eq!(file.len(), 58 + 64 * 4);
+        assert!(
+            rendered(&file).iter().any(|sample| *sample != 0.0),
+            "the oscillator was silent"
+        );
+    }
+
+    /// And a source is the source, at the gain asked for rather than the
+    /// engine's default.
+    #[wasm_bindgen_test]
+    fn a_source_is_rendered_instead_of_it() {
+        let Ok(file) = render_wav(&[0.5; 4], 1, 4, 48_000.0, 1.0, 440.0) else {
+            panic!("a rate, a length and a source");
+        };
+
+        assert_eq!(rendered(&file), [0.5; 4]);
+    }
+
+    /// The rate arrives from a host that is not this program, so it is refused
+    /// here rather than reaching arithmetic with nowhere to report it.
+    #[wasm_bindgen_test]
+    fn a_rate_that_is_not_one_is_refused() {
+        assert!(render_wav(&[], 0, 4, 0.0, 1.0, 440.0).is_err());
     }
 }
