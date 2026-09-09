@@ -60,9 +60,12 @@ checksum = "9330f8b2ff13f34540b44e946ef35111825727b38d33286ef986142615121801"
 name = "escapement-app"
 version = "0.0.0"
 dependencies = [
+ "escapement-core",
+ "escapement-export",
  "escapement-model",
  "escapement-protocol",
  "escapement-render",
+ "escapement-time",
  "escapement-view",
  "js-sys",
  "wasm-bindgen",
@@ -75,6 +78,14 @@ version = "0.0.0"
 dependencies = [
  "escapement-time",
  "libm",
+]
+
+[[package]]
+name = "escapement-export"
+version = "0.0.0"
+dependencies = [
+ "escapement-core",
+ "escapement-time",
 ]
 
 [[package]]
@@ -117,6 +128,7 @@ name = "escapement-worklet"
 version = "0.0.0"
 dependencies = [
  "escapement-core",
+ "escapement-export",
  "escapement-protocol",
  "escapement-time",
 ]
