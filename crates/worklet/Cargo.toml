@@ -16,5 +16,11 @@ escapement-protocol.workspace = true
 # boundary where a number that is not a rate has to be turned away.
 escapement-time.workspace = true
 
+# Tests only, and one test: the offline render has to be compared against the
+# online one, and the online one is this crate's `Processor`. Nothing of it
+# reaches the module that ships — `tools/check-worklet-module.py` reads that.
+[dev-dependencies]
+escapement-export.workspace = true
+
 [lints]
 workspace = true

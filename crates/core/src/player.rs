@@ -19,7 +19,7 @@ pub const MAX_SOURCE_CHANNELS: usize = 64;
 /// are read one at a time through relaxed atomics; naming that here would put
 /// the protocol, and the memory it describes, inside a crate that is only about
 /// sound (ARCHITECTURE.md §3). The worklet implements this over the region, and
-/// a test hands it an array.
+/// [`Frames`](crate::Frames) is the same over a slice.
 pub trait Samples {
     /// How many frames there are.
     fn frames(&self) -> usize;
@@ -106,9 +106,9 @@ impl Default for Player {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fixtures::Recorded;
+    use crate::Frames;
 
-    /// A source saying it has frames and no channels — which [`Recorded`]
+    /// A source saying it has frames and no channels — which [`Frames`]
     /// cannot spell, and a descriptor arriving from the other side of the
     /// region can.
     struct Malformed;
@@ -131,7 +131,8 @@ mod tests {
     fn plays_a_source_one_frame_at_a_time() {
         let mut player = Player::new();
         let mut out = [0.0f32; 4];
-        player.process(&Recorded::new(&[0.1, 0.2, 0.3, 0.4], 1), &mut out);
+        let source = [0.1, 0.2, 0.3, 0.4];
+        player.process(&Frames::new(&source, 1), &mut out);
 
         assert_eq!(out, [0.1, 0.2, 0.3, 0.4]);
     }
@@ -143,7 +144,8 @@ mod tests {
     fn the_channels_of_a_frame_are_averaged() {
         let mut player = Player::new();
         let mut out = [0.0f32; 2];
-        player.process(&Recorded::new(&[1.0, 0.0, 0.5, 0.5], 2), &mut out);
+        let source = [1.0, 0.0, 0.5, 0.5];
+        player.process(&Frames::new(&source, 2), &mut out);
 
         assert_eq!(out, [0.5, 0.5]);
     }
@@ -154,14 +156,16 @@ mod tests {
     fn a_source_that_runs_out_fills_the_rest_with_silence() {
         let mut player = Player::new();
         let mut out = [0.9f32; 4];
-        player.process(&Recorded::new(&[0.1, 0.2], 1), &mut out);
+        let source = [0.1, 0.2];
+        player.process(&Frames::new(&source, 1), &mut out);
 
         assert_eq!(out, [0.1, 0.2, 0.0, 0.0]);
     }
 
     #[test]
     fn a_block_carries_on_where_the_last_one_stopped() {
-        let source = Recorded::new(&[0.1, 0.2, 0.3, 0.4], 1);
+        let held = [0.1, 0.2, 0.3, 0.4];
+        let source = Frames::new(&held, 1);
         let mut player = Player::new();
         let mut out = [0.0f32; 2];
 

@@ -47,6 +47,13 @@
 </div>
 
 <div class="row">
+    <button id="save" disabled>Export WAV</button>
+    <p>Rendered outside real time by the same engine, in blocks of its own
+        choosing — not recorded from what is playing. Two tests compare the two
+        paths sample for sample; this is where you check that by ear.</p>
+</div>
+
+<div class="row">
     <label>frequency <input id="hz" type="range" min="55" max="1760" step="1" value="440" disabled/> <span id="hz-value">440 Hz</span></label>
     <label>gain <input id="gain" type="range" min="0" max="100" step="1" value="20" disabled/> <span id="gain-value">0.20</span></label>
 </div>
@@ -79,6 +86,7 @@
     const hz = document.getElementById("hz");
     const gain = document.getElementById("gain");
     const file = document.getElementById("file");
+    const save = document.getElementById("save");
 
     // Both kept past the handler that makes them: the file picker below needs
     // the context to decode at the engine's rate, and the memory to write the
@@ -95,6 +103,11 @@
     let half = 0;
     let sent = 0;
     let accepted = 0;
+
+    // The page's own copy of the last file, which is what the offline render
+    // reads. Reading the region back instead would race the engine over the
+    // very words it is playing.
+    let loaded = null;
 
     audio.onclick = async () => {
         audio.disabled = true;
@@ -127,7 +140,7 @@
                 memory = data.buffer;
                 say(`connected — region at byte ${data.region}, quantum ${data.quantum}`);
                 say(`audio buffer — ${engine.audio_length() / 1048576} MiB at byte ${engine.audio_offset()}`);
-                for (const control of [play, halt, hz, gain, file]) control.disabled = false;
+                for (const control of [play, halt, hz, gain, file, save]) control.disabled = false;
             };
 
             node.connect(ctx.destination);
@@ -189,14 +202,18 @@
         }
 
         // Interleaved on the way in, because that is how the engine reads a
-        // frame: one addition per sample rather than one per channel.
-        const buffer = new Float32Array(memory, engine.audio_offset(), room);
+        // frame: one addition per sample rather than one per channel. Built
+        // here and copied in one go, so the words the engine may still be
+        // reading are written over once rather than a million times.
+        const interleaved = new Float32Array(frames * channels);
         for (let channel = 0; channel < channels; channel += 1) {
             const side = decoded.getChannelData(channel);
             for (let frame = 0; frame < frames; frame += 1) {
-                buffer[at + frame * channels + channel] = side[frame];
+                interleaved[frame * channels + channel] = side[frame];
             }
         }
+        new Float32Array(memory, engine.audio_offset(), room).set(interleaved, at);
+        loaded = {samples: interleaved, channels, frames, name: chosen.name};
 
         // Last, and that is the whole ordering: the frames are already there,
         // and the ring's release is what carries them to the other thread (§3).
@@ -222,6 +239,40 @@
 
     play.onclick = () => engine.start();
     halt.onclick = () => engine.stop();
+
+    // Two seconds of it when there is no file, because the oscillator has no
+    // length of its own to take.
+    const TONE_SECONDS = 2;
+
+    save.onclick = () => {
+        const samples = loaded ? loaded.frames : Math.round(ctx.sampleRate * TONE_SECONDS);
+        let bytes;
+        try {
+            bytes = engine.render_wav(
+                loaded ? loaded.samples : new Float32Array(0),
+                loaded ? loaded.channels : 0,
+                samples,
+                ctx.sampleRate,
+                Number(gain.value) / 100,
+                Number(hz.value),
+            );
+        } catch (error) {
+            say("could not render: " + error);
+            return;
+        }
+
+        const url = URL.createObjectURL(new Blob([bytes], {type: "audio/wav"}));
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = (loaded ? loaded.name.replace(/\.[^.]*$/, "") : "oscillator") + ".wav";
+        link.click();
+        // Not straight after the click: revoking a URL a download has not
+        // picked up yet truncates the file, and the download starts on a task
+        // of its own.
+        setTimeout(() => URL.revokeObjectURL(url), 0);
+
+        say(`rendered ${samples} samples at ${ctx.sampleRate} Hz — ${bytes.length} bytes`);
+    };
 
     hz.oninput = () => {
         document.getElementById("hz-value").textContent = `${hz.value} Hz`;

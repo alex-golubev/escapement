@@ -1,0 +1,16 @@
+[package]
+name = "escapement-export"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+publish.workspace = true
+
+# The one crate here that may allocate on purpose. It runs where a person is
+# waiting for a file rather than where a quantum is due, so the rules in
+# `.claude/rules/rt-safety.md` govern what it drives and not what it is.
+[dependencies]
+escapement-core.workspace = true
+escapement-time.workspace = true
+
+[lints]
+workspace = true

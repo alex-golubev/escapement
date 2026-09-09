@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/time",
     "crates/core",
+    "crates/export",
     "crates/model",
     "crates/protocol",
     "crates/worklet",
@@ -30,6 +31,7 @@ publish = false
 
 [workspace.dependencies]
 escapement-core = { path = "crates/core" }
+escapement-export = { path = "crates/export" }
 escapement-model = { path = "crates/model" }
 escapement-protocol = { path = "crates/protocol" }
 escapement-render = { path = "crates/render" }

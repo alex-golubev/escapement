@@ -21,39 +21,3 @@ pub(crate) fn rising_zero_crossings(block: &[f32]) -> usize {
         .filter(|pair| pair[0] <= 0.0 && pair[1] > 0.0)
         .count()
 }
-
-/// Frames a test holds itself, standing in for the shared region.
-pub(crate) struct Recorded {
-    samples: std::vec::Vec<f32>,
-    channels: usize,
-}
-
-impl Recorded {
-    /// `samples` interleaved, the way the buffer holds them.
-    pub(crate) fn new(samples: &[f32], channels: usize) -> Self {
-        Self {
-            samples: samples.to_vec(),
-            channels,
-        }
-    }
-}
-
-impl crate::Samples for Recorded {
-    fn frames(&self) -> usize {
-        match self.channels {
-            0 => 0,
-            channels => self.samples.len() / channels,
-        }
-    }
-
-    fn channels(&self) -> usize {
-        self.channels
-    }
-
-    fn sample(&self, frame: usize, channel: usize) -> f32 {
-        self.samples
-            .get(frame * self.channels + channel)
-            .copied()
-            .unwrap_or(0.0)
-    }
-}
