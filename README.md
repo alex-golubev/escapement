@@ -29,10 +29,16 @@ out of the ring — and named by one command; the engine plays those frames
 instead of the oscillator. There is no clip yet, because there is no position
 for one to sit at.
 
+And it writes back out what it plays. The same engine runs outside real time,
+in blocks of its own choosing rather than the host's 128, and what comes out is a
+`.wav` — which is how slice 1 answers whether that engine is tied to the
+`AudioWorklet` at all. Two tests drive both paths over one source and compare
+them sample for sample.
+
 That closes slice 1's risk. What is written beyond it is the model's vocabulary
 — musical time as a type, and the project entities as plain structs with no CRDT
-underneath them yet (§2.5, §2.6). The timeline, the mixer, WAV export and the
-document itself are still to come.
+underneath them yet (§2.5, §2.6). The timeline, the mixer and the document
+itself are still to come.
 
 ## Layout
 
@@ -44,6 +50,7 @@ document itself are still to come.
 | `crates/protocol` | What the two wasm modules say to each other through shared memory. **`no_std`, compiled into both** |
 | `crates/view` | The same region reached from outside it, through `Atomics`. **The half that needs JavaScript, kept where the worklet cannot link it** |
 | `crates/worklet` | wasm module for `AudioWorklet` |
+| `crates/export` | The same engine outside real time, and the WAV encoder. **The one crate here that may allocate** |
 | `crates/render` | Canvas renderer for the playlist and piano roll. **Framework-agnostic** |
 | `crates/app` | Leptos client |
 
