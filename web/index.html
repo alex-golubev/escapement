@@ -54,8 +54,12 @@
 </div>
 
 <div class="row">
-    <label>frequency <input id="hz" type="range" min="55" max="1760" step="1" value="440" disabled/> <span id="hz-value">440 Hz</span></label>
-    <label>gain <input id="gain" type="range" min="0" max="100" step="1" value="20" disabled/> <span id="gain-value">0.20</span></label>
+    <!-- No `value` on either, and the readouts start empty: what they show is
+         put there from the engine's own defaults at startup. A number here
+         instead is a second copy of one in `escapement-core`, and the export
+         reads these controls. -->
+    <label>frequency <input id="hz" type="range" min="55" max="1760" step="1" disabled/> <span id="hz-value"></span></label>
+    <label>gain <input id="gain" type="range" min="0" max="100" step="1" disabled/> <span id="gain-value"></span></label>
 </div>
 
 <pre id="state">not connected</pre>
@@ -108,6 +112,33 @@
     // reads. Reading the region back instead would race the engine over the
     // very words it is playing.
     let loaded = null;
+
+    // What the engine has been told, in one place, written by the same handlers
+    // that send it. The export renders from this rather than from where the
+    // controls happen to sit — those agreed with the engine only because a
+    // number in the markup happened to equal one in `escapement-core`.
+    const settings = {
+        gain: engine.default_gain(),
+        frequency_hz: engine.default_frequency_hz(),
+    };
+
+    // Not in `settings`, because it is not something this page decides: the
+    // engine says what the transport is doing and the state block carries it
+    // back every frame (§3). An export taken while it is stopped is the silence
+    // that is playing.
+    let playing = false;
+
+    const hzValue = document.getElementById("hz-value");
+    const gainValue = document.getElementById("gain-value");
+
+    // The controls start where the engine already is.
+    const showSettings = () => {
+        hz.value = String(settings.frequency_hz);
+        hzValue.textContent = `${settings.frequency_hz} Hz`;
+        gain.value = String(Math.round(settings.gain * 100));
+        gainValue.textContent = settings.gain.toFixed(2);
+    };
+    showSettings();
 
     audio.onclick = async () => {
         audio.disabled = true;
@@ -213,12 +244,30 @@
             }
         }
         new Float32Array(memory, engine.audio_offset(), room).set(interleaved, at);
-        loaded = {samples: interleaved, channels, frames, name: chosen.name};
 
         // Last, and that is the whole ordering: the frames are already there,
         // and the ring's release is what carries them to the other thread (§3).
         sent = engine.use_audio(at, frames, channels);
         half = 1 - half;
+
+        // The engine checks a descriptor against the buffer it names and
+        // against what a quantum can afford to average, and a refusal is this
+        // number never arriving (§3). Held here rather than assumed, because
+        // the page goes on to offer an export of whatever `loaded` holds, and a
+        // file of material nothing ever played is the one thing that button
+        // must not produce.
+        if (!(await echoed(sent))) {
+            // Refused means the engine never moved, so the half it is reading
+            // is the one before this — put both back, or the next file writes
+            // over the words it is playing and this page waits for an echo that
+            // is not coming.
+            half = 1 - half;
+            sent = accepted;
+            say(`the engine did not take ${chosen.name} — ${channels} channels, ${frames} frames`);
+            return;
+        }
+
+        loaded = {samples: interleaved, channels, frames, name: chosen.name};
         say(`${chosen.name} — publication ${sent}, ${frames} frames, ${channels} channels, ${(frames / decoded.sampleRate).toFixed(2)} s`);
     };
 
@@ -244,6 +293,10 @@
     // length of its own to take.
     const TONE_SECONDS = 2;
 
+    // On this thread and not in a worker: the button can ask for half the
+    // audio buffer at most, which costs a frame of drawing. The offline
+    // render §2.1 puts in a worker is a bounce — the whole graph over a
+    // whole project.
     save.onclick = () => {
         const samples = loaded ? loaded.frames : Math.round(ctx.sampleRate * TONE_SECONDS);
         let bytes;
@@ -253,8 +306,9 @@
                 loaded ? loaded.channels : 0,
                 samples,
                 ctx.sampleRate,
-                Number(gain.value) / 100,
-                Number(hz.value),
+                settings.gain,
+                settings.frequency_hz,
+                playing,
             );
         } catch (error) {
             say("could not render: " + error);
@@ -265,23 +319,33 @@
         const link = document.createElement("a");
         link.href = url;
         link.download = (loaded ? loaded.name.replace(/\.[^.]*$/, "") : "oscillator") + ".wav";
+        // In the document for the click and out again after it: a detached
+        // `<a download>` is a click that does nothing at all in Firefox, and
+        // this page would look like it had worked.
+        document.body.append(link);
         link.click();
+        link.remove();
+
         // Not straight after the click: revoking a URL a download has not
-        // picked up yet truncates the file, and the download starts on a task
-        // of its own.
-        setTimeout(() => URL.revokeObjectURL(url), 0);
+        // picked up yet truncates the file, the download starts on a task of
+        // its own, and nothing tells this page when it has. A second is past
+        // anything that task waits for; a timeout of zero is the shortest delay
+        // that can still lose the race it is here to avoid.
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
 
         say(`rendered ${samples} samples at ${ctx.sampleRate} Hz — ${bytes.length} bytes`);
+        if (!playing) say("the transport is stopped, so that file is the silence it is playing");
     };
 
     hz.oninput = () => {
-        document.getElementById("hz-value").textContent = `${hz.value} Hz`;
-        engine.set_frequency(Number(hz.value));
+        settings.frequency_hz = Number(hz.value);
+        hzValue.textContent = `${settings.frequency_hz} Hz`;
+        engine.set_frequency(settings.frequency_hz);
     };
     gain.oninput = () => {
-        const value = Number(gain.value) / 100;
-        document.getElementById("gain-value").textContent = value.toFixed(2);
-        engine.set_gain(value);
+        settings.gain = Number(gain.value) / 100;
+        gainValue.textContent = settings.gain.toFixed(2);
+        engine.set_gain(settings.gain);
     };
 
     const state = document.getElementById("state");
@@ -309,6 +373,7 @@
             state.textContent = `waiting     frame ${frames}`;
         } else {
             accepted = now.publication;
+            playing = now.playing;
             state.textContent =
                 `transport   ${now.playing ? "playing" : "stopped"}\n` +
                 `clock       ${now.clock} samples\n` +

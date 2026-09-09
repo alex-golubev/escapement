@@ -3,10 +3,16 @@ use escapement_time::SampleRate;
 use crate::{Player, Samples, Sine};
 
 /// Roughly -14 dB, for headphones. The mixer replaces it.
-const DEFAULT_GAIN: f32 = 0.2;
+///
+/// Public because the interface's controls have to start where the engine
+/// already is. A literal in the markup instead is a second copy of this number,
+/// and every export taken before that control is touched then differs from what
+/// was heard, with nothing wrong anywhere to point at.
+pub const DEFAULT_GAIN: f32 = 0.2;
 
-/// Concert pitch, and slice 1's entire instrument.
-const DEFAULT_FREQUENCY_HZ: f32 = 440.0;
+/// Concert pitch, and slice 1's entire instrument. Public for the reason
+/// [`DEFAULT_GAIN`] is.
+pub const DEFAULT_FREQUENCY_HZ: f32 = 440.0;
 
 /// The audio graph, which for now is one oscillator behind a gain and a
 /// transport.

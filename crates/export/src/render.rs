@@ -1,6 +1,10 @@
+use std::fmt;
 use std::num::NonZeroUsize;
 
-use escapement_core::{Engine, Samples};
+use escapement_core::{Engine, Frames, Samples, MAX_SOURCE_CHANNELS};
+use escapement_time::SampleRate;
+
+use crate::wav::{self, EncodeError};
 
 /// Fills `into` by driving `engine` in blocks of `block` samples.
 ///
@@ -21,11 +25,124 @@ pub fn render<S: Samples>(
     }
 }
 
+/// What the engine has to be told before it renders.
+///
+/// Arguments rather than a read of the engine that is playing: that one lives
+/// in the worklet's memory, which this side cannot reach into (ARCHITECTURE.md
+/// §3). Until the document exists, the page is what knows both.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Settings {
+    /// Samples a second to render at.
+    pub rate_hz: f64,
+    /// Master gain, linear.
+    pub gain: f32,
+    /// The oscillator's pitch, which is what a render with no source hears.
+    pub frequency_hz: f32,
+    /// Whether the transport is running. A stopped engine renders silence and
+    /// so does this: the file is what would have been heard, including when
+    /// that is nothing.
+    pub playing: bool,
+}
+
+/// What the offline render asks the engine for at a time.
+///
+/// Nothing here is due in 2.7 ms, so this is only about how often the loop goes
+/// round; the samples it produces are the same at any length, and two tests in
+/// `escapement-worklet` are what say so.
+const BLOCK: NonZeroUsize = NonZeroUsize::new(4096).expect("a block length");
+
+/// Renders what the engine would play, outside real time, and hands back a
+/// `.wav`.
+///
+/// `source` is interleaved frames of `channels` channels, and one holding no
+/// whole frame means the oscillator — the same choice [`Engine::process`]
+/// takes, arriving as data rather than as a second entry point.
+///
+/// One channel out, because the engine has one: a source's channels are
+/// averaged and the oscillator is mono. The mixer is what gives this a second.
+///
+/// # Errors
+///
+/// [`ExportError`], for material the engine would have refused or a render
+/// longer than a `.wav` can measure.
+pub fn render_to_wav(
+    settings: &Settings,
+    source: &[f32],
+    channels: usize,
+    samples: usize,
+) -> Result<Vec<u8>, ExportError> {
+    let rate = SampleRate::new(settings.rate_hz).ok_or(ExportError::Rate {
+        hz: settings.rate_hz,
+    })?;
+
+    // The budget the worklet turns a publication away over, applied on this
+    // side too: what the engine refused to play must not come out of a file
+    // offered as what was heard.
+    if channels > MAX_SOURCE_CHANNELS {
+        return Err(ExportError::SourceChannels { channels });
+    }
+
+    let mut engine = Engine::new(rate);
+    engine.set_gain(settings.gain);
+    engine.set_frequency(settings.frequency_hz);
+    if settings.playing {
+        engine.start();
+    }
+
+    // Asked of the source rather than of the two numbers behind it: no
+    // channels and no samples are the same answer, and the engine's own choice
+    // is between frames and none.
+    let held = Frames::new(source, channels);
+    let playing = (held.frames() > 0).then_some(&held);
+
+    let mut rendered = vec![0.0f32; samples];
+    render(&mut engine, playing, BLOCK, &mut rendered);
+
+    Ok(wav::encode(&rendered, 1, rate)?)
+}
+
+/// Why what was asked for did not become a file.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ExportError {
+    /// The rate arrives from a host that is not this program, so refusing one
+    /// that is not a rate has to happen before anything divides by it.
+    Rate {
+        /// What was asked for.
+        hz: f64,
+    },
+    /// More channels than the engine will average in a quantum, which is what
+    /// the online path refuses a publication over.
+    SourceChannels {
+        /// What was asked for.
+        channels: usize,
+    },
+    /// The samples came out; the file around them did not.
+    Encode(EncodeError),
+}
+
+impl From<EncodeError> for ExportError {
+    fn from(error: EncodeError) -> Self {
+        Self::Encode(error)
+    }
+}
+
+impl fmt::Display for ExportError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Rate { hz } => write!(f, "{hz} is not a sample rate"),
+            Self::SourceChannels { channels } => write!(
+                f,
+                "{channels} channels is past the {MAX_SOURCE_CHANNELS} a quantum affords"
+            ),
+            Self::Encode(error) => error.fmt(f),
+        }
+    }
+}
+
+impl std::error::Error for ExportError {}
+
 #[cfg(test)]
 mod tests {
-    use escapement_core::Frames;
-    use escapement_time::SampleRate;
-
     use super::*;
 
     const NOTHING: Option<&Frames<'static>> = None;
@@ -117,5 +234,112 @@ mod tests {
         render(&mut engine, NOTHING, block(128), &mut []);
 
         assert_eq!(engine.clock(), 0);
+    }
+
+    /// A page with nothing touched, which the tests below vary one field of.
+    fn settings() -> Settings {
+        Settings {
+            rate_hz: 48_000.0,
+            gain: 1.0,
+            frequency_hz: 440.0,
+            playing: true,
+        }
+    }
+
+    /// The samples out of a file, past the header the encoder put in front of
+    /// them. Through [`wav::HEADER_BYTES`] rather than the number it is, so
+    /// that a chunk added to the header moves this too.
+    fn samples(file: &[u8]) -> Vec<f32> {
+        let (words, rest) = file[wav::HEADER_BYTES..].as_chunks::<4>();
+        assert!(rest.is_empty(), "a file of whole samples");
+
+        words.iter().copied().map(f32::from_le_bytes).collect()
+    }
+
+    /// An empty source is the oscillator, which is the branch this entry point
+    /// takes that its arguments do not spell.
+    #[test]
+    fn an_empty_source_renders_the_oscillator() {
+        let file = render_to_wav(&settings(), &[], 0, 64).expect("a rate and a length");
+
+        assert_eq!(&file[..4], b"RIFF");
+        assert_eq!(file.len(), wav::HEADER_BYTES + 64 * 4);
+        assert!(
+            samples(&file).iter().any(|sample| *sample != 0.0),
+            "the oscillator was silent"
+        );
+    }
+
+    /// And a source is the source, at the gain asked for rather than the
+    /// engine's default.
+    #[test]
+    fn a_source_is_rendered_instead_of_it() {
+        let file = render_to_wav(&settings(), &[0.5; 4], 1, 4).expect("a source of four frames");
+
+        assert_eq!(samples(&file), [0.5; 4]);
+    }
+
+    /// A stopped transport renders the silence it is playing. The button this
+    /// is behind is offered for checking a file against what is audible, so the
+    /// two have to be able to agree about hearing nothing.
+    #[test]
+    fn a_stopped_transport_renders_the_silence_it_is_playing() {
+        let stopped = Settings {
+            playing: false,
+            ..settings()
+        };
+        let file = render_to_wav(&stopped, &[0.5; 4], 1, 4).expect("a stopped engine renders too");
+
+        assert_eq!(samples(&file), [0.0; 4]);
+    }
+
+    /// The rate arrives from a host that is not this program, so it is refused
+    /// here rather than reaching arithmetic with nowhere to report it.
+    #[test]
+    fn a_rate_that_is_not_one_is_refused() {
+        let refused = Settings {
+            rate_hz: 0.0,
+            ..settings()
+        };
+
+        assert_eq!(
+            render_to_wav(&refused, &[], 0, 4).err(),
+            Some(ExportError::Rate { hz: 0.0 })
+        );
+    }
+
+    /// The online path turns away a publication of more channels than a quantum
+    /// can average. A file offered as what was heard has to turn away the same
+    /// material, rather than render what nothing played.
+    #[test]
+    fn a_source_of_more_channels_than_a_quantum_affords_is_refused() {
+        let past = MAX_SOURCE_CHANNELS + 1;
+        let source = vec![0.5f32; past];
+
+        assert_eq!(
+            render_to_wav(&settings(), &source, past, 4).err(),
+            Some(ExportError::SourceChannels { channels: past })
+        );
+        assert!(
+            render_to_wav(
+                &settings(),
+                &source[..MAX_SOURCE_CHANNELS],
+                MAX_SOURCE_CHANNELS,
+                4
+            )
+            .is_ok(),
+            "exactly the budget"
+        );
+    }
+
+    #[test]
+    fn every_export_error_says_what_went_wrong() {
+        for error in [
+            ExportError::Rate { hz: 0.0 },
+            ExportError::SourceChannels { channels: 65 },
+            ExportError::Encode(EncodeError::Channels { channels: 0 }),
+        ] {
+            assert!(format!("{error}").len() > 20, "{error:?} says nothing");
+        }
     }
 }
