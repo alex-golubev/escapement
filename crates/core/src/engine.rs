@@ -142,13 +142,13 @@ impl Engine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fixtures::{rate, rising_zero_crossings, Recorded, RATE_HZ};
-    use crate::RENDER_QUANTUM;
+    use crate::fixtures::{rate, rising_zero_crossings, RATE_HZ};
+    use crate::{Frames, RENDER_QUANTUM};
 
     /// Nothing published, spelled once: `None` needs a type even where there is
     /// no value, and repeating the turbofish at every call site would read as
     /// though the type mattered.
-    const NOTHING: Option<&Recorded> = None;
+    const NOTHING: Option<&Frames<'static>> = None;
 
     fn quantum(engine: &mut Engine) -> [f32; RENDER_QUANTUM] {
         let mut block = [0.0f32; RENDER_QUANTUM];
@@ -225,7 +225,8 @@ mod tests {
         engine.set_gain(1.0);
         engine.start();
 
-        let samples = Recorded::new(&[0.5; RENDER_QUANTUM], 1);
+        let held = [0.5; RENDER_QUANTUM];
+        let samples = Frames::new(&held, 1);
         let mut block = [0.0f32; RENDER_QUANTUM];
         engine.process(Some(&samples), &mut block);
 
@@ -241,7 +242,8 @@ mod tests {
         engine.set_gain(1.0);
         engine.start();
 
-        let samples = Recorded::new(&[0.5; 4], 1);
+        let held = [0.5; 4];
+        let samples = Frames::new(&held, 1);
         let mut block = [0.0f32; RENDER_QUANTUM];
 
         engine.process(Some(&samples), &mut block);

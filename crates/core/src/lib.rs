@@ -17,10 +17,12 @@ extern crate std;
 mod fixtures;
 
 mod engine;
+mod frames;
 mod player;
 mod sine;
 
 pub use engine::Engine;
+pub use frames::Frames;
 pub use player::{Player, Samples, MAX_SOURCE_CHANNELS};
 pub use sine::Sine;
 
