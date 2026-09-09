@@ -206,9 +206,10 @@ fn peak(block: &[f32]) -> f32 {
 #[cfg(test)]
 mod tests {
     use core::marker::PhantomData;
+    use core::num::NonZeroUsize;
     use core::sync::atomic::AtomicU32;
 
-    use escapement_core::RENDER_QUANTUM;
+    use escapement_core::{Frames, RENDER_QUANTUM};
     use escapement_protocol::{Cells, Full, Producer, Subscriber};
 
     use super::*;
@@ -561,5 +562,107 @@ mod tests {
             1,
             "the refused publication was echoed"
         );
+    }
+
+    /// Nothing published, spelled once — the offline render takes the same
+    /// `Option` the engine does.
+    const NOTHING: Option<&Frames<'static>> = None;
+
+    /// The claim slice 1 rests on: the offline render is the same engine, so
+    /// the same material comes out as the same samples (§7).
+    ///
+    /// Here rather than in `escapement-export` because the online path is
+    /// `Processor` and `Processor` is this crate's. The export crate is a
+    /// dependency of these tests alone.
+    ///
+    /// What it catches is state that depends on the length of a block. There
+    /// is none today; the mixer's gain ramp and its fade at a stop are the
+    /// first candidates, and this is what stops them being written per quantum
+    /// (`.claude/rules/rt-safety.md`).
+    fn online(probe: &mut Probe, samples: usize) -> Vec<f32> {
+        let mut rendered = Vec::with_capacity(samples);
+        while rendered.len() < samples {
+            rendered.extend_from_slice(&probe.quantum());
+        }
+        rendered.truncate(samples);
+        rendered
+    }
+
+    /// Four quanta, which is long enough for a source to run out inside the
+    /// render and short enough for Miri to walk (`.claude/rules/checks.md`).
+    const COMPARED: usize = 4 * RENDER_QUANTUM;
+
+    /// Two block lengths, either side of the quantum. The short one puts
+    /// boundaries inside material the online path renders whole — without it a
+    /// source of a few frames is over before the first block ends, and the two
+    /// renders agree for want of anything to disagree about. Measured: a fade
+    /// written per block was caught by the oscillator and not by the source.
+    /// The long one shares no factor with 128, so its boundaries land
+    /// somewhere different again.
+    const OFFLINE_BLOCKS: [usize; 2] = [7, 300];
+
+    fn block(of: usize) -> NonZeroUsize {
+        NonZeroUsize::new(of).expect("a block length")
+    }
+
+    /// A published source, played through and then run out. Every frame
+    /// differs from every other, so a cursor that slips shows up as a value
+    /// rather than as a level.
+    #[test]
+    fn the_offline_render_of_a_source_is_the_online_one() {
+        // From one rather than from zero: a first frame of silence is a frame
+        // that survives being multiplied by anything.
+        let source: Vec<f32> = (1..=24u8).map(|n| f32::from(n) / 24.0).collect();
+
+        let words = words();
+        let mut probe = Probe::new(&words);
+        probe
+            .send(CommandKind::SetGain(0.75))
+            .expect("an empty ring");
+        probe.publish(1, &source, 1).expect("an empty ring");
+        probe.send(CommandKind::Start).expect("an empty ring");
+        let online = online(&mut probe, COMPARED);
+
+        assert!(peak(&online) > 0.0, "the online render was silent");
+
+        for length in OFFLINE_BLOCKS {
+            let mut engine = Engine::new(rate());
+            engine.set_gain(0.75);
+            engine.start();
+            let mut offline = vec![0.0f32; COMPARED];
+            escapement_export::render(
+                &mut engine,
+                Some(&Frames::new(&source, 1)),
+                block(length),
+                &mut offline,
+            );
+
+            assert_eq!(online, offline, "blocks of {length}");
+        }
+    }
+
+    /// The same with the oscillator, whose phase is the state most likely to
+    /// notice how long a block is.
+    #[test]
+    fn the_offline_render_of_the_oscillator_is_the_online_one() {
+        let words = words();
+        let mut probe = Probe::new(&words);
+        probe
+            .send(CommandKind::SetFrequency(330.0))
+            .expect("an empty ring");
+        probe.send(CommandKind::Start).expect("an empty ring");
+        let online = online(&mut probe, COMPARED);
+
+        assert!(peak(&online) > 0.0, "the online render was silent");
+
+        for length in OFFLINE_BLOCKS {
+            let mut engine = Engine::new(rate());
+            engine.set_frequency(330.0);
+            engine.start();
+            let mut offline = vec![0.0f32; COMPARED];
+            escapement_export::render(&mut engine, NOTHING, block(length), &mut offline);
+
+            assert_eq!(online, offline, "blocks of {length}");
+        }
     }
 }

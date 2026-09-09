@@ -45,5 +45,12 @@ Enforced by nothing but discipline. Violating these tends to fail far from the c
   keeps it true is that there is nothing left in `lib.rs` worth a second test.
 - **The render quantum is 128 samples and cannot be changed.** Anything wanting
   larger windows (FFT, time-stretch) buffers internally across quanta.
+- **Smoothing is measured in samples, never in blocks.** A gain ramp or a fade
+  at a stop written "over one quantum" makes the engine's output depend on how
+  long a block is, and the offline render for export chooses its own — so the
+  file stops matching what was heard, with nothing wrong on either side to point
+  at. `the_offline_render_of_*` in `escapement-worklet` compares the two paths
+  sample for sample, and a fade written per block was measured against them and
+  caught.
 - **The transport must be drivable from outside** — the engine accepts "start at
   position P at host time T", not only "play now". Needed for follow mode later.
