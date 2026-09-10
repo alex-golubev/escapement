@@ -131,6 +131,8 @@ impl Processor {
             quanta: self.quanta,
             peak: peak(out),
             playing: self.engine.playing(),
+            gain: self.engine.gain(),
+            frequency_hz: self.engine.frequency_hz(),
             commands_applied: self.applied,
             commands_unknown: self.unknown,
             audio_publication: self.publication,
@@ -210,6 +212,7 @@ mod tests {
     use core::sync::atomic::AtomicU32;
 
     use escapement_core::{Frames, RENDER_QUANTUM};
+    use escapement_export::{render_to_wav, wav, Settings};
     use escapement_protocol::{Cells, Full, Producer, Subscriber};
 
     use super::*;
@@ -644,6 +647,37 @@ mod tests {
 
             assert_eq!(online, offline, "blocks of {length}");
         }
+    }
+
+    /// The file is rendered from what the engine publishes about itself, and
+    /// that is not what it was sent: a frequency it cannot produce leaves the
+    /// one before it standing, while an engine rebuilt from the commands lands
+    /// on its own default. This is the whole path the page takes — the state
+    /// block, the settings, the file — rather than the renderer alone.
+    #[test]
+    fn a_refused_command_does_not_part_the_file_from_what_is_heard() {
+        let words = words();
+        let mut probe = Probe::new(&words);
+        probe
+            .send(CommandKind::SetFrequency(330.0))
+            .expect("an empty ring");
+        // The rate itself, which is past Nyquist: the engine keeps 330 Hz, and
+        // nothing the interface holds says so.
+        probe
+            .send(CommandKind::SetFrequency(rate().hz() as f32))
+            .expect("an empty ring");
+        probe.send(CommandKind::Start).expect("an empty ring");
+        let online = online(&mut probe, COMPARED);
+
+        assert!(peak(&online) > 0.0, "the online render was silent");
+
+        let settings = Settings::from_state(&probe.state(), rate().hz());
+        let file = render_to_wav(&settings, &[], 0, COMPARED).expect("a rate and a length");
+        let (words, rest) = file[wav::HEADER_BYTES..].as_chunks::<4>();
+        assert!(rest.is_empty(), "a file of whole samples");
+        let offline: Vec<f32> = words.iter().copied().map(f32::from_le_bytes).collect();
+
+        assert_eq!(online, offline);
     }
 
     /// The same with the oscillator, whose phase is the state most likely to

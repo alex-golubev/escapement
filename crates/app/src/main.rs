@@ -184,33 +184,36 @@ pub struct Telemetry {
 /// Renders what the engine would play, outside real time, and hands back a
 /// `.wav`.
 ///
-/// The settings arrive as arguments for the reason [`Settings`] gives, and
-/// `playing` is the one of them this page reads back off [`poll`] rather than
-/// remembers.
+/// What the engine is set to is read off the region here rather than taken as
+/// arguments, so that the page cannot offer a file of something nothing played
+/// — including by handing over a number the engine refused (§3). `rate` stays
+/// an argument: the engine did not learn it from anybody, and this side has it
+/// from the same host.
 ///
 /// # Errors
 ///
-/// Whatever [`render_to_wav`] refused, as text for a person looking at a page
-/// that would not give them a file.
+/// Before the handshake, and whatever [`render_to_wav`] refused — as text for a
+/// person looking at a page that would not give them a file.
 #[wasm_bindgen]
 pub fn render_wav(
     source: &[f32],
     channels: usize,
     samples: usize,
     rate: f64,
-    gain: f32,
-    frequency_hz: f32,
-    playing: bool,
 ) -> Result<Vec<u8>, JsError> {
-    let settings = Settings {
-        rate_hz: rate,
-        gain,
-        frequency_hz,
-        playing,
-    };
+    LINK.with_borrow(|link| {
+        let state = link
+            .state()
+            .ok_or_else(|| JsError::new("the engine has not said anything about itself yet"))?;
 
-    render_to_wav(&settings, source, channels, samples)
+        render_to_wav(
+            &Settings::from_state(&state, rate),
+            source,
+            channels,
+            samples,
+        )
         .map_err(|refusal| JsError::new(&refusal.to_string()))
+    })
 }
 
 fn send(kind: CommandKind) {
@@ -342,6 +345,8 @@ mod wiring {
             quanta: 32,
             peak: 0.5,
             playing: true,
+            gain: 0.5,
+            frequency_hz: 220.0,
             commands_applied: 4,
             commands_unknown: 0,
             audio_publication: 1,
@@ -354,6 +359,34 @@ mod wiring {
         assert_eq!(seen.applied, 4);
         assert_eq!(seen.clock, 4096.0);
         assert_eq!(seen.publication, 1, "the echo did not come back");
+
+        // The render is here rather than in a test of its own for the reason
+        // above: it reads the same `LINK`, so on its own it would be asking
+        // whatever the run before it happened to leave connected. What it does
+        // is tested on the host; what this asks is that the settings come from
+        // the block and not from anything this page holds — the gain published
+        // above is nowhere else, and the engine's own default is 0.2.
+        let Ok(file) = render_wav(&[], 0, 256, 48_000.0) else {
+            panic!("a published state, a rate and a length")
+        };
+        assert_eq!(&file[..4], b"RIFF");
+        assert_eq!(file.len(), escapement_export::wav::HEADER_BYTES + 256 * 4);
+
+        let (words, rest) = file[escapement_export::wav::HEADER_BYTES..].as_chunks::<4>();
+        assert!(rest.is_empty(), "a file of whole samples");
+        let peak = words
+            .iter()
+            .copied()
+            .map(f32::from_le_bytes)
+            .fold(0.0f32, |loudest, sample| loudest.max(sample.abs()));
+        assert!(
+            (peak - 0.5).abs() < 0.01,
+            "the file came out at {peak}, not at the gain the engine published"
+        );
+
+        // And a refusal crosses the boundary as text, which is the only thing
+        // the page can put in front of somebody.
+        assert!(render_wav(&[], 0, 4, 0.0).is_err(), "a rate of zero");
     }
 }
 
@@ -365,29 +398,10 @@ mod exports {
 
     use super::*;
 
-    /// What the render does is tested on the host, next to where it lives.
-    /// What this reaches is the boundary in front of it, which nothing else
-    /// crosses: a slice arriving from JavaScript and a `Vec<u8>` going back.
-    #[wasm_bindgen_test]
-    fn a_render_crosses_the_boundary_as_a_file() {
-        let Ok(file) = render_wav(&[0.5; 4], 1, 4, 48_000.0, 1.0, 440.0, true) else {
-            panic!("a rate, a length and a source");
-        };
-
-        assert_eq!(&file[..4], b"RIFF");
-        assert_eq!(file.len(), escapement_export::wav::HEADER_BYTES + 4 * 4);
-    }
-
-    /// And a refusal crosses it as text, which is the only thing the page can
-    /// put in front of somebody.
-    #[wasm_bindgen_test]
-    fn a_refusal_crosses_it_as_text() {
-        assert!(render_wav(&[], 0, 4, 0.0, 1.0, 440.0, true).is_err());
-    }
-
-    /// The page starts its controls at these. A wrapper handing over anything
-    /// but the engine's own numbers puts the controls back where they were —
-    /// agreeing with what is playing by coincidence.
+    /// The page starts its controls at these, before the engine has said
+    /// anything about itself. A wrapper handing over anything but the engine's
+    /// own numbers puts the controls back where they were — agreeing with what
+    /// is playing by coincidence.
     #[wasm_bindgen_test]
     fn the_defaults_are_the_engines() {
         assert_eq!(default_gain(), escapement_core::DEFAULT_GAIN);

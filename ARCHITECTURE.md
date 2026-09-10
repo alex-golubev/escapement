@@ -1071,6 +1071,31 @@ the interface — which keeps its own queue in its own memory and drains a frame
 worth at a time — answers that with "next frame". The alternative is dropping or
 overwriting commands, which is a lost transport change rather than a late one.
 
+#### What the state block carries
+
+> **Decided 2026-09-10.** The block carries **the engine's own reading of what it
+> was told**, not only what it produced. Gain and the oscillator's frequency join
+> the meter, the clock and the transport there, and the offline render for export
+> is built from the block rather than from the numbers the interface sent.
+>
+> They are not the same numbers. `set_gain` clamps, the oscillator refuses a
+> frequency it cannot produce, and both leave the value before them standing — so
+> what is heard is a function of every command so far, and the value a refusal
+> fell back to is history the interface never kept. An engine rebuilt from the
+> last command starts at its own default instead: 440 Hz against the 330 Hz that
+> is playing, in a file offered as what was heard, with nothing anywhere to point
+> at.
+>
+> **Rejected: acknowledgement counters.** The interface knows what it sent and
+> the block already reports how many commands were applied, so the export could
+> have waited for the two to agree and then trusted its own numbers. They agree
+> in exactly the case that breaks — a refused command is an applied one.
+>
+> **This is not a licence to echo every parameter.** What belongs here is what
+> the engine alone knows. A mixer channel does not: it comes from the document,
+> and the export will render from the same snapshot the engine plays from. The
+> frequency leaves with the oscillator.
+
 #### Where "elsewhere" is
 
 > **Decided 2026-09-07.** A sample buffer is **a fourth section of the region**,

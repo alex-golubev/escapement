@@ -84,6 +84,7 @@ name = "escapement-export"
 version = "0.0.0"
 dependencies = [
  "escapement-core",
+ "escapement-protocol",
  "escapement-time",
 ]
 

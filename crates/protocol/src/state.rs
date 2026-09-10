@@ -36,6 +36,16 @@ pub struct EngineState {
     /// Whether the transport is running, as the engine sees it — which is what
     /// a button should follow, rather than what it was last told.
     pub playing: bool,
+    /// The master gain the engine is applying, linear.
+    ///
+    /// Here rather than derived from what was sent because the engine may
+    /// refuse a value and leave the one before it standing, and the value
+    /// before it is history this side did not keep. Whoever renders the same
+    /// engine offline builds it from this (§3).
+    pub gain: f32,
+    /// The frequency the oscillator is producing, for the reason
+    /// [`EngineState::gain`] is here. It goes when the oscillator does.
+    pub frequency_hz: f32,
     /// Commands taken off the ring. The interface knows what it sent, so this
     /// is how far behind the engine is.
     pub commands_applied: u32,
@@ -55,18 +65,20 @@ pub struct EngineState {
 }
 
 impl EngineState {
-    /// Words on the wire. Nine, and the header carries it so that a half
+    /// Words on the wire. Eleven, and the header carries it so that a half
     /// compiled against a different number is caught at the handshake.
-    pub const WORDS: usize = 9;
+    pub const WORDS: usize = 11;
 
     fn encode(&self, into: &mut [u32]) {
         put_u64(into, 0, self.clock);
         put_u64(into, 2, self.quanta);
         into[4] = self.peak.to_bits();
         into[5] = u32::from(self.playing);
-        into[6] = self.commands_applied;
-        into[7] = self.commands_unknown;
-        into[8] = self.audio_publication;
+        into[6] = self.gain.to_bits();
+        into[7] = self.frequency_hz.to_bits();
+        into[8] = self.commands_applied;
+        into[9] = self.commands_unknown;
+        into[10] = self.audio_publication;
     }
 
     fn decode(from: &[u32]) -> Self {
@@ -75,9 +87,11 @@ impl EngineState {
             quanta: get_u64(from, 2),
             peak: f32::from_bits(from[4]),
             playing: from[5] != 0,
-            commands_applied: from[6],
-            commands_unknown: from[7],
-            audio_publication: from[8],
+            gain: f32::from_bits(from[6]),
+            frequency_hz: f32::from_bits(from[7]),
+            commands_applied: from[8],
+            commands_unknown: from[9],
+            audio_publication: from[10],
         }
     }
 }

@@ -143,6 +143,22 @@ impl Engine {
     pub const fn playing(&self) -> bool {
         self.playing
     }
+
+    /// The gain it is applying. Not what [`Engine::set_gain`] was last handed:
+    /// that one clamps, and refuses a value that is not a number by leaving the
+    /// one before it standing — so what is heard is a function of every command
+    /// so far, which nobody outside can replay.
+    #[must_use]
+    pub const fn gain(&self) -> f32 {
+        self.gain
+    }
+
+    /// The frequency it is producing, for the reason [`Engine::gain`] gives —
+    /// [`Sine::set_frequency`] refuses the same way.
+    #[must_use]
+    pub const fn frequency_hz(&self) -> f32 {
+        self.sine.frequency_hz()
+    }
 }
 
 #[cfg(test)]
@@ -210,6 +226,36 @@ mod tests {
         engine.process(NOTHING, &mut one_second);
 
         assert_eq!(rising_zero_crossings(&one_second), 200);
+    }
+
+    /// What the engine reports is what it is playing, and after a value it
+    /// refused that is the one before it. Anything rebuilding this engine from
+    /// the commands it was sent — the offline render — lands on its default
+    /// instead, and the file stops being what was heard.
+    #[test]
+    fn a_refused_command_leaves_the_engine_reporting_what_it_kept() {
+        let mut engine = Engine::new(rate());
+
+        engine.set_frequency(200.0);
+        engine.set_gain(0.5);
+        assert_eq!(engine.frequency_hz(), 200.0);
+        assert_eq!(engine.gain(), 0.5);
+
+        // Past Nyquist, and not a number: neither reaches the engine, and
+        // neither is the default this engine started from.
+        engine.set_frequency(RATE_HZ as f32);
+        engine.set_gain(f32::NAN);
+        assert_eq!(engine.frequency_hz(), 200.0);
+        assert_eq!(engine.gain(), 0.5);
+    }
+
+    /// And a gain it takes but narrows is reported narrowed.
+    #[test]
+    fn a_clamped_gain_is_reported_as_the_engine_holds_it() {
+        let mut engine = Engine::new(rate());
+        engine.set_gain(4.0);
+
+        assert_eq!(engine.gain(), 1.0);
     }
 
     /// A block written under an earlier command must not be readable through
