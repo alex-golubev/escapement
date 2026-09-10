@@ -124,14 +124,16 @@
 
     // Not in `settings`, because it is not something this page decides: the
     // engine says what the transport is doing and the state block carries it
-    // back every frame (§3). An export taken while it is stopped is the silence
-    // that is playing.
+    // back every frame (§3). Held here for the line the export prints, not for
+    // the export — that reads the block itself.
     let playing = false;
 
     const hzValue = document.getElementById("hz-value");
     const gainValue = document.getElementById("gain-value");
 
-    // The controls start where the engine already is.
+    // The controls start where the engine already is. They are inputs from
+    // here on: what is heard, and what an export renders, is the engine's
+    // reading of what these sent, which is not always what they said.
     const showSettings = () => {
         hz.value = String(settings.frequency_hz);
         hzValue.textContent = `${settings.frequency_hz} Hz`;
@@ -301,14 +303,14 @@
         const samples = loaded ? loaded.frames : Math.round(ctx.sampleRate * TONE_SECONDS);
         let bytes;
         try {
+            // Only the material and the rate: what the engine is set to it
+            // reads out of the region itself, so nothing this page remembers
+            // can reach the file (§3).
             bytes = engine.render_wav(
                 loaded ? loaded.samples : new Float32Array(0),
                 loaded ? loaded.channels : 0,
                 samples,
                 ctx.sampleRate,
-                settings.gain,
-                settings.frequency_hz,
-                playing,
             );
         } catch (error) {
             say("could not render: " + error);
