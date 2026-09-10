@@ -46,6 +46,15 @@ paths:
   as many channels as the buffer has words is a million reads inside 2.7 ms.
   `escapement-core`'s `MAX_SOURCE_CHANNELS` is that ceiling, and it lives there
   because the budget is the engine's rather than the region's.
+- **The state block carries what the engine alone knows — including its own
+  reading of what it was told.** A parameter the engine may clamp or refuse is
+  not derivable from the commands that were sent: a refusal leaves the value
+  before it standing, and that value is nowhere in the ring. So `EngineState`
+  carries gain and frequency beside the meter, and whatever renders the same
+  engine offline is built from the block through `Settings::from_state` rather
+  than from what the interface remembers sending (§3). Counting acknowledgements
+  instead looks like it would do and does not: a refused command is an applied
+  one.
 - **Never put a cargo feature on `escapement-protocol`.** Features unify across a
   workspace build, so one added for the interface arrives in the worklet's copy
   too, and the worklet's module must import nothing. The measurement is in

@@ -18,6 +18,12 @@ paths:
   ever sends on a timer, which would appear to work and silently not. Measured:
   0 frames in 800 ms hidden, 60 a second visible. The audio thread is unaffected
   — it runs off the audio clock, not off frames.
+- **The page hands the export material and a rate, and nothing else.** What the
+  engine is set to it reads out of the region itself, because the page's copy is
+  what the engine was *told* — and the engine may have refused it
+  (`.claude/rules/protocol.md`). The controls are inputs, not a record of what is
+  playing, and a wrapper here that takes one as an argument puts the whole
+  divergence back.
 - **Nothing on the host reaches these crates.** `escapement-view` implements
   `Cells` over a typed array — four of its five methods are `Atomics` calls and
   the fifth the array's length — and `escapement-app`'s memory is only shared
