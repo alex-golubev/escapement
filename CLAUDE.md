@@ -80,6 +80,7 @@ session:
 | `musical-time.md` | `crates/time`, `crates/model`, `crates/core` | Positions in musical time, tempo as a map with ramps |
 | `model.md` | `crates/model` | The document is a CRDT from the first struct; no list holds an entity, order is a rank; a pattern is referenced, not copied; undo belongs to its author; what stays out of the document |
 | `wasm-build.md` | `crates/*/build.rs`, `.cargo/config.toml`, `Trunk.toml`, `web/` | `+atomics` is not shared memory; fixed memory against growing; `build-std` against `cargo miri`; and the rest of the build configuration |
+| `export.md` | `crates/export` | One engine and not two; whose tests say so, and where they live |
 | `licenses.md` | `Cargo.toml`, `deny.toml` | No whole-program copyleft, ever |
 | `checks.md` | `tools/`, `.github/workflows/` | What Miri, Loom and the two mutation runs cost, and why they are shaped that way |
 
@@ -121,6 +122,7 @@ understand before editing:
 | Model | `model` | CRDT project document (Yrs), undo/redo, sequencer, automation |
 | Workers | — | Disk streaming, decoding, waveform peaks, warp analysis |
 | UI | `app`, `render` | Leptos panels; WebGL2 canvas for playlist and piano roll |
+| UI, a worker later | `export` | The same engine driven outside real time, and the file it goes into. The one crate here that may allocate; §2.1 moves a whole-project bounce off this thread |
 | RT **and** UI | `protocol` | The shared region itself — header, command ring, state block. The one crate linked into both wasm modules, so both ends decode what the other encoded (§3) |
 | UI, workers | `view` | How that region is reached from outside the memory that holds it: `Atomics` over a typed-array view. Apart from `protocol` because it needs `js-sys`, which must not reach the worklet |
 
