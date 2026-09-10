@@ -6,13 +6,14 @@ license-file.workspace = true
 publish.workspace = true
 
 [dependencies]
-# The offline render: the same engine the worklet drives, in blocks of this
-# side's choosing, and the file it goes into (ARCHITECTURE.md §7).
-escapement-core.workspace = true
+# The offline render, whole: the engine, the blocks it is driven in and the
+# file it goes into all live behind one call there (ARCHITECTURE.md §7).
 escapement-export.workspace = true
+# For the two constants the page's controls start at. They are a fact about the
+# engine, and a literal in the markup is a second copy nothing keeps true.
+escapement-core.workspace = true
 escapement-model.workspace = true
 escapement-render.workspace = true
-escapement-time.workspace = true
 escapement-view.workspace = true
 # The interface module is the one that goes through `wasm-bindgen`, and the
 # check below needs the handle to its own memory. MIT/Apache-2.0.

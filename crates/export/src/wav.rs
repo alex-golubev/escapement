@@ -9,7 +9,11 @@ use std::fmt;
 use escapement_time::SampleRate;
 
 const BYTES_PER_SAMPLE: u16 = 4;
-const BITS_PER_SAMPLE: u16 = 32;
+
+/// The same width the `fmt ` chunk declares in bits. Derived rather than
+/// written twice: apart, one of them moves and the chunk describes samples the
+/// data chunk does not hold.
+const BITS_PER_SAMPLE: u16 = BYTES_PER_SAMPLE * 8;
 
 /// `WAVE_FORMAT_IEEE_FLOAT`. Tag 1 is the integer PCM this is not.
 const FORMAT_TAG: u16 = 3;
@@ -24,6 +28,14 @@ const FACT_BYTES: u32 = 4;
 /// ahead of the data, and the data chunk's own header.
 const BYTES_BEFORE_SAMPLES: u32 = 4 + (8 + FMT_BYTES) + (8 + FACT_BYTES) + 8;
 
+/// Bytes in front of the first sample: `RIFF`, its own size field, and
+/// everything [`BYTES_BEFORE_SAMPLES`] counts.
+///
+/// Public because a caller reading samples back out of a file has otherwise
+/// nothing to slice at, and the copy it would write instead stops being true
+/// the moment a chunk is added here.
+pub const HEADER_BYTES: usize = 8 + BYTES_BEFORE_SAMPLES as usize;
+
 /// Interleaved `samples` as a `.wav` file.
 ///
 /// # Errors
@@ -33,7 +45,12 @@ const BYTES_BEFORE_SAMPLES: u32 = 4 + (8 + FMT_BYTES) + (8 + FACT_BYTES) + 8;
 pub fn encode(samples: &[f32], channels: usize, rate: SampleRate) -> Result<Vec<u8>, EncodeError> {
     let header = Header::new(samples.len(), channels, rate)?;
 
-    let mut out = Vec::with_capacity(8 + BYTES_BEFORE_SAMPLES as usize + samples.len() * 4);
+    // The file the header already measured, rather than a second computation of
+    // it: what `RIFF` counts, plus the tag and size field it leaves out.
+    // Saturating because a capacity is a hint — the largest file `Header::new`
+    // admits is eight bytes past a 32-bit `usize`, and being eight short costs
+    // one growth rather than an error this has nowhere to report.
+    let mut out = Vec::with_capacity((header.riff_size as usize).saturating_add(8));
     header.write(&mut out);
     for sample in samples {
         out.extend_from_slice(&sample.to_le_bytes());

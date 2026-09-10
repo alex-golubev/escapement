@@ -16,12 +16,15 @@ extern crate std;
 #[cfg(test)]
 mod fixtures;
 
+#[doc(hidden)]
+pub mod conformance;
+
 mod engine;
 mod frames;
 mod player;
 mod sine;
 
-pub use engine::Engine;
+pub use engine::{Engine, DEFAULT_FREQUENCY_HZ, DEFAULT_GAIN};
 pub use frames::Frames;
 pub use player::{Player, Samples, MAX_SOURCE_CHANNELS};
 pub use sine::Sine;

@@ -564,8 +564,6 @@ mod tests {
         );
     }
 
-    /// Nothing published, spelled once — the offline render takes the same
-    /// `Option` the engine does.
     const NOTHING: Option<&Frames<'static>> = None;
 
     /// The claim slice 1 rests on: the offline render is the same engine, so
@@ -595,31 +593,38 @@ mod tests {
     /// Two block lengths, either side of the quantum. The short one puts
     /// boundaries inside material the online path renders whole — without it a
     /// source of a few frames is over before the first block ends, and the two
-    /// renders agree for want of anything to disagree about. Measured: a fade
-    /// written per block was caught by the oscillator and not by the source.
-    /// The long one shares no factor with 128, so its boundaries land
-    /// somewhere different again.
+    /// renders agree for want of anything to disagree about. The long one
+    /// shares no factor with 128, so its boundaries land somewhere different
+    /// again.
     const OFFLINE_BLOCKS: [usize; 2] = [7, 300];
 
     fn block(of: usize) -> NonZeroUsize {
         NonZeroUsize::new(of).expect("a block length")
     }
 
-    /// A published source, played through and then run out. Every frame
+    /// A published source, played through and then run out. Every sample
     /// differs from every other, so a cursor that slips shows up as a value
     /// rather than as a level.
+    ///
+    /// Three channels, because that is the arithmetic the two implementations
+    /// of `Samples` do differently and the only thing here that reaches it: at
+    /// one channel `frame * channels + channel` collapses to `frame`, the
+    /// averaging runs once, and a stride read wrongly lands on the right sample
+    /// anyway. Three rather than two so the count shares no factor with the
+    /// quantum or with either block length.
     #[test]
     fn the_offline_render_of_a_source_is_the_online_one() {
-        // From one rather than from zero: a first frame of silence is a frame
-        // that survives being multiplied by anything.
-        let source: Vec<f32> = (1..=24u8).map(|n| f32::from(n) / 24.0).collect();
+        // Twenty-one frames, which is what the fixtures' sixty-four-word buffer
+        // holds three channels of. From one rather than from zero: a first
+        // sample of silence is one that survives being multiplied by anything.
+        let source: Vec<f32> = (1..=63u8).map(|n| f32::from(n) / 63.0).collect();
 
         let words = words();
         let mut probe = Probe::new(&words);
         probe
             .send(CommandKind::SetGain(0.75))
             .expect("an empty ring");
-        probe.publish(1, &source, 1).expect("an empty ring");
+        probe.publish(1, &source, 3).expect("an empty ring");
         probe.send(CommandKind::Start).expect("an empty ring");
         let online = online(&mut probe, COMPARED);
 
@@ -632,7 +637,7 @@ mod tests {
             let mut offline = vec![0.0f32; COMPARED];
             escapement_export::render(
                 &mut engine,
-                Some(&Frames::new(&source, 1)),
+                Some(&Frames::new(&source, 3)),
                 block(length),
                 &mut offline,
             );

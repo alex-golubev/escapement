@@ -13,6 +13,9 @@ use crate::Samples;
 pub struct Frames<'a> {
     samples: &'a [f32],
     channels: usize,
+    /// Worked out once, so that [`Samples::sample`] guards on a field the way
+    /// the region's implementation does rather than on a division.
+    frames: usize,
 }
 
 impl<'a> Frames<'a> {
@@ -20,16 +23,23 @@ impl<'a> Frames<'a> {
     /// frame are neighbours.
     #[must_use]
     pub const fn new(samples: &'a [f32], channels: usize) -> Self {
-        Self { samples, channels }
+        // No channels is no frames rather than a division by zero.
+        let frames = match samples.len().checked_div(channels) {
+            Some(frames) => frames,
+            None => 0,
+        };
+
+        Self {
+            samples,
+            channels,
+            frames,
+        }
     }
 }
 
 impl Samples for Frames<'_> {
     fn frames(&self) -> usize {
-        match self.channels {
-            0 => 0,
-            channels => self.samples.len() / channels,
-        }
+        self.frames
     }
 
     fn channels(&self) -> usize {
@@ -37,18 +47,22 @@ impl Samples for Frames<'_> {
     }
 
     fn sample(&self, frame: usize, channel: usize) -> f32 {
-        // Without this a channel past the end reads the next frame's, which is
-        // a sample where the trait promises silence — and the region's
-        // implementation answers silence, so the two would disagree.
-        if channel >= self.channels {
+        // Both indices, because a guard on either one alone lets the other
+        // through: a channel past the end reads the next frame's first sample,
+        // and a frame past the end reads a trailing one no whole frame covers.
+        // The region's implementation answers silence to both, and a
+        // disagreement here is the two render paths disagreeing.
+        if frame >= self.frames || channel >= self.channels {
             return 0.0;
         }
 
-        // Checked, because the indices are a caller's and the trait is total.
-        frame
-            .checked_mul(self.channels)
-            .and_then(|at| at.checked_add(channel))
-            .and_then(|at| self.samples.get(at))
+        // In bounds, and past overflow, from the guard alone: the frame count
+        // is the length divided by the channels, so the largest index it admits
+        // is the last one there is. `get` rather than an index because the
+        // trait is total and this is reached from the audio thread, where a
+        // panic is the one thing there is no answer to.
+        self.samples
+            .get(frame * self.channels + channel)
             .copied()
             .unwrap_or(0.0)
     }
@@ -57,49 +71,20 @@ impl Samples for Frames<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::conformance;
 
-    /// Interleaved: the channels of one frame are neighbours, and one channel
-    /// of two frames is a stride apart. Every value differs from every other,
-    /// so a mistake in that arithmetic reads back some other sample.
+    /// The whole of [`Samples`], over lengths the channel count does not
+    /// divide: past the last whole frame there is a sample sitting in the
+    /// slice, and reading it is what the region's implementation never does.
     #[test]
-    fn a_frame_holds_its_channels_side_by_side() {
-        let source = [1.0, 2.0, 3.0, 4.0];
-        let frames = Frames::new(&source, 2);
-
-        assert_eq!(frames.frames(), 2);
-        assert_eq!(frames.channels(), 2);
-        assert_eq!(frames.sample(0, 0), 1.0);
-        assert_eq!(frames.sample(0, 1), 2.0);
-        assert_eq!(frames.sample(1, 0), 3.0);
-        assert_eq!(frames.sample(1, 1), 4.0);
-    }
-
-    /// A trailing sample that does not complete a frame is not a frame.
-    #[test]
-    fn a_frame_count_is_what_the_channels_divide_into() {
-        let source = [1.0, 2.0, 3.0, 4.0, 5.0];
-        assert_eq!(Frames::new(&source, 2).frames(), 2);
-    }
-
-    /// Silence rather than the next frame's first sample, which is what the
-    /// arithmetic alone would have answered.
-    #[test]
-    fn a_channel_past_the_end_is_silence_and_not_the_next_frame() {
-        let source = [1.0, 2.0, 3.0, 4.0];
-        let frames = Frames::new(&source, 2);
-
-        assert_eq!(frames.sample(0, 2), 0.0);
-        assert_eq!(
-            frames.sample(0, 1),
-            2.0,
-            "the channel before it still reads"
-        );
-    }
-
-    #[test]
-    fn a_frame_past_the_end_is_silence() {
-        let source = [1.0, 2.0];
-        assert_eq!(Frames::new(&source, 1).sample(2, 0), 0.0);
+    fn a_slice_holds_the_samples_contract() {
+        for (source, channels) in [
+            (&[1.0, 2.0, 3.0, 4.0, 5.0][..], 1),
+            (&[1.0, 2.0, 3.0, 4.0, 5.0][..], 2),
+            (&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0][..], 3),
+        ] {
+            conformance::check(&Frames::new(source, channels), source, channels);
+        }
     }
 
     /// A source of no channels has no frames and no samples, rather than a
@@ -107,17 +92,6 @@ mod tests {
     #[test]
     fn a_source_of_no_channels_is_empty() {
         let source = [1.0, 2.0];
-        let frames = Frames::new(&source, 0);
-
-        assert_eq!(frames.frames(), 0);
-        assert_eq!(frames.sample(0, 0), 0.0);
-    }
-
-    /// Indices arrive from a caller, so the arithmetic that turns two of them
-    /// into one must not wrap into a sample that is really there.
-    #[test]
-    fn an_index_that_overflows_the_arithmetic_is_silence() {
-        let source = [1.0, 2.0];
-        assert_eq!(Frames::new(&source, 2).sample(usize::MAX, 1), 0.0);
+        conformance::check(&Frames::new(&source, 0), &source, 0);
     }
 }

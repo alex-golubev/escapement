@@ -13,20 +13,10 @@
 //! `lib.rs` carries.
 
 use std::cell::RefCell;
-use std::num::NonZeroUsize;
 
-use escapement_core::{Engine, Frames, Samples};
-use escapement_export::{render, wav};
-use escapement_time::SampleRate;
+use escapement_export::{render_to_wav, Settings};
 use escapement_view::{Command, CommandKind, Link};
 use wasm_bindgen::prelude::*;
-
-/// What the offline render asks the engine for at a time.
-///
-/// Nothing here is due in 2.7 ms, so this is only about how often the loop goes
-/// round; the samples it produces are the same at any length, and two tests in
-/// `escapement-worklet` are what say so.
-const OFFLINE_BLOCK: NonZeroUsize = NonZeroUsize::new(4096).expect("a block length");
 
 #[wasm_bindgen]
 extern "C" {
@@ -80,6 +70,23 @@ pub fn set_frequency(hz: f32) {
 #[wasm_bindgen]
 pub fn set_gain(gain: f32) {
     send(CommandKind::SetGain(gain));
+}
+
+/// What the engine is running on before the page has told it anything.
+///
+/// The controls start here rather than at a value in the markup: the two agreed
+/// only by coincidence, and an export reads what the controls say.
+#[wasm_bindgen]
+#[must_use]
+pub fn default_gain() -> f32 {
+    escapement_core::DEFAULT_GAIN
+}
+
+/// See [`default_gain`].
+#[wasm_bindgen]
+#[must_use]
+pub fn default_frequency_hz() -> f32 {
+    escapement_core::DEFAULT_FREQUENCY_HZ
 }
 
 /// Where the audio buffer starts in the worklet's `memory.buffer`, in bytes,
@@ -177,21 +184,14 @@ pub struct Telemetry {
 /// Renders what the engine would play, outside real time, and hands back a
 /// `.wav`.
 ///
-/// The settings arrive as arguments rather than being read from the engine:
-/// the one that is playing lives in the worklet's memory, which this side
-/// cannot reach into. Until the document exists, the page is what knows both.
-///
-/// `source` is interleaved frames of `channels` channels, and one holding no
-/// whole frame means the oscillator — the same choice [`Engine::process`]
-/// takes, arriving as data rather than as a second entry point.
-///
-/// One channel out, because the engine has one: a source's channels are
-/// averaged and the oscillator is mono. The mixer is what gives this a second.
+/// The settings arrive as arguments for the reason [`Settings`] gives, and
+/// `playing` is the one of them this page reads back off [`poll`] rather than
+/// remembers.
 ///
 /// # Errors
 ///
-/// If `rate` is not a sample rate, or the render is longer than a `.wav` can
-/// measure.
+/// Whatever [`render_to_wav`] refused, as text for a person looking at a page
+/// that would not give them a file.
 #[wasm_bindgen]
 pub fn render_wav(
     source: &[f32],
@@ -200,24 +200,17 @@ pub fn render_wav(
     rate: f64,
     gain: f32,
     frequency_hz: f32,
+    playing: bool,
 ) -> Result<Vec<u8>, JsError> {
-    let rate = SampleRate::new(rate).ok_or_else(|| JsError::new("not a sample rate"))?;
+    let settings = Settings {
+        rate_hz: rate,
+        gain,
+        frequency_hz,
+        playing,
+    };
 
-    let mut engine = Engine::new(rate);
-    engine.set_gain(gain);
-    engine.set_frequency(frequency_hz);
-    engine.start();
-
-    // Asked of the source rather than of the two numbers behind it: no
-    // channels and no samples are the same answer, and the engine's own choice
-    // is between frames and none.
-    let held = Frames::new(source, channels);
-    let playing = (held.frames() > 0).then_some(&held);
-
-    let mut rendered = vec![0.0f32; samples];
-    render(&mut engine, playing, OFFLINE_BLOCK, &mut rendered);
-
-    Ok(wav::encode(&rendered, 1, rate)?)
+    render_to_wav(&settings, source, channels, samples)
+        .map_err(|refusal| JsError::new(&refusal.to_string()))
 }
 
 fn send(kind: CommandKind) {
@@ -367,49 +360,40 @@ mod wiring {
 // Two attributes rather than one `all(...)`, as everywhere else here.
 #[cfg(test)]
 #[cfg(target_arch = "wasm32")]
-mod offline {
+mod exports {
     use wasm_bindgen_test::wasm_bindgen_test;
 
     use super::*;
 
-    fn rendered(file: &[u8]) -> Vec<f32> {
-        file[58..]
-            .chunks_exact(4)
-            .map(|word| f32::from_le_bytes(word.try_into().expect("four bytes")))
-            .collect()
-    }
-
-    /// An empty source is the oscillator, which is the one branch here that is
-    /// not delegation.
+    /// What the render does is tested on the host, next to where it lives.
+    /// What this reaches is the boundary in front of it, which nothing else
+    /// crosses: a slice arriving from JavaScript and a `Vec<u8>` going back.
     #[wasm_bindgen_test]
-    fn an_empty_source_renders_the_oscillator() {
-        let Ok(file) = render_wav(&[], 0, 64, 48_000.0, 1.0, 440.0) else {
-            panic!("a rate, a length and no source");
-        };
-
-        assert_eq!(&file[..4], b"RIFF");
-        assert_eq!(file.len(), 58 + 64 * 4);
-        assert!(
-            rendered(&file).iter().any(|sample| *sample != 0.0),
-            "the oscillator was silent"
-        );
-    }
-
-    /// And a source is the source, at the gain asked for rather than the
-    /// engine's default.
-    #[wasm_bindgen_test]
-    fn a_source_is_rendered_instead_of_it() {
-        let Ok(file) = render_wav(&[0.5; 4], 1, 4, 48_000.0, 1.0, 440.0) else {
+    fn a_render_crosses_the_boundary_as_a_file() {
+        let Ok(file) = render_wav(&[0.5; 4], 1, 4, 48_000.0, 1.0, 440.0, true) else {
             panic!("a rate, a length and a source");
         };
 
-        assert_eq!(rendered(&file), [0.5; 4]);
+        assert_eq!(&file[..4], b"RIFF");
+        assert_eq!(file.len(), escapement_export::wav::HEADER_BYTES + 4 * 4);
     }
 
-    /// The rate arrives from a host that is not this program, so it is refused
-    /// here rather than reaching arithmetic with nowhere to report it.
+    /// And a refusal crosses it as text, which is the only thing the page can
+    /// put in front of somebody.
     #[wasm_bindgen_test]
-    fn a_rate_that_is_not_one_is_refused() {
-        assert!(render_wav(&[], 0, 4, 0.0, 1.0, 440.0).is_err());
+    fn a_refusal_crosses_it_as_text() {
+        assert!(render_wav(&[], 0, 4, 0.0, 1.0, 440.0, true).is_err());
+    }
+
+    /// The page starts its controls at these. A wrapper handing over anything
+    /// but the engine's own numbers puts the controls back where they were —
+    /// agreeing with what is playing by coincidence.
+    #[wasm_bindgen_test]
+    fn the_defaults_are_the_engines() {
+        assert_eq!(default_gain(), escapement_core::DEFAULT_GAIN);
+        assert_eq!(
+            default_frequency_hz(),
+            escapement_core::DEFAULT_FREQUENCY_HZ
+        );
     }
 }
