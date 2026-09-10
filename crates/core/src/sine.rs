@@ -9,6 +9,10 @@ pub struct Sine {
     phase: f32,
     /// Turns per sample.
     step: f32,
+    /// The frequency the step above was made from, kept rather than recovered
+    /// from it: `step * sample_rate_hz` is a different number in the last bits,
+    /// and an offline render built from that number is a different tone.
+    frequency_hz: f32,
     /// Kept because the frequency can change while playing, and rebuilding the
     /// oscillator to change it would reset the phase — which is a click.
     ///
@@ -25,6 +29,7 @@ impl Sine {
         let mut sine = Self {
             phase: 0.0,
             step: 0.0,
+            frequency_hz: 0.0,
             sample_rate_hz: rate.hz() as f32,
         };
         sine.set_frequency(frequency_hz);
@@ -46,7 +51,15 @@ impl Sine {
     pub fn set_frequency(&mut self, hz: f32) {
         if hz.is_finite() && hz > 0.0 && hz < self.sample_rate_hz / 2.0 {
             self.step = hz / self.sample_rate_hz;
+            self.frequency_hz = hz;
         }
+    }
+
+    /// The frequency it is producing, which after a value it refused is the one
+    /// before that rather than the one asked for.
+    #[must_use]
+    pub const fn frequency_hz(&self) -> f32 {
+        self.frequency_hz
     }
 
     /// Overwrites every element of `out`; previous contents are not read.
@@ -134,6 +147,7 @@ mod tests {
                 100,
                 "{bad} was believed"
             );
+            assert_eq!(sine.frequency_hz(), 100.0, "{bad} was reported");
         }
     }
 
@@ -154,6 +168,7 @@ mod tests {
                 100,
                 "{unreachable} was believed"
             );
+            assert_eq!(sine.frequency_hz(), 100.0, "{unreachable} was reported");
         }
     }
 }
