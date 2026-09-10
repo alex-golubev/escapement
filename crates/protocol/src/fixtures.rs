@@ -34,6 +34,10 @@ pub(crate) fn sample(n: u32) -> EngineState {
         quanta: wide + (wide << 32),
         peak: n as f32,
         playing: n % 2 == 1,
+        // Whole numbers, so that what goes in comes back out of an `f32` bit
+        // for bit however far the tests count.
+        gain: n as f32 * 2.0,
+        frequency_hz: n as f32 * 7.0,
         commands_applied: n,
         // Different multiples, so the last words never agree either.
         commands_unknown: n.wrapping_mul(3),

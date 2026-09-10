@@ -131,6 +131,8 @@ impl Processor {
             quanta: self.quanta,
             peak: peak(out),
             playing: self.engine.playing(),
+            gain: self.engine.gain(),
+            frequency_hz: self.engine.frequency_hz(),
             commands_applied: self.applied,
             commands_unknown: self.unknown,
             audio_publication: self.publication,

@@ -2,6 +2,7 @@ use std::fmt;
 use std::num::NonZeroUsize;
 
 use escapement_core::{Engine, Frames, Samples, MAX_SOURCE_CHANNELS};
+use escapement_protocol::EngineState;
 use escapement_time::SampleRate;
 
 use crate::wav::{self, EncodeError};
@@ -27,9 +28,10 @@ pub fn render<S: Samples>(
 
 /// What the engine has to be told before it renders.
 ///
-/// Arguments rather than a read of the engine that is playing: that one lives
-/// in the worklet's memory, which this side cannot reach into (ARCHITECTURE.md
-/// §3). Until the document exists, the page is what knows both.
+/// Built from what the playing engine publishes about itself
+/// ([`Settings::from_state`]) rather than from what it was sent: a command it
+/// refused leaves the value before it standing, and that value is not in the
+/// commands (ARCHITECTURE.md §3).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Settings {
     /// Samples a second to render at.
@@ -42,6 +44,23 @@ pub struct Settings {
     /// so does this: the file is what would have been heard, including when
     /// that is nothing.
     pub playing: bool,
+}
+
+impl Settings {
+    /// What the engine says it is doing.
+    ///
+    /// `rate_hz` is the one number it does not publish, because it did not
+    /// learn it: both halves take the rate from the same host, and the engine
+    /// was built with it.
+    #[must_use]
+    pub const fn from_state(state: &EngineState, rate_hz: f64) -> Self {
+        Self {
+            rate_hz,
+            gain: state.gain,
+            frequency_hz: state.frequency_hz,
+            playing: state.playing,
+        }
+    }
 }
 
 /// What the offline render asks the engine for at a time.
@@ -329,6 +348,33 @@ mod tests {
             )
             .is_ok(),
             "exactly the budget"
+        );
+    }
+
+    /// Each field comes from the field it names. A pair swapped here is a file
+    /// rendered at the pitch of its gain, which nothing further down would
+    /// notice.
+    #[test]
+    fn the_settings_are_what_the_engine_published() {
+        let state = EngineState {
+            gain: 0.25,
+            frequency_hz: 330.0,
+            playing: true,
+            ..EngineState::default()
+        };
+
+        assert_eq!(
+            Settings::from_state(&state, 44_100.0),
+            Settings {
+                rate_hz: 44_100.0,
+                gain: 0.25,
+                frequency_hz: 330.0,
+                playing: true,
+            }
+        );
+        assert!(
+            !Settings::from_state(&EngineState::default(), 44_100.0).playing,
+            "a stopped engine came back playing"
         );
     }
 
