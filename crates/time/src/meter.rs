@@ -297,7 +297,11 @@ pub fn build<'a>(marks: &[Mark], into: &'a mut [Segment]) -> Result<MeterMap<'a>
         return Err(BuildError::NotAtFirstBar { at: first.from_bar });
     }
     for (index, mark) in marks.iter().enumerate() {
-        if index > 0 && mark.from_bar <= marks[index - 1].from_bar {
+        if index > 0
+            && marks
+                .get(index - 1)
+                .is_some_and(|before| mark.from_bar <= before.from_bar)
+        {
             return Err(BuildError::OutOfOrder { index });
         }
     }
@@ -305,7 +309,10 @@ pub fn build<'a>(marks: &[Mark], into: &'a mut [Segment]) -> Result<MeterMap<'a>
     let mut start = Position::ZERO;
     for (index, mark) in marks.iter().enumerate() {
         let segment = Segment::new(start, mark.from_bar, mark.meter);
-        into[index] = segment;
+        let Some(slot) = into.get_mut(index) else {
+            break;
+        };
+        *slot = segment;
 
         if let Some(next) = marks.get(index + 1) {
             // Saturating, and unreachable in the same breath: an `i64` of ticks
@@ -316,7 +323,7 @@ pub fn build<'a>(marks: &[Mark], into: &'a mut [Segment]) -> Result<MeterMap<'a>
     }
 
     Ok(MeterMap {
-        segments: &into[..marks.len()],
+        segments: into.get(..marks.len()).unwrap_or(&[]),
     })
 }
 

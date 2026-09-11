@@ -42,6 +42,9 @@ missing_docs = "warn"
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(loom)'] }
 
 [lints.clippy]
+# See the note in `crates/core/Cargo.toml`: on this side of the boundary an
+# index the compiler cannot discharge is an allocator in the worklet's module.
+indexing_slicing = "warn"
 missing_errors_doc = "warn"
 missing_panics_doc = "warn"
 must_use_candidate = "warn"

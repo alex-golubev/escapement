@@ -210,6 +210,12 @@ impl<C: Cells> Subscriber<C> {
 #[cfg(test)]
 #[cfg(not(loom))]
 mod tests {
+    #![allow(
+        clippy::indexing_slicing,
+        reason = "a test reaching into what it built: an index out of range is \
+                  how it fails"
+    )]
+
     use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
     use std::thread;
     use std::time::Instant;
