@@ -38,6 +38,14 @@ is what breaks, and how quietly.
   lane; an insert listing its channels merges two people's moves into a channel
   feeding two inserts, which the audio graph has no reading of. The many-to-many
   that does exist is a send between inserts, and it brings the cycle with it.
+- **An audio clip addresses the channel it is heard through, never the file**
+  (§2.6). The hash of the bytes lives in `ChannelSource` and nowhere else. A
+  clip naming the bytes instead leaves its route to the mixer to be inferred,
+  and two channels may hold one hash — the same document then plays the clip
+  twice or not at all, depending on which reader is asking. Neither reading
+  fails: both produce audio, and the clip has no gain, pan, mute or output of
+  its own to say which was meant.
+
 - **An entity is a map of registers, one per field, never one value** (§2.6).
   Two people change different fields of one channel far more often than they
   change the same one, and a whole-entity value keeps only the later writer —

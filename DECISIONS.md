@@ -801,3 +801,50 @@ in exactly the case that breaks — a refused command is an applied one.
 the engine alone knows. A mixer channel does not: it comes from the document,
 and the export will render from the same snapshot the engine plays from. The
 frequency leaves with the oscillator.
+
+---
+
+<a id="d23"></a>
+
+## D23 — 2026-09-11 — An audio clip names the channel it is heard through
+
+*Governs §2.6. The answer and what it refused are in `ARCHITECTURE.md`;
+this is the argument.*
+
+An audio clip in the playlist holds **the channel it plays through**, and the
+hash of the bytes stays in `ChannelSource` alone. Dropping a file on the
+timeline therefore makes a channel, the way it does in FL.
+
+What it replaces was not another design but the absence of one.
+`ClipSource::Audio` named an asset, `ChannelSource::Sampler` named an asset, and
+that was the only place the two met — so the route from a clip to a mixer insert
+would have had to be **inferred from a hash**, and two channels may hold the same
+one. Read one way the clip plays twice, read the other it plays through neither;
+both readings are defensible, which is what makes the inference a decision
+nobody took.
+
+The shape of the rest of the document is what settles it. A note names the
+channel it sounds on. A curve addresses a channel or an insert. Only an audio
+clip addressed nothing — so it had no gain, no pan, no mute and no output, and
+automation could not reach it at all, because `Target` has no variant for a
+clip. Naming a channel gives it all five at once, from entities that already
+have them, and adds nothing to `Target`.
+
+It also answers the edge rule (D9), which a shared hash does not. Many clips to
+one channel is a register on the many side: the clip holds the name, and two
+people dropping the same file in two places write two clips rather than one
+contested entity.
+
+**Rejected: a channel reference beside the asset** — `Audio { asset, trim,
+channel }`. The clip stays readable without a hop through the channel, which is
+the whole of what it buys. The cost is two names for one file in one document,
+and therefore a state where they disagree: a clip naming `kick.wav` on a channel
+playing `snare.wav`. Which of them is heard is a third decision, and unlike the
+first two it would be taken by a merge rather than by a person.
+
+**Why no test found this, and none could.** The entities have no reader. A test
+can say that `Clip::source()` returns what was put in it, and every test here
+did. What finds it is the first consumer that has to decide where an audio
+clip's samples go — the sequencer — and that consumer is what slice 1's tail is
+now building. The question stood open from 2026-09-05 to 2026-09-11 with 5082
+lines of tests in the tree and no way for any of them to reach it.
