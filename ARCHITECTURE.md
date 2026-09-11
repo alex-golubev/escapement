@@ -1,7 +1,17 @@
-# Escapement — Architecture Notes
+# Escapement — Architecture
 
-> Status: **pre-project recommendations**, not a final design.
-> Date: 2026-08-24. Project: a browser DAW with a Rust (WASM) core.
+> A browser DAW with a Rust (WASM) core: the decisions it is built on, and what
+> each one turned down. Begun 2026-08-24 as pre-project recommendations and read
+> as a specification ever since; folded into its own decisions on 2026-09-11.
+>
+> **How to read it.** The prose of a section is what is true now. The dated
+> blocks are how it was settled and against what — a log, appended rather than
+> edited, and no longer the only place an answer lives. When a decision changes
+> the prose, the prose changes; a block is never rewritten to match.
+>
+> A rule in `.claude/rules/` carries the same decision as a prohibition and
+> points back here. It does not re-derive the argument, and this document does
+> not restate the rule.
 
 ---
 
@@ -71,7 +81,7 @@ third-party iframes, some CDNs and OAuth popups.
 
 - Desktop Chrome, output: **~10–30 ms**
 - With `getUserMedia` on input, round-trip: **20–60 ms** depending on the OS
-  (per-platform breakdown in §2.2a)
+  (per-platform breakdown in §2.2)
 
 That is "tolerable on headphones", but it is not Reaper with ASIO.
 
@@ -82,7 +92,7 @@ a processed signal.
 
 If the product is about recording live instruments, this latency cannot be
 optimized away — but it does not block recording either: hardware direct
-monitoring works around it. Full analysis in **§2.2**.
+monitoring works around it. §2.2 has the decision and the shape of the problem.
 
 ---
 
@@ -117,110 +127,27 @@ boundary.
 
 ### 2.2. Latency and recording live instruments
 
-This is not one problem but four, of different magnitudes. Three of the four are
-solvable; one is not solvable at all. Keeping them apart matters — they get
-conflated constantly.
 
-#### (a) Monitoring — not solvable
+Not one problem but four, of different magnitudes, and they get conflated
+constantly. **Monitoring is the one that is not solvable at all** — Chrome
+supports neither ASIO nor WASAPI exclusive mode, so the round trip is 20–40 ms on
+macOS and 30–60 on Windows against the 10–12 ms musicians tolerate. The other
+three are solvable: landing a take on the grid, but only by building loopback
+calibration, because there is no API for input latency; clock drift between two
+devices, by refusing the configuration; dropouts mid-take, by streaming capture
+straight to OPFS through a worker.
 
-You play and hear yourself late. Round-trip:
-input → OS → browser → worklet → OS → output.
+What follows from that: overdubbing one source through an interface with hardware
+direct monitoring works properly, monitoring through our own effects does not,
+and multi-mic recording is not to be promised. Live recording is a supported
+workflow with a documented hardware requirement, never a headline feature.
 
-**Chrome supports neither ASIO nor WASAPI exclusive mode.**
-
-| Platform | Round-trip |
-|---|---|
-| Windows (WASAPI shared) | 30–60 ms |
-| macOS (CoreAudio) | 20–40 ms |
-| *Native DAW + ASIO @128* | *6–10 ms* |
-
-Musicians tolerate roughly 10–12 ms. Singers have it worst: you also hear your own
-voice through bone conduction, and the direct sound layered over the delayed one
-produces comb filtering — a "flanged doubling" that is noticeable at 10 ms.
-
-**This cannot be optimized.** It is a limit of the browser's audio stack, not of
-our code.
-
-#### (b) The workaround that removes 80% of the problem
-
-**Hardware direct monitoring.** Any decent interface (Scarlett, MOTU, RME, UA,
-PreSonus) mixes the input into the headphones internally, never touching the
-computer. Zero latency, and the browser is not involved.
-
-The DAW's job is then to **not monitor a second time**, so nothing is heard twice.
-That means an explicit per-track monitoring mode (off / hardware / software).
-
-Overdubbing a single source with an interface and direct monitoring works
-properly. This is how people track in native DAWs too — it is not a compromise.
-
-It breaks down where you need to hear yourself **through our processing**:
-
-- a guitarist wants to hear an amp, not a dry DI ← the painful case;
-- a singer wants reverb "for confidence";
-- a laptop mic with no interface — there is physically no direct monitoring.
-
-#### (c) Aligning recordings to the timeline — solvable, and mandatory
-
-The input stream arrives late. Naively stamping recorded chunks with "now" puts
-everything on the timeline 20–50 ms late — by an amount that is **unknown and
-device-dependent**. That is the difference between a DAW and a toy.
-
-- `AudioContext.outputLatency` + `baseLatency` cover the output side.
-- **There is no reliable API for input latency** — the key gap.
-- Hence **loopback calibration**: emit an impulse, record it back (via a cable, or
-  headphones held to the mic), measure the real round-trip in samples, remember it
-  per device. Native DAWs do exactly this.
-- Plus a manual per-take nudge in the UI as an escape hatch.
-- Store the offset in the project so it stays derivable.
-
-For capture, look at `MediaStreamTrackProcessor` (Chrome only): it hands you
-`AudioData` with explicit timestamps rather than "whatever showed up in this render
-quantum" via `MediaStreamAudioSourceNode`.
-
-#### (d) Clock drift — solvable by discipline
-
-If input and output are **different physical devices**, their crystals are
-independent and they drift apart. Over a five-minute take it is already audible.
-Chrome hides this by resampling the input to the `AudioContext` rate, but the
-resampling is opaque and adds unknown latency of its own.
-
-→ Detect mismatched devices and warn. One interface for both input and output is
-the only sane configuration.
-
-#### (e) Dropouts — solvable architecturally
-
-The worklet runs on an RT thread, but a browser is not an RTOS. Tab throttling,
-neighbouring tabs, compositor pressure, and your own UI. A glitch mid-take is
-unforgivable: you lose a performance, not a second of audio.
-
-A direct architectural requirement:
-
-```
-capture → ring buffer → worker → OPFS
-```
-
-Continuously, never buffering an entire take in memory, with the UI thread never
-touching it. Plus an honest "this take glitched" indicator.
-
-**A trick:** if the user monitors through hardware, low latency is unnecessary —
-take a large buffer and buy reliability with it.
-⚠️ Caveat: `latencyHint` is set when the `AudioContext` is created and cannot be
-changed on the fly, so a "recording mode" requires recreating the context. Design
-the session around that.
-
-#### Verdict
-
-| Scenario | Status |
-|---|---|
-| Overdub of one source + interface + direct monitoring | ✅ **Works** properly |
-| Monitoring through our effects (amp sim) | ❌ **Does not work.** macOS just barely, Windows badly |
-| Multi-mic recording (drums, a band) | ❌ **Do not promise it.** Multichannel input in browsers is weak and uneven |
-| Landing on the grid | ⚠️ Solvable, but **calibration has to be built** |
-
-The conclusion is not "there will be no live recording". It is that live recording
-is a **supported workflow with a documented hardware requirement**, not a headline
-feature. That is a reasonable position. What would be unreasonable is promising
-"record guitar through our tube preamp in real time".
+**The full analysis is no longer in this repository** — all four problems in
+detail, the per-platform numbers, the calibration a take on the grid needs. It
+was taken out on 2026-09-11 and kept in the author's working notes; `git log -S`
+over this file reaches the last revision carrying it. The decision below closed
+the question, §7 has no slice for it, and the platform numbers would have to be
+measured again before they were trusted.
 
 #### ✅ Decision taken
 
@@ -242,7 +169,8 @@ only ever hits the second threshold.
 
 1. The `AudioContext` is created with **`latencyHint: 'playback'` by default** —
    large buffers, far fewer dropouts, DSP headroom per block, tolerance for UI
-   load. The trick from §2.2e stops being a compromise and becomes the default.
+   load. A large buffer, bought with hardware monitoring, stops being a
+   compromise and becomes the default.
    Switching to `'interactive'` only when a MIDI controller is connected (which
    requires recreating the context).
 2. The entire recording path — loopback calibration, streaming capture into OPFS,
@@ -250,8 +178,6 @@ only ever hits the second threshold.
 3. The difficulty **does not disappear, it relocates** — into time-stretching (§5),
    the sample library, the sampler, and the time model (§2.5).
 
-The material above (a–e) is kept as finished analysis for whenever live recording
-comes back into scope.
 
 ### 2.3. Plugins — own format or WAM?
 
@@ -452,9 +378,11 @@ format with more than one implementation behind it.
 Thousands of points, and drawing with the mouse produces hundreds of operations per
 second. This is exactly where naive CRDT usage explodes in memory and traffic.
 
-The likely answer: automation is **not a generic structure** but a specialized one,
-with a soft lock on the lane ("Anya is editing this right now"). Worth prototyping
-early.
+The answer, and no longer a guess: automation is **not a generic structure** but a
+specialized one, with a soft lock on the lane ("Anya is editing this right now").
+The 2026-09-07 measurement below settles that the lock is needed whichever library
+sits underneath — a drag costs kilobytes of heap per edit on both — so it is scope
+inside slice 2 rather than something still to be decided.
 
 #### What is synchronized and what is not
 
@@ -510,21 +438,26 @@ where native cannot catch up. But let it be a conscious choice.
 A direct consequence of §2.2: since everything is stretched to tempo, **the tempo
 map stops being optional**.
 
-Mandatory from day one:
+Mandatory from day one, and all four now settled — the blocks below are how, and
+against what:
 
-- clip positions stored in **musical time** (rational fractions of a bar, or PPQ),
-  **not in samples**;
-- a tempo map with ramps, not a single number;
-- a time-signature map;
-- sample-accurate conversion between musical time and samples **in both directions**.
+- a position is **an integer count of ticks**, 5 765 760 to the quarter. Never a
+  rational pair, never a float, and never samples;
+- **a tempo map with ramps**, each ramp straight in beats per minute, and tempo
+  counted in quarter notes whatever the signature says;
+- **a time-signature map**, each mark addressed by the bar it starts at. It steps
+  at a bar line and is not interpolated at all;
+- **conversion to samples in both directions**, `floor` to the sample a position
+  falls in, with the rate a parameter of the conversion rather than a field of
+  either map.
 
 > The classic mistake is "we'll store positions in samples and add tempo later".
 > The only cure is rewriting the core. Same "now or never" category as §2.4 on
 > CRDTs.
 
-> **Decided 2026-08-29.** Of the two representations offered above, **PPQ** — a
-> position is an integer count of ticks, at **5 765 760 ticks to the quarter**
-> (2^7 · 3^2 · 5 · 7 · 11 · 13).
+> **Decided 2026-08-29.** A position is an integer count of ticks, at
+> **5 765 760 ticks to the quarter** (2^7 · 3^2 · 5 · 7 · 11 · 13). The
+> alternative on the table was a rational fraction of a bar.
 >
 > Precision did not decide it. The two differ there by hundredths of a
 > millisecond, and the error does not accumulate: positions are absolute, so the
@@ -768,8 +701,22 @@ go anywhere.
 ---
 
 All three concern the project model, which per §2.4 must be CRDT-compatible from
-day one. So **both shapes are fixed at the same time**, before the first line of
-the model is written.
+day one. So both shapes were fixed at the same time, before the model's first
+line — and the blocks below are that work, each with what it turned down. What
+they settle, gathered in one place because otherwise it is only readable as eight
+separate arguments:
+
+**Every collection is a map keyed by identity, and the document holds no list at
+all.** Where a person arranged the order — lanes, channels, inserts — the order is
+a rank the entity carries; everything numerous has a position instead. **An entity
+is a map of registers, one per field**, never one value. **An edge with one end is
+a register on the many side**: a channel holds the insert it feeds, a clip holds
+its lane. **Identity is 128 random bits** behind an opaque type, spelled as 22
+base64 characters — except an asset's, which is the hash of its bytes. **A
+dangling reference is legal** and every read of one answers with an absence; a
+field no constructor would accept makes its entity absent too, with the timeline
+the one exception, because it cannot be absent. And **the document carries its own
+version number**, from the first struct.
 
 > **Decided 2026-09-05.** An edge that must have exactly one end lives as a
 > **register on the many side**, never as a list on the one side. A channel
@@ -1544,18 +1491,18 @@ handing over the binary.
 > Unlike the rest of this section, the rule no longer rests on remembering it.
 > `deny.toml` is the allow-list, and CI refuses a license that is not on it.
 
-#### What can be decided whenever
+#### The license text
 
-Which license text actually goes into `LICENSE` — Apache, MIT, GPL, BSL. It blocks
-nothing and affects nothing right now.
-
-A leaning: **Apache 2.0 + CLA on the engine, service closed.** The split falls
-cleanly — the Rust core (graph, DSP, warp, time model) and the service (sync,
-hosting, accounts) are physically separate codebases. But this is a leaning, not a
-decision.
+`LICENSE` is **PolyForm Shield 1.0.0**, with the CLA above behind it keeping
+relicensing possible. Every purpose is permitted except providing a product that
+competes with Escapement or with the service it connects to — so music made with
+the DAW is unrestricted, while the DAW itself cannot be resold or re-hosted. This
+is deliberately not open source by the OSI definition, and the block below is why
+that cost was taken knowingly.
 
 > **Decided 2026-08-25.** `LICENSE` is **PolyForm Shield 1.0.0**, not Apache. The
-> leaning above rests on an assumption that does not survive inspection: that the
+> leaning it replaced — Apache 2.0 and a CLA on the engine, with the service kept
+> closed — rests on an assumption that does not survive inspection: that the
 > value sits in the service and the engine can be given away. It is the other way
 > round. The engine — graph, DSP, sampler with voice allocation, warp, CRDT model,
 > WebGL2 renderer — is years of work; the relay is a websocket server broadcasting
