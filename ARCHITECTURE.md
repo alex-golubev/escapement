@@ -504,7 +504,7 @@ all.** Where a person arranged the order — lanes, channels, inserts — the or
 a rank the entity carries; everything numerous has a position instead. **An entity
 is a map of registers, one per field**, never one value. **An edge with one end is
 a register on the many side**: a channel holds the insert it feeds, a clip holds
-its lane. **Identity is 128 random bits** behind an opaque type, spelled as 22
+its lane, and an audio clip holds the channel it is heard through. **Identity is 128 random bits** behind an opaque type, spelled as 22
 base64 characters — except an asset's, which is the hash of its bytes. **A
 dangling reference is legal** and every read of one answers with an absence; a
 field no constructor would accept makes its entity absent too, with the timeline
@@ -567,6 +567,16 @@ arguments.
 > while the alphabet costs 2.1%, so the width is worth something and the
 > spelling is not — which leaves the spelling to legibility.
 > [Why, in full: D17](DECISIONS.md#d17)
+
+> **Decided 2026-09-11 — an audio clip names the channel it is heard through,
+> and the hash of the bytes stays in `ChannelSource`.** Dropping a file on the
+> timeline makes a channel, as it does in FL, and the clip arrives with a gain,
+> a pan, a mute and a route it would otherwise have had none of. Rejected: a
+> channel reference beside the asset — two names for one file in one document,
+> and which of them is heard when they disagree would be settled by a merge
+> rather than by a person. Rejected: leaving the route to be inferred from the
+> shared hash, which two channels may both hold.
+> [Why, in full: D23](DECISIONS.md#d23)
 
 ---
 
@@ -1279,28 +1289,12 @@ If all four skeletons stand, what remains is a lot of work but little uncertaint
    scope and contradicts nothing. The single architectural consequence: **the
    transport must be drivable from outside** (§2.4).
 
-### The four above are closed. One question of shape is not
+### The four above are closed, and so is the last question of shape
 
 Of the §2 decisions, 2.3 (plugins) remains a recommendation rather than a
-decision. 2.1 stopped being one when slice 1 built it.
-
-> **Open, and on a door that shuts: what an audio clip in the playlist sounds
-> through.** `ClipSource::Audio` names an asset, `ChannelSource::Sampler` names
-> an asset, and that is the only place the two meet — so a route from the clip to
-> a mixer insert would have to be inferred from a hash that two channels can both
-> hold. A note reaches the mixer through the channel it names and a curve
-> addresses a channel or an insert; an audio clip addresses nothing, and
-> therefore has no gain, pan, mute or route, and automation cannot reach it.
->
-> Two readings, and this section is not the place to pick one. FL's is
-> structural — a playlist audio clip *is* a channel, and routes like every other
-> channel. The other gives the clip a reference to a channel, as it already
-> carries one to a lane. Both are §2.6's kind of question, so both shut at the
-> first saved project.
->
-> It is here rather than in the list below because nothing in the model can find
-> it: the entities have no reader, so no test fails on it. It surfaces the day
-> the sequencer has to decide where an audio clip's samples go.
+decision. 2.1 stopped being one when slice 1 built it, and 2.6's one open
+question — what an audio clip sounds through — was settled on 2026-09-11 in the
+section itself, by the consumer that finally had to ask.
 
 Worth keeping in view as deferred rather than settled:
 

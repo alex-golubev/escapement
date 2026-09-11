@@ -14,8 +14,9 @@ use escapement_time::{Position, Span};
 
 use crate::asset::Frames;
 use crate::automation::Automation;
+use crate::mixer::Channel;
 use crate::pattern::Pattern;
-use crate::{AssetHash, Id};
+use crate::Id;
 
 /// A row of the arrangement, which is a place to look and nothing more.
 #[derive(Clone, Debug, PartialEq)]
@@ -46,8 +47,12 @@ pub enum ClipSource {
     /// A pattern, from `offset` into it — which is how the same pattern plays
     /// from its second bar in one place and its first in another.
     Pattern { pattern: Id<Pattern>, offset: Span },
-    /// A file, from `trim` frames into it.
-    Audio { asset: AssetHash, trim: Frames },
+    /// The channel playing a file, from `trim` frames into it.
+    ///
+    /// The channel and not the file: a clip reaches the mixer through one, the
+    /// way a note does, and the hash of the bytes lives in `ChannelSource`
+    /// alone (§2.6).
+    Audio { channel: Id<Channel>, trim: Frames },
     /// A curve. It has no offset: the points carry their own positions, and
     /// sliding a curve inside its clip is not a thing anyone asks for.
     Automation { automation: Id<Automation> },
@@ -180,12 +185,13 @@ mod tests {
     #[test]
     fn a_pattern_slides_by_ticks_and_a_file_by_its_own_frames() {
         let mut entropy = Counter::new();
+        let channel = Id::mint(&mut entropy);
         let pattern = ClipSource::Pattern {
             pattern: Id::mint(&mut entropy),
             offset: Span::QUARTER,
         };
         let audio = ClipSource::Audio {
-            asset: AssetHash::from_bytes([3; 32]),
+            channel,
             trim: Frames::new(48_000),
         };
 
@@ -193,14 +199,14 @@ mod tests {
         assert_eq!(
             audio,
             ClipSource::Audio {
-                asset: AssetHash::from_bytes([3; 32]),
+                channel,
                 trim: Frames::new(48_000),
             }
         );
         assert_ne!(
             audio,
             ClipSource::Audio {
-                asset: AssetHash::from_bytes([3; 32]),
+                channel,
                 trim: Frames::ZERO,
             },
             "a different point in the file is a different clip"

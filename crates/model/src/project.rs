@@ -28,7 +28,7 @@ use std::collections::BTreeMap;
 use crate::automation::Automation;
 use crate::mixer::{Channel, Insert};
 use crate::pattern::Pattern;
-use crate::playlist::{Clip, Lane};
+use crate::playlist::{Clip, ClipSource, Lane};
 use crate::timeline::Timeline;
 use crate::{Asset, AssetHash, Id};
 
@@ -284,6 +284,26 @@ impl Project {
         self.clips().filter(move |(_, clip)| clip.lane() == lane)
     }
 
+    /// The clips heard through one channel, and the same edge again.
+    pub fn clips_through(&self, channel: Id<Channel>) -> impl Iterator<Item = (Id<Clip>, &Clip)> {
+        self.clips().filter(move |(_, clip)| {
+            matches!(clip.source(), ClipSource::Audio { channel: named, .. } if named == channel)
+        })
+    }
+
+    /// The channel an audio clip is heard through, or nothing.
+    ///
+    /// Nothing twice over, and the mixer has one answer for both: a clip that
+    /// is not audio never reaches a channel, and one whose channel is gone is
+    /// silent rather than routed somewhere else (§2.6).
+    #[must_use]
+    pub fn channel_of(&self, clip: &Clip) -> Option<&Channel> {
+        let ClipSource::Audio { channel, .. } = clip.source() else {
+            return None;
+        };
+        self.channel(channel)
+    }
+
     fn find<T>(entities: &[(Id<T>, T)], name: Id<T>) -> Option<&T> {
         entities
             .iter()
@@ -318,11 +338,13 @@ mod tests {
         lane: Id<Lane>,
         pattern: Id<Pattern>,
         clip: Id<Clip>,
+        audio: Id<Clip>,
         curve: Id<Automation>,
     }
 
-    /// Two channels into one insert, one clip on one lane: the smallest project
-    /// in which every edge of §2.6 is present exactly once.
+    /// Two channels into one insert, a pattern clip and an audio clip on one
+    /// lane: the smallest project in which every edge of §2.6 is present
+    /// exactly once.
     fn song() -> Song {
         let mut entropy = Counter::new();
         let master = Id::mint(&mut entropy);
@@ -332,6 +354,7 @@ mod tests {
         let lane = Id::mint(&mut entropy);
         let pattern = Id::mint(&mut entropy);
         let clip = Id::mint(&mut entropy);
+        let audio = Id::mint(&mut entropy);
         let curve = Id::mint(&mut entropy);
 
         let mut parts = Parts::new("Song".to_owned(), master);
@@ -373,6 +396,19 @@ mod tests {
             ),
         );
 
+        parts.clips.insert(
+            audio,
+            Clip::new(
+                lane,
+                Position::quarters(4),
+                Span::quarters(4),
+                ClipSource::Audio {
+                    channel: kick,
+                    trim: Frames::new(240),
+                },
+            ),
+        );
+
         parts.automation.insert(
             curve,
             Automation::new(
@@ -403,6 +439,7 @@ mod tests {
             lane,
             pattern,
             clip,
+            audio,
             curve,
         }
     }
@@ -567,8 +604,97 @@ mod tests {
         let song = song();
         let project = &song.project;
 
-        assert_eq!(project.clips_on(song.lane).count(), 1);
+        assert_eq!(project.clips_on(song.lane).count(), 2);
         assert_eq!(project.clips_on(Id::from_bits(u128::MAX)).count(), 0);
+    }
+
+    /// The edge §8 was open on, read end to end: the clip names a channel, the
+    /// channel names an insert, and that is the route to the master.
+    #[test]
+    fn an_audio_clip_is_heard_through_the_channel_it_names() {
+        let song = song();
+        let project = &song.project;
+        let clip = project.clip(song.audio).expect("the clip is here");
+        let channel = project.channel_of(clip).expect("its channel is here");
+
+        assert_eq!(channel.name(), "Kick");
+        assert_eq!(project.output_of(channel).map(Insert::name), Some("Drums"));
+    }
+
+    /// The half `output_of` was written for and this one inherits: a channel
+    /// somebody deleted leaves the clip silent, not playing through whatever
+    /// is nearest.
+    #[test]
+    fn an_audio_clip_whose_channel_is_gone_reaches_nothing() {
+        let song = song();
+        let mut parts = Parts::new("Song".to_owned(), song.master);
+        parts.clips.insert(
+            song.audio,
+            Clip::new(
+                song.lane,
+                Position::ZERO,
+                Span::quarters(4),
+                ClipSource::Audio {
+                    channel: song.kick,
+                    trim: Frames::ZERO,
+                },
+            ),
+        );
+        let project = Project::new(parts);
+        let clip = project.clip(song.audio).expect("the clip is here");
+
+        assert!(project.channel_of(clip).is_none());
+    }
+
+    /// A pattern clip reaches the mixer through the channels its notes name,
+    /// so it has none of its own — and the mixer needs that to read the same
+    /// as a channel that is gone.
+    #[test]
+    fn a_clip_that_is_not_audio_names_no_channel() {
+        let song = song();
+        let project = &song.project;
+        let pattern = project.clip(song.clip).expect("the clip is here");
+
+        assert!(project.channel_of(pattern).is_none());
+    }
+
+    /// The far end of the new edge. One of the two clips on that lane is a
+    /// pattern, so this also says the variant is what is being filtered on.
+    #[test]
+    fn the_clips_of_a_channel_are_the_ones_naming_it() {
+        let song = song();
+        let project = &song.project;
+
+        assert_eq!(project.clips_through(song.kick).count(), 1);
+        assert_eq!(project.clips_through(song.snare).count(), 0);
+    }
+
+    /// What the shape is for: one strip and one set of controls, however many
+    /// places the file is dropped in.
+    #[test]
+    fn two_clips_play_through_one_channel() {
+        let song = song();
+        let mut parts = Parts::new("Song".to_owned(), song.master);
+        for (name, start) in [
+            (song.audio, Position::ZERO),
+            (Id::from_bits(u128::MAX), Position::quarters(8)),
+        ] {
+            parts.clips.insert(
+                name,
+                Clip::new(
+                    song.lane,
+                    start,
+                    Span::quarters(4),
+                    ClipSource::Audio {
+                        channel: song.kick,
+                        trim: Frames::ZERO,
+                    },
+                ),
+            );
+        }
+        let project = Project::new(parts);
+
+        assert_eq!(project.clips_through(song.kick).count(), 2);
     }
 
     /// Arranged order is the data for these three, so it is what comes back —
@@ -598,7 +724,7 @@ mod tests {
         let project = &song.project;
 
         assert_eq!(project.patterns().count(), 1);
-        assert_eq!(project.clips().count(), 1);
+        assert_eq!(project.clips().count(), 2);
         assert_eq!(project.automation().count(), 1);
         assert_eq!(project.assets().count(), 1);
     }
