@@ -51,4 +51,11 @@ exclude_re = [
     # differences live on. With the boundary unreachable, including it or not
     # is the same comparison. Measured; the commit that added this has the scan.
     "crates/time/src/tempo\\.rs.*replace > with >= in build",
+    # The clock the undo manager is handed answers zero, and zero is what
+    # `Default::default()` answers for a `u64` — the mutant and the function are
+    # the same function. Nothing reads it either: with the capture window at
+    # zero no two transactions are ever grouped, so the number is never compared
+    # against anything. The comment on the type says why there is no wall clock
+    # to give it instead.
+    "crates/model/src/document\\.rs.*replace <impl Clock for Motionless>::now",
 ]

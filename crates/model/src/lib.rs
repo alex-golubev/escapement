@@ -13,6 +13,7 @@ mod fixtures;
 pub mod asset;
 pub mod automation;
 mod bounded;
+pub mod document;
 mod id;
 pub mod mixer;
 pub mod pattern;
