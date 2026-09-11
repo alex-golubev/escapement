@@ -11,6 +11,13 @@
 //! crate too (`.claude/rules/protocol.md`). Nothing below reaches a module that
 //! does not call it — a generic function nobody instantiates emits no code.
 
+#![allow(
+    clippy::indexing_slicing,
+    reason = "the contract's own reading of what it was handed: an index out of \
+              range here is a test failing, and nothing below is instantiated \
+              outside one"
+)]
+
 use crate::Samples;
 
 /// Asserts the whole of [`Samples`] against `over`, which the caller built over

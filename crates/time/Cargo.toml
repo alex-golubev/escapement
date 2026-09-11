@@ -12,5 +12,16 @@ publish.workspace = true
 [dependencies]
 libm = "0.2"
 
-[lints]
-workspace = true
+# Repeated from the workspace rather than inherited: a crate cannot have both
+# `lints.workspace` and a table of its own.
+[lints.rust]
+unused_qualifications = "warn"
+
+# The audio thread's crates carry one lint the rest do not. An index the
+# compiler cannot discharge is a panic; a panic carries a formatted message; a
+# formatted message is a `String`, and a `String` is the allocator that must not
+# be in the worklet's module. `.claude/rules/rt-safety.md` has the measurement.
+# `tools/check-worklet-module.py` catches it in the built artifact, a dozen
+# calls from the cause — this catches it where it is written.
+[lints.clippy]
+indexing_slicing = "warn"

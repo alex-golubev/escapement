@@ -299,6 +299,12 @@ impl Engine {
 
 #[cfg(test)]
 mod tests {
+    #![allow(
+        clippy::indexing_slicing,
+        reason = "a test reaching into what it built: an index out of range is \
+                  how it fails"
+    )]
+
     use super::*;
     use crate::fixtures::{rate, RATE_HZ};
     use crate::{Frames, RENDER_QUANTUM};

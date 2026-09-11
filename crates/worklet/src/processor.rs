@@ -239,6 +239,12 @@ fn peak(block: &[f32]) -> f32 {
 
 #[cfg(test)]
 mod tests {
+    #![allow(
+        clippy::indexing_slicing,
+        reason = "a test reaching into what it built: an index out of range is \
+                  how it fails"
+    )]
+
     use core::marker::PhantomData;
     use core::num::NonZeroUsize;
     use core::sync::atomic::AtomicU32;

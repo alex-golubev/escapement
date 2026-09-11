@@ -52,6 +52,11 @@ cause.
   `dlmalloc` in whole. What holds instead: `get`/`get_mut` with an answer for
   the miss, and a slice narrowed to a fixed-size array once at the top of a
   codec so every index below it is one the compiler can discharge.
+  **`clippy::indexing_slicing` is on in the four crates the module links**, so
+  this is caught where it is written rather than in the built artifact. Where an
+  index is genuinely discharged, the proof is a `const` assertion the expect
+  points at — never a sentence. A test module allows the lint: there an index
+  out of range is how a test fails.
 - **The render quantum is 128 samples and cannot be changed.** Anything wanting
   larger windows (FFT, time-stretch) buffers internally across quanta.
 - **Every implementation of `Samples` is held to `conformance::check`, and a new

@@ -161,14 +161,31 @@ impl<C: Cells, S: Slot> Half<C, S> {
         self.cells.store_release(self.layout.base + counter, to);
     }
 
+    /// Checked for every slot type that is ever instantiated, which is what
+    /// makes the two slices below indices the compiler discharges rather than
+    /// bounds checks that can panic — and a panic here would put an allocator
+    /// in the worklet's module (`.claude/rules/rt-safety.md`). A `Slot` wider
+    /// than the buffer fails to compile instead.
+    const ROOM: () = assert!(S::WORDS <= MAX_SLOT_WORDS, "slot too large for a ring");
+
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "narrower than the array by `Self::ROOM`"
+    )]
     fn write_slot(&self, at: u32, item: &S) {
+        const { Self::ROOM };
         let mut words = [0u32; MAX_SLOT_WORDS];
         item.encode(&mut words[..S::WORDS]);
         self.cells
             .write_words(self.layout.slot(at), &words[..S::WORDS]);
     }
 
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "narrower than the array by `Self::ROOM`"
+    )]
     fn read_slot(&self, at: u32) -> S {
+        const { Self::ROOM };
         let mut words = [0u32; MAX_SLOT_WORDS];
         self.cells
             .read_words(self.layout.slot(at), &mut words[..S::WORDS]);
@@ -256,6 +273,12 @@ impl<C: Cells, S: Slot> Consumer<C, S> {
 #[cfg(test)]
 #[cfg(not(loom))]
 mod tests {
+    #![allow(
+        clippy::indexing_slicing,
+        reason = "a test reaching into what it built: an index out of range is \
+                  how it fails"
+    )]
+
     use std::collections::VecDeque;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::thread;

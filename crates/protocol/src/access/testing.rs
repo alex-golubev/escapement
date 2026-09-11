@@ -1,6 +1,11 @@
 //! Access to a plain allocation, so the protocol can be driven by two real
 //! threads under `cargo test` instead of only in a browser.
 
+#![allow(
+    clippy::indexing_slicing,
+    reason = "a test double: an index out of range is how a test fails"
+)]
+
 use core::sync::atomic::{AtomicU32, Ordering};
 use std::boxed::Box;
 
