@@ -38,6 +38,13 @@ exclude_re = [
     # says the design is right rather than that a test is missing.
     "crates/time/src/tempo\\.rs.*replace < with <= in Segment::elapsed",
     "crates/time/src/tempo\\.rs.*replace < with <= in Segment::quarters_after",
+    # A level already at its target does not move, and the two branches say so
+    # the same way: below it the step is added and clamped down to the target,
+    # at it the step is subtracted and clamped back up to the target. Including
+    # the boundary or excluding it computes the same number, which is what
+    # "never steps past where it is heading" means at the one point where it has
+    # arrived.
+    "crates/core/src/strip\\.rs.*replace < with <= in approach",
     # The crossover below which a ramp is built flat compares a difference of
     # two tempi against a fraction of one of them, and no pair of `f64` tempi
     # makes those exactly equal — the threshold does not land on the grid the

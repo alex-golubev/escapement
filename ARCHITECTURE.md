@@ -568,6 +568,15 @@ arguments.
 > spelling is not — which leaves the spelling to legibility.
 > [Why, in full: D17](DECISIONS.md#d17)
 
+> **Decided 2026-09-11 — a channel pans by equal power and an insert by a
+> balance.** A channel places a mono source, so its centre is −3 dB a side and
+> its squares sum to one; an insert leans a stereo signal, so its centre is
+> untouched. Rejected: one law for both — the channel's costs 3 dB at every
+> neutral strip on the route, the insert's makes a source panned hard over
+> louder than it was in the middle. The position stays in the document and the
+> law stays in the engine.
+> [Why, in full: D25](DECISIONS.md#d25)
+
 > **Decided 2026-09-11 — an audio clip names the channel it is heard through,
 > and the hash of the bytes stays in `ChannelSource`.** Dropping a file on the
 > timeline makes a channel, as it does in FL, and the clip arrives with a gain,
@@ -705,6 +714,15 @@ overwriting commands, which is a lost transport change rather than a late one.
 > applied to agree, and they agree in exactly the case that breaks, because a
 > refused command is an applied one.
 > [Why, in full: D22](DECISIONS.md#d22)
+
+> **Decided 2026-09-11 — what the block carries is what the engine alone
+> knows**: the clock, the transport position, the peak, the counters and the
+> publication echo. Everything the document decides — tempo, clip, the strips
+> of the route — reaches the engine and the export from one projection of it,
+> so there is nothing for the two to disagree about. Rejected: echoing the
+> mixer back, nine words a quantum against a divergence the document's own
+> constructors already make unrepresentable.
+> [Why, in full: D24](DECISIONS.md#d24)
 
 #### Where "elsewhere" is
 
@@ -1187,7 +1205,9 @@ Runs the entire risky platform path end to end:
 - preallocation
 - offline render through the same engine
 
-Closes risk 1: **does the Rust + AudioWorklet combination work at all.**
+Closes risk 1: **does the Rust + AudioWorklet combination work at all.** Built,
+end to end, on 2026-09-11: a clip laid at a position in the document is heard
+through its channel into the master, and the same projection renders the file.
 
 ### Slice 2 — CRDT on Yrs (can run in parallel with slice 1)
 

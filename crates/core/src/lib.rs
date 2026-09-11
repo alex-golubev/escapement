@@ -3,8 +3,9 @@
 //!
 //! `no_std` is what turns the no-allocation half of those from discipline into
 //! a compiler error: with no allocator in this crate's graph there is nothing
-//! here to allocate with. It costs one dependency — `f32::sin` lives in `std` —
-//! and on wasm that costs nothing at all, see `Cargo.toml`.
+//! here to allocate with. It costs one dependency — the trigonometry a pan law
+//! needs lives in `std` — and on wasm that costs nothing at all, see
+//! `Cargo.toml`.
 
 #![no_std]
 
@@ -21,13 +22,13 @@ pub mod conformance;
 
 mod engine;
 mod frames;
-mod player;
-mod sine;
+mod source;
+mod strip;
 
-pub use engine::{Engine, DEFAULT_FREQUENCY_HZ, DEFAULT_GAIN};
+pub use engine::{Engine, Stage};
 pub use frames::Frames;
-pub use player::{Player, Samples, MAX_SOURCE_CHANNELS};
-pub use sine::Sine;
+pub use source::{frame, Samples, MAX_SOURCE_CHANNELS};
+pub use strip::Strip;
 
 /// Render quantum fixed by the Web Audio spec. Internal block sizes are multiples
 /// of it.

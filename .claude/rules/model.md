@@ -45,7 +45,6 @@ is what breaks, and how quietly.
   twice or not at all, depending on which reader is asking. Neither reading
   fails: both produce audio, and the clip has no gain, pan, mute or output of
   its own to say which was meant.
-
 - **An entity is a map of registers, one per field, never one value** (§2.6).
   Two people change different fields of one channel far more often than they
   change the same one, and a whole-entity value keeps only the later writer —

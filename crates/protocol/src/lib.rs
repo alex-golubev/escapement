@@ -51,7 +51,7 @@ pub mod state;
 // reaching past the front door, because it is.
 pub use access::{Cells, Pointers};
 pub use audio::AudioLayout;
-pub use command::{Command, CommandKind};
+pub use command::{Command, CommandKind, Stage};
 pub use ring::{Consumer, Full, Producer, RingLayout, Slot};
 pub use state::{BlockLayout, EngineState, Publisher, Subscriber};
 
@@ -61,13 +61,35 @@ use core::fmt;
 ///
 /// In one place because the two ends have to agree on that order, and nothing
 /// would notice if they quietly stopped.
+/// Total, like everything else that runs on the audio thread: a word outside
+/// the slot is nothing written rather than a panic, and a panic here formats
+/// its message — which pulls a `String`, and with it an allocator, into the
+/// module that must not have one (`.claude/rules/rt-safety.md`).
 pub(crate) fn put_u64(into: &mut [u32], at: usize, value: u64) {
-    into[at] = value as u32;
-    into[at + 1] = (value >> 32) as u32;
+    if let Some(slot) = into.get_mut(at) {
+        *slot = value as u32;
+    }
+    if let Some(slot) = into.get_mut(at + 1) {
+        *slot = (value >> 32) as u32;
+    }
 }
 
+/// See [`put_u64`]. A word that is not there reads as zero.
 pub(crate) fn get_u64(from: &[u32], at: usize) -> u64 {
-    u64::from(from[at]) | (u64::from(from[at + 1]) << 32)
+    let low = from.get(at).copied().unwrap_or(0);
+    let high = from.get(at + 1).copied().unwrap_or(0);
+    u64::from(low) | (u64::from(high) << 32)
+}
+
+/// A tick count, which is signed because a count-in is before the origin
+/// (§2.5). The bits are the same two words; the cast is where the sign lives.
+pub(crate) fn put_i64(into: &mut [u32], at: usize, value: i64) {
+    put_u64(into, at, value as u64);
+}
+
+/// See [`put_i64`].
+pub(crate) fn get_i64(from: &[u32], at: usize) -> i64 {
+    get_u64(from, at) as i64
 }
 
 /// `"ESCP"`. Read out of a memory dump it is the one word that says which
@@ -79,7 +101,7 @@ pub const MAGIC: u32 = 0x4553_4350;
 /// The two modules are fetched and cached by the browser separately, so a new
 /// interface meeting a stale worklet is an ordinary afternoon. The version turns
 /// that into a message instead of a silent misread.
-pub const VERSION: u32 = 3;
+pub const VERSION: u32 = 4;
 
 /// The ceiling on a region, and what keeps every offset read out of a header
 /// inside 32-bit arithmetic: `usize` is 32 bits on the target, and a base of

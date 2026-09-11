@@ -21,12 +21,12 @@ paths:
   control whose value the engine has not been told yet — that is how an export
   comes out different from what is playing. The audio thread is unaffected: it
   runs off the audio clock, not off frames.
-- **The page hands the export material and a rate, and nothing else.** What the
-  engine is set to it reads out of the region itself, because the page's copy is
-  what the engine was *told* — and the engine may have refused it
-  (`.claude/rules/protocol.md`). The controls are inputs, not a record of what is
-  playing, and a wrapper here that takes one as an argument puts the whole
-  divergence back.
+- **The page hands the export material and a rate, and nothing else.** What is
+  played comes out of the document — the same projection the ring was told — and
+  never out of the controls, which are inputs rather than a record of what is
+  playing (D24). A wrapper here that takes a gain or a tempo as an argument puts
+  the divergence back: the export would then be rendering what somebody typed
+  rather than what the engine was sent.
 - **Nothing on the host reaches these crates.** `escapement-view` implements
   `Cells` over a typed array — four of its five methods are `Atomics` calls and
   the fifth the array's length — and `escapement-app`'s memory is only shared

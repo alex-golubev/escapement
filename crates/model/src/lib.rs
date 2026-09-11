@@ -16,6 +16,7 @@ mod bounded;
 mod id;
 pub mod mixer;
 pub mod pattern;
+pub mod playback;
 pub mod playlist;
 pub mod project;
 pub mod timeline;

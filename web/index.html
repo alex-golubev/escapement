@@ -43,7 +43,8 @@
     <p>Decoded on this page and copied into the worklet's own memory, then named
         by one command through the ring. The frames never travel as a message:
         §3 keeps data out of the ring, so what crosses is where they already
-        are. With none loaded the engine is the oscillator below.</p>
+        are. With none loaded there is no clip, and a project with no clip is
+        the silence it is.</p>
 </div>
 
 <div class="row">
@@ -54,12 +55,23 @@
 </div>
 
 <div class="row">
-    <!-- No `value` on either, and the readouts start empty: what they show is
-         put there from the engine's own defaults at startup. A number here
-         instead is a second copy of one in `escapement-core`, and the export
-         reads these controls. -->
-    <label>frequency <input id="hz" type="range" min="55" max="1760" step="1" disabled/> <span id="hz-value"></span></label>
-    <label>gain <input id="gain" type="range" min="0" max="100" step="1" disabled/> <span id="gain-value"></span></label>
+    <!-- Every control here is an input to the document, never a record of what
+         is playing: what the page sends and what it exports both come out of
+         the document afterwards (D24). -->
+    <label>tempo <input id="tempo" type="number" min="20" max="300" step="1" value="120" disabled/> BPM</label>
+    <label>clip at <input id="at" type="number" min="0" max="64" step="0.25" value="0" disabled/> quarters</label>
+</div>
+
+<div class="row">
+    <label>channel gain <input id="channel-gain" type="range" min="0" max="200" step="1" value="100" disabled/> <span id="channel-gain-value"></span></label>
+    <label>pan <input id="channel-pan" type="range" min="-100" max="100" step="1" value="0" disabled/> <span id="channel-pan-value"></span></label>
+    <label><input id="channel-mute" type="checkbox" disabled/> mute</label>
+</div>
+
+<div class="row">
+    <label>master gain <input id="master-gain" type="range" min="0" max="200" step="1" value="100" disabled/> <span id="master-gain-value"></span></label>
+    <label>pan <input id="master-pan" type="range" min="-100" max="100" step="1" value="0" disabled/> <span id="master-pan-value"></span></label>
+    <label><input id="master-mute" type="checkbox" disabled/> mute</label>
 </div>
 
 <pre id="state">not connected</pre>
@@ -87,10 +99,26 @@
     const audio = document.getElementById("audio");
     const play = document.getElementById("play");
     const halt = document.getElementById("halt");
-    const hz = document.getElementById("hz");
-    const gain = document.getElementById("gain");
     const file = document.getElementById("file");
     const save = document.getElementById("save");
+    const tempo = document.getElementById("tempo");
+    const at = document.getElementById("at");
+
+    // The two strips a slice-1 route has: the channel the clip sounds on, and
+    // the master it is heard through. The insert between them exists in the
+    // model and is the master here, because this page's channel feeds it
+    // directly (§2.6).
+    const strips = [
+        {stage: 0, gain: "channel-gain", pan: "channel-pan", mute: "channel-mute"},
+        {stage: 1, gain: "master-gain", pan: "master-pan", mute: "master-mute"},
+    ].map((strip) => ({
+        stage: strip.stage,
+        gain: document.getElementById(strip.gain),
+        pan: document.getElementById(strip.pan),
+        mute: document.getElementById(strip.mute),
+        gainValue: document.getElementById(strip.gain + "-value"),
+        panValue: document.getElementById(strip.pan + "-value"),
+    }));
 
     // Both kept past the handler that makes them: the file picker below needs
     // the context to decode at the engine's rate, and the memory to write the
@@ -113,34 +141,50 @@
     // very words it is playing.
     let loaded = null;
 
-    // What the engine has been told, in one place, written by the same handlers
-    // that send it. The export renders from this rather than from where the
-    // controls happen to sit — those agreed with the engine only because a
-    // number in the markup happened to equal one in `escapement-core`.
-    const settings = {
-        gain: engine.default_gain(),
-        frequency_hz: engine.default_frequency_hz(),
-    };
-
-    // Not in `settings`, because it is not something this page decides: the
-    // engine says what the transport is doing and the state block carries it
-    // back every frame (§3). Held here for the line the export prints, not for
-    // the export — that reads the block itself.
+    // Not a control: the engine says what the transport is doing and the state
+    // block carries it back every frame (§3). Held for the line the export
+    // prints.
     let playing = false;
 
-    const hzValue = document.getElementById("hz-value");
-    const gainValue = document.getElementById("gain-value");
+    // How long the clip is, in quarters, worked out when a file is loaded: its
+    // own length at the tempo the document is at. A clip shorter than its file
+    // trims it and a longer one leaves silence, so this is what "the whole
+    // file, once" means in musical time (§2.5).
+    let quarters = 4;
 
-    // The controls start where the engine already is. They are inputs from
-    // here on: what is heard, and what an export renders, is the engine's
-    // reading of what these sent, which is not always what they said.
-    const showSettings = () => {
-        hz.value = String(settings.frequency_hz);
-        hzValue.textContent = `${settings.frequency_hz} Hz`;
-        gain.value = String(Math.round(settings.gain * 100));
-        gainValue.textContent = settings.gain.toFixed(2);
+    const sendStrips = () => {
+        for (const strip of strips) {
+            const gain = Number(strip.gain.value) / 100;
+            const pan = Number(strip.pan.value) / 100;
+            strip.gainValue.textContent = gain.toFixed(2);
+            strip.panValue.textContent = pan.toFixed(2);
+            engine.set_strip(strip.stage, gain, pan, strip.mute.checked);
+        }
     };
-    showSettings();
+
+    const sendClip = () => engine.place_clip(Number(at.value), quarters, 0);
+
+    for (const strip of strips) {
+        strip.gain.oninput = sendStrips;
+        strip.pan.oninput = sendStrips;
+        strip.mute.onchange = sendStrips;
+    }
+    tempo.oninput = () => {
+        engine.set_tempo(Number(tempo.value));
+        // The clip is held in quarters, so a new tempo moves it in seconds
+        // without this page doing anything — but its length in quarters is a
+        // fact about the file, and that one has to be worked out again.
+        if (loaded) {
+            quarters = fileQuarters(loaded.frames, loaded.rate);
+            sendClip();
+        }
+    };
+    at.oninput = sendClip;
+
+    // The file's own seconds, at the document's tempo. The other direction of
+    // §2.5's one conversion, done here because this is where a file's length
+    // meets a project's clock.
+    const fileQuarters = (frames, rate) => (frames / rate) * (Number(tempo.value) / 60);
 
     audio.onclick = async () => {
         audio.disabled = true;
@@ -157,7 +201,7 @@
             await ctx.audioWorklet.addModule("worklet.js");
 
             const node = new AudioWorkletNode(ctx, "escapement", {
-                outputChannelCount: [1],
+                outputChannelCount: [2],
                 processorOptions: {module},
             });
 
@@ -173,7 +217,13 @@
                 memory = data.buffer;
                 say(`connected — region at byte ${data.region}, quantum ${data.quantum}`);
                 say(`audio buffer — ${engine.audio_length() / 1048576} MiB at byte ${engine.audio_offset()}`);
-                for (const control of [play, halt, hz, gain, file, save]) control.disabled = false;
+                const controls = [play, halt, file, save, tempo, at];
+                for (const strip of strips) controls.push(strip.gain, strip.pan, strip.mute);
+                for (const control of controls) control.disabled = false;
+                // The controls are inputs, so the document starts where they
+                // are rather than the other way about.
+                engine.set_tempo(Number(tempo.value));
+                sendStrips();
             };
 
             node.connect(ctx.destination);
@@ -249,7 +299,7 @@
 
         // Last, and that is the whole ordering: the frames are already there,
         // and the ring's release is what carries them to the other thread (§3).
-        sent = engine.use_audio(at, frames, channels);
+        sent = engine.use_audio(at, frames, channels, decoded.sampleRate);
         half = 1 - half;
 
         // The engine checks a descriptor against the buffer it names and
@@ -269,7 +319,10 @@
             return;
         }
 
-        loaded = {samples: interleaved, channels, frames, name: chosen.name};
+        loaded = {samples: interleaved, channels, frames, rate: decoded.sampleRate, name: chosen.name};
+        // The clip is the file, once, from wherever the control says.
+        quarters = fileQuarters(frames, decoded.sampleRate);
+        sendClip();
         say(`${chosen.name} — publication ${sent}, ${frames} frames, ${channels} channels, ${(frames / decoded.sampleRate).toFixed(2)} s`);
     };
 
@@ -291,21 +344,26 @@
     play.onclick = () => engine.start();
     halt.onclick = () => engine.stop();
 
-    // Two seconds of it when there is no file, because the oscillator has no
-    // length of its own to take.
-    const TONE_SECONDS = 2;
+    // A second of silence when there is no file, so the button still produces a
+    // file and the file is honestly what the project plays: nothing.
+    const EMPTY_SECONDS = 1;
 
     // On this thread and not in a worker: the button can ask for half the
     // audio buffer at most, which costs a frame of drawing. The offline
     // render §2.1 puts in a worker is a bounce — the whole graph over a
     // whole project.
     save.onclick = () => {
-        const samples = loaded ? loaded.frames : Math.round(ctx.sampleRate * TONE_SECONDS);
+        // The whole clip, from the origin: the file is the project rather than
+        // what is on screen, so it runs to where the clip ends.
+        const seconds = loaded
+            ? ((Number(at.value) + quarters) * 60) / Number(tempo.value)
+            : EMPTY_SECONDS;
+        const samples = Math.round(ctx.sampleRate * seconds);
         let bytes;
         try {
-            // Only the material and the rate: what the engine is set to it
-            // reads out of the region itself, so nothing this page remembers
-            // can reach the file (§3).
+            // Only the material and the rate: what is played comes out of the
+            // document on the Rust side, which is the same value the ring was
+            // told (D24).
             bytes = engine.render_wav(
                 loaded ? loaded.samples : new Float32Array(0),
                 loaded ? loaded.channels : 0,
@@ -320,7 +378,7 @@
         const url = URL.createObjectURL(new Blob([bytes], {type: "audio/wav"}));
         const link = document.createElement("a");
         link.href = url;
-        link.download = (loaded ? loaded.name.replace(/\.[^.]*$/, "") : "oscillator") + ".wav";
+        link.download = (loaded ? loaded.name.replace(/\.[^.]*$/, "") : "silence") + ".wav";
         // In the document for the click and out again after it: a detached
         // `<a download>` is a click that does nothing at all in Firefox, and
         // this page would look like it had worked.
@@ -337,17 +395,6 @@
 
         say(`rendered ${samples} samples at ${ctx.sampleRate} Hz — ${bytes.length} bytes`);
         if (!playing) say("the transport is stopped, so that file is the silence it is playing");
-    };
-
-    hz.oninput = () => {
-        settings.frequency_hz = Number(hz.value);
-        hzValue.textContent = `${settings.frequency_hz} Hz`;
-        engine.set_frequency(settings.frequency_hz);
-    };
-    gain.oninput = () => {
-        settings.gain = Number(gain.value) / 100;
-        gainValue.textContent = settings.gain.toFixed(2);
-        engine.set_gain(settings.gain);
     };
 
     const state = document.getElementById("state");
@@ -379,6 +426,7 @@
             state.textContent =
                 `transport   ${now.playing ? "playing" : "stopped"}\n` +
                 `clock       ${now.clock} samples\n` +
+                `position    ${now.position} samples from the origin\n` +
                 `quanta      ${now.quanta}\n` +
                 `peak        ${now.peak.toFixed(3)}  ${meter(now.peak)}\n` +
                 `applied     ${now.applied}   unknown ${now.unknown}   pending ${now.pending}\n` +

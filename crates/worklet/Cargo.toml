@@ -21,6 +21,9 @@ escapement-time.workspace = true
 # reaches the module that ships — `tools/check-worklet-module.py` reads that.
 [dev-dependencies]
 escapement-export.workspace = true
+# The document both paths are driven from: the ring is told what it says, and
+# the file is rendered from the same value (D24).
+escapement-model.workspace = true
 
 [lints]
 workspace = true

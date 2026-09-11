@@ -54,16 +54,23 @@ struct SingleThreaded<T>(UnsafeCell<T>);
 // SAFETY: see above. Two named impls rather than one blanket over every `T`,
 // which would promise this for types the argument has never seen.
 unsafe impl Sync for SingleThreaded<Module> {}
-unsafe impl Sync for SingleThreaded<[f32; RENDER_QUANTUM]> {}
+unsafe impl Sync for SingleThreaded<[f32; OUTPUT_SAMPLES]> {}
 
 static MODULE: SingleThreaded<Module> = SingleThreaded(UnsafeCell::new(Module::new()));
 
+/// Two channels of one quantum, one after the other rather than interleaved.
+///
+/// Planar because that is the shape `AudioWorkletProcessor` hands out — each
+/// output channel is its own `Float32Array`, and a `subarray` of this reaches
+/// one of them with no rearranging in JavaScript.
+const OUTPUT_SAMPLES: usize = RENDER_QUANTUM * 2;
+
 /// The block the host reads. Its own `static` rather than a field of [`Module`]:
 /// `Option<Processor>` is `None` by one non-zero byte, and one non-zero byte
-/// takes a whole `static` out of `.bss` into a data segment — these 512 zeros
-/// with it.
-static OUTPUT: SingleThreaded<[f32; RENDER_QUANTUM]> =
-    SingleThreaded(UnsafeCell::new([0.0; RENDER_QUANTUM]));
+/// takes a whole `static` out of `.bss` into a data segment — these zeros with
+/// it.
+static OUTPUT: SingleThreaded<[f32; OUTPUT_SAMPLES]> =
+    SingleThreaded(UnsafeCell::new([0.0; OUTPUT_SAMPLES]));
 
 /// Call once, before the first [`escapement_process`], and before the address
 /// from [`escapement_region_ptr`] is handed to anyone: this is what writes the
@@ -98,24 +105,37 @@ pub extern "C" fn escapement_output_ptr() -> *mut f32 {
     OUTPUT.0.get().cast()
 }
 
-/// In samples, so the host never hard-codes 128 on its side.
+/// Samples in one channel of the block, so the host hard-codes neither 128 nor
+/// the channel count on its side.
 #[no_mangle]
 pub extern "C" fn escapement_output_len() -> usize {
     RENDER_QUANTUM
 }
 
-/// One quantum into the block at [`escapement_output_ptr`], silent until
-/// [`escapement_init`] has run.
+/// Channels in the block above. Two, and the host reads them one after the
+/// other.
+#[no_mangle]
+pub extern "C" fn escapement_output_channels() -> usize {
+    2
+}
+
+/// One quantum into both channels of the block at [`escapement_output_ptr`],
+/// silent until [`escapement_init`] has run.
 #[no_mangle]
 pub extern "C" fn escapement_process() {
     // SAFETY: see `SingleThreaded`. Two distinct statics, so the two `&mut`
     // do not alias.
-    unsafe { (*MODULE.0.get()).process(&mut *OUTPUT.0.get()) };
+    unsafe {
+        let (left, right) = (*OUTPUT.0.get()).split_at_mut(RENDER_QUANTUM);
+        (*MODULE.0.get()).process(left, right);
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use escapement_protocol::{Command, CommandKind, Layout, Producer, Subscriber};
+    use escapement_protocol::{Cells, Command, CommandKind, Layout, Producer, Subscriber};
+    use escapement_time::tempo::Curve;
+    use escapement_time::{Position, Span};
 
     use super::*;
 
@@ -124,9 +144,10 @@ mod tests {
     /// A borrow of it cannot be held across [`escapement_process`], which takes
     /// `&mut` to the same words — that is the aliasing the module is careful
     /// about, and a test is not exempt from it.
+    /// Both channels, one after the other — the whole block the host reads.
     fn output() -> Vec<f32> {
         let ptr = escapement_output_ptr();
-        let len = escapement_output_len();
+        let len = escapement_output_len() * escapement_output_channels();
 
         // SAFETY: those two describe the module's output block, exactly `len`
         // initialized `f32`. Nothing else is borrowing it here: the module is
@@ -151,13 +172,47 @@ mod tests {
         let cells = unsafe { Pointers::new(escapement_region_ptr().cast(), LAYOUT.words()) };
         let seen = Layout::read_header(&cells).expect("init did not write a header");
 
+        for word in 0..RENDER_QUANTUM {
+            cells.store_relaxed(seen.audio().base() + word, 0.9f32.to_bits());
+        }
+
         let mut interface = Producer::new(cells, seen.commands());
-        interface.push(&Command::now(CommandKind::Start)).unwrap();
+        for kind in [
+            CommandKind::SetTempo {
+                beats_per_minute: 120.0,
+                curve: Curve::Hold,
+            },
+            CommandKind::PlaceClip {
+                start: Position::ZERO,
+                length: Span::quarters(64),
+                trim: 0,
+            },
+            CommandKind::Audio {
+                publication: 1,
+                offset: 0,
+                frames: RENDER_QUANTUM as u32,
+                channels: 1,
+            },
+            CommandKind::Start { at: Position::ZERO },
+        ] {
+            interface.push(&Command::now(kind)).unwrap();
+        }
 
         escapement_process();
+        let block = output();
+        assert_eq!(
+            block.len(),
+            RENDER_QUANTUM * 2,
+            "the block is not two whole quanta, so one channel reads the other"
+        );
+        let (left, right) = block.split_at(RENDER_QUANTUM);
         assert!(
-            output().iter().any(|sample| *sample != 0.0),
+            left.iter().any(|sample| *sample != 0.0),
             "Start did not reach the block the host reads"
+        );
+        assert_eq!(
+            left, right,
+            "a centred clip came out different on the two sides"
         );
 
         escapement_process();
@@ -166,6 +221,6 @@ mod tests {
             .expect("the writer was not in the way");
         assert!(state.playing);
         assert_eq!(state.quanta, 2, "the module did not survive between calls");
-        assert_eq!(state.commands_applied, 1);
+        assert_eq!(state.commands_applied, 4);
     }
 }
