@@ -651,17 +651,19 @@ mod exports {
 
     use super::*;
 
-    /// Every control is an input to the document, so what the page is showing
-    /// and what the engine plays meet there and nowhere else. A project with
-    /// no file in it has no clip, and no clip is silence rather than a default
-    /// sound.
+    /// Its own `Document` rather than the page's: the `thread_local!` is one
+    /// per process and every test here would be reading whatever the last one
+    /// left in it — which is the same argument the module comment makes about
+    /// leaving behaviour in a `static`. Caught by CI rather than here: the
+    /// order these run in differs between machines, and on mine the test that
+    /// loads a file happened to run second.
     #[wasm_bindgen_test]
     fn a_document_with_no_file_has_nothing_to_play() {
-        set_tempo(90.0);
-        place_clip(2.0, 4.0, 0.0);
-        set_strip(0, 0.5, -1.0, false);
+        let mut document = Document::new();
+        document.beats_per_minute = 90.0;
+        document.start = Position::quarters(2);
 
-        let playback = DOCUMENT.with_borrow(Document::playback);
+        let playback = document.playback();
         assert_eq!(playback.tempo().beats_per_minute(), 90.0);
         assert!(playback.clip().is_none(), "a clip with no asset behind it");
     }
@@ -687,9 +689,31 @@ mod exports {
     /// where a strip nobody set sits.
     #[wasm_bindgen_test]
     fn a_control_that_is_not_a_value_leaves_the_document_standing() {
-        set_strip(1, f32::NAN, 9.0, false);
+        let mut document = Document::new();
+        document.asset = Some((
+            AssetHash::from_bytes([1; 32]),
+            AssetFrames::new(4_800),
+            SampleRate::new(48_000.0).expect("48 kHz is a rate"),
+            1,
+        ));
+        document.strips[0] = (f32::NAN, 9.0, false);
+        document.strips[1] = (0.5, 0.0, false);
 
-        let playback = DOCUMENT.with_borrow(Document::playback);
-        assert_eq!(playback.tempo().beats_per_minute(), 90.0, "the tempo above");
+        let audible = document.playback().clip().expect("a file and a clip");
+        assert_eq!(
+            audible.channel().gain(),
+            Gain::UNITY,
+            "a gain that is not one took the strip with it"
+        );
+        assert_eq!(
+            audible.channel().pan(),
+            Pan::CENTRE,
+            "a place that is not one between the speakers is the middle"
+        );
+        assert_eq!(
+            audible.insert().gain().amplitude(),
+            0.5,
+            "the strip beside it did not survive"
+        );
     }
 }
