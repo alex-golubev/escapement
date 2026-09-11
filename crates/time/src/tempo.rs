@@ -106,7 +106,23 @@ pub struct TempoMap<'a> {
     segments: &'a [Segment],
 }
 
-impl TempoMap<'_> {
+impl<'a> TempoMap<'a> {
+    /// A map over segments [`build`] has already worked out.
+    ///
+    /// The cheap half of the map on its own. [`build`] hands one back over the
+    /// buffer it wrote, and holding both is what a reader cannot do: a struct
+    /// carrying the segments and a map borrowing them is self-referential. This
+    /// is how the audio thread keeps the segments in a `static` and makes the
+    /// map again each quantum, which costs a pointer and a length.
+    ///
+    /// Segments no `build` produced are not refused, because nothing here can
+    /// tell: what they describe is whatever they say. An empty slice is a map
+    /// with no marks, and every lookup in one answers at the origin.
+    #[must_use]
+    pub const fn over(segments: &'a [Segment]) -> Self {
+        Self { segments }
+    }
+
     /// Seconds from the origin to `position`, negative before it.
     ///
     /// A position before the map's first mark needs no case of its own: the
@@ -337,6 +353,41 @@ mod tests {
         assert_eq!(map.seconds_at(Position::ZERO), 0.0);
         assert_eq!(map.seconds_at(Position::quarters(1)), 0.5);
         assert_eq!(map.seconds_at(Position::quarters(8)), 4.0);
+    }
+
+    /// What the audio thread does with the two halves: keep the segments, make
+    /// the map over them again each quantum, and read what `build` would have
+    /// answered. A ramp is in here because it is the half that carries state
+    /// worked out at build time.
+    #[test]
+    fn a_map_over_written_segments_reads_as_the_one_build_returned() {
+        let marks = [mark(0, 120.0, Curve::Ramp), mark(4, 60.0, Curve::Hold)];
+        let mut room = [Segment::default(); 2];
+        let built = build(&marks, &mut room).expect("two marks describe a map");
+
+        let mut was = [0.0f64; 16];
+        for (slot, quarter) in was.iter_mut().zip(-4..12) {
+            *slot = built.seconds_at(Position::quarters(quarter));
+        }
+
+        let again = TempoMap::over(&room);
+        for (seconds, quarter) in was.iter().zip(-4..12) {
+            assert_eq!(
+                again.seconds_at(Position::quarters(quarter)),
+                *seconds,
+                "quarter {quarter}"
+            );
+        }
+    }
+
+    /// The shape the audio thread holds before anything has been published.
+    /// Neither direction may reach for a segment that is not there.
+    #[test]
+    fn a_map_over_nothing_answers_at_the_origin() {
+        let empty = TempoMap::over(&[]);
+
+        assert_eq!(empty.seconds_at(Position::quarters(4)), 0.0);
+        assert_eq!(empty.position_at(2.0), Position::ZERO);
     }
 
     /// The other kind of tempo change, and the more common one: no ramp, a step

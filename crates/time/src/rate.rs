@@ -1,4 +1,5 @@
-//! The sample rate, and the two conversions that need one.
+//! The sample rate, the two conversions that need one, and where a converted
+//! position lands.
 //!
 //! Here rather than in `escapement-core` because both ends convert: the model
 //! turns a position into a moment to schedule, and the engine turns its clock
@@ -6,6 +7,61 @@
 //! in [`tempo`](crate::tempo) because that map answers in seconds — seconds are
 //! physical, and the offline render for export drives the same engine at a rate
 //! of its own choosing, so a map that knew the rate could not serve both.
+
+/// A point on the timeline, counted in samples from its origin.
+///
+/// The second of the three counts `.claude/rules/musical-time.md` keeps apart,
+/// and a type because the other two are: the engine's clock counts from when
+/// the engine was built and is unsigned, an asset's frames count from the start
+/// of a file. Signed, because a count-in sits before the origin — the same
+/// reason [`Position`](crate::Position) is.
+///
+/// Arithmetic saturates. This is what the audio thread advances every quantum,
+/// and a debug build there must not panic.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct SamplePosition(i64);
+
+impl SamplePosition {
+    /// The origin of the timeline, which is where bar one starts.
+    pub const ZERO: Self = Self(0);
+
+    /// From a count of samples.
+    #[must_use]
+    pub const fn new(samples: i64) -> Self {
+        Self(samples)
+    }
+
+    /// The sample that `seconds` from the timeline's origin falls in.
+    ///
+    /// The far end of the only chain that produces one of these:
+    /// [`TempoMap::seconds_at`](crate::tempo::TempoMap::seconds_at) answers in
+    /// seconds from the origin, and this turns that into a sample. Written here
+    /// rather than as a return type on [`SampleRate::sample_at`], which is
+    /// arithmetic over whatever the caller is counting — an asset's own frames
+    /// reach it too, and they are not positions on any timeline.
+    #[must_use]
+    pub fn at(seconds: f64, rate: SampleRate) -> Self {
+        Self(rate.sample_at(seconds))
+    }
+
+    /// Samples from the origin.
+    #[must_use]
+    pub const fn samples(self) -> i64 {
+        self.0
+    }
+
+    /// This many samples later, and saturating at the end of the count.
+    #[must_use]
+    pub const fn advanced_by(self, samples: i64) -> Self {
+        Self(self.0.saturating_add(samples))
+    }
+
+    /// Samples from `earlier` to here, negative if this is the earlier one.
+    #[must_use]
+    pub const fn since(self, earlier: Self) -> i64 {
+        self.0.saturating_sub(earlier.0)
+    }
+}
 
 /// How many samples stand in a second, and the rounding that follows.
 ///
@@ -174,6 +230,44 @@ mod tests {
     #[test]
     fn a_moment_that_is_not_a_number_answers_with_the_origin() {
         assert_eq!(rate().sample_at(f64::NAN), 0);
+    }
+
+    /// The chain this type exists for, end to end: seconds from the origin in,
+    /// the sample they fall in out.
+    #[test]
+    fn a_converted_position_is_the_sample_the_moment_falls_in() {
+        let rate = rate();
+
+        assert_eq!(SamplePosition::at(0.0, rate), SamplePosition::ZERO);
+        assert_eq!(SamplePosition::at(1.0, rate).samples(), 48_000);
+        assert_eq!(
+            SamplePosition::at(-1.0 / HZ, rate).samples(),
+            -1,
+            "a count-in is before the origin, and the type is signed for it"
+        );
+    }
+
+    #[test]
+    fn a_position_advances_by_what_it_is_given_and_measures_back_the_same() {
+        let start = SamplePosition::new(48_000);
+        let later = start.advanced_by(128);
+
+        assert_eq!(later.samples(), 48_128);
+        assert_eq!(later.since(start), 128);
+        assert_eq!(start.since(later), -128, "backwards is negative, not zero");
+        assert!(start < later, "and they order the way the clock runs");
+    }
+
+    /// The audio thread advances one of these every quantum, so neither
+    /// direction may panic in a debug build.
+    #[test]
+    fn the_ends_of_the_count_saturate_rather_than_wrapping() {
+        let last = SamplePosition::new(i64::MAX);
+        let first = SamplePosition::new(i64::MIN);
+
+        assert_eq!(last.advanced_by(128), last);
+        assert_eq!(first.advanced_by(-128), first);
+        assert_eq!(last.since(first), i64::MAX);
     }
 
     /// A rate that is not the usual one is not a special case, and a fractional

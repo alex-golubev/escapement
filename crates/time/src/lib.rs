@@ -93,4 +93,4 @@ mod rate;
 pub mod tempo;
 
 pub use position::{Position, Span};
-pub use rate::SampleRate;
+pub use rate::{SamplePosition, SampleRate};
