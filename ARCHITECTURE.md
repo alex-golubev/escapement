@@ -1,7 +1,25 @@
-# Escapement — Architecture Notes
+# Escapement — Architecture
 
-> Status: **pre-project recommendations**, not a final design.
-> Date: 2026-08-24. Project: a browser DAW with a Rust (WASM) core.
+> A browser DAW with a Rust (WASM) core: the decisions it is built on, and what
+> each one turned down. Begun 2026-08-24 as pre-project recommendations and read
+> as a specification ever since; folded into its own decisions on 2026-09-11.
+>
+> **How to read it.** The prose of a section is what is true now. Beside it, a
+> short dated block carries what that decision **refused**, so that nobody
+> proposes it again. The derivation — why the chosen thing is right, and what was
+> measured to know it — is one file over in **`DECISIONS.md`**, which is
+> append-only and is not meant to be read through.
+>
+> The split is by how long each part is needed. An answer changes when the
+> decision changes, so it lives in the prose and is edited. A refusal is needed
+> for as long as the project exists and fits in a sentence, so it stays here. A
+> derivation is needed while a decision is being made or revisited and is
+> archaeology afterwards, so it leaves — which is what stops this document
+> growing by three hundred words every time something is settled.
+>
+> A rule in `.claude/rules/` carries the same decision again, as a prohibition
+> with the way it fails quietly. It does not re-derive the argument, and this
+> document does not restate the rule.
 
 ---
 
@@ -71,7 +89,7 @@ third-party iframes, some CDNs and OAuth popups.
 
 - Desktop Chrome, output: **~10–30 ms**
 - With `getUserMedia` on input, round-trip: **20–60 ms** depending on the OS
-  (per-platform breakdown in §2.2a)
+  (per-platform breakdown in §2.2)
 
 That is "tolerable on headphones", but it is not Reaper with ASIO.
 
@@ -82,7 +100,7 @@ a processed signal.
 
 If the product is about recording live instruments, this latency cannot be
 optimized away — but it does not block recording either: hardware direct
-monitoring works around it. Full analysis in **§2.2**.
+monitoring works around it. §2.2 has the decision and the shape of the problem.
 
 ---
 
@@ -90,7 +108,7 @@ monitoring works around it. Full analysis in **§2.2**.
 
 | # | Decision | Status |
 |---|---|---|
-| 2.1 | Worklet or worker | 🔵 Recommendation: graph in the worklet |
+| 2.1 | Worklet or worker | ✅ Graph in the worklet, and slice 1 built it |
 | 2.2 | Latency / live recording | ✅ **Decided:** target is samples, live recording deferred |
 | 2.3 | Plugins | 🔵 Recommendation: own ABI + WAM 2.0 |
 | 2.4 | Collaboration | ✅ **Decided:** multiplayer is required → CRDT (**Yrs**) from day one |
@@ -109,117 +127,35 @@ The two options produce **different products**:
 - ✅ Freedom: allocation, large buffers, ordinary debugging
 - ❌ +50–100 ms of latency
 
-**Recommendation:** option A, with the heavy work (disk streaming, decoding,
-waveform peaks, offline render) pushed into workers. The link between them is a
+**Option A**, with the heavy work (disk streaming, decoding, waveform peaks,
+offline render) pushed into workers. Written as a recommendation and settled by
+being built: slice 1 put the graph in the worklet. The link between them is a
 **lock-free SPSC ring buffer over SharedArrayBuffer**. No mutexes across the RT
 boundary.
 
 ### 2.2. Latency and recording live instruments
 
-This is not one problem but four, of different magnitudes. Three of the four are
-solvable; one is not solvable at all. Keeping them apart matters — they get
-conflated constantly.
 
-#### (a) Monitoring — not solvable
+Not one problem but four, of different magnitudes, and they get conflated
+constantly. **Monitoring is the one that is not solvable at all** — Chrome
+supports neither ASIO nor WASAPI exclusive mode, so the round trip is 20–40 ms on
+macOS and 30–60 on Windows against the 10–12 ms musicians tolerate. The other
+three are solvable: landing a take on the grid, but only by building loopback
+calibration, because there is no API for input latency; clock drift between two
+devices, by refusing the configuration; dropouts mid-take, by streaming capture
+straight to OPFS through a worker.
 
-You play and hear yourself late. Round-trip:
-input → OS → browser → worklet → OS → output.
+What follows from that: overdubbing one source through an interface with hardware
+direct monitoring works properly, monitoring through our own effects does not,
+and multi-mic recording is not to be promised. Live recording is a supported
+workflow with a documented hardware requirement, never a headline feature.
 
-**Chrome supports neither ASIO nor WASAPI exclusive mode.**
-
-| Platform | Round-trip |
-|---|---|
-| Windows (WASAPI shared) | 30–60 ms |
-| macOS (CoreAudio) | 20–40 ms |
-| *Native DAW + ASIO @128* | *6–10 ms* |
-
-Musicians tolerate roughly 10–12 ms. Singers have it worst: you also hear your own
-voice through bone conduction, and the direct sound layered over the delayed one
-produces comb filtering — a "flanged doubling" that is noticeable at 10 ms.
-
-**This cannot be optimized.** It is a limit of the browser's audio stack, not of
-our code.
-
-#### (b) The workaround that removes 80% of the problem
-
-**Hardware direct monitoring.** Any decent interface (Scarlett, MOTU, RME, UA,
-PreSonus) mixes the input into the headphones internally, never touching the
-computer. Zero latency, and the browser is not involved.
-
-The DAW's job is then to **not monitor a second time**, so nothing is heard twice.
-That means an explicit per-track monitoring mode (off / hardware / software).
-
-Overdubbing a single source with an interface and direct monitoring works
-properly. This is how people track in native DAWs too — it is not a compromise.
-
-It breaks down where you need to hear yourself **through our processing**:
-
-- a guitarist wants to hear an amp, not a dry DI ← the painful case;
-- a singer wants reverb "for confidence";
-- a laptop mic with no interface — there is physically no direct monitoring.
-
-#### (c) Aligning recordings to the timeline — solvable, and mandatory
-
-The input stream arrives late. Naively stamping recorded chunks with "now" puts
-everything on the timeline 20–50 ms late — by an amount that is **unknown and
-device-dependent**. That is the difference between a DAW and a toy.
-
-- `AudioContext.outputLatency` + `baseLatency` cover the output side.
-- **There is no reliable API for input latency** — the key gap.
-- Hence **loopback calibration**: emit an impulse, record it back (via a cable, or
-  headphones held to the mic), measure the real round-trip in samples, remember it
-  per device. Native DAWs do exactly this.
-- Plus a manual per-take nudge in the UI as an escape hatch.
-- Store the offset in the project so it stays derivable.
-
-For capture, look at `MediaStreamTrackProcessor` (Chrome only): it hands you
-`AudioData` with explicit timestamps rather than "whatever showed up in this render
-quantum" via `MediaStreamAudioSourceNode`.
-
-#### (d) Clock drift — solvable by discipline
-
-If input and output are **different physical devices**, their crystals are
-independent and they drift apart. Over a five-minute take it is already audible.
-Chrome hides this by resampling the input to the `AudioContext` rate, but the
-resampling is opaque and adds unknown latency of its own.
-
-→ Detect mismatched devices and warn. One interface for both input and output is
-the only sane configuration.
-
-#### (e) Dropouts — solvable architecturally
-
-The worklet runs on an RT thread, but a browser is not an RTOS. Tab throttling,
-neighbouring tabs, compositor pressure, and your own UI. A glitch mid-take is
-unforgivable: you lose a performance, not a second of audio.
-
-A direct architectural requirement:
-
-```
-capture → ring buffer → worker → OPFS
-```
-
-Continuously, never buffering an entire take in memory, with the UI thread never
-touching it. Plus an honest "this take glitched" indicator.
-
-**A trick:** if the user monitors through hardware, low latency is unnecessary —
-take a large buffer and buy reliability with it.
-⚠️ Caveat: `latencyHint` is set when the `AudioContext` is created and cannot be
-changed on the fly, so a "recording mode" requires recreating the context. Design
-the session around that.
-
-#### Verdict
-
-| Scenario | Status |
-|---|---|
-| Overdub of one source + interface + direct monitoring | ✅ **Works** properly |
-| Monitoring through our effects (amp sim) | ❌ **Does not work.** macOS just barely, Windows badly |
-| Multi-mic recording (drums, a band) | ❌ **Do not promise it.** Multichannel input in browsers is weak and uneven |
-| Landing on the grid | ⚠️ Solvable, but **calibration has to be built** |
-
-The conclusion is not "there will be no live recording". It is that live recording
-is a **supported workflow with a documented hardware requirement**, not a headline
-feature. That is a reasonable position. What would be unreasonable is promising
-"record guitar through our tube preamp in real time".
+**The full analysis is no longer in this repository** — all four problems in
+detail, the per-platform numbers, the calibration a take on the grid needs. It
+was taken out on 2026-09-11 and kept in the author's working notes; `git log -S`
+over this file reaches the last revision carrying it. The decision below closed
+the question, §7 has no slice for it, and the platform numbers would have to be
+measured again before they were trusted.
 
 #### ✅ Decision taken
 
@@ -241,7 +177,8 @@ only ever hits the second threshold.
 
 1. The `AudioContext` is created with **`latencyHint: 'playback'` by default** —
    large buffers, far fewer dropouts, DSP headroom per block, tolerance for UI
-   load. The trick from §2.2e stops being a compromise and becomes the default.
+   load. A large buffer, bought with hardware monitoring, stops being a
+   compromise and becomes the default.
    Switching to `'interactive'` only when a MIDI controller is connected (which
    requires recreating the context).
 2. The entire recording path — loopback calibration, streaming capture into OPFS,
@@ -249,8 +186,6 @@ only ever hits the second threshold.
 3. The difficulty **does not disappear, it relocates** — into time-stretching (§5),
    the sample library, the sampler, and the time model (§2.5).
 
-The material above (a–e) is kept as finished analysis for whenever live recording
-comes back into scope.
 
 ### 2.3. Plugins — own format or WAM?
 
@@ -371,60 +306,12 @@ nowhere and is hard to track down. Only Loro answers it with an operation.
 It was named before §2.6 decided which collections are ordered at all, and it
 stopped deciding once the two were put side by side and measured.
 
-> **Decided 2026-09-07.** **Yrs**, and what it does not have — an operation for
-> moving an element — is bought back by holding the order **as a rank inside the
-> entity** rather than as a place in a list (§2.6).
->
-> Measured under this build — `build-std`, `+atomics`, shared memory, then
-> `wasm-opt -Oz` and brotli, which is what a browser is actually sent. The
-> document is 32 channels, 32 inserts, 16 lanes, 8 patterns of 500 notes, 200
-> clips and 4 curves of 500 points, written in the shapes §2.6 fixes.
->
-> | | added to the bundle | project on the wire | live heap |
-> |---|---|---|---|
-> | Yrs 0.27 | **+146 KiB** | **152 KiB** | 10.5 MiB |
-> | Loro 1.16 | **+630 KiB** | 264 KiB | 9.4 MiB |
->
-> The weight is the visible difference and it is not the argument. Three things
-> are.
->
-> **The movable list had shrunk to three collections.** §2.6 puts lanes,
-> channels and inserts in a list because a person arranged them, and everything
-> there are thousands of — clips, notes, automation points, both time maps — in
-> a map keyed by identity. So Loro's one exclusive feature covers three
-> collections of tens of items, and the rank covers them at the cost named
-> below. The criterion above predates that decision by twelve days.
->
-> **What the missing move actually costs is not duplicates.** Two people
-> dragging one track under delete-plus-insert do produce the duplicate §2.4
-> named, and a reader can collapse it. The sharper failure has no reader-side
-> repair: a list holds entities, an entity is a map of registers, and
-> re-inserting it means building a **new** map — so a concurrent edit to the old
-> one lands on a tombstone and is gone. Over 2000 random rounds of two replicas
-> each moving and editing, the list shape lost **432 of 3474 edits**; both
-> replicas converged on every one of them, so a convergence property would have
-> passed. With the rank, the same 2000 rounds lost **none**.
->
-> **The retreat is asymmetric, and that is what settles it.** Leaving Loro means
-> rewriting the model, which §2.4 has said from the start. Finding the rank
-> insufficient means migrating three small collections, because the order is a
-> field we own — the same insurance §2.6 bought by minting our own identities
-> instead of taking the library's, and the reason that block is now load-bearing
-> rather than fastidious.
->
-> **Rejected: Loro.** It is right by construction on the one thing this trades
-> away, and that is worth saying plainly: taking Yrs means owning a rank
-> generator and its properties, roughly a hundred and fifty lines, where Loro
-> ships them tested. It also has the more compact update encoding (475 KiB of
-> full history against 704) and shallow snapshots, which a project accumulating
-> years of history will eventually want. What it does not have is a second
-> implementation of its format, and §2.6 requires a document that opens years
-> after the client that wrote it.
->
-> **What does not separate them.** Author-scoped undo — both have it, measured
-> on both. Automation — a 600-edit drag costs 15 bytes an edit on the wire and
-> kilobytes an edit in heap **on both**, so the soft lock below is needed either
-> way and is not an argument for either library.
+> **Decided 2026-09-07 — yrs, with order held as a rank inside the entity.**
+> Rejected: Loro, which is right by construction on the one thing this trades
+> away — it has a move operation and ships the rank generator tested — but has
+> no second implementation of its format, and §2.6 requires a document that
+> opens years after the client that wrote it.
+> [Why, in full: D18](DECISIONS.md#d18)
 
 #### ⚠️ What Yrs costs us
 
@@ -451,9 +338,11 @@ format with more than one implementation behind it.
 Thousands of points, and drawing with the mouse produces hundreds of operations per
 second. This is exactly where naive CRDT usage explodes in memory and traffic.
 
-The likely answer: automation is **not a generic structure** but a specialized one,
-with a soft lock on the lane ("Anya is editing this right now"). Worth prototyping
-early.
+The answer, and no longer a guess: automation is **not a generic structure** but a
+specialized one, with a soft lock on the lane ("Anya is editing this right now").
+The 2026-09-07 measurement below settles that the lock is needed whichever library
+sits underneath — a drag costs kilobytes of heap per edit on both — so it is scope
+inside slice 2 rather than something still to be decided.
 
 #### What is synchronized and what is not
 
@@ -509,226 +398,65 @@ where native cannot catch up. But let it be a conscious choice.
 A direct consequence of §2.2: since everything is stretched to tempo, **the tempo
 map stops being optional**.
 
-Mandatory from day one:
+Mandatory from day one, and all four now settled. The blocks below carry what
+each of them refused; `DECISIONS.md` has the arguments.
 
-- clip positions stored in **musical time** (rational fractions of a bar, or PPQ),
-  **not in samples**;
-- a tempo map with ramps, not a single number;
-- a time-signature map;
-- sample-accurate conversion between musical time and samples **in both directions**.
+- a position is **an integer count of ticks**, 5 765 760 to the quarter. Never a
+  rational pair, never a float, and never samples;
+- **a tempo map with ramps**, each ramp straight in beats per minute, and tempo
+  counted in quarter notes whatever the signature says;
+- **a time-signature map**, each mark addressed by the bar it starts at. It steps
+  at a bar line and is not interpolated at all;
+- **conversion to samples in both directions**, `floor` to the sample a position
+  falls in, with the rate a parameter of the conversion rather than a field of
+  either map.
 
 > The classic mistake is "we'll store positions in samples and add tempo later".
 > The only cure is rewriting the core. Same "now or never" category as §2.4 on
 > CRDTs.
 
-> **Decided 2026-08-29.** Of the two representations offered above, **PPQ** — a
-> position is an integer count of ticks, at **5 765 760 ticks to the quarter**
-> (2^7 · 3^2 · 5 · 7 · 11 · 13).
->
-> Precision did not decide it. The two differ there by hundredths of a
-> millisecond, and the error does not accumulate: positions are absolute, so the
-> hundredth copy of a pattern lands exactly as far out as the first. **The
-> document decided it.** A rational position is a pair, and (3,2) and (6,4) are
-> different pairs holding the same number — so two people placing a note on the
-> same beat can write two different values, which is the class of failure §2.4
-> exists to avoid. Normalizing on construction fixes that and leaves an invariant which
-> must then hold through serialization, across the network, and in a client
-> version not yet written. An integer tick is canonical by construction and has
-> no such invariant to break.
->
-> Two smaller reasons point the same way. Rational addition multiplies
-> denominators, so it needs reduction — and on the audio thread, checked
-> arithmetic with invented behaviour on overflow, where `escapement-core` may
-> not panic. And the conversion running every quantum is samples to position,
-> which has one natural answer on a fixed grid and none at all without one.
->
-> **Rejected: `f64` beats**, as Ableton and Reaper store it. Not among the two
-> above, and worse than either here — a third of a beat is not representable at
-> all, and equality of positions is precisely what the document needs.
->
-> The resolution is generous on purpose, and the asymmetry is the argument: a
-> finer grid is always reachable from a coarser one by multiplication, while a
-> coarser one has already lost what it cannot hold. MIDI's usual values and FL's
-> — 96, 480, 960 — all divide it exactly, so nothing is lost on import. At `i64`
-> the ceiling is around a trillion quarter notes, and the cost in the document
-> is a few bytes per position.
->
-> **What this closes is the document, not the type.** The door shuts when the
-> first project is saved, and §7's slice 2 puts two stages before that: the type
-> in use with no document, then entities as plain structs with no CRDT beneath
-> them. So the position is a type with a private field and nothing outside its
-> crate doing arithmetic on the raw integer — the same cheap insurance §4 buys
-> for the renderer. Worth revisiting once, before the CRDT goes underneath;
-> after that it is a migration.
+> **Decided 2026-08-29 — 5 765 760 ticks to the quarter.** Rejected: a
+> rational fraction of a bar, where `(3,2)` and `(6,4)` spell one position two
+> ways and the invariant that repairs it must then survive serialization, the
+> network and a client version nobody has written. Rejected: `f64` beats, as
+> Ableton and Reaper store it — a third of a beat is not representable at all,
+> and equality of positions is precisely what the document needs.
+> [Why, in full: D3](DECISIONS.md#d3)
 
-> **Decided 2026-08-29.** A tempo ramp is **linear in beats per minute**, not in
-> the period those beats imply.
->
-> Not a matter of taste: a ramp is a curve either way, and only one of the two
-> can be the straight one. The same two tempo marks over the same eight bars —
-> 60 to 180 — part by three and three quarter seconds depending on which. That
-> is a different place in the song, not a different shade of a curve.
->
-> Precision did not decide this one either, though it was expected to. The
-> closed form for a linear-bpm ramp is a logarithm and its inverse an
-> exponential, which looked like a threat to the sample-accurate conversion
-> demanded above. Measured, the round trip through samples costs about 2 x 10^-8
-> of a sample, and the linear-period form is no better. The objection was
-> withdrawn rather than answered.
->
-> What decides it is that the curve is **drawn**. Tempo is a parameter in beats
-> per minute, automated like any other, and an automation curve interpolates its
-> parameter — so a straight line between two tempo marks is straight in beats
-> per minute. Make the period linear instead and the line someone drew is no
-> longer the tempo but a curve nobody asked for. The same rule that settled the
-> representation above: the data means what it says.
->
-> **Rejected: linear in the period.** It integrates to a quadratic rather than a
-> logarithm and inverts through a square root rather than an exponential, which
-> is marginally cheaper and buys nothing — `escapement-core` already carries
-> `libm` for the oscillator.
->
-> **A segment with no ramp in it is a second formula, not an edge case.** The
-> integral of a period over position takes one form while the tempo moves and
-> another while it stands still, and the moving one divides by the rate of
-> change. At a rate of zero that is not an error to be handled: `f64` division
-> does not trap, so it gives an infinity, the infinity meets a logarithm of one,
-> and the result is a NaN — which compares false to everything, sorts nowhere,
-> and saturates to tick zero on its way to an integer. The start of the project,
-> silently — the value the oscillator in `escapement-core` already refuses for
-> the same reason.
->
-> So the two kinds of segment are told apart **when the map is built**, in the
-> model, where allocating and deciding are both allowed; the audio thread reads
-> which form applies instead of comparing a float against a threshold. A
-> threshold does exist — the logarithmic form loses precision well before the
-> rate reaches zero — and choosing where it falls is not a judgement to make
-> once per quantum.
->
-> The time-signature map is not interpolated at all. A signature steps at a bar
-> line; there is no ramp from 4/4 to 7/8 to have an opinion about.
+> **Decided 2026-08-29 — a tempo ramp is linear in beats per minute.**
+> Rejected: linear in the period, which integrates to a quadratic rather than
+> a logarithm and is marginally cheaper. It buys nothing, and over eight bars
+> from 60 to 180 the two part by three and three quarter seconds — a different
+> place in the song.
+> [Why, in full: D4](DECISIONS.md#d4)
 
-> **Decided 2026-09-05.** A tempo is **quarter notes per minute**, whatever the
-> time signature says. The signature gets no vote in it.
->
-> That is what keeps the two maps independent, and the independence is the whole
-> argument. Let a beat be the signature's denominator instead — the notation
-> reading, where 6/8 at 120 is counted in dotted quarters — and every conversion
-> from a position to seconds has to consult the signature map first. Worse, a
-> signature change then moves every later moment in the song in time: edit one
-> bar into 7/8 halfway through and the audio after it slides. Nobody editing a
-> signature is asking for that.
->
-> The convention agrees and so does the interchange format: MIDI stores tempo as
-> microseconds per quarter note, in a message that knows nothing about the
-> signature beside it. A file that comes in at 120 goes out at 120.
->
-> **Rejected: the beat the denominator implies.** It is the musician's reading of
-> the word, and the wrong one to build on — it couples two maps that otherwise
-> never have to meet.
->
-> The price is one collision of vocabulary, worth naming because it reads as a
-> mistake: `beat` in the tempo map is a quarter note, `beat` in the bar map is
-> one unit of the denominator. They are different things on purpose, and the day
-> they become the same thing is the day the maps stop being independent.
+> **Decided 2026-09-05 — a tempo is quarter notes per minute, whatever the
+> signature says.** Rejected: the beat the denominator implies, which is the
+> musician's reading of the word — it couples two maps that otherwise never
+> have to meet, and a signature change would then move every later moment in
+> the song.
+> [Why, in full: D5](DECISIONS.md#d5)
 
-> **Decided 2026-09-05.** A signature mark is addressed by **the bar it starts
-> at**, never by a position. Where that bar falls in ticks is counted from the
-> origin.
->
-> The map lives in the CRDT document (§2.4), so the question is not which reads
-> better but which survives a merge. Take a project in 4/4: one person changes
-> the opening signature to 7/8 while another adds a signature at bar 5. Addressed
-> by position, that second mark sits at tick 92 252 160 — but under 7/8 the bar
-> lines stand 20 180 160 ticks apart, and that tick is 4.571 bars in, which is not
-> a bar line at all. Both replicas converge, on a document that will not build.
-> Addressed by a bar, the same two edits merge into four bars of 7/8 followed by
-> whatever was put at bar 5: perhaps not what either person pictured, but a
-> project that opens.
->
-> The same argument as the tick above, one level up — take the representation in
-> which the invalid state cannot be written down, because the alternative is an
-> invariant that has to survive serialization, the network, and a client version
-> nobody has written yet.
->
-> **Rejected: addressed by position, validated when the map is built.** That
-> validation is exactly the invariant a merge breaks. **Rejected: addressed by
-> position, repaired on load** — it moves somebody's edit silently, and where it
-> moves to depends on which client opened the file.
->
-> Three consequences, which are the design rather than details of it.
->
-> **The document keys its marks; it does not list them.** Two people can put a
-> signature at bar 5, and a map cannot have two marks in one place. Keyed by bar,
-> the duplicate cannot be spelled at all and the CRDT settles the conflict per
-> key. The tempo map goes the same way, keyed by position.
->
-> **Bars count from one and keep counting backwards.** A count-in sits before the
-> first bar — which is why a position is signed — so bar zero and the ones below
-> it hold the first signature, the rule the tempo map already follows behind its
-> first mark.
->
-> **Nothing in the bar map is floating point.** A bar is a whole number of ticks,
-> the running total is exact, and a position that goes out as a bar and a beat
-> comes back the tick it was. The constraint that buys it lands on the
-> denominator, which has to divide a whole note: the resolution grants every
-> power of two through 512, and thirds, fifths, sevenths, elevenths and
-> thirteenths besides. A signature outside that is refused rather than rounded.
->
-> And a beat in the display is **one unit of the denominator** — 6/8 has six of
-> them. The grouping a compound signature is felt in, 6/8 as two dotted quarters,
-> is accent and drawing rather than time: it wants a field this type does not
-> have, and adding one moves no bar line.
+> **Decided 2026-09-05 — a signature mark is addressed by the bar it starts
+> at.** Rejected: addressed by position and validated when the map is built —
+> that validation is exactly the invariant a merge breaks. Rejected: addressed
+> by position and repaired on load — it moves somebody's edit silently, and
+> where it moves to depends on which client opened the file.
+> [Why, in full: D6](DECISIONS.md#d6)
 
-> **Decided 2026-09-05.** A position converts to **the sample it falls in** —
-> `floor(seconds x rate)` — and the sample rate is a parameter of the
-> conversion, never a field of the map.
->
-> **Two sample counts exist and they are not the same number.** The engine's
-> clock counts samples since the engine was built: unsigned, monotonic, running
-> whether or not the transport is. A converted position counts samples from the
-> timeline's origin, and it is signed, because a count-in sits before bar one.
-> Different origins, different types, and nothing may quietly turn one into the
-> other.
->
-> **The rate is not part of the tempo map**, because the map is physical — it
-> answers in seconds — and because the offline render for export (§7) drives the
-> same engine at a rate of its own choosing. A map that knew the rate could not
-> serve both, and the one place where the multiplier and the rounding live is a
-> type that carries the rate rather than the map.
->
-> The rounding is not a preference among three. Sample *n* covers the half-open
-> interval from `n/rate` to `(n+1)/rate`, so "which sample is this moment in"
-> has exactly one answer, and `floor` is it.
->
-> **Rejected: truncation toward zero**, which is what an unguarded cast does.
-> The scale is signed for the count-in, and truncation folds the two samples
-> either side of the origin into one of double width — so everything before bar
-> one lands a sample late, silently, in the region the sign exists for.
->
-> **Rejected: the nearest sample.** It moves the boundary to the middle of a
-> sample, and the question every block asks — is this event inside `[start,
-> end)` — then admits an event whose position is before the block began.
->
-> **The two directions are not each other's inverse, and that is not a defect to
-> repair.** A tick is a fraction of a sample: 240 of them at 48 kHz and 120
-> quarters to the minute. Going the other way lands on the nearest tick, which
-> can sit just behind a sample boundary, and `floor` then answers with the
-> sample before. What holds is monotonicity and an error below one sample; an
-> exact round trip is not available and pretending otherwise would cost a second
-> rounding rule. The scheduler's question — the first sample **not before** a
-> position — is a different question, and it gets its own name on the day the
-> sequencer asks it rather than a rounding mode today.
+> **Decided 2026-09-05 — a position converts to the sample it falls in —
+> `floor`.** Rejected: truncation toward zero, which is what an unguarded cast
+> does: the scale is signed for the count-in, so it folds the samples either
+> side of the origin into one of double width. Rejected: the nearest sample,
+> which moves the boundary into the middle of a sample and lets a block admit
+> an event that began before it.
+> [Why, in full: D7](DECISIONS.md#d7)
 
-> **Decided 2026-09-05.** An audio clip's trim into its source is a **third
-> count, in the source's own frames**, and never a musical span.
->
-> Two sample counts already exist and turning one into the other is a bug
-> (above). A point inside a file is a third: its zero is the start of the file,
-> its rate is the file's own, and nothing relates it to the timeline until the
-> clip is warped, which is what slice 4 builds (§7). Spell the trim as a span of
-> ticks and every audio clip is stretched by whatever the project tempo happens
-> to be — with no stretching code anywhere to blame for it.
+> **Decided 2026-09-05 — an audio clip's trim into its source is a third
+> count, in the source's own frames.** Spelled as a span of ticks, every audio
+> clip is stretched by whatever the project tempo happens to be — and no
+> stretching code exists to blame for it.
+> [Why, in full: D8](DECISIONS.md#d8)
 
 ### 2.6. Project model entities — FL-shaped
 
@@ -750,8 +478,8 @@ places.
 
 #### 2. Channel ≠ track ≠ mixer insert
 
-In most DAWs these are one fused entity. In FL they are three distinct things in a
-many-to-many relationship:
+In most DAWs these are one fused entity. In FL they are three distinct things, and
+the arrow between two of them is **many-to-one**:
 
 ```
 channel (sound source)
@@ -767,192 +495,78 @@ go anywhere.
 ---
 
 All three concern the project model, which per §2.4 must be CRDT-compatible from
-day one. So **both shapes are fixed at the same time**, before the first line of
-the model is written.
+day one. So both shapes were fixed at the same time, before the model's first
+line. What that settled, gathered here because it is otherwise only readable as
+eight separate arguments:
 
-> **Decided 2026-09-05.** An edge that must have exactly one end lives as a
-> **register on the many side**, never as a list on the one side. A channel
-> holds the insert it feeds; a clip holds the lane it sits on.
->
-> The three entities above are distinct, but the arrow between two of them is
-> many-to-one: several channels share an insert, and no channel is in two. Put
-> the edge on the insert instead, as a list of the channels it takes, and that
-> stops being true the moment two people move one channel to two different
-> inserts — the merge keeps both, and a channel feeding two inserts is a state
-> the audio graph has no reading of. As a register the same pair of edits
-> converges on one of the two, which is a choice somebody made rather than a
-> state nobody can mean.
->
-> Genuine many-to-many appears only between inserts, where a send is an entity
-> of its own. Deferred, and with it the question of a cycle — which on the audio
-> thread is not a wrong mix but a call that does not return.
+**Every collection is a map keyed by identity, and the document holds no list at
+all.** Where a person arranged the order — lanes, channels, inserts — the order is
+a rank the entity carries; everything numerous has a position instead. **An entity
+is a map of registers, one per field**, never one value. **An edge with one end is
+a register on the many side**: a channel holds the insert it feeds, a clip holds
+its lane. **Identity is 128 random bits** behind an opaque type, spelled as 22
+base64 characters — except an asset's, which is the hash of its bytes. **A
+dangling reference is legal** and every read of one answers with an absence; a
+field no constructor would accept makes its entity absent too, with the timeline
+the one exception, because it cannot be absent. And **the document carries its own
+version number**, from the first struct.
 
-> **Decided 2026-09-05.** The document is a **movable list only where the order
-> is itself the data**, and a **map keyed by identity everywhere else**.
->
-> Lanes, channels and inserts are ordered because a person arranged them, and
-> preserving that arrangement under a concurrent reorder is what §2.4 weighed
-> the libraries on. Clips, notes and automation points are not
-> ordered at all; they have a position. Hold them in a list and every insertion
-> has to be merged at an index that means nothing, so two people adding a note
-> to the same bar conflict over a place neither of them chose. Held in a map
-> they cannot conflict, and moving a note is editing two registers.
->
-> The two maps of §2.5 arrived here from the other end and with a sharper
-> reason: `build` refuses two marks in one place, so a list of marks can hold a
-> document that stops opening.
+The blocks below carry what each of those refused; `DECISIONS.md` has the
+arguments.
 
-> **Decided 2026-09-07.** An ordered collection is a **map keyed by identity
-> whose entities carry a rank**, and there is **no list in the document at
-> all**. Reading one in order is sorting by rank, ties broken by identity;
-> moving something is writing one register.
->
-> This replaces "a movable list" in the block above with the same guarantee
-> spelled differently, and it follows §2.4 taking a library with no move
-> operation. Without a move, a reorder is a delete and an insert; the entity is
-> a map of registers, so the insert has to build a **new** map, and whatever
-> somebody else was writing to the old one lands on a tombstone. Measured: 432
-> of 3474 edits gone over 2000 random rounds, with both replicas agreeing every
-> time. As a rank the same 2000 rounds lose nothing, because the operation that
-> loses them cannot be spelled.
->
-> What makes this cheap rather than a concession is that §2.6 had already put
-> everything numerous in a map. Three collections change shape — lanes,
-> channels, inserts — and the document comes out **more** uniform than it was:
-> every collection is a map, and order is a field like gain is a field.
->
-> The rank is an opaque type, as `Position` and the identity are, and it is
-> the one place in the document where a value's *ordering* is its meaning —
-> so it is compared, never parsed, and never read as a number.
+> **Decided 2026-09-05 — an edge that must have exactly one end is a register
+> on the many side.** Rejected: a list on the one side — an insert holding the
+> channels it takes merges two people's moves into a channel feeding two
+> inserts, which the audio graph has no reading of.
+> [Why, in full: D9](DECISIONS.md#d9)
 
-> **Decided 2026-09-05.** An entity's identity is **128 random bits**, minted
-> locally, behind an opaque type — a private field and two methods at the
-> serialization boundary, as `Position` has (§2.5).
->
-> A counter needs somebody to hand out the numbers, and §2.4 promises a document
-> that survives a wifi drop: two people offline both reach four, and the merge
-> is one entry carrying the fields of two patterns with nothing left to record
-> that there were two. A pair of "who I am" and a private counter repairs that
-> and halves the key — about eleven characters against twenty-two, a hundred
-> kilobytes on ten thousand notes — but the counter has to survive a reload, and
-> a counter that does not produces the same unrepairable collision in silence.
-> Randomness has no state to get wrong.
->
-> **Rejected: the library's own identifiers.** They save writing any of this,
-> and they make the entities unable to exist without the CRDT — while §7 puts
-> them as plain structs one stage *before* it, precisely so that slice 2 tests
-> the bet instead of assuming it. The bet was tested and the library changed
-> (§2.4, 2026-09-07); this is the block that made that a swap rather than a
-> rewrite.
->
-> **An asset is the exception: its identity is the hash of its bytes** (§2.4).
-> Mint one and the same loop imported by two people becomes two entries, which
-> is the deduplication of a content-addressed store thrown away at the only
-> point where it was free.
->
-> What the opaque type buys is a change of shape up to the first saved project;
-> after that it is a migration, the same door §2.5 describes. So the weight is
-> worth measuring in slice 2, while the door is still open.
+> **Decided 2026-09-05 — ordered only where the order is itself the data;
+> keyed by identity everywhere else.** Superseded in part by the rank below,
+> which spells the same guarantee without a list.
+> [Why, in full: D10](DECISIONS.md#d10)
 
-> **Decided 2026-09-05.** A **dangling reference is a legal state of the
-> document**, and every read of one answers with an absence rather than a value.
->
-> A deletes a pattern while B places its twenty-first instance. Both edits are
-> legal, both merge, and the result is a clip pointing at nothing. No CRDT
-> prevents this — the two edits never met — so the model does not pretend it
-> cannot happen: resolving a reference returns an option, the sequencer skips
-> what does not resolve, and the interface draws the hole.
->
-> **A channel whose insert is gone is silent, and does not fall back to the
-> master.** A merge that reroutes audio nobody rerouted is worse than one that
-> stops it where somebody can hear that it stopped.
->
-> This is a decision about every read site rather than about a type, which is
-> why it belongs here. Found later, it is a signature change through the whole
-> model.
+> **Decided 2026-09-07 — an ordered collection is a map keyed by identity
+> whose entities carry a rank, and there is no list in the document at all.**
+> Without a move operation a reorder is a delete and an insert; the insert
+> builds a *new* map, so a concurrent edit to the old one lands on a
+> tombstone. Measured: 432 of 3474 edits gone over 2000 rounds, with both
+> replicas converging every time.
+> [Why, in full: D19](DECISIONS.md#d19)
 
-> **Decided 2026-09-05.** The document carries **its own version number**, from
-> the first struct.
->
-> §3 puts a version in the header of the shared region because a fresh reader
-> meeting a stale writer otherwise parts company as a misread rather than as a
-> message. A project outlives a client version by years, so the same argument
-> applies with more force. Every shape §2.5 and this section leave revisitable
-> shuts at the first saved project, and what makes that door openable again is a
-> document that says which shape it was written in. One integer now; it cannot
-> be added later, because the documents that would need it are exactly the ones
-> already written.
+> **Decided 2026-09-05 — an entity's identity is 128 random bits, minted
+> locally, behind an opaque type.** Rejected: a counter — two people offline
+> both reach four, and the merge is one entry carrying the fields of two, with
+> nothing left to record that there were two. Rejected: the library's own
+> identifiers, which would make the entities unable to exist without the CRDT.
+> [Why, in full: D11](DECISIONS.md#d11)
 
-> **Decided 2026-09-06.** An entity in the document is a **map of registers, one
-> per field**, never one value holding the whole entity.
->
-> Two people at one mixer change different things about one channel far more
-> often than they change the same thing, and a whole-entity value cannot keep
-> both: the merge picks a writer, and the other edit is gone with nothing left
-> to say it was made. Per field both survive, and the pair that genuinely
-> collides converges the way a register always does. The identity block above
-> already assumes this where it says moving a note is editing two registers;
-> this makes it the rule for every entity rather than for that one.
->
-> **The price is memory, and it falls the opposite way from the fear.** §2.4
-> names automation as where naive CRDT use explodes "in memory and traffic".
-> Measured: registers cost 1.6x the saved document and a little over twice the
-> memory, and 2.6x *less* traffic while a curve is drawn — a moved point sends
-> the field that moved rather than the point that holds it. Only one of the two
-> axes gets worse, and it is the one with room.
->
-> **Rejected: the whole entity as one value.** It is smaller, and it loses
-> edits.
->
-> A consequence worth having: how often the document is committed does not
-> reach the wire. A drag exports the same bytes committed once at the end as
-> committed after every point, so the rate a curve is drawn at is the
-> interface's business and nobody else's.
+> **Decided 2026-09-05 — a dangling reference is a legal state of the
+> document, and every read of one answers with an absence.** Nothing prevents
+> it, because the two edits never met. A channel whose insert is gone falls
+> silent rather than back to the master.
+> [Why, in full: D12](DECISIONS.md#d12)
 
-> **Decided 2026-09-06.** A field the document holds but no constructor accepts
-> takes its entity with it: **the entity reads as absent.**
->
-> A gain outside its range, a denominator that does not divide a whole note, a
-> tempo of zero. Nothing writing through this model produces one — every edit
-> takes a type that was checked when it was constructed, and a merge chooses
-> between two values that were both legal when written — so the source is a
-> bug, a damaged file, or a client version the version number already turns
-> away. What matters is therefore not preventing it but what the reader does,
-> and one answer costs nothing at all: absence is a state every read site
-> already handles, because a dangling reference is legal (above). Refusing the
-> document instead is the failure this whole section is written to avoid.
->
-> **The timeline is the exception, because absence is not available to it.** It
-> is the one part of the document that cannot be empty, so a tempo or a
-> signature that will not read falls back to the default rather than taking the
-> clock away with it. That is the guarantee the opening marks already carry, met
-> from the other side: no document that can be written yields a map that
-> refuses to build.
->
-> **Rejected: clamping into range.** It invents a value nobody wrote and hides
-> the bug that wrote the other one, and where it lands depends on which client
-> opened the file — the objection that already rejected repairing a signature on
-> load (§2.5).
+> **Decided 2026-09-05 — the document carries its own version number, from the
+> first struct.** It cannot be added later, because the documents that would
+> need it are exactly the ones already written.
+> [Why, in full: D13](DECISIONS.md#d13)
 
-> **Decided 2026-09-06.** Identity stays 128 random bits, spelled in the
-> document as **22 base64 characters**. The weight left to be measured above is
-> measured.
->
-> Ten thousand notes: halving the width, which is what the peer and counter buy,
-> saves 19% of the saved document; changing only the alphabet at full width — 32
-> hexadecimal characters against 22 — costs 2.1%. The width is worth something
-> and the spelling is not, which leaves the spelling to be chosen on legibility.
->
-> **The estimate above was low by half, for a structural reason.** It counted a
-> key once. A key is stored once per occurrence, and every reference between
-> entities is a name: a note carries its own and its channel's, a clip its own
-> and its lane's and its source's. The multiplier is the number of references,
-> so it grows with the shape of the document rather than with the count of
-> things in it.
->
-> Nineteen per cent does not buy back what the counter costs. One that fails to
-> survive a reload gives the same unrepairable collision in the same silence,
-> and the door this measurement was to be taken through stays where it is.
+> **Decided 2026-09-06 — an entity is a map of registers, one per field.**
+> Rejected: the whole entity as one value. It is smaller, and it loses edits.
+> [Why, in full: D15](DECISIONS.md#d15)
+
+> **Decided 2026-09-06 — a field the document holds but no constructor accepts
+> takes its entity with it: the entity reads as absent.** The timeline is the
+> exception, because absence is not available to it. Rejected: clamping into
+> range — it invents a value nobody wrote, hides the bug that wrote the other
+> one, and where it lands depends on which client opened the file.
+> [Why, in full: D16](DECISIONS.md#d16)
+
+> **Decided 2026-09-06 — identity is spelled in the document as 22 base64
+> characters.** Halving the width saves 19% of a ten-thousand-note document
+> while the alphabet costs 2.1%, so the width is worth something and the
+> spelling is not — which leaves the spelling to legibility.
+> [Why, in full: D17](DECISIONS.md#d17)
 
 ---
 
@@ -971,7 +585,9 @@ see the UI thread's memory, no matter how much Rust sits on either side.
 So the exchange still goes through `SharedArrayBuffer`:
 
 - **UI → engine**: commands, via a command ring buffer
-- **engine → UI**: state diffs plus high-frequency values (see below)
+- **engine → UI**: a latest-value block, read once a frame (see below). Not
+  diffs, and not a ring: what the engine has to say upward is the value now
+  rather than the values that have been
 
 The gain from Leptos is that **the protocol is written once in Rust** and used by
 both ends — rather than duplicated in TypeScript, where two implementations must
@@ -1073,34 +689,19 @@ overwriting commands, which is a lost transport change rather than a late one.
 
 #### What the state block carries
 
-> **Decided 2026-09-10.** The block carries **the engine's own reading of what it
-> was told**, not only what it produced. Gain and the oscillator's frequency join
-> the meter, the clock and the transport there, and the offline render for export
-> is built from the block rather than from the numbers the interface sent.
->
-> They are not the same numbers. `set_gain` clamps, the oscillator refuses a
-> frequency it cannot produce, and both leave the value before them standing — so
-> what is heard is a function of every command so far, and the value a refusal
-> fell back to is history the interface never kept. An engine rebuilt from the
-> last command starts at its own default instead: 440 Hz against the 330 Hz that
-> is playing, in a file offered as what was heard, with nothing anywhere to point
-> at.
->
-> **Rejected: acknowledgement counters.** The interface knows what it sent and
-> the block already reports how many commands were applied, so the export could
-> have waited for the two to agree and then trusted its own numbers. They agree
-> in exactly the case that breaks — a refused command is an applied one.
->
-> **This is not a licence to echo every parameter.** What belongs here is what
-> the engine alone knows. A mixer channel does not: it comes from the document,
-> and the export will render from the same snapshot the engine plays from. The
-> frequency leaves with the oscillator.
+> **Decided 2026-09-10 — the state block carries the engine's own reading of
+> what it was told** , not only what it produced. Rejected: acknowledgement
+> counters — the export could have waited for what it sent and what was
+> applied to agree, and they agree in exactly the case that breaks, because a
+> refused command is an applied one.
+> [Why, in full: D22](DECISIONS.md#d22)
 
 #### Where "elsewhere" is
 
-> **Decided 2026-09-07.** A sample buffer is **a fourth section of the region**,
-> described by two words of the header, filled by the interface through a typed
-> array of its own and named by a command.
+> **Decided 2026-09-07 — a sample buffer is a fourth section of the region** ,
+> described by two words of the header, filled by the interface through a
+> typed array of its own, and named by a command.
+> [Why, in full: D20](DECISIONS.md#d20)
 
 "Published elsewhere" above is a rule with no address in it, and the address is
 narrowed to one answer by things already decided.
@@ -1226,40 +827,11 @@ gets created when there is something to put in it.
 
 #### When a command takes effect
 
-> **Decided 2026-09-05.** A command's moment is a **sample count on the engine's
-> clock**, not a musical position. Musical time crosses this boundary as the
-> payload of the commands that carry a place in the song, never as their
-> schedule.
->
-> The requirement this comes from already separates the two: *start at position
-> P at time T*. P is where in the song the transport should land; T is when the
-> instruction takes effect. `when` is T, and it is a question about the audio
-> device rather than about music.
->
-> Three things follow, and each is enough on its own. The audio thread cannot
-> resolve a musical moment without the tempo map, and the map does not cross
-> this boundary yet — a musical `when` would make every command undeliverable
-> until it does. Resolving one costs a search and a logarithm, per command per
-> quantum, against an integer comparison. And `0` already means *as soon as it
-> is seen*, a sentinel that works only because zero is not a moment the clock
-> will reach again; on a musical scale zero is bar one, a position people
-> actually use.
->
-> **The objection is that the tempo may change between sending and firing**, and
-> it holds only against a long horizon. This is not one: the ring is drained
-> before every quantum, so the horizon is a block or two. The long horizon
-> belongs to the sequencer, which the split below puts on the model thread with
-> the document.
->
-> **Rejected: a tagged moment** — samples or a position, told apart by a
-> discriminant. It buys a branch on the audio thread and complicates a decode
-> deliberately built so that it cannot fail.
->
-> A consequence rather than a doubt: should the sequencer later move onto the
-> audio thread — where most DAWs end up, because a descheduled worker cannot
-> deliver a sample-accurate event — `when` does not change, since the schedule
-> of an instruction stays physical. What changes is that the tempo map has to
-> cross the boundary regardless.
+> **Decided 2026-09-05 — a command's moment is a sample count on the engine's
+> clock** , never a musical position. Rejected: a tagged moment told apart by
+> a discriminant — it buys a branch on the audio thread and complicates a
+> decode deliberately built so that it cannot fail.
+> [Why, in full: D14](DECISIONS.md#d14)
 
 ### A state snapshot for the audio thread
 
@@ -1487,92 +1059,32 @@ handing over the binary.
 
 → The rule for all dependencies: **permissive by default**, GPL never.
 
-> **Decided 2026-08-26.** The rule above splits in two, because copyleft does.
-> **Whole-program copyleft — GPL, AGPL, SSPL — never**, for the reason already
-> given. **File-level copyleft — MPL, EPL, CDDL — is accepted**, and an
-> attribution page is its price.
->
-> Forced by Loro, which depends on `im` unconditionally and brings `bitmaps` and
-> `sized-chunks` with it, all three under MPL-2.0. Dropping them means forking
-> Loro, which is out of proportion to what they cost.
->
-> The two kinds differ in the unit of contagion, not in degree. MPL 1.7 defines a
-> Larger Work as one combining covered software with other material *"in a
-> separate file or files"*, and 3.3 permits distributing that Larger Work *"under
-> terms of Your choice"*. So those three crates keep their license and Escapement
-> keeps PolyForm. The GPL has no such clause, which is precisely why it stays
-> refused — the distinction is the whole reason this is a decision rather than an
-> exception.
->
-> The price is 3.2(a), with 3.1 behind it: whoever receives the bundle must be
-> told, per package, that it is under MPL, where its source is, and where the
-> license text is. That is a page inside the product rather than a file in the
-> repository — the recipient of the executable form is a person with a browser,
-> who has no reason to know the repository exists. Generated from the dependency
-> tree at build time rather than written by hand: a hand-written list drifts as
-> dependencies change, and it drifts silently.
+> **Decided 2026-08-26 — whole-program copyleft never; file-level copyleft is
+> admissible, at the cost of an attribution page.** The two differ in the unit
+> of contagion rather than in degree.
+> [Why, in full: D2](DECISIONS.md#d2)
 
-> **Amended 2026-09-07.** The dependency that forced this left with Loro (§2.4).
-> The Yrs tree is MIT and Apache-2.0 throughout: `cargo deny check licenses`
-> passes with `MPL-2.0` struck from the allow-list, checked before the entry was
-> removed.
->
-> **The distinction above stands; the allow-list does not keep an entry nothing
-> uses.** File-level copyleft is still admissible and is added back the day
-> something is worth taking under it, with the attribution page as its price —
-> the argument was general and the decision was not a one-off exception. What
-> the entry costs while unused is the wrong signal: an allow-list is read as a
-> statement about what the product contains.
->
-> **The attribution page does not go away with it.** MIT and Apache-2.0 require
-> the notice too, so it was always owed; 3.2(a)'s link to the source was the
-> sharpest version of an obligation the tree already carried, not the only one.
-> What does go away is the open question of 3.2(b) against PolyForm, which no
-> longer has anything to be asked about.
->
-> One point is left open on purpose. MPL 3.2(b) permits sublicensing the
-> executable form under other terms *"provided that the license for the Executable
-> Form does not attempt to limit or alter the recipients' rights in the Source
-> Code Form"*. PolyForm restricts competing use of Escapement, not of `im`, which
-> remains available to the recipient under MPL untouched — so on a plain reading
-> there is no conflict. It is still a sentence worth a lawyer before the first
-> public build, and not one to settle here.
->
-> Unlike the rest of this section, the rule no longer rests on remembering it.
-> `deny.toml` is the allow-list, and CI refuses a license that is not on it.
+> **Amended 2026-09-07 — the dependency that forced that left with Loro** , so
+> the allow-list no longer carries an entry nothing uses. The distinction
+> stands, and the attribution page is owed regardless — MIT and Apache-2.0
+> require the notice too.
+> [Why, in full: D21](DECISIONS.md#d21)
 
-#### What can be decided whenever
+#### The license text
 
-Which license text actually goes into `LICENSE` — Apache, MIT, GPL, BSL. It blocks
-nothing and affects nothing right now.
+`LICENSE` is **PolyForm Shield 1.0.0**, with the CLA above behind it keeping
+relicensing possible. Every purpose is permitted except providing a product that
+competes with Escapement or with the service it connects to — so music made with
+the DAW is unrestricted, while the DAW itself cannot be resold or re-hosted. This
+is deliberately not open source by the OSI definition, and the block below is why
+that cost was taken knowingly.
 
-A leaning: **Apache 2.0 + CLA on the engine, service closed.** The split falls
-cleanly — the Rust core (graph, DSP, warp, time model) and the service (sync,
-hosting, accounts) are physically separate codebases. But this is a leaning, not a
-decision.
-
-> **Decided 2026-08-25.** `LICENSE` is **PolyForm Shield 1.0.0**, not Apache. The
-> leaning above rests on an assumption that does not survive inspection: that the
-> value sits in the service and the engine can be given away. It is the other way
-> round. The engine — graph, DSP, sampler with voice allocation, warp, CRDT model,
-> WebGL2 renderer — is years of work; the relay is a websocket server broadcasting
-> document updates, plus asset storage and accounts, and that is weeks. Apache would
-> hand a competitor the expensive half and leave them the cheap half to build.
->
-> Shield rather than Noncommercial, and the reason is specific to a DAW.
-> Noncommercial permits personal use only "without any anticipated commercial
-> application" — which excludes a beatmaker who intends to sell the track. That
-> restriction lands on the target user rather than on the threat. Shield permits
-> every purpose except providing a competing product, so music made with the DAW
-> is unrestricted while the DAW itself cannot be resold or re-hosted.
->
-> `LICENSE` carries a `Licensor Line of Business:` line, without which Shield's
-> Discontinued Products clause would let a competitor in on anything that stops
-> being offered.
->
-> The cost is accepted knowingly: this is not open source by the OSI definition,
-> and few contributors come to a repository they may not compete with. The CLA
-> half of the leaning stands unchanged.
+> **Decided 2026-08-25 — `LICENSE` is PolyForm Shield 1.0.0.** Rejected:
+> Apache 2.0 with the service closed, which rests on the value sitting in the
+> service and the engine being givable away; it is the other way round.
+> Rejected: PolyForm Noncommercial, whose restriction lands on the target user
+> — a beatmaker who intends to sell the track.
+> [Why, in full: D1](DECISIONS.md#d1)
 
 ### The sample library — a deceptively hard problem
 
@@ -1767,11 +1279,28 @@ If all four skeletons stand, what remains is a lot of work but little uncertaint
    scope and contradicts nothing. The single architectural consequence: **the
    transport must be drivable from outside** (§2.4).
 
-### ⛔ No open questions
+### The four above are closed. One question of shape is not
 
-All four are closed. Of the §2 decisions, only 2.1 (worklet vs worker) and 2.3
-(plugins) remain recommendations rather than decisions — but neither blocks any
-slice.
+Of the §2 decisions, 2.3 (plugins) remains a recommendation rather than a
+decision. 2.1 stopped being one when slice 1 built it.
+
+> **Open, and on a door that shuts: what an audio clip in the playlist sounds
+> through.** `ClipSource::Audio` names an asset, `ChannelSource::Sampler` names
+> an asset, and that is the only place the two meet — so a route from the clip to
+> a mixer insert would have to be inferred from a hash that two channels can both
+> hold. A note reaches the mixer through the channel it names and a curve
+> addresses a channel or an insert; an audio clip addresses nothing, and
+> therefore has no gain, pan, mute or route, and automation cannot reach it.
+>
+> Two readings, and this section is not the place to pick one. FL's is
+> structural — a playlist audio clip *is* a channel, and routes like every other
+> channel. The other gives the clip a reference to a channel, as it already
+> carries one to a lane. Both are §2.6's kind of question, so both shut at the
+> first saved project.
+>
+> It is here rather than in the list below because nothing in the model can find
+> it: the entities have no reader, so no test fails on it. It surfaces the day
+> the sequencer has to decide where an audio clip's samples go.
 
 Worth keeping in view as deferred rather than settled:
 

@@ -1,20 +1,14 @@
 //! The playlist: lanes to look at, and the clips laid out on them.
 //!
-//! **A lane is visual and carries no routing** (ARCHITECTURE.md §2.6). A
-//! pattern, a file and a curve can go on any of them, and where the sound goes
-//! afterwards is the channel's business and never the lane's. So a lane holds a
-//! name and nothing else — a colour and a height are cosmetic, and arrive as
-//! registers on the day the interface wants them. What is deliberately absent
-//! is anything about routing, which is what makes a lane a lane rather than a
-//! track in the Ableton sense.
+//! A lane is visual and carries no routing, a clip holds its lane rather than
+//! the other way about, and a clip refers to what it plays and never copies it
+//! — ARCHITECTURE.md §2.6 for all three, `.claude/rules/model.md` for what each
+//! one costs if it is given up.
 //!
-//! **A clip holds its lane**, not the other way about (§2.6): a lane listing
-//! its clips merges two people's drags into one clip on two lanes, while one
-//! field converges on the lane one of them chose.
-//!
-//! **A clip refers to what it plays and never copies it** (§2.6). Editing a
-//! pattern changes all twenty places it appears because there is only ever the
-//! one pattern; the clip carries where it sits and how much of it is heard.
+//! So a lane holds **a name and nothing else**. A colour and a height are
+//! cosmetic and arrive as registers on the day the interface wants them; what is
+//! deliberately absent is any field about routing, which is the whole of what
+//! makes a lane a lane rather than a track in the Ableton sense.
 
 use escapement_time::{Position, Span};
 

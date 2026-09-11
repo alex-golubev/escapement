@@ -1,10 +1,17 @@
 //! The document itself: everything the project is, and the ways of reading it.
 //!
 //! **Ordered where the order is the data, keyed everywhere else** (§2.6). The
-//! inserts, the channels and the lanes were arranged by a person, so they are
-//! held in the order they were arranged in — which underneath is a rank each
-//! one carries, because the document holds no list at all (§2.6, 2026-09-07).
-//! Patterns, clips, curves and assets have no order; they are found by name.
+//! inserts, the channels and the lanes were arranged by a person, so they come
+//! back in the order they were arranged in. Patterns, clips, curves and assets
+//! have no order; they are found by name.
+//!
+//! **The three arranged collections are `Vec<(Id, Entity)>` here, and that is
+//! not the shape the document will have.** `.claude/rules/model.md` forbids a
+//! list that holds an entity, and the order there is a rank each entity carries.
+//! A list is right in *this* type because `Parts` is a flattened value with no
+//! CRDT underneath it, and a flattened value can spell an order as a place. The
+//! rank field arrives with the document layer; until it does, there is nothing
+//! here that reorders anything, which is why the shape has not cost anything yet.
 //!
 //! **The order is where they live, not a second list beside them.** An order
 //! kept apart from the entities is a second thing to keep true, and a merge

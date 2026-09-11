@@ -1,22 +1,14 @@
 //! The tempo and the signature, as the document holds them.
 //!
-//! **Both maps are keyed, never listed** (§2.5): signatures by bar, tempi by
-//! position. A merge can put two marks in one place and neither `build` takes
-//! two of them, so under a list that duplicate is representable — and what it
-//! produces is a project that stops opening, for both people at once, because
-//! they converged on it.
+//! Both maps are keyed rather than listed, and the mark that opens each is a
+//! field rather than an entry. What either shape costs is in
+//! `.claude/rules/musical-time.md`; §2.5 has why.
 //!
-//! **The mark that opens each map is a field rather than an entry**, and that
-//! is the second half of the same problem. Both maps must begin at the
-//! beginning: `tempo::build` refuses marks that do not start at the origin, and
-//! `meter::build` refuses marks that do not start at the first bar. As an entry
-//! the opening mark is one somebody can move or delete — one edit, merged, and
-//! the project no longer opens. As a field there is nothing to delete.
-//!
-//! Between the two, and with a tempo that cannot be built holding a value that
-//! is not a tempo, **no document reachable from here produces a map that
-//! refuses to build**. That is the property worth having, and it is structural
-//! rather than checked.
+//! What the two together buy is worth naming here, because it is a property of
+//! this type and not of either map: `tempo::build` refuses marks before the
+//! origin, `meter::build` refuses marks before the first bar, and a tempo that
+//! is not one is refused at construction — so **no document reachable from here
+//! produces a map that refuses to build.** Structural rather than checked.
 //!
 //! A key is an address, and the value under it does not repeat it: what a merge
 //! could then disagree with itself about is exactly what `build` reads.

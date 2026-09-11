@@ -1,10 +1,9 @@
 //! A curve, and what it moves.
 //!
-//! §2.4 names this as the place a naive CRDT explodes: one drag of the mouse is
-//! hundreds of operations a second. So the shape is the one that survives it —
-//! points keyed by name, never listed (§2.6) — and the soft lock that keeps two
-//! people out of one curve is presence rather than document state, which puts
-//! it outside this crate altogether.
+//! §2.4 names this as the place a naive CRDT explodes, so the points are keyed
+//! by name and never listed, and the soft lock that keeps two people out of one
+//! curve is presence rather than document state — which puts it outside this
+//! crate altogether.
 //!
 //! **What the curve does between two points is not settled here.** §2.5 has a
 //! straight line between two tempo marks, and FL has a tension on every

@@ -24,14 +24,13 @@
 //! because both of them answer in seconds, which are physical: the offline
 //! render for export drives the same engine at a rate of its own.
 //!
-//! **Two maps, and they do not consult each other.** [`tempo`] turns a position
-//! into seconds; [`meter`] turns it into a bar and a beat. What keeps them apart
-//! is that tempo counts quarter notes whatever the signature says (§2.5) — so
-//! the word `beat` means one thing in one module and another in the other, and
-//! that is the whole of their independence rather than an oversight. Both are
-//! reached through their module for the same reason: `tempo::Mark` and
-//! `meter::Mark` are different marks, and a crate root holding one of each would
-//! have to invent names for what the modules already name.
+//! **Two maps, and they do not consult each other** — [`tempo`] turns a position
+//! into seconds, [`meter`] turns it into a bar and a beat, and `beat` therefore
+//! means a different thing in each (§2.5, and
+//! `.claude/rules/musical-time.md` for what collapsing them would couple). Both
+//! are reached through their module for a reason of this crate's own:
+//! `tempo::Mark` and `meter::Mark` are different marks, and a crate root holding
+//! one of each would have to invent names for what the modules already name.
 
 #![no_std]
 // Nothing here needs it, unlike `escapement-protocol`, which has one module

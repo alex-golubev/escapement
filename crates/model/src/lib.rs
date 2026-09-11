@@ -10,7 +10,7 @@
 #[cfg(test)]
 mod fixtures;
 
-mod asset;
+pub mod asset;
 pub mod automation;
 mod bounded;
 mod id;
@@ -20,6 +20,13 @@ pub mod playlist;
 pub mod project;
 pub mod timeline;
 
-pub use asset::{Asset, AssetHash, Frames};
+// `Frames` is deliberately not among these and is reached as `asset::Frames`,
+// the way `playlist::Lane` and `meter::Mark` are reached — the module carries
+// the distinction so the type need not repeat it. Here it also removes a
+// collision: `escapement_core::Frames` is a borrowed buffer of samples, this one
+// is a count of frames in a source file, and they are two of the three counts
+// `.claude/rules/musical-time.md` exists to keep apart. `escapement-app` links
+// both crates.
+pub use asset::{Asset, AssetHash};
 pub use id::{Entropy, Id};
 pub use project::Project;
