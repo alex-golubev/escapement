@@ -104,6 +104,14 @@ So a comment does not carry the number that justified a choice already made, doe
 not narrate the change that introduced it, and does not retell a section it could
 point at — the `ARCHITECTURE.md §3` idiom is there for that.
 
+**The same holds one level up, and that is the half that slipped.** A rule states
+the prohibition and how a violation fails quietly, then points at the section for
+why; it does not re-derive the argument or list what was rejected. A rule that
+carries its own §2.5 is a second copy of it, and the two drift apart in silence,
+because nothing ever reads them side by side. Measured 2026-09-10, before this
+line existed: the argument for `floor` over a cast was written out in full in
+three places and in part in a fourth.
+
 Nothing checks this. A script can catch the narrowest corner of it — prose
 copied word for word out of one of the documents — and that is not where the
 weight is: the essays that grow are restatements, and a check that reads as

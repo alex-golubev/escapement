@@ -6,6 +6,9 @@ paths:
 
 # The shared region and how it is checked
 
+The region's shape, and what was rejected in arriving at it, is `ARCHITECTURE.md`
+§3. What is here is what breaks, and how quietly.
+
 - **Never send frame-rate data through `postMessage`.** Meters, playhead position
   and transport state go into a fixed `SharedArrayBuffer` region that the UI polls
   each frame. Messages carry only user commands and structural model changes.
@@ -55,11 +58,11 @@ paths:
   than from what the interface remembers sending (§3). Counting acknowledgements
   instead looks like it would do and does not: a refused command is an applied
   one.
-- **Never put a cargo feature on `escapement-protocol`.** Features unify across a
-  workspace build, so one added for the interface arrives in the worklet's copy
-  too, and the worklet's module must import nothing. The measurement is in
-  `.claude/rules/rt-safety.md`; the outside half of the protocol is
-  `escapement-view`, which is where `js-sys` is allowed to be.
+- **Never put a cargo feature on `escapement-protocol`**, because features unify
+  across a workspace build. The outside half of the protocol is
+  `escapement-view`, which is where `js-sys` is allowed to be;
+  `.claude/rules/rt-safety.md` has what a feature here costs the worklet, and the
+  measurement.
 - **Loom only sees what goes through Loom's types**, and it must see the *same*
   code that ships. A `core::sync::atomic::fence` is invisible to it, so it
   explores interleavings the real fence forbids and reports a failure that is not

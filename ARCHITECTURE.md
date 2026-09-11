@@ -90,7 +90,7 @@ monitoring works around it. Full analysis in **§2.2**.
 
 | # | Decision | Status |
 |---|---|---|
-| 2.1 | Worklet or worker | 🔵 Recommendation: graph in the worklet |
+| 2.1 | Worklet or worker | ✅ Graph in the worklet, and slice 1 built it |
 | 2.2 | Latency / live recording | ✅ **Decided:** target is samples, live recording deferred |
 | 2.3 | Plugins | 🔵 Recommendation: own ABI + WAM 2.0 |
 | 2.4 | Collaboration | ✅ **Decided:** multiplayer is required → CRDT (**Yrs**) from day one |
@@ -109,8 +109,9 @@ The two options produce **different products**:
 - ✅ Freedom: allocation, large buffers, ordinary debugging
 - ❌ +50–100 ms of latency
 
-**Recommendation:** option A, with the heavy work (disk streaming, decoding,
-waveform peaks, offline render) pushed into workers. The link between them is a
+**Option A**, with the heavy work (disk streaming, decoding, waveform peaks,
+offline render) pushed into workers. Written as a recommendation and settled by
+being built: slice 1 put the graph in the worklet. The link between them is a
 **lock-free SPSC ring buffer over SharedArrayBuffer**. No mutexes across the RT
 boundary.
 
@@ -750,8 +751,8 @@ places.
 
 #### 2. Channel ≠ track ≠ mixer insert
 
-In most DAWs these are one fused entity. In FL they are three distinct things in a
-many-to-many relationship:
+In most DAWs these are one fused entity. In FL they are three distinct things, and
+the arrow between two of them is **many-to-one**:
 
 ```
 channel (sound source)
@@ -971,7 +972,9 @@ see the UI thread's memory, no matter how much Rust sits on either side.
 So the exchange still goes through `SharedArrayBuffer`:
 
 - **UI → engine**: commands, via a command ring buffer
-- **engine → UI**: state diffs plus high-frequency values (see below)
+- **engine → UI**: a latest-value block, read once a frame (see below). Not
+  diffs, and not a ring: what the engine has to say upward is the value now
+  rather than the values that have been
 
 The gain from Leptos is that **the protocol is written once in Rust** and used by
 both ends — rather than duplicated in TypeScript, where two implementations must
@@ -1767,11 +1770,28 @@ If all four skeletons stand, what remains is a lot of work but little uncertaint
    scope and contradicts nothing. The single architectural consequence: **the
    transport must be drivable from outside** (§2.4).
 
-### ⛔ No open questions
+### The four above are closed. One question of shape is not
 
-All four are closed. Of the §2 decisions, only 2.1 (worklet vs worker) and 2.3
-(plugins) remain recommendations rather than decisions — but neither blocks any
-slice.
+Of the §2 decisions, 2.3 (plugins) remains a recommendation rather than a
+decision. 2.1 stopped being one when slice 1 built it.
+
+> **Open, and on a door that shuts: what an audio clip in the playlist sounds
+> through.** `ClipSource::Audio` names an asset, `ChannelSource::Sampler` names
+> an asset, and that is the only place the two meet — so a route from the clip to
+> a mixer insert would have to be inferred from a hash that two channels can both
+> hold. A note reaches the mixer through the channel it names and a curve
+> addresses a channel or an insert; an audio clip addresses nothing, and
+> therefore has no gain, pan, mute or route, and automation cannot reach it.
+>
+> Two readings, and this section is not the place to pick one. FL's is
+> structural — a playlist audio clip *is* a channel, and routes like every other
+> channel. The other gives the clip a reference to a channel, as it already
+> carries one to a lane. Both are §2.6's kind of question, so both shut at the
+> first saved project.
+>
+> It is here rather than in the list below because nothing in the model can find
+> it: the entities have no reader, so no test fails on it. It surfaces the day
+> the sequencer has to decide where an audio clip's samples go.
 
 Worth keeping in view as deferred rather than settled:
 

@@ -1,15 +1,9 @@
 //! A pattern, and the notes in it.
 //!
 //! A pattern is an entity with a lifetime of its own and not a clip with notes
-//! inside it (ARCHITECTURE.md §2.6). The playlist points at it, so editing it
-//! changes all twenty places it plays — which is the difference between this
-//! product's shape and Ableton's, and the thing §2.6 exists to keep.
-//!
-//! **Notes are a map keyed by name, never a list** (§2.6). Nothing about a note
-//! is third; it has a position. In a list every addition would have to be
-//! merged at an index neither person chose, and two people writing into one bar
-//! would collide over a place that means nothing. In a map they cannot collide,
-//! and moving a note is editing two of its fields.
+//! inside it, and its notes are a map keyed by name rather than a list —
+//! ARCHITECTURE.md §2.6 for why either is the shape it is,
+//! `.claude/rules/model.md` for what giving one up costs.
 //!
 //! **A note names its channel; the pattern does not hold a map for each.**
 //! Nesting by channel would make "add a note" sometimes also create the

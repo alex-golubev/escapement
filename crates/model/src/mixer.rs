@@ -1,13 +1,9 @@
 //! What makes a sound, what it is heard through, and how the two are joined.
 //!
-//! Two entities rather than one fused strip (ARCHITECTURE.md §2.6): a channel
-//! is a source, an insert is a strip, and several channels share an insert.
-//!
-//! **The edge lives on the channel**, and that is a merge decision rather than
-//! a preference (§2.6). An insert holding a list of the channels it takes turns
-//! two people's moves into a channel feeding two inserts, which the audio graph
-//! has no reading of; held as one field on the channel, the same pair of edits
-//! converges on one insert, which somebody chose.
+//! Two entities rather than one fused strip: a channel is a source, an insert is
+//! a strip, and several channels share an insert. The edge lives on the channel
+//! — ARCHITECTURE.md §2.6 for both, `.claude/rules/model.md` for what putting
+//! the edge on the insert instead would merge into.
 //!
 //! **Mute is here and solo is not.** Mute is a property of the mix and shared;
 //! solo is how one person is listening right now, and it belongs with the zoom

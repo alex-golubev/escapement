@@ -10,14 +10,17 @@ paths:
 - **`escapement-render` must not depend on the UI framework.** State in, mouse
   events out, no Leptos types in its public API. This is the only decision in the
   project that is deliberately kept reversible.
-- **A hidden tab has no frames, so the interface stops sending.** Chrome pauses
-  `requestAnimationFrame` in a tab that is not visible, and the interface's
-  outbox is drained once a frame (§3) — so while the tab is hidden, commands
-  queue and nothing leaves. They go when it comes back. Harmless for a person,
-  who is not clicking at a tab they cannot see; not harmless for anything that
-  ever sends on a timer, which would appear to work and silently not. Measured:
-  0 frames in 800 ms hidden, 60 a second visible. The audio thread is unaffected
-  — it runs off the audio clock, not off frames.
+- **A tab that is not in front has almost no frames, so the interface almost
+  stops sending.** Chrome pauses `requestAnimationFrame` in a hidden tab and
+  throttles it hard in a visible one that is not in front, while the interface's
+  outbox is drained once a frame (§3). Measured: 60 a second in front, 0 in
+  800 ms hidden — and **15 frames in three minutes in a tab that was neither**,
+  which is the case to design against, because a page in that state looks alive
+  while its queue stands still. Harmless for a person, who is not clicking at a
+  tab they cannot see; not harmless for anything that sends on a timer, nor for a
+  control whose value the engine has not been told yet — that is how an export
+  comes out different from what is playing. The audio thread is unaffected: it
+  runs off the audio clock, not off frames.
 - **The page hands the export material and a rate, and nothing else.** What the
   engine is set to it reads out of the region itself, because the page's copy is
   what the engine was *told* — and the engine may have refused it
