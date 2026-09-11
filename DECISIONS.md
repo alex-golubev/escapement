@@ -848,3 +848,75 @@ did. What finds it is the first consumer that has to decide where an audio
 clip's samples go — the sequencer — and that consumer is what slice 1's tail is
 now building. The question stood open from 2026-09-05 to 2026-09-11 with 5082
 lines of tests in the tree and no way for any of them to reach it.
+
+---
+
+<a id="d24"></a>
+
+## D24 — 2026-09-11 — Both paths are driven from one projection of the document
+
+*Governs §3 and §7. The answer and what it refused are in `ARCHITECTURE.md`;
+this is the argument.*
+
+What is played and what is exported both come from **`Playback`, the projection
+of the document** — the engine is told what it says, and the file is rendered
+from the same value. Neither reads a control, and neither reads a parameter back
+out of the state block.
+
+D22 put the engine's own reading of what it was told into the state block, and
+closed by saying what does not belong there: a mixer channel comes from the
+document, and the export will render from the same snapshot the engine plays
+from. This is that sentence arriving. `gain` and `frequency_hz` leave the block,
+which keeps what the engine alone knows — the clock, the transport position, the
+peak, the counters and the publication echo.
+
+**The divergence D22 was guarding against cannot happen on this path**, and
+that is why the echo is not needed. A gain crossed `mixer::Gain` before it
+reached the document, a pan crossed `mixer::Pan`, a tempo crossed
+`timeline::Tempo`; each of them refuses what is not a value, and what the
+document holds is therefore something the engine has no reason to turn away.
+The refusals that mattered in D22 were the oscillator's Nyquist check and a
+gain clamp on a control wired straight to the wire — both of which left with
+the oscillator.
+
+**Rejected: echoing the mixer back through the state block.** Three strips of
+three fields each is nine more words, published every quantum, for a divergence
+that the document's own constructors have already made unrepresentable. D22
+named this and refused it in advance.
+
+**Rejected: the page keeping its own copy of what it sent.** That is where slice
+1 started, and `.claude/rules/interface.md` has the failure: a control is an
+input, a page in a background tab sends fifteen frames in three minutes, and the
+copy and the engine part company with nothing to point at.
+
+What this does cost: a control now sends the document rather than its own
+argument, so one slider movement is five commands instead of one. The ring is
+sized for a burst and drains sixteen a quantum, so a person dragging a fader at
+sixty frames a second is using a twentieth of it.
+
+---
+
+<a id="d25"></a>
+
+## D25 — 2026-09-11 — A channel and an insert pan by different laws
+
+*Governs §2.6, in the engine rather than in the document. The answer and what it
+refused are in `ARCHITECTURE.md`; this is the argument.*
+
+A **channel** places a mono source between the speakers, so its law is **equal
+power**: the two sides are the cosine and the sine of one angle, their squares
+sum to one, and the centre is −3 dB on each side. An **insert** is handed a
+stereo signal and can only lean it, so its law is a **balance**: the centre is
+untouched, and hard over silences the far side.
+
+One law for both is the obvious simplification and it is wrong in opposite
+directions. Give the insert the channel's law and every neutral strip on the
+route costs 3 dB — a project through a channel, a bus and a master comes out 9 dB
+down, and nothing in the document says why. Give the channel the insert's law and
+a source panned hard over is as loud on one side as it was in the middle on two,
+so panning a sound makes it louder.
+
+**The document holds neither law.** `mixer::Pan` is a position between the
+speakers, and what that position does to a signal is the engine's — which is
+what lets a stereo channel, when one arrives, take the balance law without the
+document changing at all.

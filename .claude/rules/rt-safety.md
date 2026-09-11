@@ -42,6 +42,16 @@ cause.
   test over them. That test cannot be joined by a second — `cargo test` runs
   `#[test]`s on several threads and they would race — and **Miri does not cover
   this class at all**, since `cargo miri test` runs them one at a time.
+- **Nothing on the processing path may panic, and an index into a slice is
+  how that happens.** A panic that carries a message formats it, formatting
+  builds a `String`, and a `String` is an allocator in the module that must not
+  have one — so `tools/check-worklet-module.py` fails on a bounds check the
+  optimizer could not discharge, a dozen calls away from the index that caused
+  it. Measured 2026-09-11: one `&self.tempo[..self.marks]` in the engine, plus
+  `into[index]` in `tempo::build` and the codec's slice indexing, pulled
+  `dlmalloc` in whole. What holds instead: `get`/`get_mut` with an answer for
+  the miss, and a slice narrowed to a fixed-size array once at the top of a
+  codec so every index below it is one the compiler can discharge.
 - **The render quantum is 128 samples and cannot be changed.** Anything wanting
   larger windows (FFT, time-stretch) buffers internally across quanta.
 - **Every implementation of `Samples` is held to `conformance::check`, and a new
@@ -59,10 +69,10 @@ cause.
   stops matching what was heard, with nothing wrong on either side to point at.
   `the_offline_render_of_*` in `escapement-worklet` compares the two paths sample
   for sample.
-- **The transport has to become drivable from outside** — "start at position P at
-  host time T", not only "play now" (§2.4). **Not true yet:** `Engine::start`
-  takes neither value, and `Command.when` is decoded and ignored, with the
-  deferral reasoned at `Processor::apply`. It is written here rather than left
-  for later because it is the one requirement §2.4 asks to be designed for rather
-  than retrofitted — every transport method added before it lands is one that
-  will have to grow two arguments.
+- **The transport has to be drivable from outside** — "start at position P at
+  host time T", not only "play now" (§2.4). **Half true:** `Engine::start` takes
+  P, and `Command.when` is still decoded and ignored, with the deferral reasoned
+  at `Processor::apply`. Honouring T needs somewhere for a command that is not
+  due to wait, and that somewhere is a preallocated structure the sequencer
+  brings. What holds now is the half that shapes signatures: a transport method
+  without a position is one that will have to grow one.

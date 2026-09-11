@@ -45,16 +45,19 @@ impl Module {
         self.engine = Some(Processor::new(cells, layout, rate));
     }
 
-    /// One quantum, and `out` is overwritten either way.
+    /// One quantum into each channel, and both are overwritten either way.
     ///
     /// Silence until [`Module::init`] has run. A missed init must not be a
     /// panic on the audio thread — and it must not be the previous quantum
     /// either, because the host reads this block whether or not anything wrote
     /// to it.
-    pub(crate) fn process(&mut self, out: &mut [f32]) {
+    pub(crate) fn process(&mut self, left: &mut [f32], right: &mut [f32]) {
         match self.engine.as_mut() {
-            Some(engine) => engine.process(out),
-            None => out.fill(0.0),
+            Some(engine) => engine.process(left, right),
+            None => {
+                left.fill(0.0);
+                right.fill(0.0);
+            }
         }
     }
 }
@@ -62,12 +65,39 @@ impl Module {
 #[cfg(test)]
 mod tests {
     use escapement_core::RENDER_QUANTUM;
-    use escapement_protocol::{Command, CommandKind, HandshakeError, Producer};
+    use escapement_protocol::{Cells, Command, CommandKind, HandshakeError, Producer};
+    use escapement_time::tempo::Curve;
+    use escapement_time::{Position, Span};
 
     use super::*;
     use crate::fixtures::{cells, words, LAYOUT};
 
     const RATE: f32 = 48_000.0;
+
+    /// What has to be said before a started transport is audible: a tempo, a
+    /// clip, and the frames it reads. Spelled once here and once in `lib.rs`,
+    /// which are the two places that drive the module rather than the
+    /// processor.
+    fn scene(frames: u32) -> [CommandKind; 4] {
+        [
+            CommandKind::SetTempo {
+                beats_per_minute: 120.0,
+                curve: Curve::Hold,
+            },
+            CommandKind::PlaceClip {
+                start: Position::ZERO,
+                length: Span::quarters(64),
+                trim: 0,
+            },
+            CommandKind::Audio {
+                publication: 1,
+                offset: 0,
+                frames,
+                channels: 1,
+            },
+            CommandKind::Start { at: Position::ZERO },
+        ]
+    }
 
     /// The case no test in this crate could reach while it lived in `lib.rs`:
     /// there, `init` had already run by the time anything could look, and it
@@ -77,12 +107,13 @@ mod tests {
         // Dirtied first. A block that starts at zero cannot say whether the
         // silence in it was produced or merely never overwritten, which is
         // exactly the mistake this guards.
-        let mut block = [0.5f32; RENDER_QUANTUM];
+        let mut left = [0.5f32; RENDER_QUANTUM];
+        let mut right = [0.5f32; RENDER_QUANTUM];
 
-        Module::new().process(&mut block);
+        Module::new().process(&mut left, &mut right);
 
         assert!(
-            block.iter().all(|sample| *sample == 0.0),
+            left.iter().chain(right.iter()).all(|sample| *sample == 0.0),
             "a missed init left the previous quantum in the block"
         );
     }
@@ -118,10 +149,11 @@ mod tests {
                 "{bad} was promised an engine"
             );
 
-            let mut block = [0.5f32; RENDER_QUANTUM];
-            module.process(&mut block);
+            let mut left = [0.5f32; RENDER_QUANTUM];
+            let mut right = [0.5f32; RENDER_QUANTUM];
+            module.process(&mut left, &mut right);
             assert!(
-                block.iter().all(|sample| *sample == 0.0),
+                left.iter().chain(right.iter()).all(|sample| *sample == 0.0),
                 "{bad} left the previous quantum in the block"
             );
         }
@@ -136,14 +168,23 @@ mod tests {
         module.init(cells(&words), LAYOUT, RATE);
 
         let seen = Layout::read_header(&cells(&words)).expect("init wrote a header");
-        let mut interface = Producer::new(cells(&words), seen.commands());
-        interface.push(&Command::now(CommandKind::Start)).unwrap();
+        let held = cells(&words);
+        let frames = seen.audio().words();
+        for word in 0..frames {
+            held.store_relaxed(seen.audio().base() + word, 0.9f32.to_bits());
+        }
 
-        let mut block = [0.0f32; RENDER_QUANTUM];
-        module.process(&mut block);
+        let mut interface = Producer::new(cells(&words), seen.commands());
+        for kind in scene(frames as u32) {
+            interface.push(&Command::now(kind)).unwrap();
+        }
+
+        let mut left = [0.0f32; RENDER_QUANTUM];
+        let mut right = [0.0f32; RENDER_QUANTUM];
+        module.process(&mut left, &mut right);
 
         assert!(
-            block.iter().any(|sample| *sample != 0.0),
+            left.iter().any(|sample| *sample != 0.0),
             "Start did not reach the block"
         );
     }

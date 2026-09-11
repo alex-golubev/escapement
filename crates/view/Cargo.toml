@@ -25,6 +25,9 @@ wasm-bindgen = "0.2"
 # methods below `Cells` are `Atomics` calls and nothing else, so a host test
 # cannot reach them at all. MIT/Apache-2.0.
 [dev-dependencies]
+# Musical time reaches the wire, so the tests here spell a position rather than
+# a number (§2.5). Already linked through `escapement-protocol`.
+escapement-time.workspace = true
 wasm-bindgen-test = "0.3"
 
 # Repeated from the workspace rather than inherited, as in `escapement-protocol`

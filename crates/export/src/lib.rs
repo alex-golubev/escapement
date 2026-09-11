@@ -10,4 +10,4 @@
 mod render;
 pub mod wav;
 
-pub use render::{render, render_to_wav, ExportError, Settings};
+pub use render::{render, render_to_wav, ExportError};

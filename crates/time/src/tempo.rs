@@ -197,7 +197,11 @@ pub fn build<'a>(marks: &[Mark], into: &'a mut [Segment]) -> Result<TempoMap<'a>
                 beats_per_minute: mark.beats_per_minute,
             });
         }
-        if index > 0 && mark.at <= marks[index - 1].at {
+        if index > 0
+            && marks
+                .get(index - 1)
+                .is_some_and(|before| mark.at <= before.at)
+        {
             return Err(BuildError::OutOfOrder { index });
         }
     }
@@ -231,7 +235,10 @@ pub fn build<'a>(marks: &[Mark], into: &'a mut [Segment]) -> Result<TempoMap<'a>
             None => Shape::Steady,
         };
 
-        into[index] = Segment {
+        let Some(slot) = into.get_mut(index) else {
+            break;
+        };
+        *slot = Segment {
             start: mark.at,
             seconds_at_start: seconds,
             seconds_per_quarter,
@@ -239,12 +246,15 @@ pub fn build<'a>(marks: &[Mark], into: &'a mut [Segment]) -> Result<TempoMap<'a>
         };
 
         if let Some(next) = next {
-            seconds += into[index].elapsed(quarters(next.at - mark.at));
+            let Some(written) = into.get(index) else {
+                break;
+            };
+            seconds += written.elapsed(quarters(next.at - mark.at));
         }
     }
 
     Ok(TempoMap {
-        segments: &into[..marks.len()],
+        segments: into.get(..marks.len()).unwrap_or(&[]),
     })
 }
 

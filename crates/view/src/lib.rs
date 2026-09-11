@@ -22,7 +22,7 @@ use escapement_protocol::{AudioLayout, Cells, HandshakeError, Layout, Producer, 
 // What a caller needs in order to say anything to the engine or read anything
 // back, so that reaching it is one import rather than two. The protocol's own
 // facade exists for the same reason.
-pub use escapement_protocol::{Command, CommandKind, EngineState};
+pub use escapement_protocol::{Command, CommandKind, EngineState, Stage};
 
 /// Bytes per word. The region is addressed in words on both sides (§3); this is
 /// the one place that has to know what a word costs, because the view is built
@@ -475,6 +475,18 @@ mod tests {
 #[cfg(target_arch = "wasm32")]
 mod browser {
     use escapement_protocol::{Consumer, Layout, Producer, Publisher, Subscriber};
+    use escapement_time::Position;
+
+    /// A command that differs from the next one by a number, for the tests
+    /// about the queue rather than about any particular command.
+    fn strip_gain(level: f32) -> CommandKind {
+        CommandKind::SetStrip {
+            stage: Stage::Channel,
+            gain: level,
+            pan: 0.0,
+            mute: false,
+        }
+    }
     use js_sys::SharedArrayBuffer;
     use wasm_bindgen_test::{wasm_bindgen_test, wasm_bindgen_test_configure};
 
@@ -579,22 +591,34 @@ mod browser {
 
         let mut interface = Producer::new(cells.clone(), seen.commands());
         interface
-            .push(&Command::now(CommandKind::SetFrequency(440.0)))
+            .push(&Command::now(CommandKind::SetStrip {
+                stage: Stage::Insert,
+                gain: 0.75,
+                pan: -0.5,
+                mute: true,
+            }))
             .expect("an empty ring");
         // Annotated because `pop` is the only thing naming the slot type here,
         // and it returns an `Option` of whatever the ring was built for.
         let taken: Command = Consumer::new(cells.clone(), seen.commands())
             .pop()
             .expect("what was just pushed");
-        assert_eq!(taken.kind, CommandKind::SetFrequency(440.0));
+        assert_eq!(
+            taken.kind,
+            CommandKind::SetStrip {
+                stage: Stage::Insert,
+                gain: 0.75,
+                pan: -0.5,
+                mute: true,
+            }
+        );
 
         let published = EngineState {
             clock: 1 << 40,
             quanta: 7,
+            position: -1 << 20,
             peak: 0.5,
             playing: true,
-            gain: 0.75,
-            frequency_hz: 440.0,
             commands_applied: 1,
             commands_unknown: 0,
             audio_publication: 2,
@@ -630,8 +654,13 @@ mod browser {
     #[wasm_bindgen_test]
     fn what_was_sent_before_the_handshake_still_arrives() {
         let mut link = Link::new();
-        link.send(Command::now(CommandKind::Start));
-        link.send(Command::now(CommandKind::SetGain(0.25)));
+        link.send(Command::now(CommandKind::Start { at: Position::ZERO }));
+        link.send(Command::now(CommandKind::SetStrip {
+            stage: Stage::Master,
+            gain: 0.25,
+            pan: 0.0,
+            mute: false,
+        }));
 
         assert_eq!(link.flush(), 0, "there is nowhere to flush to yet");
         assert_eq!(link.pending(), 2);
@@ -646,10 +675,18 @@ mod browser {
         assert_eq!(link.pending(), 0);
 
         let mut engine = engine(&buffer, layout);
-        assert_eq!(engine.pop().map(|c| c.kind), Some(CommandKind::Start));
         assert_eq!(
             engine.pop().map(|c| c.kind),
-            Some(CommandKind::SetGain(0.25))
+            Some(CommandKind::Start { at: Position::ZERO })
+        );
+        assert_eq!(
+            engine.pop().map(|c| c.kind),
+            Some(CommandKind::SetStrip {
+                stage: Stage::Master,
+                gain: 0.25,
+                pan: 0.0,
+                mute: false,
+            })
         );
     }
 
@@ -664,27 +701,21 @@ mod browser {
         let mut link = Link::new();
         link.connect(&buffer, OFFSET).expect("a header is there");
         for step in 0..5u8 {
-            link.send(Command::now(CommandKind::SetFrequency(f32::from(step))));
+            link.send(Command::now(strip_gain(f32::from(step))));
         }
 
         assert_eq!(link.flush(), SLOTS as usize, "only what fits");
         assert_eq!(link.pending(), 3);
 
         let mut engine = engine(&buffer, layout);
-        assert_eq!(
-            engine.pop().map(|c| c.kind),
-            Some(CommandKind::SetFrequency(0.0))
-        );
-        assert_eq!(
-            engine.pop().map(|c| c.kind),
-            Some(CommandKind::SetFrequency(1.0))
-        );
+        assert_eq!(engine.pop().map(|c| c.kind), Some(strip_gain(0.0)));
+        assert_eq!(engine.pop().map(|c| c.kind), Some(strip_gain(1.0)));
 
         assert_eq!(link.flush(), 2, "room for two more");
         assert_eq!(link.pending(), 1);
         assert_eq!(
             engine.pop().map(|c| c.kind),
-            Some(CommandKind::SetFrequency(2.0)),
+            Some(strip_gain(2.0)),
             "and in the order they were sent"
         );
     }
@@ -699,10 +730,9 @@ mod browser {
         let published = EngineState {
             clock: 96_000,
             quanta: 750,
+            position: 96_000,
             peak: 0.25,
             playing: true,
-            gain: 0.5,
-            frequency_hz: 220.0,
             commands_applied: 3,
             commands_unknown: 0,
             audio_publication: 5,
@@ -795,7 +825,7 @@ mod browser {
     #[wasm_bindgen_test]
     fn a_refused_handshake_leaves_the_link_taking_commands() {
         let mut link = Link::new();
-        link.send(Command::now(CommandKind::Start));
+        link.send(Command::now(CommandKind::Start { at: Position::ZERO }));
 
         let empty: JsValue = SharedArrayBuffer::new(256).into();
         assert!(matches!(

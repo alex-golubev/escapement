@@ -67,9 +67,10 @@ Why each of these is the shape it is — and what was rejected on the way — is
   width, so everything before bar one lands a sample late without saying so.
 - **Two sample counts exist, and turning one into the other is a bug** (§2.5).
   The engine's clock counts from when the engine was built: unsigned, monotonic,
-  running whether or not the transport is. A converted position counts from the
-  timeline's origin and is signed. Different origins, and the compiler will not
-  catch a swap that the names have to.
+  running whether or not the transport is. A converted position is
+  `SamplePosition` — signed, counted from the timeline's origin, and stopping
+  when the transport does. Different origins, so they are different types: the
+  clock stays a `u64` precisely so that the two do not add up.
 - **The sample rate is a parameter of the conversion, not a field of a map or a
   document** (§2.5). The map answers in seconds, and the offline render for
   export drives the same engine at a rate of its own. One type carries the rate,

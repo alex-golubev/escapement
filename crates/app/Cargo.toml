@@ -9,11 +9,12 @@ publish.workspace = true
 # The offline render, whole: the engine, the blocks it is driven in and the
 # file it goes into all live behind one call there (ARCHITECTURE.md §7).
 escapement-export.workspace = true
-# For the two constants the page's controls start at. They are a fact about the
-# engine, and a literal in the markup is a second copy nothing keeps true.
-escapement-core.workspace = true
+# The document the page holds, and the projection both the ring and the file are
+# driven from (D24).
 escapement-model.workspace = true
-escapement-render.workspace = true
+# Musical time reaches the page too: a control says quarter notes and the
+# document holds ticks, and nothing but this crate converts between them.
+escapement-time.workspace = true
 escapement-view.workspace = true
 # The interface module is the one that goes through `wasm-bindgen`, and the
 # check below needs the handle to its own memory. MIT/Apache-2.0.

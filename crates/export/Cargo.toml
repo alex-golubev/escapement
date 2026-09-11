@@ -10,10 +10,9 @@ publish.workspace = true
 # `.claude/rules/rt-safety.md` govern what it drives and not what it is.
 [dependencies]
 escapement-core.workspace = true
-# For the one type this crate reads rather than writes: what the engine
-# publishes about itself. No `js-sys` and no features, so it costs the same
-# here as it does in the worklet.
-escapement-protocol.workspace = true
+# The projection of the document the engine is playing. A file rendered from
+# anything else is one that can differ from what was heard (D24).
+escapement-model.workspace = true
 escapement-time.workspace = true
 
 [lints]

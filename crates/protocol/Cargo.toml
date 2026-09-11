@@ -11,6 +11,12 @@ publish.workspace = true
 # across a workspace build, so a feature would have put `js-sys` in the worklet.
 [dependencies]
 
+# The wire carries musical time: a clip's bounds and the position a transport
+# starts from are ticks, and a tick count travelling as a bare integer is the
+# swap `.claude/rules/musical-time.md` exists to stop. `no_std`, no allocation,
+# and already linked by both modules through `escapement-core`.
+escapement-time.workspace = true
+
 # Only under `--cfg loom`, so it is absent from every ordinary build and can
 # never reach the bundle. MIT, like everything else here.
 [target.'cfg(loom)'.dependencies]

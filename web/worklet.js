@@ -16,9 +16,16 @@ class EscapementProcessor extends AudioWorkletProcessor {
 
     // memory.buffer is a SharedArrayBuffer — this is the memory the rings live
     // in (§3). Viewed once; per-quantum would allocate on the RT thread.
+    // Planar: the module writes one quantum per channel, one after the other,
+    // which is the shape an output channel already has. Viewed once per
+    // channel, never per quantum — that would allocate on the RT thread.
     const ptr = this.wasm.escapement_output_ptr();
     const len = this.wasm.escapement_output_len();
-    this.out = new Float32Array(this.wasm.memory.buffer, ptr, len);
+    const channels = this.wasm.escapement_output_channels();
+    this.out = [];
+    for (let channel = 0; channel < channels; channel += 1) {
+      this.out.push(new Float32Array(this.wasm.memory.buffer, ptr + channel * len * 4, len));
+    }
 
     // The handshake (§3). One message, at startup: the ban on postMessage is
     // about frame rate, not about this. Sent after escapement_init, which is
@@ -37,9 +44,10 @@ class EscapementProcessor extends AudioWorkletProcessor {
 
   process(_inputs, outputs) {
     this.wasm.escapement_process();
-    for (const channel of outputs[0]) {
-      channel.set(this.out);
-    }
+    // The host's channel count is what it is: fewer than the module writes
+    // drops the rest, more repeats the last, and neither is this shim's to
+    // decide about.
+    outputs[0].forEach((channel, at) => channel.set(this.out[Math.min(at, this.out.length - 1)]));
     return true;
   }
 }

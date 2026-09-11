@@ -6,7 +6,7 @@
 //! this and not double buffering is §3.
 
 use crate::access::Cells;
-use crate::{get_u64, put_u64};
+use crate::{get_i64, get_u64, put_i64, put_u64};
 
 /// The generation counter sits in front of the payload.
 const SEQ_WORDS: usize = 1;
@@ -22,8 +22,7 @@ const ATTEMPTS: usize = 4;
 pub struct EngineState {
     /// Samples the engine has produced since it started. Monotonic, and what
     /// [`Command::when`](crate::Command::when) is measured against — a clock to
-    /// schedule by, not a position on a timeline. A transport position joins
-    /// this block when there is a timeline to have one.
+    /// schedule by, never a position on a timeline (§2.5).
     pub clock: u64,
     /// Callbacks the host has made. Against the host's own clock
     /// (`AudioContext.currentTime`) this is how a dropout shows up: a missed
@@ -31,21 +30,19 @@ pub struct EngineState {
     /// [`EngineState::clock`] divided by the quantum — the offline render drives
     /// the same engine in blocks of its own choosing.
     pub quanta: u64,
-    /// Peak of the last quantum, full scale.
+    /// Where the transport stands, in samples from the timeline's origin.
+    ///
+    /// The other of the two counts, and the reason they are two: this one is
+    /// signed, starts wherever the transport was started, and stops when the
+    /// transport does. It is here because the engine alone knows it — the
+    /// interface sent a musical position and what became of it depends on the
+    /// map the engine holds.
+    pub position: i64,
+    /// Peak of the last quantum, full scale, over both channels.
     pub peak: f32,
     /// Whether the transport is running, as the engine sees it — which is what
     /// a button should follow, rather than what it was last told.
     pub playing: bool,
-    /// The master gain the engine is applying, linear.
-    ///
-    /// Here rather than derived from what was sent because the engine may
-    /// refuse a value and leave the one before it standing, and the value
-    /// before it is history this side did not keep. Whoever renders the same
-    /// engine offline builds it from this (§3).
-    pub gain: f32,
-    /// The frequency the oscillator is producing, for the reason
-    /// [`EngineState::gain`] is here. It goes when the oscillator does.
-    pub frequency_hz: f32,
     /// Commands taken off the ring. The interface knows what it sent, so this
     /// is how far behind the engine is.
     pub commands_applied: u32,
@@ -70,25 +67,31 @@ impl EngineState {
     pub const WORDS: usize = 11;
 
     fn encode(&self, into: &mut [u32]) {
+        // Narrowed once, for the reason `Command::encode` gives: an index the
+        // compiler cannot discharge is a panic, and a panic here formats.
+        let Ok(into) = <&mut [u32; Self::WORDS]>::try_from(into) else {
+            return;
+        };
         put_u64(into, 0, self.clock);
         put_u64(into, 2, self.quanta);
-        into[4] = self.peak.to_bits();
-        into[5] = u32::from(self.playing);
-        into[6] = self.gain.to_bits();
-        into[7] = self.frequency_hz.to_bits();
+        put_i64(into, 4, self.position);
+        into[6] = self.peak.to_bits();
+        into[7] = u32::from(self.playing);
         into[8] = self.commands_applied;
         into[9] = self.commands_unknown;
         into[10] = self.audio_publication;
     }
 
     fn decode(from: &[u32]) -> Self {
+        let Ok(from) = <&[u32; Self::WORDS]>::try_from(from) else {
+            return Self::default();
+        };
         Self {
             clock: get_u64(from, 0),
             quanta: get_u64(from, 2),
-            peak: f32::from_bits(from[4]),
-            playing: from[5] != 0,
-            gain: f32::from_bits(from[6]),
-            frequency_hz: f32::from_bits(from[7]),
+            position: get_i64(from, 4),
+            peak: f32::from_bits(from[6]),
+            playing: from[7] != 0,
             commands_applied: from[8],
             commands_unknown: from[9],
             audio_publication: from[10],
