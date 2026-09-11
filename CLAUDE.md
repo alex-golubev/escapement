@@ -6,13 +6,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Slice 1's audio path runs and the project entities are written; everything else
 is still ahead. Most of this repository's substance is not in the code but in
-`ARCHITECTURE.md` (~1700 lines): the decisions, the reasoning, and — importantly
-— which decisions are irreversible.
+`ARCHITECTURE.md` (~1300 lines): what the product is, and beside each decision
+the alternatives it refused.
 
 Several choices are explicitly one-way doors (CRDT-shaped project model, FL-shaped
 entities, musical time, RT-safe engine). Making a design choice here without
 reading that document risks silently invalidating one of them. Section numbers
 (§2.4, §5.1, …) referenced in code comments point into it.
+
+`DECISIONS.md` beside it holds the derivation behind each of those — why the
+chosen thing was right, and what was measured. **It is append-only and is not
+read through**: open it at the entry a section points to, the way you would open
+a commit. Keeping it out of `ARCHITECTURE.md` is what stops the document a reader
+has to finish from growing every time something is settled.
 
 ## Commands
 
@@ -89,15 +95,16 @@ the file to edit, and this table is only the index.
 
 ## Where a reason goes
 
-Four permanent homes, and a reason belongs to exactly one. Without the rule each
+Five permanent homes, and a reason belongs to exactly one. Without the rule each
 one lands in the nearest, which is always the comment — that is where you are
 typing — and the code fills up with the project's history.
 
 | The reason is | Home |
 |---|---|
 | this must not be done, it breaks silently | this file, or the rule in `.claude/rules/` that governs those files |
-| the product is shaped this way, and here is what was rejected | `ARCHITECTURE.md` |
-| this is how we found out — a measurement, an experiment, a failed attempt | the commit message |
+| the product is shaped this way, and this is what it refused | `ARCHITECTURE.md` |
+| the argument that settled it, for a decision that is hard to replay | `DECISIONS.md`, appended, never edited |
+| how we found out — what was run, what it measured, what failed on the way | the commit message |
 | this is what you need in order to edit this line | the comment |
 
 So a comment does not carry the number that justified a choice already made, does

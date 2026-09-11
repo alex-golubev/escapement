@@ -3,8 +3,10 @@
 A browser DAW with a Rust core. Sample-based production, real-time collaborative
 editing, modelled on FL Studio.
 
-Architectural decisions and the reasoning behind them live in
-**[ARCHITECTURE.md](ARCHITECTURE.md)**.
+What the product is, and what each decision refused, lives in
+**[ARCHITECTURE.md](ARCHITECTURE.md)**. The argument behind each one is in
+**[DECISIONS.md](DECISIONS.md)**, which is append-only and meant to be opened at
+an entry rather than read through.
 
 > An *escapement* is the mechanism in a clock that releases the gear train in
 > steps. Fitting for a DAW: it is exactly about turning continuous time into
