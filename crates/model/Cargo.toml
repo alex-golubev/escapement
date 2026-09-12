@@ -6,11 +6,14 @@ license-file.workspace = true
 publish.workspace = true
 
 [dependencies]
-# yrs = "*"
-
 # For `SampleRate`, which an audio file needs to say how long it is: the frames
 # in a file are counted at the file's own rate and at nothing else (§2.5).
 escapement-time.workspace = true
+# The CRDT the document is, chosen over Loro on weight, licensing and a format
+# with more than one implementation (D18). MIT. It reaches no other crate: the
+# worklet links `core`, `protocol` and `time`, so nothing of this arrives on the
+# audio thread.
+yrs = "0.27"
 
 [lints]
 workspace = true

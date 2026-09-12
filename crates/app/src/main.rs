@@ -16,13 +16,13 @@ use std::cell::RefCell;
 
 use escapement_export::render_to_wav;
 use escapement_model::asset::Frames as AssetFrames;
+use escapement_model::document;
 use escapement_model::mixer::{Channel, ChannelSource, Gain, Insert, Pan};
 use escapement_model::playback::Playback;
 use escapement_model::playlist::{Clip, ClipSource, Lane};
 use escapement_model::project::Parts;
-use escapement_model::timeline::{Tempo, Timeline};
+use escapement_model::timeline::Tempo;
 use escapement_model::{Asset, AssetHash, Entropy, Id, Project};
-use escapement_time::meter::Meter;
 use escapement_time::tempo::Curve;
 use escapement_time::{Position, SampleRate, Span, TICKS_PER_QUARTER};
 use escapement_view::{Command, CommandKind, Link, Stage};
@@ -43,17 +43,23 @@ thread_local! {
 
     /// What the project says, which is the only thing the engine is ever told.
     ///
-    /// **Held as fields and built into a document on demand**, rather than kept
-    /// as one: the entities have no setters by design (`model.md`), and what
-    /// will edit them is the CRDT of slice 2. Until then this is where a
-    /// control's value lands, and `Project::new` is how it becomes a document
-    /// the projection can read.
+    /// **The clock is in the CRDT and the rest is still fields**, built into a
+    /// document on demand. The entities have no setters by design (`model.md`),
+    /// so what edits them is `escapement_model::document`, and each of them
+    /// moves under it in turn; until one has, this is where its control's value
+    /// lands and `Project::new` is how it becomes something the projection can
+    /// read.
     static DOCUMENT: RefCell<Document> = RefCell::new(Document::new());
 }
 
 /// Slice 1's project: one clip, one channel, one master.
+///
+/// Two sources of truth for as long as the move takes, and the field names say
+/// which is which: what `project` holds is the document, what sits beside it is
+/// waiting to move under it.
 struct Document {
-    beats_per_minute: f64,
+    /// The document itself, holding what has moved into it so far.
+    project: document::Document,
     start: Position,
     length: Span,
     trim: AssetFrames,
@@ -81,7 +87,7 @@ impl Document {
     fn new() -> Self {
         let mut entropy = Counted(0);
         Self {
-            beats_per_minute: 120.0,
+            project: document::Document::create("Slice one"),
             start: Position::ZERO,
             length: Span::quarters(4),
             trim: AssetFrames::ZERO,
@@ -111,11 +117,8 @@ impl Document {
     }
 
     fn parts(&self, asset: Option<(AssetHash, Asset)>) -> Parts {
-        let mut parts = Parts::new("Slice one".to_owned(), self.master);
-        if let Some(tempo) = Tempo::new(self.beats_per_minute, Curve::Hold) {
-            parts.timeline =
-                Timeline::new(tempo, Meter::new(4, 4).expect("four four is a signature"));
-        }
+        let mut parts = Parts::new(self.project.name(), self.master);
+        parts.timeline = self.project.timeline();
 
         let (channel_gain, channel_pan, channel_mute) = self.strips[0];
         let (insert_gain, insert_pan, insert_mute) = self.strips[1];
@@ -258,7 +261,15 @@ pub fn stop() {
 /// The tempo the project opens at, in quarter notes a minute.
 #[wasm_bindgen]
 pub fn set_tempo(beats_per_minute: f64) {
-    DOCUMENT.with_borrow_mut(|document| document.beats_per_minute = beats_per_minute);
+    DOCUMENT.with_borrow(|document| {
+        // A number off a control is not necessarily a tempo, and one that is
+        // not leaves the clock where it was rather than resetting it to the
+        // default — which is what a page that never reads the document back
+        // would show as the number it just sent (D24).
+        if let Some(tempo) = Tempo::new(beats_per_minute, Curve::Hold) {
+            document.project.set_tempo(tempo);
+        }
+    });
     publish_document();
 }
 
@@ -660,7 +671,9 @@ mod exports {
     #[wasm_bindgen_test]
     fn a_document_with_no_file_has_nothing_to_play() {
         let mut document = Document::new();
-        document.beats_per_minute = 90.0;
+        document
+            .project
+            .set_tempo(Tempo::new(90.0, Curve::Hold).expect("a tempo is a tempo"));
         document.start = Position::quarters(2);
 
         let playback = document.playback();
