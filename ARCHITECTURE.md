@@ -460,6 +460,16 @@ each of them refused; `DECISIONS.md` has the arguments.
 > stretching code exists to blame for it.
 > [Why, in full: D8](DECISIONS.md#d8)
 
+> **Decided 2026-09-13 — an audio clip's musical length is written down, and
+> the tempo rewrites it.** The one derived value in the document, and
+> deliberately: an unwarped file sounds for a fixed number of seconds, so how
+> many quarters it covers is the tempo's answer. Rejected: writing it once,
+> which leaves a clip cut short or short of its neighbour after any tempo
+> change. Rejected: deriving it at the projection — that is the right answer
+> and it is **slice 4's**, because what an audio clip's length means is the
+> question warping asks.
+> [Why, in full: D27](DECISIONS.md#d27)
+
 ### 2.6. Project model entities — FL-shaped
 
 The reference is FL Studio, and it differs from Ableton **not cosmetically but in
@@ -1223,11 +1233,18 @@ It does not overlap with slice 1 by subsystem, so it can run in parallel. The
 library is already chosen (§2.4), so this slice does not compare options — it
 **tests the bet**.
 
+What the document holds as of 2026-09-13 is the clock, the mixer and the
+playlist — so there is a clip for two browsers to move, which there was not.
+Patterns and automation curves are not in it: each waits for the slice that
+gives it something to be, and the curve is in the table below for that reason.
+What is left of this slice is otherwise the half that is not the model — the
+transport and presence.
+
 What it must confirm:
 
 | Check | Why |
 |---|---|
-| **The rank** | Reorder a track from both sides at once, while a third edit lands on it, and lose nothing. This is what §2.4 traded the movable list for, and the one place the trade can fail |
+| **The rank** | Reorder a track from both sides at once, while a third edit lands on it, and lose nothing. This is what §2.4 traded the movable list for, and the one place the trade can fail. Confirmed 2026-09-13 on the mixer and then on the lanes, which is every collection somebody arranges |
 | **Automation curves** | Where a naive CRDT explodes in memory and traffic. Measured at kilobytes of heap per edit on both candidates, so the soft lock is in scope rather than optional (§2.4) |
 | **Transaction origins** | Every write the interface makes carries ours, or it is not undoable and nothing says so (§3) |
 | Memory on a large document | The criterion §2.4 measured on a synthetic project; confirm it on a real one |

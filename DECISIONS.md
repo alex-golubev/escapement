@@ -994,3 +994,52 @@ key is one the reader takes back. The document above it is shaken the same way,
 and `the_reorder_a_list_would_have_forced_loses_the_edit_beside_it` is the test
 that shows why a convergence property alone would have been worth nothing —
 D19's measurement, in the form a test can keep.
+
+---
+
+<a id="d27"></a>
+
+## D27 — 2026-09-13 — An audio clip's musical length is written down
+
+*Governs §2.5 and §2.6. The answer and what it refused are in
+`ARCHITECTURE.md`; this is the argument.*
+
+An audio clip's `length` is **a register like any other**, written when the clip
+is placed and rewritten whenever the tempo moves. It is the one value in the
+document that is derived from two others — the file's own duration and the tempo
+map — and this entry exists because that is a thing to be uncomfortable about.
+
+**What makes it derived.** An unwarped file sounds for a fixed number of
+seconds. How many quarters of the timeline that covers is the tempo's answer, so
+at 120 a two-second loop covers four quarters and at 60 it covers two. The page
+recomputes it on every tempo change and sends it, which after this change means
+the tempo control writes a register on every audio clip in the project.
+
+**Rejected: writing the length once and leaving it.** The document is then
+quieter — no edit drags a cascade of writes into other entities behind it — and
+the clip is wrong: a tempo change leaves it cut short or with a gap after it,
+and nothing in the interface accounts for either. The demo that closed slice 1
+stops being true of the thing it demonstrates.
+
+**Rejected: not storing an audio clip's length at all**, and deriving it at the
+projection from the asset's frames, its rate and the tempo map. This is the
+answer, and it is **slice 4's to take**: what an audio clip's length means is
+exactly the question warping asks, because a warped clip has a musical length
+that is its own and an unwarped one does not. Taking it now would settle the
+shape of a warp anchor with none of the material that decides it — and the model
+would carry a `length` that means one thing for two of the three clip sources
+and nothing for the third, which is worse than a value that is merely redundant.
+
+**What the redundancy actually costs, measured rather than feared.** Three
+registers per placement, of which only the ones that moved are written — the
+document skips a register told what it already holds, so a tempo change at the
+same tempo writes nothing at all, and the test that says so is
+`a_clip_told_where_it_already_is_is_not_a_change`. Against a person dragging the
+tempo control, that is one register per clip per distinct value, in a ring sized
+for a burst and drained sixteen a quantum (D24).
+
+**What it does not cost: a merge that cannot be read.** Two people at two tempi
+is not a state this document has — the tempo is in it, and it converges like
+everything else. What can happen is the ordinary one: my tempo change and your
+clip drag, and the clip comes out at your start with my length, which is the
+same clip either of us would have seen after the other's edit arrived.
