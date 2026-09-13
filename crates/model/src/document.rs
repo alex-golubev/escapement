@@ -24,11 +24,12 @@
 //! is the operation a list would need and the one that drops whatever somebody
 //! else was writing to the old map.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 
 use escapement_time::meter::Meter;
 use escapement_time::tempo::Curve;
+use escapement_time::{Position, SampleRate, Span};
 use yrs::sync::time::{Clock, Timestamp};
 use yrs::undo::{Options as UndoOptions, UndoManager};
 use yrs::updates::decoder::Decode;
@@ -37,12 +38,13 @@ use yrs::{
     TransactionMut, Update,
 };
 
-use crate::asset::AssetHash;
+use crate::asset::{AssetHash, Frames};
 use crate::mixer::{Channel, ChannelSource, Gain, Insert, Pan};
+use crate::playlist::{Clip, ClipSource, Lane};
 use crate::project::Version;
 use crate::rank::Rank;
 use crate::timeline::{Tempo, Timeline};
-use crate::{Entropy, Id};
+use crate::{Asset, Entropy, Id};
 
 /// The root map, and the only thing in the document reached by name rather than
 /// through something else.
@@ -64,6 +66,9 @@ mod key {
     pub const DENOMINATOR: &str = "denominator";
     pub const INSERTS: &str = "inserts";
     pub const CHANNELS: &str = "channels";
+    pub const LANES: &str = "lanes";
+    pub const CLIPS: &str = "clips";
+    pub const ASSETS: &str = "assets";
     // The registers an entity is made of. `NAME` above is one of these too: in
     // the root it is the project's, in an entity's map it is the entity's, and
     // one key spelled twice is one key to misspell.
@@ -74,6 +79,18 @@ mod key {
     pub const KIND: &str = "kind";
     pub const HASH: &str = "hash";
     pub const OUTPUT: &str = "output";
+    pub const LANE: &str = "lane";
+    pub const START: &str = "start";
+    pub const LENGTH: &str = "length";
+    pub const TRIM: &str = "trim";
+    pub const CHANNEL: &str = "channel";
+    pub const FRAMES: &str = "frames";
+    pub const RATE: &str = "rate";
+    // Spelled the way `CHANNELS` is, and a second constant because it is a
+    // second thing: how many channels of samples are interleaved in one file,
+    // in an asset's map, against the project's mixer channels in the root.
+    // Sharing the constant would make one of the two rename the other.
+    pub const CHANNEL_COUNT: &str = "channels";
 }
 
 /// The tags a [`Curve`] is spelled with. A variant is a word and not a number,
@@ -87,6 +104,15 @@ const RAMP: &str = "ramp";
 /// instruments of §2.3 arrive as a second tag instead of as a change to every
 /// channel that was ever written.
 const SAMPLER: &str = "sampler";
+
+/// The one tag a [`ClipSource`] has here, of the three it has in the model.
+///
+/// A pattern and a curve are the other two, and this build writes neither: the
+/// document holds no patterns and no curves for one to name, so the branch
+/// could only ever resolve to silence. They arrive with the slices that give
+/// them something to point at (§7), and until then a clip tagged with either
+/// reads the way any unknown tag does — as a clip that is not there.
+const AUDIO: &str = "audio";
 
 /// Why somebody else's update did not go in.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -154,6 +180,9 @@ impl Document {
             let fields = write_entity(txn, &inserts, master, &rank, "Master");
             write_strip(txn, &fields, Gain::UNITY, Pan::CENTRE, false);
             map_under(txn, root, key::CHANNELS);
+            map_under(txn, root, key::LANES);
+            map_under(txn, root, key::CLIPS);
+            map_under(txn, root, key::ASSETS);
         });
         document
     }
@@ -375,6 +404,119 @@ impl Document {
         self.rearrange(key::CHANNELS, name, after);
     }
 
+    /// The lanes, top to bottom — the order somebody arranged them in.
+    #[must_use]
+    pub fn lanes(&self) -> Vec<(Id<Lane>, Lane)> {
+        self.arranged(key::LANES, read_lane)
+    }
+
+    /// The clips, found by name and in no order.
+    ///
+    /// A clip's place is its start, so there is no rank on one to read this by
+    /// (D10): two clips at one moment are two clips, and a second ordering laid
+    /// over the first would be a second thing to keep true.
+    #[must_use]
+    pub fn clips(&self) -> BTreeMap<Id<Clip>, Clip> {
+        self.keyed(key::CLIPS, Id::read, read_clip)
+    }
+
+    /// The files the project refers to, found by the hash of their bytes.
+    #[must_use]
+    pub fn assets(&self) -> BTreeMap<AssetHash, Asset> {
+        self.keyed(key::ASSETS, AssetHash::read, read_asset)
+    }
+
+    /// A new lane, at the bottom, under a name nobody else will mint.
+    pub fn add_lane(&mut self, lane: &Lane) -> Id<Lane> {
+        let name = Id::mint(&mut *self.entropy);
+        let rank = self.appended(key::LANES);
+        self.edit(|txn, root| {
+            let lanes = map_under(txn, root, key::LANES);
+            write_entity(txn, &lanes, name, &rank, lane.name());
+        });
+        name
+    }
+
+    /// A new clip, under a name nobody else will mint — or nothing, for a clip
+    /// this build has no way to write down.
+    ///
+    /// The refusal is the writer saying what the reader says: a source tagged
+    /// with something [`read_clip`] would turn away is one that must not be put
+    /// in the document, or the entity is absent the moment it is written. It
+    /// leaves with the other two tags, when there is something for them to
+    /// name.
+    pub fn add_clip(&mut self, clip: &Clip) -> Option<Id<Clip>> {
+        let ClipSource::Audio { channel, trim } = clip.source() else {
+            return None;
+        };
+        let name = Id::mint(&mut *self.entropy);
+        self.edit(|txn, root| {
+            let clips = map_under(txn, root, key::CLIPS);
+            let fields = clips.insert(txn, name.spell(), MapPrelim::default());
+            fields.insert(txn, key::LANE, clip.lane().spell());
+            fields.insert(txn, key::START, clip.start().ticks());
+            fields.insert(txn, key::LENGTH, clip.length().ticks());
+            fields.insert(txn, key::KIND, AUDIO);
+            fields.insert(txn, key::CHANNEL, channel.spell());
+            fields.insert(txn, key::TRIM, frames(trim));
+        });
+        Some(name)
+    }
+
+    /// Where a clip sits, how long it sounds, and how far into its file it
+    /// begins.
+    ///
+    /// Three registers rather than three calls, because they move together
+    /// under one hand: dragging a clip is one thing a person did and so one
+    /// step to take back. They are three separate registers all the same, so a
+    /// merge is free to take the start from one writer and the length from
+    /// another — unlike a tag and its payload, neither of them means anything
+    /// different beside the other.
+    pub fn place_clip(&self, name: Id<Clip>, start: Position, length: Span, trim: Frames) {
+        self.edit(|txn, root| {
+            let clips = map_under(txn, root, key::CLIPS);
+            if let Some(Out::YMap(fields)) = clips.get(txn, name.spell().as_str()) {
+                fields.try_update(txn, key::START, start.ticks());
+                fields.try_update(txn, key::LENGTH, length.ticks());
+                fields.try_update(txn, key::TRIM, frames(trim));
+            }
+        });
+    }
+
+    /// A file the project now refers to.
+    ///
+    /// Not `&mut self`, alone among the things that add one: an asset's name is
+    /// the hash of its bytes and there is nothing to mint (§2.6). Two people
+    /// importing one file therefore write one entry rather than two, which is
+    /// the whole of what a content-addressed store buys.
+    pub fn add_asset(&self, hash: AssetHash, asset: &Asset) {
+        self.edit(|txn, root| {
+            let assets = map_under(txn, root, key::ASSETS);
+            let fields = assets.insert(txn, hash.spell(), MapPrelim::default());
+            fields.insert(txn, key::NAME, asset.name());
+            fields.insert(txn, key::FRAMES, frames(asset.frames()));
+            fields.insert(txn, key::RATE, asset.rate().hz());
+            fields.insert(txn, key::CHANNEL_COUNT, i64::from(asset.channels()));
+        });
+    }
+
+    /// Take a lane out. Whatever sat on it is left naming nothing, which is
+    /// legal and reads as an absence everywhere (§2.6) — and a lane routes
+    /// nothing, so the clips that named it are still heard.
+    pub fn remove_lane(&self, name: Id<Lane>) {
+        self.forget(key::LANES, name);
+    }
+
+    /// Take a clip out. See [`Document::remove_insert`].
+    pub fn remove_clip(&self, name: Id<Clip>) {
+        self.forget(key::CLIPS, name);
+    }
+
+    /// Put a lane after another one, or at the top when there is none.
+    pub fn move_lane(&self, name: Id<Lane>, after: Option<Id<Lane>>) {
+        self.rearrange(key::LANES, name, after);
+    }
+
     /// Everything this document is, as an update somebody else can apply.
     #[must_use]
     pub fn state(&self) -> Vec<u8> {
@@ -412,6 +554,34 @@ impl Document {
         places(&entities, &txn)
             .into_iter()
             .filter_map(|(_, name, fields)| Some((name, read(&fields, &txn)?)))
+            .collect()
+    }
+
+    /// A collection nobody arranged, read by name.
+    ///
+    /// The sibling of [`Document::arranged`], and separate from it because the
+    /// entities here carry no rank — there is nothing to sort by and nothing to
+    /// drop an entity for lacking. What reads the key is a parameter because
+    /// the two collections spell theirs differently: a clip's is a minted name
+    /// and a file's is the hash of its bytes.
+    fn keyed<K: Ord, E>(
+        &self,
+        collection: &str,
+        name: impl Fn(&str) -> Option<K>,
+        read: impl Fn(&MapRef, &Transaction) -> Option<E>,
+    ) -> BTreeMap<K, E> {
+        let txn = self.doc.transact();
+        let Some(Out::YMap(entities)) = self.root.get(&txn, collection) else {
+            return BTreeMap::new();
+        };
+        entities
+            .iter(&txn)
+            .filter_map(|(key, value)| {
+                let Out::YMap(fields) = value else {
+                    return None;
+                };
+                Some((name(key)?, read(&fields, &txn)?))
+            })
             .collect()
     }
 
@@ -616,6 +786,55 @@ fn read_channel(fields: &MapRef, txn: &Transaction<'_>) -> Option<Channel> {
     ))
 }
 
+/// A lane, which is a name and a place among the other lanes. See
+/// [`read_insert`] for why the name alone cannot make it absent.
+fn read_lane(fields: &MapRef, txn: &Transaction<'_>) -> Option<Lane> {
+    Some(Lane::new(called(fields, txn)))
+}
+
+/// A clip, or nothing if one of its registers is not one. See [`read_insert`].
+///
+/// A clip has no name to display, so unlike every other entity here there is
+/// nothing it can be missing and still be read.
+fn read_clip(fields: &MapRef, txn: &Transaction<'_>) -> Option<Clip> {
+    Some(Clip::new(
+        Id::read(&text(fields, txn, key::LANE)?)?,
+        Position::from_ticks(whole(fields, txn, key::START)?),
+        Span::from_ticks(whole(fields, txn, key::LENGTH)?),
+        clip_source(fields, txn)?,
+    ))
+}
+
+/// A file's description, or nothing if one of its registers is not one. See
+/// [`read_insert`].
+///
+/// The hash is not among them: it is the key this entity was found under, and
+/// a key repeated inside its own value is a second copy for a merge to
+/// disagree with (§2.6).
+fn read_asset(fields: &MapRef, txn: &Transaction<'_>) -> Option<Asset> {
+    Asset::new(
+        called(fields, txn),
+        Frames::new(u64::try_from(whole(fields, txn, key::FRAMES)?).ok()?),
+        SampleRate::new(number(fields, txn, key::RATE)?)?,
+        count(fields, txn, key::CHANNEL_COUNT)?,
+    )
+}
+
+/// What a clip plays, or nothing for a tag this build does not know. See
+/// [`source`], which answers the same way and for the same reason.
+///
+/// Two of the three tags a [`ClipSource`] has are among the ones it does not
+/// know: see [`AUDIO`].
+fn clip_source<T: ReadTxn>(fields: &MapRef, txn: &T) -> Option<ClipSource> {
+    if text(fields, txn, key::KIND).as_deref() != Some(AUDIO) {
+        return None;
+    }
+    Some(ClipSource::Audio {
+        channel: Id::read(&text(fields, txn, key::CHANNEL)?)?,
+        trim: Frames::new(u64::try_from(whole(fields, txn, key::TRIM)?).ok()?),
+    })
+}
+
 /// What a channel makes its sound out of, or nothing for a tag this build does
 /// not know — which is a channel written by a newer client, and a channel this
 /// one cannot play is one it must not play as something else.
@@ -645,6 +864,16 @@ fn amplitude(gain: Gain) -> Any {
 
 fn position(pan: Pan) -> Any {
     Any::from(f64::from(pan.position()))
+}
+
+/// A count of frames in a file, as the document holds it.
+///
+/// Saturating rather than refusing: the count is a `u64` and the document holds
+/// an `i64`, so the unwritable ones start at four thousand years of audio at
+/// any rate anybody has. What comes back is read with `try_from` all the same,
+/// because the value could have been written by anything.
+fn frames(count: Frames) -> Any {
+    Any::from(i64::try_from(count.count()).unwrap_or(i64::MAX))
 }
 
 /// A register that is not a flag reads as a flag that was never set, which is
@@ -1416,30 +1645,394 @@ mod tests {
         );
     }
 
+    fn lane_of(name: &str) -> Lane {
+        Lane::new(name.to_owned())
+    }
+
+    fn clip_of(lane: Id<Lane>, channel: Id<Channel>) -> Clip {
+        Clip::new(
+            lane,
+            Position::quarters(2),
+            Span::quarters(4),
+            ClipSource::Audio {
+                channel,
+                trim: Frames::new(480),
+            },
+        )
+    }
+
+    fn asset_of(name: &str) -> Asset {
+        Asset::new(
+            name.to_owned(),
+            Frames::new(48_000),
+            SampleRate::new(48_000.0).expect("48 kHz is a rate"),
+            2,
+        )
+        .expect("two channels are audio")
+    }
+
+    /// A project with somewhere to put a clip and something for it to play.
+    fn playlist() -> (Document, Id<Lane>, Id<Channel>) {
+        let mut document = Document::create("Ours", Counter::new());
+        let master = document.master();
+        let channel = document.add_channel(&channel_of("Kick", master));
+        let lane = document.add_lane(&lane_of("Drums"));
+        (document, lane, channel)
+    }
+
+    #[test]
+    fn a_new_document_has_a_playlist_with_nothing_on_it() {
+        let document = Document::create("Ours", Counter::new());
+
+        assert!(document.lanes().is_empty());
+        assert!(document.clips().is_empty());
+        assert!(document.assets().is_empty());
+    }
+
+    #[test]
+    fn a_lane_a_clip_and_a_file_come_back_the_way_they_went_in() {
+        let (mut document, lane, channel) = playlist();
+        let hash = AssetHash::from_bytes([7; 32]);
+        document.add_asset(hash, &asset_of("kick.wav"));
+        let clip = document
+            .add_clip(&clip_of(lane, channel))
+            .expect("an audio clip is one this build writes");
+
+        assert_eq!(document.lanes(), vec![(lane, lane_of("Drums"))]);
+        assert_eq!(
+            document.clips(),
+            BTreeMap::from([(clip, clip_of(lane, channel))])
+        );
+        assert_eq!(
+            document.assets(),
+            BTreeMap::from([(hash, asset_of("kick.wav"))])
+        );
+    }
+
+    /// The lanes are the second collection somebody arranges, and the first the
+    /// rank was not written for.
+    #[test]
+    fn the_lanes_come_back_in_the_order_they_were_arranged() {
+        let mut document = Document::create("Ours", Counter::new());
+        let names: Vec<_> = ["a", "b", "c"]
+            .map(|name| document.add_lane(&lane_of(name)))
+            .to_vec();
+
+        document.move_lane(names[2], None);
+
+        let lanes = document.lanes();
+        let order: Vec<&str> = lanes.iter().map(|(_, lane)| lane.name()).collect();
+        assert_eq!(order, ["c", "a", "b"]);
+    }
+
+    /// What a rank on a clip would have cost, stated as the case that would
+    /// pay it: two clips at one moment are two clips, and neither of them is
+    /// anywhere in particular among the other.
+    #[test]
+    fn two_clips_at_one_moment_are_two_clips() {
+        let (mut document, lane, channel) = playlist();
+        let first = document.add_clip(&clip_of(lane, channel)).expect("a clip");
+        let second = document.add_clip(&clip_of(lane, channel)).expect("another");
+
+        let clips = document.clips();
+        assert_ne!(first, second, "two clips, under two names");
+        assert_eq!(clips.len(), 2);
+        assert_eq!(clips[&first], clips[&second], "and the same clip twice");
+    }
+
+    /// The writer refusing what the reader would turn away. Both of these are
+    /// clips the model can hold and this build cannot write down, and writing
+    /// one would put an entity in the document that is absent the moment it is
+    /// read.
+    #[test]
+    fn a_clip_this_build_cannot_write_down_is_not_written() {
+        let (mut document, lane, _) = playlist();
+        let sources = [
+            ClipSource::Pattern {
+                pattern: Id::from_bits(1),
+                offset: Span::ZERO,
+            },
+            ClipSource::Automation {
+                automation: Id::from_bits(2),
+            },
+        ];
+
+        for source in sources {
+            let refused =
+                document.add_clip(&Clip::new(lane, Position::ZERO, Span::quarters(1), source));
+
+            assert!(refused.is_none(), "{source:?} was written");
+            assert!(document.clips().is_empty(), "{source:?} left an entity");
+        }
+    }
+
+    /// Where a clip sits, how long it sounds and how far into its file it
+    /// begins, each written on its own so that one landing in the wrong
+    /// register has somewhere to show.
+    #[test]
+    fn a_clip_is_placed_where_it_was_put_and_nowhere_else() {
+        let (mut document, lane, channel) = playlist();
+        let name = document.add_clip(&clip_of(lane, channel)).expect("a clip");
+
+        document.place_clip(
+            name,
+            Position::quarters(8),
+            Span::quarters(1),
+            Frames::new(96_000),
+        );
+
+        let clips = document.clips();
+        let clip = clips.get(&name).expect("the clip is still there");
+        assert_eq!(clip.start(), Position::quarters(8));
+        assert_eq!(clip.length(), Span::quarters(1));
+        assert_eq!(
+            clip.source(),
+            ClipSource::Audio {
+                channel,
+                trim: Frames::new(96_000),
+            }
+        );
+        assert_eq!(clip.lane(), lane, "and the lane it sits on did not move");
+    }
+
+    /// D16 on the playlist, register by register. See
+    /// [`a_register_no_constructor_accepts_makes_its_entity_absent`], which
+    /// says what each of these is.
+    #[test]
+    fn a_playlist_register_no_constructor_accepts_makes_its_entity_absent() {
+        for (field, value) in [
+            (key::LANE, Any::from("not a name")),
+            (key::START, Any::from(1.5)),
+            (key::LENGTH, Any::from("four")),
+            (key::KIND, Any::from("pattern")),
+            (key::CHANNEL, Any::from("not a name")),
+            (key::TRIM, Any::from(-1)),
+        ] {
+            let (mut document, lane, channel) = playlist();
+            let name = document
+                .add_clip(&clip_of(lane, channel))
+                .expect("a clip")
+                .spell();
+            deface(&document, key::CLIPS, &name, field, value);
+
+            assert!(
+                document.clips().is_empty(),
+                "{field} left the clip readable"
+            );
+            assert_eq!(document.lanes().len(), 1, "{field} took the lane with it");
+        }
+
+        for (field, value) in [
+            (key::FRAMES, Any::from(0.5)),
+            (key::RATE, Any::from(0.0)),
+            (key::CHANNEL_COUNT, Any::from(0)),
+        ] {
+            let (document, ..) = playlist();
+            let hash = AssetHash::from_bytes([7; 32]);
+            document.add_asset(hash, &asset_of("kick.wav"));
+            deface(&document, key::ASSETS, &hash.spell(), field, value);
+
+            assert!(
+                document.assets().is_empty(),
+                "{field} left the file readable"
+            );
+        }
+    }
+
+    /// The key rather than a register, which only the playlist can fail on: a
+    /// file is found by the hash of its bytes, and a name is the one thing an
+    /// entity cannot be missing and still be somewhere.
+    #[test]
+    fn a_file_under_something_that_is_not_a_hash_is_not_a_file() {
+        let (document, ..) = playlist();
+        document.apply(|txn, root| {
+            let assets = map_under(txn, root, key::ASSETS);
+            let fields = assets.insert(txn, "not a hash", MapPrelim::default());
+            fields.insert(txn, key::NAME, "kick.wav");
+            fields.insert(txn, key::FRAMES, 48_000);
+            fields.insert(txn, key::RATE, 48_000.0);
+            fields.insert(txn, key::CHANNEL_COUNT, 2);
+        });
+
+        assert!(document.assets().is_empty());
+    }
+
+    /// A clip taken off the timeline, which takes nothing with it: the lane it
+    /// sat on and the channel it played through are both things other clips
+    /// use, and neither is this one's to remove.
+    ///
+    /// The second half is [`a_register_written_to_something_removed_does_not_bring_it_back`]
+    /// on the setter that writes three registers at once — half an entity is
+    /// worse than none, and a clip with a start and no source would be one.
+    #[test]
+    fn a_clip_taken_out_leaves_what_it_was_using_behind() {
+        let (mut document, lane, channel) = playlist();
+        let name = document.add_clip(&clip_of(lane, channel)).expect("a clip");
+
+        document.remove_clip(name);
+        document.place_clip(name, Position::ZERO, Span::QUARTER, Frames::ZERO);
+
+        assert!(document.clips().is_empty(), "gone, and not written back");
+        assert_eq!(document.lanes().len(), 1, "the lane it sat on");
+        assert_eq!(document.channels().len(), 1, "and the channel it played");
+    }
+
+    /// A lane routes nothing (§2.6), so a clip that has lost its lane is still
+    /// heard — which is what makes it different from the same clip losing the
+    /// channel it plays through.
+    #[test]
+    fn a_clip_whose_lane_is_gone_is_still_a_clip() {
+        let (mut document, lane, channel) = playlist();
+        let name = document.add_clip(&clip_of(lane, channel)).expect("a clip");
+
+        document.remove_lane(lane);
+
+        let clips = document.clips();
+        assert!(document.lanes().is_empty(), "the lane is gone");
+        assert_eq!(clips.len(), 1, "and the clip is not");
+        assert_eq!(clips[&name].lane(), lane, "still naming what is not there");
+    }
+
+    /// The deduplication a content-addressed store buys, which is the whole
+    /// reason an asset's name is not minted (§2.6). Two people importing one
+    /// file write one entry, and neither of them has to be told about the
+    /// other.
+    #[test]
+    fn two_people_importing_one_file_write_one_entry() {
+        let mine = Document::create("Ours", Counter::new());
+        let theirs =
+            Document::open(&mine.state(), Counter::starting_at(1 << 96)).expect("a document");
+        let hash = AssetHash::from_bytes([7; 32]);
+
+        mine.add_asset(hash, &asset_of("kick.wav"));
+        theirs.add_asset(hash, &asset_of("kick.wav"));
+        settle(&mine, &theirs);
+
+        for document in [&mine, &theirs] {
+            assert_eq!(
+                document.assets(),
+                BTreeMap::from([(hash, asset_of("kick.wav"))])
+            );
+        }
+    }
+
+    /// The slice's question on the collection the playlist arranges, in the
+    /// same shape [`a_reorder_and_an_edit_at_once_lose_neither`] asks it in.
+    #[test]
+    fn a_lane_reordered_and_a_clip_placed_at_once_lose_neither() {
+        let mut mine = Document::create("Ours", Counter::new());
+        let master = mine.master();
+        let channel = mine.add_channel(&channel_of("Kick", master));
+        let lanes: Vec<_> = ["a", "b", "c"]
+            .map(|name| mine.add_lane(&lane_of(name)))
+            .to_vec();
+        let clip = mine.add_clip(&clip_of(lanes[0], channel)).expect("a clip");
+        let mut theirs =
+            Document::open(&mine.state(), Counter::starting_at(1 << 96)).expect("a document");
+
+        mine.move_lane(lanes[2], None);
+        theirs.place_clip(clip, Position::quarters(16), Span::QUARTER, Frames::ZERO);
+        theirs.add_lane(&lane_of("d"));
+        settle(&mine, &theirs);
+
+        for document in [&mine, &theirs] {
+            let lanes = document.lanes();
+            let order: Vec<&str> = lanes.iter().map(|(_, lane)| lane.name()).collect();
+            assert_eq!(order, ["c", "a", "b", "d"], "the reorder and the lane");
+            assert_eq!(
+                document.clips()[&clip].start(),
+                Position::quarters(16),
+                "and the clip that moved beside them"
+            );
+        }
+    }
+
+    /// See [`a_register_told_what_it_already_holds_is_not_a_change`], which is
+    /// the same trap. It is worth asking twice because this is the setter that
+    /// writes three registers from one gesture: the tempo control recomputes a
+    /// clip's length whenever it moves, and at the same tempo that is the same
+    /// length.
+    #[test]
+    fn a_clip_told_where_it_already_is_is_not_a_change() {
+        let (mut document, lane, channel) = playlist();
+        let placed = clip_of(lane, channel);
+        let name = document.add_clip(&placed).expect("a clip");
+
+        let ClipSource::Audio { trim, .. } = placed.source() else {
+            unreachable!("the clip was built with an audio source")
+        };
+        document.place_clip(name, placed.start(), placed.length(), trim);
+
+        assert!(document.undo(), "there was something to take back");
+        assert!(
+            document.clips().is_empty(),
+            "and it was the clip, because nothing happened after it"
+        );
+    }
+
+    #[test]
+    fn a_clip_this_user_placed_is_theirs_to_take_back() {
+        let (mut document, lane, channel) = playlist();
+        document.add_clip(&clip_of(lane, channel)).expect("a clip");
+
+        assert!(document.undo());
+        assert!(document.clips().is_empty());
+        assert!(document.redo());
+        assert_eq!(document.clips().len(), 1);
+    }
+
     /// One move in a session with two people in it, the flag saying which of
     /// them makes it.
+    ///
+    /// The collection each step works on is in its name, because there are now
+    /// three shapes of them here and they fail differently: the mixer and the
+    /// lanes are arranged and carry a rank, the clips are found by a minted
+    /// name, and the files by a name two people can arrive at independently.
     #[derive(Clone, Copy, Debug)]
     enum Step {
-        Add(bool),
+        AddChannel(bool),
         Gain(bool, usize, u8),
         Mute(bool, usize),
-        Move(bool, usize, Option<usize>),
-        Remove(bool, usize),
+        MoveChannel(bool, usize, Option<usize>),
+        RemoveChannel(bool, usize),
+        AddLane(bool),
+        MoveLane(bool, usize, Option<usize>),
+        RemoveLane(bool, usize),
+        AddClip(bool, usize, usize),
+        PlaceClip(bool, usize, u8),
+        RemoveClip(bool, usize),
+        /// A file imported. The one place two replicas write the same key
+        /// without having agreed on it, which is what naming a file by its
+        /// bytes is for.
+        AddAsset(bool, u8),
         /// Where the two exchange what they have. Sparse on purpose: what is
-        /// under test is what happens to edits made while they had not.
+        /// under test is what happens to edits made while they had not. Weighed
+        /// against the rest so that adding steps above does not quietly make
+        /// the exchanges rarer than the session they are testing.
         Meet,
     }
 
     fn any_step() -> impl Strategy<Value = Step> {
         prop_oneof![
-            any::<bool>().prop_map(Step::Add),
-            (any::<bool>(), 0..8usize, any::<u8>())
+            1 => any::<bool>().prop_map(Step::AddChannel),
+            1 => (any::<bool>(), 0..8usize, any::<u8>())
                 .prop_map(|(side, which, gain)| Step::Gain(side, which, gain)),
-            (any::<bool>(), 0..8usize).prop_map(|(side, which)| Step::Mute(side, which)),
-            (any::<bool>(), 0..8usize, prop::option::of(0..8usize))
-                .prop_map(|(side, which, after)| Step::Move(side, which, after)),
-            (any::<bool>(), 0..8usize).prop_map(|(side, which)| Step::Remove(side, which)),
-            Just(Step::Meet),
+            1 => (any::<bool>(), 0..8usize).prop_map(|(side, which)| Step::Mute(side, which)),
+            1 => (any::<bool>(), 0..8usize, prop::option::of(0..8usize))
+                .prop_map(|(side, which, after)| Step::MoveChannel(side, which, after)),
+            1 => (any::<bool>(), 0..8usize)
+                .prop_map(|(side, which)| Step::RemoveChannel(side, which)),
+            1 => any::<bool>().prop_map(Step::AddLane),
+            1 => (any::<bool>(), 0..8usize, prop::option::of(0..8usize))
+                .prop_map(|(side, which, after)| Step::MoveLane(side, which, after)),
+            1 => (any::<bool>(), 0..8usize).prop_map(|(side, which)| Step::RemoveLane(side, which)),
+            1 => (any::<bool>(), 0..8usize, 0..8usize)
+                .prop_map(|(side, lane, channel)| Step::AddClip(side, lane, channel)),
+            1 => (any::<bool>(), 0..8usize, any::<u8>())
+                .prop_map(|(side, which, at)| Step::PlaceClip(side, which, at)),
+            1 => (any::<bool>(), 0..8usize).prop_map(|(side, which)| Step::RemoveClip(side, which)),
+            1 => (any::<bool>(), 0..4u8).prop_map(|(side, bytes)| Step::AddAsset(side, bytes)),
+            2 => Just(Step::Meet),
         ]
     }
 
@@ -1452,9 +2045,22 @@ mod tests {
             .map(|(name, _)| *name)
     }
 
+    /// See [`nth`].
+    fn nth_lane(document: &Document, which: usize) -> Option<Id<Lane>> {
+        let lanes = document.lanes();
+        lanes.get(which % lanes.len().max(1)).map(|(name, _)| *name)
+    }
+
+    /// See [`nth`]. Round the keys rather than the arrangement, there being
+    /// none.
+    fn nth_clip(document: &Document, which: usize) -> Option<Id<Clip>> {
+        let clips = document.clips();
+        clips.keys().nth(which % clips.len().max(1)).copied()
+    }
+
     fn play(step: Step, sides: &mut [Document; 2]) {
         match step {
-            Step::Add(side) => {
+            Step::AddChannel(side) => {
                 let document = &mut sides[usize::from(side)];
                 let master = document.master();
                 document.add_channel(&channel_of("one of many", master));
@@ -1471,17 +2077,62 @@ mod tests {
                     document.set_channel_mute(name, true);
                 }
             }
-            Step::Move(side, which, after) => {
+            Step::MoveChannel(side, which, after) => {
                 let document = &sides[usize::from(side)];
                 if let Some(name) = nth(document, which) {
                     document.move_channel(name, after.and_then(|after| nth(document, after)));
                 }
             }
-            Step::Remove(side, which) => {
+            Step::RemoveChannel(side, which) => {
                 let document = &sides[usize::from(side)];
                 if let Some(name) = nth(document, which) {
                     document.remove_channel(name);
                 }
+            }
+            Step::AddLane(side) => {
+                let document = &mut sides[usize::from(side)];
+                document.add_lane(&lane_of("one of many"));
+            }
+            Step::MoveLane(side, which, after) => {
+                let document = &sides[usize::from(side)];
+                if let Some(name) = nth_lane(document, which) {
+                    document.move_lane(name, after.and_then(|after| nth_lane(document, after)));
+                }
+            }
+            Step::RemoveLane(side, which) => {
+                let document = &sides[usize::from(side)];
+                if let Some(name) = nth_lane(document, which) {
+                    document.remove_lane(name);
+                }
+            }
+            Step::AddClip(side, lane, channel) => {
+                let document = &mut sides[usize::from(side)];
+                if let (Some(lane), Some(channel)) =
+                    (nth_lane(document, lane), nth(document, channel))
+                {
+                    document.add_clip(&clip_of(lane, channel));
+                }
+            }
+            Step::PlaceClip(side, which, at) => {
+                let document = &sides[usize::from(side)];
+                if let Some(name) = nth_clip(document, which) {
+                    document.place_clip(
+                        name,
+                        Position::quarters(i64::from(at)),
+                        Span::QUARTER,
+                        Frames::ZERO,
+                    );
+                }
+            }
+            Step::RemoveClip(side, which) => {
+                let document = &sides[usize::from(side)];
+                if let Some(name) = nth_clip(document, which) {
+                    document.remove_clip(name);
+                }
+            }
+            Step::AddAsset(side, bytes) => {
+                let document = &sides[usize::from(side)];
+                document.add_asset(AssetHash::from_bytes([bytes; 32]), &asset_of("one of many"));
             }
             Step::Meet => {
                 let [mine, theirs] = sides;
@@ -1491,7 +2142,7 @@ mod tests {
     }
 
     proptest! {
-        #![proptest_config(ProptestConfig::with_cases(48))]
+        #![proptest_config(ProptestConfig::with_cases(128))]
 
         /// Any session at all, and the one thing true of every one of them:
         /// once the two have seen each other they are looking at the same
@@ -1521,6 +2172,9 @@ mod tests {
 
             prop_assert_eq!(mine.channels(), theirs.channels());
             prop_assert_eq!(mine.inserts(), theirs.inserts());
+            prop_assert_eq!(mine.lanes(), theirs.lanes());
+            prop_assert_eq!(mine.clips(), theirs.clips());
+            prop_assert_eq!(mine.assets(), theirs.assets());
             prop_assert_eq!(mine.master(), theirs.master());
         }
     }

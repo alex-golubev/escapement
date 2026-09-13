@@ -74,47 +74,36 @@ thread_local! {
 
     /// What the project says, which is the only thing the engine is ever told.
     ///
-    /// **The clock and the mixer are in the CRDT; the playlist is still
-    /// fields**, built into a document on demand. The entities have no setters
-    /// by design (`model.md`), so what edits them is
-    /// `escapement_model::document`, and each of them moves under it in turn;
-    /// until one has, this is where its control's value lands and
-    /// `Project::new` is how it becomes something the projection can read.
+    /// **The whole of it is in the CRDT.** The entities have no setters by
+    /// design (`model.md`), so what edits them is
+    /// `escapement_model::document`, and `Project::new` is how what it holds
+    /// becomes something the projection can read.
     static DOCUMENT: RefCell<Document> = RefCell::new(Document::new());
 }
 
 /// Slice 1's project: one clip, one channel, one master.
 ///
-/// Two sources of truth for as long as the move takes, and the field names say
-/// which is which: what `project` holds is the document, what sits beside it is
-/// waiting to move under it.
+/// What sits beside the document now is which of the entities this page is
+/// working on, and that is not project state: a selection is per-user and
+/// stays out of the document (`model.md`). Both are absent until a file
+/// arrives, because slice 1's page has nothing to name before that.
 struct Document {
-    /// The document itself, holding what has moved into it so far — the clock,
-    /// the master and the channel below.
     project: document::Document,
-    start: Position,
-    length: Span,
-    trim: AssetFrames,
     /// The channel the file is heard through, made when the first one arrives.
     /// A channel with no source is not one, so there is none before that.
     channel: Option<Id<Channel>>,
-    /// What the document would know about the file, which is not in it yet.
-    asset: Option<(AssetHash, Asset)>,
-    lane: Id<Lane>,
-    clip: Id<Clip>,
+    /// The lane and the clip on it, made with the channel and for the same
+    /// reason: a clip is a thing that plays, and until there is a file there is
+    /// nothing for one to play.
+    clip: Option<Id<Clip>>,
 }
 
 impl Document {
     fn new() -> Self {
         Self {
             project: document::Document::create("Slice one", Random),
-            start: Position::ZERO,
-            length: Span::quarters(4),
-            trim: AssetFrames::ZERO,
             channel: None,
-            asset: None,
-            lane: Id::mint(&mut Random),
-            clip: Id::mint(&mut Random),
+            clip: None,
         }
     }
 
@@ -124,7 +113,11 @@ impl Document {
     /// says, and the file is rendered from it — which is what keeps the two
     /// from drifting (D24).
     fn playback(&self) -> Playback {
-        Playback::of(&Project::new(self.parts()), self.clip)
+        // Before there is a clip, a name nothing answers to — which the
+        // projection reads as the absence it is (D12), the same way it reads a
+        // clip whose channel has gone.
+        let clip = self.clip.unwrap_or(Id::from_bits(0));
+        Playback::of(&Project::new(self.parts()), clip)
     }
 
     fn parts(&self) -> Parts {
@@ -132,42 +125,38 @@ impl Document {
         parts.timeline = self.project.timeline();
         parts.inserts = self.project.inserts();
         parts.channels = self.project.channels();
-
-        let (Some(channel), Some((hash, asset))) = (self.channel, self.asset.clone()) else {
-            return parts;
-        };
-        parts.lanes.push((self.lane, Lane::new("Audio".to_owned())));
-        parts.clips.insert(
-            self.clip,
-            Clip::new(
-                self.lane,
-                self.start,
-                self.length,
-                ClipSource::Audio {
-                    channel,
-                    trim: self.trim,
-                },
-            ),
-        );
-        parts.assets.insert(hash, asset);
+        parts.lanes = self.project.lanes();
+        parts.clips = self.project.clips();
+        parts.assets = self.project.assets();
         parts
     }
 
-    /// A file arrived, or one that is not a file did.
+    /// Bytes arrived under a name, and a description of them if the page could
+    /// make one.
     ///
     /// The channel is made the first time and pointed at the new bytes
-    /// afterwards, which is what loading a second file into one strip is. A
-    /// file the page could not describe leaves the channel where it is and
-    /// takes the asset away, so the project is silent rather than playing the
-    /// last one under the new one's name.
-    fn use_source(&mut self, arrived: Option<(AssetHash, Asset)>) {
-        self.asset = arrived.clone();
-        let Some((hash, _)) = arrived else {
-            return;
-        };
+    /// afterwards, which is what loading a second file into one strip is. Both
+    /// happen whether or not the description did: the bytes in the region have
+    /// already been replaced by the time this is called, so a channel left
+    /// naming the last file would play the new ones under the old one's name.
+    /// Pointed at a file the document has no description of, it is silent —
+    /// which is a dangling name reading as an absence (D12) rather than
+    /// anything this page has to arrange.
+    ///
+    /// The clip is made here rather than when a control first moves, so that
+    /// what the document holds is always something that plays. The numbers it
+    /// starts at are the page's own, and the page sends the controls' own again
+    /// as soon as this returns.
+    fn use_source(&mut self, hash: AssetHash, described: Option<&Asset>) {
+        if let Some(asset) = described {
+            self.project.add_asset(hash, asset);
+        }
         let source = ChannelSource::Sampler(hash);
-        match self.channel {
-            Some(name) => self.project.set_channel_source(name, source),
+        let channel = match self.channel {
+            Some(name) => {
+                self.project.set_channel_source(name, source);
+                name
+            }
             None => {
                 let master = self.project.master();
                 let channel = Channel::new(
@@ -178,8 +167,35 @@ impl Document {
                     Pan::CENTRE,
                     false,
                 );
-                self.channel = Some(self.project.add_channel(&channel));
+                let name = self.project.add_channel(&channel);
+                self.channel = Some(name);
+                name
             }
+        };
+        if self.clip.is_none() {
+            let lane = self.project.add_lane(&Lane::new("Audio".to_owned()));
+            self.clip = self.project.add_clip(&Clip::new(
+                lane,
+                Position::ZERO,
+                Span::quarters(4),
+                ClipSource::Audio {
+                    channel,
+                    trim: AssetFrames::ZERO,
+                },
+            ));
+        }
+    }
+
+    /// Where the clip sits, how long it sounds, and how far into the file it
+    /// begins.
+    ///
+    /// Nothing before there is a clip: the controls are enabled from the moment
+    /// the audio context is, and what they say until a file arrives is what the
+    /// page would have shown anyway. It is not lost — the page sends these
+    /// again once the file is in, reading the controls as they stand.
+    fn place_clip(&self, start: Position, length: Span, trim: AssetFrames) {
+        if let Some(name) = self.clip {
+            self.project.place_clip(name, start, length, trim);
         }
     }
 
@@ -324,10 +340,12 @@ pub fn set_tempo(beats_per_minute: f64) {
 /// first two are musical and become ticks, the third is the file's.
 #[wasm_bindgen]
 pub fn place_clip(start_quarters: f64, length_quarters: f64, trim_frames: f64) {
-    DOCUMENT.with_borrow_mut(|document| {
-        document.start = Position::from_ticks(ticks(start_quarters));
-        document.length = Span::from_ticks(ticks(length_quarters));
-        document.trim = AssetFrames::new(trim_frames.max(0.0) as u64);
+    DOCUMENT.with_borrow(|document| {
+        document.place_clip(
+            Position::from_ticks(ticks(start_quarters)),
+            Span::from_ticks(ticks(length_quarters)),
+            AssetFrames::new(trim_frames.max(0.0) as u64),
+        );
     });
     publish_document();
 }
@@ -390,16 +408,15 @@ pub fn use_audio(offset: u32, frames: u32, channels: u32, rate_hz: f64) -> u32 {
     DOCUMENT.with_borrow_mut(|document| {
         let mut bytes = [0u8; 32];
         bytes[..4].copy_from_slice(&publication.to_le_bytes());
-        let arrived = SampleRate::new(rate_hz).and_then(|rate| {
-            let asset = Asset::new(
+        let described = SampleRate::new(rate_hz).and_then(|rate| {
+            Asset::new(
                 "source".to_owned(),
                 AssetFrames::new(u64::from(frames)),
                 rate,
                 u16::try_from(channels).unwrap_or(u16::MAX),
-            )?;
-            Some((AssetHash::from_bytes(bytes), asset))
+            )
         });
-        document.use_source(arrived);
+        document.use_source(AssetHash::from_bytes(bytes), described.as_ref());
     });
     publish_document();
     publication
@@ -704,6 +721,19 @@ mod exports {
 
     use super::*;
 
+    /// A tenth of a second of it, which is all any of these needs: what is
+    /// under test here is the document, and a file's description is the same
+    /// shape whatever is in it.
+    fn sound() -> Asset {
+        Asset::new(
+            "source".to_owned(),
+            AssetFrames::new(4_800),
+            SampleRate::new(48_000.0).expect("48 kHz is a rate"),
+            1,
+        )
+        .expect("one channel is audio")
+    }
+
     /// Its own `Document` rather than the page's: the `thread_local!` is one
     /// per process and every test here would be reading whatever the last one
     /// left in it — which is the same argument the module comment makes about
@@ -712,15 +742,19 @@ mod exports {
     /// loads a file happened to run second.
     #[wasm_bindgen_test]
     fn a_document_with_no_file_has_nothing_to_play() {
-        let mut document = Document::new();
+        let document = Document::new();
         document
             .project
             .set_tempo(Tempo::new(90.0, Curve::Hold).expect("a tempo is a tempo"));
-        document.start = Position::quarters(2);
+        document.place_clip(Position::quarters(2), Span::quarters(4), AssetFrames::ZERO);
 
         let playback = document.playback();
         assert_eq!(playback.tempo().beats_per_minute(), 90.0);
-        assert!(playback.clip().is_none(), "a clip with no asset behind it");
+        assert!(playback.clip().is_none(), "a clip nothing has been put on");
+        assert!(
+            document.project.clips().is_empty(),
+            "and the controls made none: a clip is what a file arriving makes"
+        );
     }
 
     /// The names the page hands out are distinct, and they are not a counter.
@@ -749,16 +783,7 @@ mod exports {
     #[wasm_bindgen_test]
     fn a_control_that_is_not_a_value_leaves_the_document_standing() {
         let mut document = Document::new();
-        document.use_source(Some((
-            AssetHash::from_bytes([1; 32]),
-            Asset::new(
-                "source".to_owned(),
-                AssetFrames::new(4_800),
-                SampleRate::new(48_000.0).expect("48 kHz is a rate"),
-                1,
-            )
-            .expect("one channel is audio"),
-        )));
+        document.use_source(AssetHash::from_bytes([1; 32]), Some(&sound()));
 
         document.set_strip(0, 0.75, -0.5, false);
         document.set_strip(0, f32::NAN, 9.0, false);
@@ -782,31 +807,56 @@ mod exports {
         );
     }
 
+    /// A file the page could not describe replaces the one that was playing,
+    /// and what replaces it is silence.
+    ///
+    /// The bytes in the region are the new ones by the time the document hears
+    /// about them, so a channel still naming the last file would play what
+    /// arrived under the name of what did not. It names the new file instead,
+    /// and the document has no description of that one — a dangling name, which
+    /// reads as the absence it is (D12).
+    #[wasm_bindgen_test]
+    fn a_file_the_page_could_not_describe_is_silence_rather_than_the_last_one() {
+        let mut document = Document::new();
+        document.use_source(AssetHash::from_bytes([1; 32]), Some(&sound()));
+        assert!(document.playback().clip().is_some(), "the first file plays");
+
+        document.use_source(AssetHash::from_bytes([2; 32]), None);
+
+        assert!(
+            document.playback().clip().is_none(),
+            "and the second does not"
+        );
+        assert_eq!(
+            document.project.channels().len(),
+            1,
+            "through the strip that was already there"
+        );
+        assert_eq!(
+            document.project.assets().len(),
+            1,
+            "and the file it could describe is still described"
+        );
+    }
+
     /// The mixer is read out of the document now, so a second file goes to the
     /// channel that is already there rather than making another one.
     #[wasm_bindgen_test]
     fn a_second_file_is_heard_through_the_channel_the_first_one_made() {
         let mut document = Document::new();
-        let file = |first: u8| {
-            (
-                AssetHash::from_bytes([first; 32]),
-                Asset::new(
-                    "source".to_owned(),
-                    AssetFrames::new(4_800),
-                    SampleRate::new(48_000.0).expect("48 kHz is a rate"),
-                    1,
-                )
-                .expect("one channel is audio"),
-            )
-        };
 
-        document.use_source(Some(file(1)));
+        document.use_source(AssetHash::from_bytes([1; 32]), Some(&sound()));
         document.set_strip(0, 0.25, 0.0, false);
-        document.use_source(Some(file(2)));
+        document.use_source(AssetHash::from_bytes([2; 32]), Some(&sound()));
 
         assert_eq!(document.project.channels().len(), 1, "one channel, not two");
+        assert_eq!(document.project.clips().len(), 1, "and one clip, not two");
         let audible = document.playback().clip().expect("a file and a clip");
-        assert_eq!(audible.asset(), file(2).0, "playing the second file");
+        assert_eq!(
+            audible.asset(),
+            AssetHash::from_bytes([2; 32]),
+            "playing the second file"
+        );
         assert_eq!(
             audible.channel().gain().amplitude(),
             0.25,
