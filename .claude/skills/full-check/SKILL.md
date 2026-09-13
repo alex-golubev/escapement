@@ -73,6 +73,11 @@ themselves are diff-scoped in CI; locally, run one when a change adds logic:
 python3 tools/mutants.py host --in-diff /tmp/pr.diff   # after: git diff origin/main...HEAD > /tmp/pr.diff
 ```
 
+**Take the diff that way, and after committing.** A file that is still
+untracked is not in `git diff` at all, so `--in-diff` skips every mutant in it
+and reports on what is left as though that were the change — a new module can
+go entirely untested under a run that ends in "0 missed".
+
 Surviving mutants on `Cells::fence_release` and `fence_acquire` are expected —
 `.claude/rules/protocol.md` says why.
 
