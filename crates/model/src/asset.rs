@@ -35,17 +35,56 @@ impl AssetHash {
     pub const fn bytes(self) -> [u8; 32] {
         self.0
     }
+
+    /// How a document holds it: 64 hexadecimal characters, lower case.
+    ///
+    /// Not the base64 a minted name is spelled in (D17), and the reason is that
+    /// this one is not minted. It comes from whatever hashed the file, it is
+    /// quoted in logs and compared against a store's own listing by eye, and
+    /// hexadecimal is the spelling everything that hashes bytes already uses.
+    #[must_use]
+    pub fn spell(self) -> String {
+        use fmt::Write;
+
+        self.0.iter().fold(String::new(), |mut spelling, byte| {
+            let _ = write!(spelling, "{byte:02x}");
+            spelling
+        })
+    }
+
+    /// A hash back out of a document, or nothing if what is there is not one.
+    ///
+    /// Upper case is refused rather than accepted, so that one file has one
+    /// spelling: two would be two keys in a store that exists to hold one entry
+    /// per set of bytes.
+    #[must_use]
+    pub fn read(spelling: &str) -> Option<Self> {
+        let spelling = spelling.as_bytes();
+        if spelling.len() != 64 {
+            return None;
+        }
+        let mut bytes = [0; 32];
+        for (byte, pair) in bytes.iter_mut().zip(spelling.as_chunks::<2>().0) {
+            *byte = (digit(pair[0])? << 4) + digit(pair[1])?;
+        }
+        Some(Self(bytes))
+    }
 }
 
-/// Hexadecimal and full width. Two files differ somewhere in those bytes, and
-/// a printer that stopped early would say they were the same file.
+/// What a hexadecimal character is worth, or nothing if it is not one.
+fn digit(character: u8) -> Option<u8> {
+    match character {
+        b'0'..=b'9' => Some(character - b'0'),
+        b'a'..=b'f' => Some(character - b'a' + 10),
+        _ => None,
+    }
+}
+
+/// Full width. Two files differ somewhere in those bytes, and a printer that
+/// stopped early would say they were the same file.
 impl fmt::Debug for AssetHash {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "AssetHash(")?;
-        for byte in self.0 {
-            write!(f, "{byte:02x}")?;
-        }
-        write!(f, ")")
+        write!(f, "AssetHash({})", self.spell())
     }
 }
 
@@ -183,6 +222,47 @@ mod tests {
         let bytes = core::array::from_fn(|i| i as u8);
 
         assert_eq!(AssetHash::from_bytes(bytes).bytes(), bytes);
+    }
+
+    #[test]
+    fn a_hash_survives_the_round_trip_through_its_spelling() {
+        for bytes in [[0; 32], [0xff; 32], core::array::from_fn(|i| i as u8)] {
+            let hash = AssetHash::from_bytes(bytes);
+            let spelling = hash.spell();
+
+            assert_eq!(spelling.len(), 64);
+            assert_eq!(AssetHash::read(&spelling), Some(hash));
+        }
+    }
+
+    #[test]
+    fn a_hash_is_spelled_from_the_first_byte_to_the_last() {
+        let mut bytes = [0; 32];
+        bytes[0] = 0x0a;
+        bytes[31] = 0xf0;
+
+        assert_eq!(
+            AssetHash::from_bytes(bytes).spell(),
+            "0a000000000000000000000000000000000000000000000000000000000000f0"
+        );
+    }
+
+    #[test]
+    fn what_is_not_a_hash_is_refused() {
+        let spelling = AssetHash::from_bytes([0xab; 32]).spell();
+
+        assert_eq!(AssetHash::read(&spelling[..63]), None, "too short");
+        assert_eq!(AssetHash::read(&format!("{spelling}0")), None, "too long");
+        assert_eq!(
+            AssetHash::read(&spelling.replace("ab", "az")),
+            None,
+            "not a digit"
+        );
+        assert_eq!(
+            AssetHash::read(&spelling.to_uppercase()),
+            None,
+            "the other case is a second spelling"
+        );
     }
 
     /// Identity is the bytes and all of them: a file differing in the last one

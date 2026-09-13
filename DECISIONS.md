@@ -920,3 +920,77 @@ so panning a sound makes it louder.
 speakers, and what that position does to a signal is the engine's — which is
 what lets a stereo channel, when one arrives, take the balance law without the
 document changing at all.
+
+---
+
+<a id="d26"></a>
+
+## D26 — 2026-09-13 — A rank is a base-256 fraction with the peer on the end
+
+*Governs §2.4 and §2.6. The answer and what it refused are in
+`ARCHITECTURE.md`; this is the argument.*
+
+§2.4 says the rank generator is ours and names its three properties: a key
+strictly between two keys, a longer key when there is no room, and the peer on
+the end. This is how they are met, and why the off-the-shelf answer was not
+taken after all.
+
+**The representation.** A non-empty string of bytes, compared the way two
+strings are — a fraction written in base 256 after the point. One invariant:
+**the last byte is never zero.** It is not tidiness. Without it the pair
+`[0x40]` and `[0x40, 0x00]` is representable, those are the same fraction
+written twice, and there is no key strictly between them at all — so the
+generator would need an answer for "these two neighbours have no room", which
+is an ordinary drag with nothing to do. Refused at the reader instead, the pair
+cannot arise.
+
+**Minting between two keys.** Walk the two in step while their bytes agree,
+copying them. At the first place they differ: if there is a byte strictly
+between the two, take the middle of them and stop; if they are adjacent, take
+the lower one and go on past the end of the lower key, which is the "longer key
+when there is no room" case. Below a key with no lower bound, halve its last
+byte — or, when that byte is 1, replace it with zero and append. Above a key
+with no upper bound, raise its last byte, and only widen when the byte is full:
+a collection built by appending stays one byte wide for 127 entries instead of
+growing a byte an entry.
+
+**The peer, and why appending it is safe.** The client identifier goes on the
+end of the minted key — eight bytes, the whole of it, because a truncated one
+would collide by construction rather than by chance and the width is nothing
+against a collection a person arranged by hand. That it leaves the key where it
+was put is not obvious and is the reason this entry exists: in **every** branch
+above, the minted key is made **strictly** smaller than the upper bound at a
+position inside its own length, so anything appended after that position keeps
+it below; and it is above the lower bound either at such a position or by having
+the lower bound as a proper prefix, which appending cannot undo either. The one
+adjustment is a client identifier ending in a zero byte, which would break the
+invariant above — a `1` goes after it, and the mapping from identifier to tail
+stays one-to-one because the two cases have different lengths.
+
+**The peer rather than random bytes**, which is what Loro's fork uses. A peer
+cannot collide with itself, and it does not need to: two mints into one gap from
+one replica happen one after the other, and the second sees the first as its
+neighbour. Only concurrent mints can agree, and those come from different
+replicas by definition. Taking the peer also costs no plumbing — yrs already
+mints a 53-bit client identifier per document, from the browser's generator on
+the platform that has one — and it makes a rank deterministic, so a test can
+write one down.
+
+**Why not the ready-made crate.** `fractional_index` (jamsocket, MIT, no runtime
+dependencies) has no peer on the end, and one cannot be added from outside: its
+keys end in a terminator byte, so bytes appended after it are read as part of
+the fraction, and its `new_between` leaves no room reserved for them. Loro's
+fork solves exactly that — it moved the terminator into the middle and gave
+`new_between` a minimum gap — but it reaches its randomness through `rand 0.8`
+in its public API, which brings `getrandom` without the `js` feature and does
+not compile for `wasm32-unknown-unknown` at all; and its decoder accepts any
+bytes, so the panics inside its generator become reachable from a document that
+arrived. The whole of what was taken instead is 110 lines.
+
+**What the properties are worth is in the tests, not here.** The generator is
+shaken by `proptest`: a key lands between whichever ends it was given, two peers
+never mint one key, a gap can be filled sixty-four times over, and every minted
+key is one the reader takes back. The document above it is shaken the same way,
+and `the_reorder_a_list_would_have_forced_loses_the_edit_beside_it` is the test
+that shows why a convergence property alone would have been worth nothing —
+D19's measurement, in the form a test can keep.

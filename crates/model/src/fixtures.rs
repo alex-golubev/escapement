@@ -14,6 +14,14 @@ impl Counter {
     pub const fn new() -> Self {
         Self(0)
     }
+
+    /// A source that starts somewhere else, for a test with two replicas in
+    /// it. Two counters from zero mint one name twice, which is exactly the
+    /// collision 128 random bits exist to avoid — and a test standing on it
+    /// would pass while saying nothing.
+    pub const fn starting_at(first: u128) -> Self {
+        Self(first)
+    }
 }
 
 impl Entropy for Counter {

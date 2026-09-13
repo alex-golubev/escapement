@@ -20,6 +20,7 @@ pub mod pattern;
 pub mod playback;
 pub mod playlist;
 pub mod project;
+mod rank;
 pub mod timeline;
 
 // `Frames` is deliberately not among these and is reached as `asset::Frames`,

@@ -16,6 +16,11 @@ escapement-model.workspace = true
 # document holds ticks, and nothing but this crate converts between them.
 escapement-time.workspace = true
 escapement-view.workspace = true
+# For `crypto.getRandomValues`, which is where the name of a new entity comes
+# from: 128 bits nobody else will mint (§2.6). `Math.random` is not one of the
+# things it could be instead — it has fewer bits of state than a name has bits.
+# MIT/Apache-2.0.
+js-sys = "0.3"
 # The interface module is the one that goes through `wasm-bindgen`, and the
 # check below needs the handle to its own memory. MIT/Apache-2.0.
 wasm-bindgen = "0.2"
@@ -26,7 +31,6 @@ wasm-bindgen = "0.2"
 # The test below has to play the engine's part — write a header, drain the ring,
 # publish a state block — and that is the protocol's own machinery.
 escapement-protocol.workspace = true
-js-sys = "0.3"
 wasm-bindgen-test = "0.3"
 
 [lints]
