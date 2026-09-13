@@ -322,6 +322,8 @@ One thing, and it is not the ecosystem:
   the same key. Off-the-shelf implementations exist; the properties are ours to
   test either way, because this is the piece holding up the invariant in
   `.claude/rules/model.md` that no list in the document may hold an entity.
+  Written 2026-09-13; the off-the-shelf ones turned out not to fit, and why is
+  in [D26](DECISIONS.md#d26) along with the construction.
 
 Against that, what a Yjs-compatible format brings: a **sync transport** that can
 start from an existing Rust server rather than an empty file, a **presence

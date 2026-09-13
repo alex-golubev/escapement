@@ -17,7 +17,7 @@ use std::cell::RefCell;
 use escapement_export::render_to_wav;
 use escapement_model::asset::Frames as AssetFrames;
 use escapement_model::document;
-use escapement_model::mixer::{Channel, ChannelSource, Gain, Insert, Pan};
+use escapement_model::mixer::{Channel, ChannelSource, Gain, Pan};
 use escapement_model::playback::Playback;
 use escapement_model::playlist::{Clip, ClipSource, Lane};
 use escapement_model::project::Parts;
@@ -26,12 +26,43 @@ use escapement_model::{Asset, AssetHash, Entropy, Id, Project};
 use escapement_time::tempo::Curve;
 use escapement_time::{Position, SampleRate, Span, TICKS_PER_QUARTER};
 use escapement_view::{Command, CommandKind, Link, Stage};
+use js_sys::Uint8Array;
 use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen]
 extern "C" {
     #[wasm_bindgen(js_namespace = console)]
     fn log(text: &str);
+
+    /// The browser's own generator, filling an array of the host's.
+    ///
+    /// **Not a view into this module's memory.** It is shared, and
+    /// `getRandomValues` refuses a buffer backed by a `SharedArrayBuffer` — so
+    /// the bytes are drawn over there and copied across.
+    ///
+    /// Bound without `catch`, which is a claim and not an oversight: the
+    /// isolation headers that make the memory shared at all are what make this
+    /// a secure context, and `crypto` is there in every context that can load
+    /// this module.
+    #[wasm_bindgen(js_namespace = crypto, js_name = getRandomValues)]
+    fn fill_with_random(array: &Uint8Array);
+}
+
+/// Where the name of a new entity comes from.
+///
+/// A unit struct rather than a handle: there is nothing to keep between calls,
+/// and two of these are two draws from the same generator rather than two
+/// sequences that could line up — which is what a counter here got wrong.
+struct Random;
+
+impl Entropy for Random {
+    fn next_u128(&mut self) -> u128 {
+        let array = Uint8Array::new_with_length(16);
+        fill_with_random(&array);
+        let mut bytes = [0; 16];
+        array.copy_to(&mut bytes);
+        u128::from_be_bytes(bytes)
+    }
 }
 
 thread_local! {
@@ -43,12 +74,12 @@ thread_local! {
 
     /// What the project says, which is the only thing the engine is ever told.
     ///
-    /// **The clock is in the CRDT and the rest is still fields**, built into a
-    /// document on demand. The entities have no setters by design (`model.md`),
-    /// so what edits them is `escapement_model::document`, and each of them
-    /// moves under it in turn; until one has, this is where its control's value
-    /// lands and `Project::new` is how it becomes something the projection can
-    /// read.
+    /// **The clock and the mixer are in the CRDT; the playlist is still
+    /// fields**, built into a document on demand. The entities have no setters
+    /// by design (`model.md`), so what edits them is
+    /// `escapement_model::document`, and each of them moves under it in turn;
+    /// until one has, this is where its control's value lands and
+    /// `Project::new` is how it becomes something the projection can read.
     static DOCUMENT: RefCell<Document> = RefCell::new(Document::new());
 }
 
@@ -58,45 +89,32 @@ thread_local! {
 /// which is which: what `project` holds is the document, what sits beside it is
 /// waiting to move under it.
 struct Document {
-    /// The document itself, holding what has moved into it so far.
+    /// The document itself, holding what has moved into it so far — the clock,
+    /// the master and the channel below.
     project: document::Document,
     start: Position,
     length: Span,
     trim: AssetFrames,
-    /// Channel, insert and master, in the order the signal takes them.
-    strips: [(f32, f32, bool); 3],
-    asset: Option<(AssetHash, AssetFrames, SampleRate, u16)>,
-    master: Id<Insert>,
-    channel: Id<Channel>,
+    /// The channel the file is heard through, made when the first one arrives.
+    /// A channel with no source is not one, so there is none before that.
+    channel: Option<Id<Channel>>,
+    /// What the document would know about the file, which is not in it yet.
+    asset: Option<(AssetHash, Asset)>,
     lane: Id<Lane>,
     clip: Id<Clip>,
 }
 
-/// Names a page can hand out without a source of randomness it has no reason to
-/// reach for: these four entities are made once, at load, and never again.
-struct Counted(u128);
-
-impl Entropy for Counted {
-    fn next_u128(&mut self) -> u128 {
-        self.0 += 1;
-        self.0
-    }
-}
-
 impl Document {
     fn new() -> Self {
-        let mut entropy = Counted(0);
         Self {
-            project: document::Document::create("Slice one"),
+            project: document::Document::create("Slice one", Random),
             start: Position::ZERO,
             length: Span::quarters(4),
             trim: AssetFrames::ZERO,
-            strips: [(1.0, 0.0, false); 3],
+            channel: None,
             asset: None,
-            master: Id::mint(&mut entropy),
-            channel: Id::mint(&mut entropy),
-            lane: Id::mint(&mut entropy),
-            clip: Id::mint(&mut entropy),
+            lane: Id::mint(&mut Random),
+            clip: Id::mint(&mut Random),
         }
     }
 
@@ -106,46 +124,18 @@ impl Document {
     /// says, and the file is rendered from it — which is what keeps the two
     /// from drifting (D24).
     fn playback(&self) -> Playback {
-        let Some((hash, frames, rate, channels)) = self.asset else {
-            return Playback::of(&Project::new(self.parts(None)), self.clip);
-        };
-        let asset = Asset::new("source".to_owned(), frames, rate, channels);
-        Playback::of(
-            &Project::new(self.parts(asset.map(|asset| (hash, asset)))),
-            self.clip,
-        )
+        Playback::of(&Project::new(self.parts()), self.clip)
     }
 
-    fn parts(&self, asset: Option<(AssetHash, Asset)>) -> Parts {
-        let mut parts = Parts::new(self.project.name(), self.master);
+    fn parts(&self) -> Parts {
+        let mut parts = Parts::new(self.project.name(), self.project.master());
         parts.timeline = self.project.timeline();
+        parts.inserts = self.project.inserts();
+        parts.channels = self.project.channels();
 
-        let (channel_gain, channel_pan, channel_mute) = self.strips[0];
-        let (insert_gain, insert_pan, insert_mute) = self.strips[1];
-        parts.inserts.push((
-            self.master,
-            Insert::new(
-                "Master".to_owned(),
-                gain_or_unity(insert_gain),
-                pan_or_centre(insert_pan),
-                insert_mute,
-            ),
-        ));
-
-        let Some((hash, asset)) = asset else {
+        let (Some(channel), Some((hash, asset))) = (self.channel, self.asset.clone()) else {
             return parts;
         };
-        parts.channels.push((
-            self.channel,
-            Channel::new(
-                "Source".to_owned(),
-                ChannelSource::Sampler(hash),
-                self.master,
-                gain_or_unity(channel_gain),
-                pan_or_centre(channel_pan),
-                channel_mute,
-            ),
-        ));
         parts.lanes.push((self.lane, Lane::new("Audio".to_owned())));
         parts.clips.insert(
             self.clip,
@@ -154,7 +144,7 @@ impl Document {
                 self.start,
                 self.length,
                 ClipSource::Audio {
-                    channel: self.channel,
+                    channel,
                     trim: self.trim,
                 },
             ),
@@ -162,26 +152,80 @@ impl Document {
         parts.assets.insert(hash, asset);
         parts
     }
+
+    /// A file arrived, or one that is not a file did.
+    ///
+    /// The channel is made the first time and pointed at the new bytes
+    /// afterwards, which is what loading a second file into one strip is. A
+    /// file the page could not describe leaves the channel where it is and
+    /// takes the asset away, so the project is silent rather than playing the
+    /// last one under the new one's name.
+    fn use_source(&mut self, arrived: Option<(AssetHash, Asset)>) {
+        self.asset = arrived.clone();
+        let Some((hash, _)) = arrived else {
+            return;
+        };
+        let source = ChannelSource::Sampler(hash);
+        match self.channel {
+            Some(name) => self.project.set_channel_source(name, source),
+            None => {
+                let master = self.project.master();
+                let channel = Channel::new(
+                    "Source".to_owned(),
+                    source,
+                    master,
+                    Gain::UNITY,
+                    Pan::CENTRE,
+                    false,
+                );
+                self.channel = Some(self.project.add_channel(&channel));
+            }
+        }
+    }
+
+    /// One strip of the route, from three numbers a control gave.
+    ///
+    /// A number that is not a value leaves that register standing, as a tempo
+    /// that is not one does: the control was wrong, and the last good value is
+    /// the one in the document rather than a default invented here (D24).
+    ///
+    /// The page sends all six numbers whenever one of them moves, and nothing
+    /// here filters them — the document does not write a register that already
+    /// holds the value, which is where that belongs and where it is tested.
+    fn set_strip(&self, stage: u32, amplitude: f32, place: f32, mute: bool) {
+        let gain = Gain::new(amplitude);
+        let pan = Pan::new(place);
+        match stage {
+            0 => {
+                let Some(name) = self.channel else {
+                    return;
+                };
+                if let Some(gain) = gain {
+                    self.project.set_channel_gain(name, gain);
+                }
+                if let Some(pan) = pan {
+                    self.project.set_channel_pan(name, pan);
+                }
+                self.project.set_channel_mute(name, mute);
+            }
+            // The insert the channel feeds, which in slice 1's project is the
+            // master itself — there is no strip between the two, and the page
+            // has two sets of controls rather than three because of it.
+            1 => {
+                let name = self.project.master();
+                if let Some(gain) = gain {
+                    self.project.set_insert_gain(name, gain);
+                }
+                if let Some(pan) = pan {
+                    self.project.set_insert_pan(name, pan);
+                }
+                self.project.set_insert_mute(name, mute);
+            }
+            _ => {}
+        }
+    }
 }
 
-/// A control's value is a number from a slider, so what the document refuses is
-/// the slider's mistake and not a merge's: the last good value is not available
-/// here, and unity is what a strip that was never set is at.
-fn gain_or_unity(amplitude: f32) -> Gain {
-    Gain::new(amplitude).unwrap_or(Gain::UNITY)
-}
-
-/// See [`gain_or_unity`].
-fn pan_or_centre(position: f32) -> Pan {
-    Pan::new(position).unwrap_or(Pan::CENTRE)
-}
-
-/// Sends the engine what the document now says.
-///
-/// Every value crossed the document's own constructors on the way here, so
-/// there is nothing left for the engine to refuse — which is what makes the
-/// file and the ring agree without the state block echoing a single parameter
-/// (D24, D22).
 fn publish_document() {
     let playback = DOCUMENT.with_borrow(Document::playback);
     let tempo = playback.tempo();
@@ -291,11 +335,7 @@ pub fn place_clip(start_quarters: f64, length_quarters: f64, trim_frames: f64) {
 /// One strip of the route: `0` the channel, `1` the insert, `2` the master.
 #[wasm_bindgen]
 pub fn set_strip(stage: u32, gain: f32, pan: f32, mute: bool) {
-    DOCUMENT.with_borrow_mut(|document| {
-        if let Some(strip) = document.strips.get_mut(stage as usize) {
-            *strip = (gain, pan, mute);
-        }
-    });
+    DOCUMENT.with_borrow(|document| document.set_strip(stage, gain, pan, mute));
     publish_document();
 }
 
@@ -350,14 +390,16 @@ pub fn use_audio(offset: u32, frames: u32, channels: u32, rate_hz: f64) -> u32 {
     DOCUMENT.with_borrow_mut(|document| {
         let mut bytes = [0u8; 32];
         bytes[..4].copy_from_slice(&publication.to_le_bytes());
-        document.asset = SampleRate::new(rate_hz).map(|rate| {
-            (
-                AssetHash::from_bytes(bytes),
+        let arrived = SampleRate::new(rate_hz).and_then(|rate| {
+            let asset = Asset::new(
+                "source".to_owned(),
                 AssetFrames::new(u64::from(frames)),
                 rate,
                 u16::try_from(channels).unwrap_or(u16::MAX),
-            )
+            )?;
+            Some((AssetHash::from_bytes(bytes), asset))
         });
+        document.use_source(arrived);
     });
     publish_document();
     publication
@@ -681,52 +723,94 @@ mod exports {
         assert!(playback.clip().is_none(), "a clip with no asset behind it");
     }
 
-    /// Four entities are made once at load, and they have to be four. Held as
-    /// one name they resolve to each other — a clip on the channel that is also
-    /// the insert that is also the master — and every read below still answers,
-    /// which is why nothing else here would notice.
+    /// The names the page hands out are distinct, and they are not a counter.
+    ///
+    /// The second half is the one worth a test: a counter here mints one, two,
+    /// three, and two browsers offline both reach them — the merge then keeps
+    /// one entry holding the fields of two entities, with nothing left to
+    /// record that there were two (§2.6). This is the only test in the tree
+    /// that can ask, because `crypto` is the browser's.
     #[wasm_bindgen_test]
-    fn the_names_the_page_hands_out_are_not_one_name() {
-        let mut entropy = Counted(0);
-        let first = entropy.next_u128();
-        let second = entropy.next_u128();
-        let third = entropy.next_u128();
+    fn the_names_the_page_hands_out_are_not_one_name_and_not_a_counter() {
+        let names: [u128; 3] = core::array::from_fn(|_| Random.next_u128());
 
-        assert_ne!(first, second);
-        assert_ne!(second, third);
-        assert_ne!(first, 0, "zero is what an unwritten field holds");
+        assert_ne!(names[0], names[1]);
+        assert_ne!(names[1], names[2]);
+        assert_ne!(names[0], 0, "zero is what an unwritten field holds");
+        assert!(
+            names.iter().any(|name| *name > u128::from(u64::MAX)),
+            "a counter never reaches the high half, and random names live there"
+        );
     }
 
     /// A control that is not a value the document accepts does not take the
-    /// document with it: the slider is the one that was wrong, and unity is
-    /// where a strip nobody set sits.
+    /// document with it: the slider is the one that was wrong, and what the
+    /// document already held is the last value anybody meant.
     #[wasm_bindgen_test]
     fn a_control_that_is_not_a_value_leaves_the_document_standing() {
         let mut document = Document::new();
-        document.asset = Some((
+        document.use_source(Some((
             AssetHash::from_bytes([1; 32]),
-            AssetFrames::new(4_800),
-            SampleRate::new(48_000.0).expect("48 kHz is a rate"),
-            1,
-        ));
-        document.strips[0] = (f32::NAN, 9.0, false);
-        document.strips[1] = (0.5, 0.0, false);
+            Asset::new(
+                "source".to_owned(),
+                AssetFrames::new(4_800),
+                SampleRate::new(48_000.0).expect("48 kHz is a rate"),
+                1,
+            )
+            .expect("one channel is audio"),
+        )));
+
+        document.set_strip(0, 0.75, -0.5, false);
+        document.set_strip(0, f32::NAN, 9.0, false);
+        document.set_strip(1, 0.5, 0.0, false);
 
         let audible = document.playback().clip().expect("a file and a clip");
         assert_eq!(
-            audible.channel().gain(),
-            Gain::UNITY,
-            "a gain that is not one took the strip with it"
+            audible.channel().gain().amplitude(),
+            0.75,
+            "a gain that is not one took the last one with it"
         );
         assert_eq!(
-            audible.channel().pan(),
-            Pan::CENTRE,
-            "a place that is not one between the speakers is the middle"
+            audible.channel().pan().position(),
+            -0.5,
+            "and a place that is not one between the speakers did the same"
         );
         assert_eq!(
             audible.insert().gain().amplitude(),
             0.5,
             "the strip beside it did not survive"
+        );
+    }
+
+    /// The mixer is read out of the document now, so a second file goes to the
+    /// channel that is already there rather than making another one.
+    #[wasm_bindgen_test]
+    fn a_second_file_is_heard_through_the_channel_the_first_one_made() {
+        let mut document = Document::new();
+        let file = |first: u8| {
+            (
+                AssetHash::from_bytes([first; 32]),
+                Asset::new(
+                    "source".to_owned(),
+                    AssetFrames::new(4_800),
+                    SampleRate::new(48_000.0).expect("48 kHz is a rate"),
+                    1,
+                )
+                .expect("one channel is audio"),
+            )
+        };
+
+        document.use_source(Some(file(1)));
+        document.set_strip(0, 0.25, 0.0, false);
+        document.use_source(Some(file(2)));
+
+        assert_eq!(document.project.channels().len(), 1, "one channel, not two");
+        let audible = document.playback().clip().expect("a file and a clip");
+        assert_eq!(audible.asset(), file(2).0, "playing the second file");
+        assert_eq!(
+            audible.channel().gain().amplitude(),
+            0.25,
+            "through the strip the first one was set to"
         );
     }
 }

@@ -15,5 +15,16 @@ escapement-time.workspace = true
 # audio thread.
 yrs = "0.27"
 
+# The properties of the rank are the reason this crate exists in the shape it
+# does, and a handful of written-down keys cannot state them: what has to hold
+# is "for any two keys", over the ones nobody would think to type. §7 names this
+# as the first thing proptest is for. MIT/Apache-2.0.
+#
+# `default-features = false` drops `fork`, `timeout` and `bit-set` — the first
+# two run each case in a subprocess, which buys catching a segfault in code that
+# has `#![forbid(unsafe_code)]` on it.
+[dev-dependencies]
+proptest = { version = "1", default-features = false, features = ["std"] }
+
 [lints]
 workspace = true

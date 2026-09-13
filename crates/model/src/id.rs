@@ -56,8 +56,11 @@ pub struct Id<T> {
 
 impl<T> Id<T> {
     /// A name no one else will mint.
+    ///
+    /// `?Sized`, so that a source held behind a `dyn` is one of these too — a
+    /// document owns its source and does not know what kind it is.
     #[must_use]
-    pub fn mint(entropy: &mut impl Entropy) -> Self {
+    pub fn mint(entropy: &mut (impl Entropy + ?Sized)) -> Self {
         Self::from_bits(entropy.next_u128())
     }
 
@@ -118,12 +121,12 @@ impl<T> Id<T> {
         for (group, &character) in spelling.iter().enumerate() {
             let place = index(character)?;
             if group + 1 < SPELLED {
-                bits = (bits << 6) | u128::from(place);
+                bits = (bits << 6) + u128::from(place);
             } else {
                 if place & 0xf != 0 {
                     return None;
                 }
-                bits = (bits << 2) | u128::from(place >> 4);
+                bits = (bits << 2) + u128::from(place >> 4);
             }
         }
         Some(Self::from_bits(bits))
@@ -307,6 +310,12 @@ mod tests {
             (
                 0x0123_4567_89ab_cdef_0123_4567_89ab_cdef,
                 "ASNFZ4mrze8BI0VniavN7w",
+            ),
+            // The two characters this alphabet differs from the ordinary one
+            // in, and so the only place the choice of alphabet is visible.
+            (
+                0xfbf0_0000_0000_0000_0000_0000_0000_0001,
+                "-_AAAAAAAAAAAAAAAAAAAQ",
             ),
         ] {
             assert_eq!(Id::<Thing>::from_bits(bits).spell(), spelling);
