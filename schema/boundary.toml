@@ -17,8 +17,8 @@ major = 0
 # A ring slot is an 8-byte header followed by an opaque payload (ADR-0015).
 # The slot's own size belongs to records.command_slot and is not repeated here:
 # one number, one place.
-command_payload_offset = 8
-command_payload_size = 24
+command_payload_offset = { value = 8, doc = "Where a slot's payload begins, in bytes from the slot." }
+command_payload_size = { value = 24, doc = "How many bytes of a slot a command has to itself." }
 
 # The staging area is a static in the wasm host (ADR-0020), so how many slots it
 # holds is fixed when the code is compiled. Here rather than in the engine,
@@ -64,10 +64,17 @@ playing = 1
 
 [records.command_slot]
 size = 32
+doc = """
+One slot of the command ring, copied into the staging area as it stands. The
+header is what the engine reads of every slot; the payload only the slot's own
+kind knows how to read."""
 fields = [
-  { name = "kind", type = "u32", offset = 0 },
-  { name = "frame_offset", type = "u32", offset = 4 },
-  { name = "payload", type = "u8", count = 24, offset = 8 },
+  { name = "kind", type = "u32", offset = 0, doc = "Which command this is, one of the `command_kind` codes." },
+  { name = "frame_offset", type = "u32", offset = 4, doc = """
+Where in the block the command takes effect, in frames from its start. The
+engine renders up to that point, applies the command and carries on; at or
+beyond the end of the block the command is dropped as `bad_frame_offset`.""" },
+  { name = "payload", type = "u8", count = 24, offset = 8, doc = "The command's own fields, laid out by its kind, and zero wherever the kind declares nothing." },
 ]
 
 # The block the engine renders into. It is a static in the wasm host, so its
@@ -135,14 +142,17 @@ is the curve, not a second decay.""" },
 # kinds never share a layout, so there is nothing to reinterpret.
 
 [commands.play]
+doc = "Start the transport."
 fields = [
-  { name = "from_frame", type = "u32", offset = 0 },
+  { name = "from_frame", type = "u32", offset = 0, doc = "Where to start, in frames from the start of the timeline." },
 ]
 
 [commands.stop]
+doc = "Stop the transport."
 fields = []
 
 [commands.set_tempo]
+doc = "Set the tempo from this point in the block onwards."
 # Integer micro-BPM rather than a float: the document holds exact values and
 # the engine must not disagree with the export about the tempo.
 fields = [
@@ -157,9 +167,17 @@ block reports `bad_command_payload`.""" },
 [[exports]]
 name = "memory"
 kind = "memory"
+doc = """
+The engine's own linear memory, unshared, and never grown after `init`: growing
+it detaches every view the glue holds over it (ADR-0015)."""
 
 [[exports]]
 name = "abi_version"
+doc = """
+The ABI this module was built against. The glue compares it with the
+`ABI_VERSION` generated from the same file and refuses the module if they
+differ: a stale binary does not fail, it reads the same bytes as something
+else (ADR-0015)."""
 params = []
 returns = "u32"
 
@@ -176,11 +194,13 @@ returns = "u32"
 
 [[exports]]
 name = "command_staging_ptr"
+doc = "Where the glue copies the slots it drained. Stable for the life of the instance, so the glue takes its view once."
 params = []
 returns = "u32"
 
 [[exports]]
 name = "audio_out_ptr"
+doc = "Where the engine leaves the block it rendered. Stable for the life of the instance, so the glue takes its views once."
 params = []
 returns = "u32"
 
