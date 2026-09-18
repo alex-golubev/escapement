@@ -133,6 +133,14 @@ impl Type {
             Type::F64 => "Float64",
         }
     }
+
+    /// `getUint8` and `setUint8` take no byte-order argument, because one byte
+    /// has no byte order. Every other accessor takes it and the generated code
+    /// always passes it (ADR-0013). Handing a third argument to `setUint8` is
+    /// not a harmless extra: TypeScript rejects the call.
+    pub fn view_takes_endianness(self) -> bool {
+        self.size() > 1
+    }
 }
 
 impl Field {

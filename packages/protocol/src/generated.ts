@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 // The boundary between the engine and the TypeScript half.
-// Every read and write below passes the little-endian flag explicitly.
+// Every multi-byte read and write below passes the little-endian flag.
 // Atomic accessors take an Int32Array and a byte offset that must be
 // 4-byte aligned; the generator refuses any field where it is not.
 
@@ -96,7 +96,7 @@ export function storeMeterBlockTransportState(atoms: Int32Array, base: number, v
   Atomics.store(atoms, (base + 12) >> 2, value)
 }
 
-/** Writes a complete `play` slot (kind 1). Hot path: no allocation. */
+/** Writes a `play` slot (kind 1). Hot path: no allocation. */
 export function writePlay(view: DataView, slot: number, frameOffset: number, fromFrame: number): void {
   view.setUint32(slot + CommandSlotOffsets.kind, 1, true)
   view.setUint32(slot + CommandSlotOffsets.frameOffset, frameOffset, true)
@@ -110,7 +110,7 @@ export function readPlay(view: DataView, slot: number) {
   }
 }
 
-/** Writes a complete `set_tempo` slot (kind 3). Hot path: no allocation. */
+/** Writes a `set_tempo` slot (kind 3). Hot path: no allocation. */
 export function writeSetTempo(view: DataView, slot: number, frameOffset: number, microBpm: number): void {
   view.setUint32(slot + CommandSlotOffsets.kind, 3, true)
   view.setUint32(slot + CommandSlotOffsets.frameOffset, frameOffset, true)
@@ -124,7 +124,7 @@ export function readSetTempo(view: DataView, slot: number) {
   }
 }
 
-/** Writes a complete `stop` slot (kind 2). Hot path: no allocation. */
+/** Writes a `stop` slot (kind 2). Hot path: no allocation. */
 export function writeStop(view: DataView, slot: number, frameOffset: number): void {
   view.setUint32(slot + CommandSlotOffsets.kind, 2, true)
   view.setUint32(slot + CommandSlotOffsets.frameOffset, frameOffset, true)

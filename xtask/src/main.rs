@@ -6,6 +6,8 @@ mod emit_rust;
 mod emit_ts;
 mod names;
 mod schema;
+#[cfg(test)]
+mod tests;
 
 use schema::{Export, ExportKind, Field, Schema};
 use sha2::{Digest, Sha256};
