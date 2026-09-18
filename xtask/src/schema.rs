@@ -9,14 +9,17 @@
 
 use crate::names::{pascal, screaming};
 use serde::Deserialize;
+use serde::de::{self, MapAccess, Visitor};
 use std::collections::BTreeMap;
+use std::fmt;
+use std::marker::PhantomData;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Schema {
     pub abi: Abi,
-    pub constants: BTreeMap<String, u64>,
-    pub enums: BTreeMap<String, BTreeMap<String, u32>>,
+    pub constants: BTreeMap<String, Documented<u64>>,
+    pub enums: BTreeMap<String, BTreeMap<String, Documented<u32>>>,
     pub records: BTreeMap<String, Record>,
     pub commands: BTreeMap<String, Command>,
     pub exports: Vec<Export>,
@@ -34,12 +37,16 @@ pub struct Record {
     pub size: usize,
     #[serde(default)]
     pub shared: bool,
+    #[serde(default)]
+    pub doc: Option<String>,
     pub fields: Vec<Field>,
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Command {
+    #[serde(default)]
+    pub doc: Option<String>,
     pub fields: Vec<Field>,
 }
 
@@ -54,10 +61,71 @@ pub struct Field {
     pub count: usize,
     #[serde(default)]
     pub atomic: bool,
+    #[serde(default)]
+    pub doc: Option<String>,
 }
 
 fn one() -> usize {
     1
+}
+
+/// A number in the schema may carry its own prose: `8`, or
+/// `{ value = 8, doc = "..." }`. The generator emits the prose into both
+/// languages so that a unit or a contract reaches the place where the value is
+/// used, rather than dying in a TOML comment. It stays out of the ABI hash: the
+/// hash is what the boundary is, not how the file is written.
+pub struct Documented<T> {
+    pub value: T,
+    pub doc: Option<String>,
+}
+
+impl<T> Documented<T> {
+    fn bare(value: T) -> Self {
+        Self { value, doc: None }
+    }
+}
+
+impl<'de, T: Deserialize<'de>> Deserialize<'de> for Documented<T> {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Either<T>(PhantomData<T>);
+
+        impl<'de, T: Deserialize<'de>> Visitor<'de> for Either<T> {
+            type Value = Documented<T>;
+
+            fn expecting(&self, out: &mut fmt::Formatter) -> fmt::Result {
+                out.write_str("a number, or a table of `value` and `doc`")
+            }
+
+            fn visit_i64<E: de::Error>(self, value: i64) -> Result<Self::Value, E> {
+                T::deserialize(de::value::I64Deserializer::new(value)).map(Documented::bare)
+            }
+
+            fn visit_u64<E: de::Error>(self, value: u64) -> Result<Self::Value, E> {
+                T::deserialize(de::value::U64Deserializer::new(value)).map(Documented::bare)
+            }
+
+            // The table is a struct of its own rather than this type, so that a
+            // misspelled key is reported as an unknown field instead of as a
+            // value matching no shape.
+            fn visit_map<M: MapAccess<'de>>(self, map: M) -> Result<Self::Value, M::Error> {
+                #[derive(Deserialize)]
+                #[serde(deny_unknown_fields)]
+                struct Table<T> {
+                    value: T,
+                    #[serde(default)]
+                    doc: Option<String>,
+                }
+
+                let table = Table::<T>::deserialize(de::value::MapAccessDeserializer::new(map))?;
+                Ok(Documented {
+                    value: table.value,
+                    doc: table.doc,
+                })
+            }
+        }
+
+        deserializer.deserialize_any(Either(PhantomData))
+    }
 }
 
 #[derive(Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
@@ -80,6 +148,8 @@ pub struct Export {
     #[serde(default)]
     pub params: Vec<Param>,
     pub returns: Option<Type>,
+    #[serde(default)]
+    pub doc: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -223,7 +293,7 @@ impl Schema {
     pub fn constant(&self, name: &str) -> Result<usize, String> {
         self.constants
             .get(name)
-            .map(|v| *v as usize)
+            .map(|constant| constant.value as usize)
             .ok_or_else(|| format!("constants.{name} is missing"))
     }
 
@@ -395,9 +465,10 @@ impl Schema {
         for (name, values) in &self.enums {
             let mut seen = BTreeMap::new();
             for (variant, value) in values {
-                if let Some(other) = seen.insert(*value, variant) {
+                if let Some(other) = seen.insert(value.value, variant) {
                     errors.push(format!(
-                        "enums.{name}: {variant} and {other} share the code {value}"
+                        "enums.{name}: {variant} and {other} share the code {}",
+                        value.value
                     ));
                 }
             }

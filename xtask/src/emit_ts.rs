@@ -7,7 +7,7 @@
 // `view_get` / `view_set`, so the byte-order question is answered once.
 
 use crate::names::{camel, pascal, screaming};
-use crate::schema::{ExportKind, Field, Record, Schema, Type};
+use crate::schema::{Documented, ExportKind, Field, Record, Schema, Type};
 use std::fmt::Write as _;
 
 const PAYLOAD_BASE: &str = "slot + COMMAND_PAYLOAD_OFFSET";
@@ -74,18 +74,20 @@ pub fn emit(schema: &Schema, abi_version: u32, abi_hash: u32) -> String {
     let _ = writeln!(out, "export const ABI_HASH = {abi_hash:#010x}");
     let _ = writeln!(out, "export const ABI_VERSION = {abi_version:#010x}\n");
 
-    for (name, value) in &schema.constants {
-        let _ = writeln!(out, "export const {} = {value}", screaming(name));
+    for (name, constant) in &schema.constants {
+        emit_doc(&mut out, "", constant.doc.as_deref());
+        let _ = writeln!(out, "export const {} = {}", screaming(name), constant.value);
     }
     out.push('\n');
 
     for (name, variants) in &schema.enums {
         let type_name = pascal(name);
-        let mut variants: Vec<(&String, u32)> = variants.iter().map(|(k, v)| (k, *v)).collect();
-        variants.sort_by_key(|(_, code)| *code);
+        let mut variants: Vec<(&String, &Documented<u32>)> = variants.iter().collect();
+        variants.sort_by_key(|(_, code)| code.value);
         let _ = writeln!(out, "export const {type_name} = {{");
         for (variant, code) in &variants {
-            let _ = writeln!(out, "  {}: {code},", camel(variant));
+            emit_doc(&mut out, "  ", code.doc.as_deref());
+            let _ = writeln!(out, "  {}: {},", camel(variant), code.value);
         }
         let _ = writeln!(out, "}} as const");
         let _ = writeln!(
@@ -96,6 +98,7 @@ pub fn emit(schema: &Schema, abi_version: u32, abi_hash: u32) -> String {
 
     for (name, record) in &schema.records {
         let type_name = pascal(name);
+        emit_doc(&mut out, "", record.doc.as_deref());
         let _ = writeln!(out, "export const {type_name}Offsets = {{");
         for field in &record.fields {
             let _ = writeln!(out, "  {}: {},", camel(&field.name), field.offset);
@@ -118,23 +121,27 @@ pub fn emit(schema: &Schema, abi_version: u32, abi_hash: u32) -> String {
             let at = offset_expr("base", field.offset, None);
             if field.atomic {
                 let index = atomic_index(field.offset);
+                emit_doc(&mut out, "", field.doc.as_deref());
                 let _ = writeln!(
                     out,
                     "export function load{type_name}{field_name}(atoms: Int32Array, base: number): number {{\n  \
                      return Atomics.load(atoms, {index})\n}}\n"
                 );
+                emit_doc(&mut out, "", field.doc.as_deref());
                 let _ = writeln!(
                     out,
                     "export function store{type_name}{field_name}(atoms: Int32Array, base: number, value: number): void {{\n  \
                      Atomics.store(atoms, {index}, value)\n}}\n"
                 );
             } else {
+                emit_doc(&mut out, "", field.doc.as_deref());
                 let _ = writeln!(
                     out,
                     "export function read{type_name}{field_name}(view: DataView, base: number): number {{\n  \
                      return {}\n}}\n",
                     view_get(field.ty, &at)
                 );
+                emit_doc(&mut out, "", field.doc.as_deref());
                 let _ = writeln!(
                     out,
                     "export function write{type_name}{field_name}(view: DataView, base: number, value: number): void {{\n  \
@@ -153,7 +160,7 @@ pub fn emit(schema: &Schema, abi_version: u32, abi_hash: u32) -> String {
             .enums
             .get("command_kind")
             .and_then(|kinds| kinds.get(name))
-            .copied()
+            .map(|kind| kind.value)
             .unwrap_or_default();
 
         for field in &command.fields {
@@ -174,10 +181,18 @@ pub fn emit(schema: &Schema, abi_version: u32, abi_hash: u32) -> String {
             format!(", {}", params.join(", "))
         };
 
-        let _ = writeln!(
-            out,
-            "/** Writes a complete `{name}` slot (kind {kind}). Hot path: no allocation. */"
-        );
+        emit_doc(&mut out, "", command.doc.as_deref());
+        let mut params_doc = String::new();
+        for field in &command.fields {
+            emit_param(&mut params_doc, &camel(&field.name), field.doc.as_deref());
+        }
+        let writes =
+            format!("Writes a complete `{name}` slot (kind {kind}). Hot path: no allocation.");
+        if params_doc.is_empty() {
+            let _ = writeln!(out, "/** {writes} */");
+        } else {
+            let _ = writeln!(out, "/**\n * {writes}\n{params_doc} */");
+        }
         let _ = writeln!(
             out,
             "export function write{type_name}(view: DataView, slot: number, frameOffset: number{signature}): void {{"
@@ -237,6 +252,7 @@ pub fn emit(schema: &Schema, abi_version: u32, abi_hash: u32) -> String {
 
     let _ = writeln!(out, "export interface EngineExports {{");
     for export in &schema.exports {
+        emit_doc(&mut out, "  ", export.doc.as_deref());
         match export.kind {
             ExportKind::Memory => {
                 let _ = writeln!(out, "  {}: WebAssembly.Memory", export.name);
@@ -259,6 +275,41 @@ pub fn emit(schema: &Schema, abi_version: u32, abi_hash: u32) -> String {
     let _ = writeln!(out, "}}");
 
     out
+}
+
+/// The schema's own prose as a JSDoc block: what a unit or a contract says
+/// reaches the editor of whoever calls the accessor, which a TOML comment does
+/// not. Where the lines break is the schema's to say.
+fn emit_doc(out: &mut String, indent: &str, doc: Option<&str>) {
+    let Some(text) = doc else { return };
+    let mut lines = text.lines();
+    let Some(first) = lines.next() else { return };
+    let rest: Vec<&str> = lines.collect();
+    if rest.is_empty() {
+        let _ = writeln!(out, "{indent}/** {first} */");
+        return;
+    }
+    let _ = writeln!(out, "{indent}/**\n{indent} * {first}");
+    for line in rest {
+        if line.is_empty() {
+            let _ = writeln!(out, "{indent} *");
+        } else {
+            let _ = writeln!(out, "{indent} * {line}");
+        }
+    }
+    let _ = writeln!(out, "{indent} */");
+}
+
+/// A command's field is an argument rather than a property, so its prose
+/// belongs to the writer's parameter.
+fn emit_param(out: &mut String, name: &str, doc: Option<&str>) {
+    let Some(text) = doc else { return };
+    let mut lines = text.lines();
+    let Some(first) = lines.next() else { return };
+    let _ = writeln!(out, " * @param {name} - {first}");
+    for line in lines {
+        let _ = writeln!(out, " *   {line}");
+    }
 }
 
 /// The cold-path read of ADR-0018: a snapshot rather than a view, so that a

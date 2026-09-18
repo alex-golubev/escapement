@@ -6,7 +6,7 @@
 // asserted (ADR-0017).
 
 use crate::names::{pascal, screaming};
-use crate::schema::{ExportKind, Field, Schema};
+use crate::schema::{Documented, ExportKind, Field, Schema};
 use std::fmt::Write as _;
 
 pub fn emit(schema: &Schema, abi_version: u32, abi_hash: u32) -> String {
@@ -36,8 +36,14 @@ pub fn emit(schema: &Schema, abi_version: u32, abi_hash: u32) -> String {
     let _ = writeln!(out, "pub const ABI_HASH: u32 = {abi_hash:#010x};");
     let _ = writeln!(out, "pub const ABI_VERSION: u32 = {abi_version:#010x};\n");
 
-    for (name, value) in &schema.constants {
-        let _ = writeln!(out, "pub const {}: usize = {value};", screaming(name));
+    for (name, constant) in &schema.constants {
+        emit_doc(&mut out, "", constant.doc.as_deref());
+        let _ = writeln!(
+            out,
+            "pub const {}: usize = {};",
+            screaming(name),
+            constant.value
+        );
     }
     out.push('\n');
 
@@ -49,7 +55,8 @@ pub fn emit(schema: &Schema, abi_version: u32, abi_hash: u32) -> String {
             "#[repr(u32)]\n#[derive(Clone, Copy, PartialEq, Eq, Debug)]\npub enum {type_name} {{"
         );
         for (variant, code) in &variants {
-            let _ = writeln!(out, "    {} = {code},", pascal(variant));
+            emit_doc(&mut out, "    ", code.doc.as_deref());
+            let _ = writeln!(out, "    {} = {},", pascal(variant), code.value);
         }
         let _ = writeln!(out, "}}\n\nimpl {type_name} {{");
         let _ = writeln!(
@@ -59,7 +66,8 @@ pub fn emit(schema: &Schema, abi_version: u32, abi_hash: u32) -> String {
         for (variant, code) in &variants {
             let _ = writeln!(
                 out,
-                "            {code} => Some(Self::{}),",
+                "            {} => Some(Self::{}),",
+                code.value,
                 pascal(variant)
             );
         }
@@ -71,11 +79,13 @@ pub fn emit(schema: &Schema, abi_version: u32, abi_hash: u32) -> String {
 
     for (name, record) in &schema.records {
         let type_name = pascal(name);
+        emit_doc(&mut out, "", record.doc.as_deref());
         let _ = writeln!(
             out,
             "#[repr(C)]\n#[derive(Clone, Copy, PartialEq, Debug)]\npub struct {type_name} {{"
         );
         for field in &record.fields {
+            emit_doc(&mut out, "    ", field.doc.as_deref());
             let _ = writeln!(out, "    pub {}: {},", field.name, field.rust_type());
         }
         let _ = writeln!(out, "}}\n");
@@ -113,7 +123,7 @@ pub fn emit(schema: &Schema, abi_version: u32, abi_hash: u32) -> String {
             .enums
             .get("command_kind")
             .and_then(|kinds| kinds.get(name))
-            .copied()
+            .map(|kind| kind.value)
             .unwrap_or_default();
 
         // `derive(Default)` cannot reach an array longer than 32, so a command
@@ -125,6 +135,7 @@ pub fn emit(schema: &Schema, abi_version: u32, abi_hash: u32) -> String {
             "Clone, Copy, PartialEq, Debug, Default"
         };
 
+        emit_doc(&mut out, "", command.doc.as_deref());
         let _ = writeln!(
             out,
             "/// Command `{name}`, code {kind}, read from and written to a slot's payload."
@@ -134,6 +145,7 @@ pub fn emit(schema: &Schema, abi_version: u32, abi_hash: u32) -> String {
             "#[repr(C)]\n#[derive({derives})]\npub struct {type_name} {{"
         );
         for field in &command.fields {
+            emit_doc(&mut out, "    ", field.doc.as_deref());
             let _ = writeln!(out, "    pub {}: {},", field.name, field.rust_type());
         }
         let _ = writeln!(out, "}}\n");
@@ -219,6 +231,19 @@ pub fn emit(schema: &Schema, abi_version: u32, abi_hash: u32) -> String {
     out
 }
 
+/// The schema's own prose, one `///` per line its author wrote. rustfmt does
+/// not rewrap a doc comment, so where the lines break is the schema's to say.
+fn emit_doc(out: &mut String, indent: &str, doc: Option<&str>) {
+    let Some(text) = doc else { return };
+    for line in text.lines() {
+        if line.is_empty() {
+            let _ = writeln!(out, "{indent}///");
+        } else {
+            let _ = writeln!(out, "{indent}/// {line}");
+        }
+    }
+}
+
 fn bytes_at(offset: usize, size: usize) -> String {
     (0..size)
         .map(|i| format!("payload[{}]", offset + i))
@@ -285,8 +310,10 @@ fn write_statements(field: &Field) -> String {
 
 /// Enum variants read best in code order, which is not the alphabetical order
 /// the schema is parsed into.
-fn by_code(variants: &std::collections::BTreeMap<String, u32>) -> Vec<(&String, u32)> {
-    let mut sorted: Vec<(&String, u32)> = variants.iter().map(|(k, v)| (k, *v)).collect();
-    sorted.sort_by_key(|(_, code)| *code);
+fn by_code(
+    variants: &std::collections::BTreeMap<String, Documented<u32>>,
+) -> Vec<(&String, &Documented<u32>)> {
+    let mut sorted: Vec<(&String, &Documented<u32>)> = variants.iter().collect();
+    sorted.sort_by_key(|(_, code)| code.value);
     sorted
 }

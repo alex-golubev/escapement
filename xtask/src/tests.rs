@@ -669,3 +669,112 @@ fields = [ {{ name = \"counter\", type = \"i32\", offset = 0 }} ]
         "{found}"
     );
 }
+
+/// `VALID` with prose on one of everything the schema can describe.
+fn documented() -> String {
+    VALID
+        .replace(
+            "command_payload_size = 24",
+            r#"command_payload_size = { value = 24, doc = "Bytes a command may use." }"#,
+        )
+        .replace(
+            "probe = 1",
+            r#"probe = { value = 1, doc = "The only kind these tests have." }"#,
+        )
+        .replace("size = 32\n", "size = 32\ndoc = \"A slot in the ring.\"\n")
+        .replace(
+            r#"{ name = "kind", type = "u32", offset = 0 }"#,
+            r#"{ name = "kind", type = "u32", offset = 0, doc = "The command this slot carries." }"#,
+        )
+        .replace(
+            "[commands.probe]\n",
+            "[commands.probe]\ndoc = \"The command these tests write.\"\n",
+        )
+        .replace(
+            r#"{ name = "tempo", type = "u32", offset = 0 }"#,
+            r#"{ name = "tempo", type = "u32", offset = 0, doc = "Micro-BPM." }"#,
+        )
+}
+
+fn parse(source: &str) -> Schema {
+    let schema: Schema = toml::from_str(source).expect("the fixture parses");
+    if let Err(problems) = schema.check() {
+        panic!("the fixture should be consistent, but: {problems:?}");
+    }
+    schema
+}
+
+/// A unit is not a layout: no vector catches a peak published in dBFS and read
+/// as an amplitude. The prose that says which one it is has to reach the place
+/// where the value is used, and in a TOML comment it reaches nobody.
+#[test]
+fn schema_prose_reaches_both_languages() {
+    let schema = parse(&documented());
+    let rust = rust_of(&schema);
+    let ts = ts_of(&schema);
+
+    for expected in [
+        "/// Bytes a command may use.\npub const COMMAND_PAYLOAD_SIZE",
+        "    /// The only kind these tests have.\n    Probe = 1,",
+        "/// A slot in the ring.\n#[repr(C)]",
+        "    /// The command this slot carries.\n    pub kind: u32,",
+        "/// The command these tests write.\n/// Command `probe`",
+        "    /// Micro-BPM.\n    pub tempo: u32,",
+    ] {
+        assert!(rust.contains(expected), "missing {expected:?} in:\n{rust}");
+    }
+
+    for expected in [
+        "/** Bytes a command may use. */\nexport const COMMAND_PAYLOAD_SIZE",
+        "  /** The only kind these tests have. */\n  probe: 1,",
+        "/** A slot in the ring. */\nexport const CommandSlotOffsets",
+        "/** The command this slot carries. */\nexport function readCommandSlotKind",
+        "/** The command this slot carries. */\nexport function writeCommandSlotKind",
+        " * @param tempo - Micro-BPM.",
+    ] {
+        assert!(ts.contains(expected), "missing {expected:?} in:\n{ts}");
+    }
+}
+
+/// rustfmt does not rewrap a doc comment and the generated TypeScript is not
+/// formatted at all, so the schema's line breaks are the only ones there are.
+#[test]
+fn a_doc_of_several_lines_keeps_its_line_breaks() {
+    let source = VALID.replace(
+        "[commands.probe]\n",
+        "[commands.probe]\ndoc = \"\"\"\nFirst.\n\nSecond.\"\"\"\n",
+    );
+    let schema = parse(&source);
+
+    assert!(
+        rust_of(&schema).contains("/// First.\n///\n/// Second.\n"),
+        "{}",
+        rust_of(&schema)
+    );
+    assert!(
+        ts_of(&schema).contains("/**\n * First.\n *\n * Second.\n */\n"),
+        "{}",
+        ts_of(&schema)
+    );
+}
+
+/// The ABI version is what the boundary is, not how the file is written. A
+/// bumped version tells every plugin author that an offset moved, so editing a
+/// comment must not move it.
+#[test]
+fn prose_is_not_part_of_the_abi() {
+    assert_ne!(documented(), VALID, "the fixture documents something");
+    assert_eq!(
+        crate::abi_hash(&parse(VALID)),
+        crate::abi_hash(&parse(&documented())),
+    );
+}
+
+/// A documented value is a table, and an untagged enum would have reported a
+/// misspelled key in it as a value matching no shape — the same silence
+/// `deny_unknown_fields` exists to break.
+#[test]
+fn a_misspelled_key_beside_a_doc_is_refused() {
+    let misspelled = VALID.replace("probe = 1", r#"probe = { value = 1, dock = "why" }"#);
+    assert!(problems(&misspelled).contains("dock"), "{misspelled}");
+}
