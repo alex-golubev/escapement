@@ -17,7 +17,24 @@ type Vector = {
 
 const vectors = JSON.parse(
   readFileSync(new URL("../../../schema/vectors/boundary.json", import.meta.url), "utf8"),
-) as { records: Vector[]; commands: Vector[] }
+) as {
+  enums: { enum: string; codes: Record<string, number> }[]
+  arrays: { record: string; field: string; offset: number; length: number }[]
+  records: Vector[]
+  commands: Vector[]
+}
+
+const codesOf = (name: string) => {
+  const found = vectors.enums.find((candidate) => candidate.enum === name)
+  if (!found) throw new Error(`no vector for ${name}`)
+  return found.codes
+}
+
+const arrayOf = (field: string) => {
+  const found = vectors.arrays.find((candidate) => candidate.field === field)
+  if (!found) throw new Error(`no vector for ${field}`)
+  return found
+}
 
 const hex = (text: string) => Number.parseInt(text, 16)
 
@@ -167,6 +184,75 @@ describe("commands", () => {
     expect(protocol.readSetTempo(slot.view, 0)).toEqual({
       microBpm: hex(vector.fields.micro_bpm as string),
     })
+  })
+})
+
+/** The generated codes are what a third-party host or plugin SDK implements
+ *  against, and ADR-0011 counts them among what the golden vectors fix. Both
+ *  sides read them from the file rather than from each other. */
+test("enum codes match their vector", () => {
+  const kinds = codesOf("command_kind")
+  expect(protocol.CommandKind.play).toBe(kinds.play)
+  expect(protocol.CommandKind.stop).toBe(kinds.stop)
+  expect(protocol.CommandKind.setTempo).toBe(kinds.set_tempo)
+
+  const errors = codesOf("engine_error")
+  expect(protocol.EngineError).toEqual({
+    ok: errors.ok,
+    unknownCommandKind: errors.unknown_command_kind,
+    badFrameCount: errors.bad_frame_count,
+    badSampleRate: errors.bad_sample_rate,
+    notInitialised: errors.not_initialised,
+    tooManyCommands: errors.too_many_commands,
+    badCommandPayload: errors.bad_command_payload,
+    badFrameOffset: errors.bad_frame_offset,
+    commandsOutOfOrder: errors.commands_out_of_order,
+  })
+
+  const transport = codesOf("transport_state")
+  expect(protocol.TransportState.stopped).toBe(transport.stopped)
+  expect(protocol.TransportState.playing).toBe(transport.playing)
+})
+
+/** A plane of samples has no byte vector, so what the two sides have to agree
+ *  on is where it starts and how much of it there is. In Rust that is a static
+ *  assertion; here it is arithmetic inside a generated function, and the base
+ *  is deliberately not zero so that a helper ignoring it would show. */
+describe("array fields", () => {
+  test("the audio planes match their vector", () => {
+    const left = arrayOf("left")
+    const right = arrayOf("right")
+    expect(protocol.AudioOutOffsets.left).toBe(left.offset)
+    expect(protocol.AudioOutOffsets.right).toBe(right.offset)
+    expect(protocol.AUDIO_OUT_LEFT_LENGTH).toBe(left.length)
+    expect(protocol.AUDIO_OUT_RIGHT_LENGTH).toBe(right.length)
+    expect(protocol.AUDIO_OUT_SIZE).toBe(
+      right.offset + right.length * Float32Array.BYTES_PER_ELEMENT,
+    )
+
+    const base = protocol.AUDIO_OUT_SIZE
+    const memory = new ArrayBuffer(base + protocol.AUDIO_OUT_SIZE)
+    for (const [view, plane] of [
+      [protocol.audioOutLeft(memory, base), left],
+      [protocol.audioOutRight(memory, base), right],
+    ] as const) {
+      expect(view.byteOffset).toBe(base + plane.offset)
+      expect(view.length).toBe(plane.length)
+    }
+  })
+
+  test("the slot payload matches its vector", () => {
+    const payload = arrayOf("payload")
+    expect(protocol.CommandSlotOffsets.payload).toBe(payload.offset)
+    expect(protocol.COMMAND_PAYLOAD_OFFSET).toBe(payload.offset)
+    expect(protocol.COMMAND_SLOT_PAYLOAD_LENGTH).toBe(payload.length)
+    expect(protocol.COMMAND_PAYLOAD_SIZE).toBe(payload.length)
+
+    const base = protocol.COMMAND_SLOT_SIZE
+    const ring = new ArrayBuffer(base + protocol.COMMAND_SLOT_SIZE)
+    const view = protocol.commandSlotPayload(ring, base)
+    expect(view.byteOffset).toBe(base + payload.offset)
+    expect(view.length).toBe(payload.length)
   })
 })
 
