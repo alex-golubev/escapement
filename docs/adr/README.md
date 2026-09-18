@@ -26,8 +26,9 @@ This is where the project's architecture decisions are recorded: what we decided
 | [0012](0012-license-and-public-repo.md) | License and the contents of the public repository | accepted, amended by [0016](0016-generated-rust-is-apache.md), [0019](0019-typescript-engine-host.md) |
 | [0013](0013-boundary-code-generation.md) | Generating the boundary code | accepted, amended by [0018](0018-functional-by-default.md) |
 | [0014](0014-tooling-and-ci.md) | Development tooling and CI | accepted |
-| [0015](0015-command-records-and-engine-abi.md) | Command records and the engine ABI surface | accepted, amended by [0017](0017-command-records-are-values.md) |
+| [0015](0015-command-records-and-engine-abi.md) | Command records and the engine ABI surface | accepted, amended by [0017](0017-command-records-are-values.md), [0020](0020-engine-core-owns-no-memory.md) |
 | [0016](0016-generated-rust-is-apache.md) | The generated Rust lives on the Apache side | accepted |
 | [0017](0017-command-records-are-values.md) | A command record is a value, not a map of memory | accepted |
 | [0018](0018-functional-by-default.md) | Functional by default, free functions on the audio path | accepted |
 | [0019](0019-typescript-engine-host.md) | The TypeScript half of the boundary lives in `packages/engine-host` | accepted |
+| [0020](0020-engine-core-owns-no-memory.md) | The engine core owns no memory | accepted |
