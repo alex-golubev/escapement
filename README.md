@@ -12,8 +12,10 @@ A browser DAW with real-time collaborative editing.
   interface.
 - **Plugins** in Rust and in TS, on one versioned contract.
 
-**Status: design stage.** The architecture is settled and written down;
-there is no code yet. The place to start is
+**Status: early.** The architecture is settled and written down; the code
+so far is the engine boundary, generated from
+[`schema/boundary.toml`](schema/boundary.toml) into Rust and TypeScript.
+The place to start is
 [docs/architecture.md](docs/architecture.md), and the reasoning behind
 each choice is in the [decision records](docs/adr/README.md) — including
 the ones that look surprising, such as [why the CRDT is Yjs rather than
