@@ -59,8 +59,10 @@ the architecture, expect the discussion to end in a new ADR.
 
 Contributions are accepted under a
 [Contributor License Agreement](CLA.md). When you open your first pull
-request a bot will ask you to accept it; that happens once, not per pull
-request. The reasoning is in
+request a maintainer will ask you to accept it in the pull request
+itself; that happens once, not per pull request. There is no CLA bot
+because no maintained one exists, see
+[ADR-0014](docs/adr/0014-tooling-and-ci.md). The reasoning is in
 [ADR-0012](docs/adr/0012-license-and-public-repo.md): without it the
 project could not grant commercial exceptions to its own license.
 

@@ -167,7 +167,7 @@ docs/
 
 Cargo workspace + pnpm workspaces.
 
-## Stack and versions as of 2026-09-17
+## Stack and versions as of 2026-09-18
 
 | What | Version | Note |
 |---|---|---|
@@ -176,6 +176,18 @@ Cargo workspace + pnpm workspaces.
 | Yjs | 13.6.x | 14 is in beta, Hocuspocus requires `^13.6.8` |
 | Hocuspocus | 4.7 | |
 | AssemblyScript | 0.28.20 | only a candidate for future third-party plugins |
+
+Toolchain, pinned by [ADR-0014](adr/0014-tooling-and-ci.md):
+
+| What | Version | Note |
+|---|---|---|
+| Rust | 1.98.1 stable | nightly only for the multi-threaded mixer, later |
+| Node | 24 LTS | |
+| pnpm | 12.4.2 | |
+| TypeScript | 6.0.3 | 7.x dropped the compiler API that `svelte2tsx` needs |
+| Vite | 8.3 | COOP/COEP headers in dev and preview |
+| Vitest | 5.0 | browser mode on Playwright Chromium for SAB and the worklet |
+| Biome | 2.5 | lint and format, Svelte support is experimental |
 
 ## License and repository
 
