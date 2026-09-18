@@ -1,6 +1,6 @@
 # ADR-0015. Command records and the engine ABI surface
 
-- Status: accepted
+- Status: accepted, amended by [ADR-0017](0017-command-records-are-values.md)
 - Date: 2026-09-18
 
 ## Context
@@ -70,7 +70,9 @@ and emits, per command record:
 
 - Rust: a `#[repr(C)]` struct, the `offset_of!` assertions of
   [ADR-0013](0013-boundary-code-generation.md), and
-  `assert!(size_of::<NoteOn>() <= COMMAND_PAYLOAD_SIZE)`;
+  `assert!(size_of::<NoteOn>() <= COMMAND_PAYLOAD_SIZE)`
+  (the offset assertions were withdrawn by
+  [ADR-0017](0017-command-records-are-values.md); the size one stands);
 - TypeScript: a writer taking the slot base, which adds the payload
   offset itself so no caller ever does that arithmetic.
 
