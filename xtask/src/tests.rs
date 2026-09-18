@@ -535,3 +535,60 @@ fn a_command_writer_fills_the_whole_payload() {
         ts_of(&empty)
     );
 }
+
+/// ADR-0013 asks for a class-style accessor beside the free functions, for the
+/// cold path that reads the meters once a frame. It delegates to them rather
+/// than repeating the offsets, and takes only the arrays its fields need.
+#[test]
+fn a_record_gets_a_view_that_delegates() {
+    let schema = probe_schema(
+        24,
+        r#"{ name = "tempo", type = "u32", offset = 0 }"#,
+        r#"
+[records.meters]
+size = 8
+shared = true
+fields = [
+  { name = "level", type = "i32", offset = 0, atomic = true },
+  { name = "peak", type = "i32", offset = 4, atomic = true },
+]
+
+[records.mixed]
+size = 8
+fields = [
+  { name = "flag", type = "u32", offset = 0 },
+  { name = "count", type = "i32", offset = 4, atomic = true },
+]
+"#,
+    );
+    let ts = ts_of(&schema);
+
+    assert!(ts.contains("export class MetersView {"), "{ts}");
+    assert!(
+        ts.contains("constructor(atoms: Int32Array, base: number)"),
+        "{ts}"
+    );
+    assert!(
+        ts.contains("return loadMetersLevel(this.atoms, this.base)"),
+        "{ts}"
+    );
+    assert!(
+        ts.contains("storeMetersPeak(this.atoms, this.base, value)"),
+        "{ts}"
+    );
+
+    // A record with both kinds of field needs both arrays.
+    assert!(
+        ts.contains("constructor(view: DataView, atoms: Int32Array, base: number)"),
+        "{ts}"
+    );
+
+    // The slot's payload is an array, so it has no function to delegate to and
+    // no property; its header has both.
+    assert!(ts.contains("export class CommandSlotView {"), "{ts}");
+    assert!(
+        ts.contains("return readCommandSlotKind(this.view, this.base)"),
+        "{ts}"
+    );
+    assert!(!ts.contains("get payload()"), "{ts}");
+}
