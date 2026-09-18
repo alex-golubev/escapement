@@ -1,0 +1,89 @@
+# Cargo.lock and pnpm-lock.yaml are committed on purpose: this workspace builds
+# applications, so exact dependency versions have to be reproducible.
+
+# --- Rust ---
+target/
+**/*.rs.bk
+*.pdb
+# cargo-fuzz
+fuzz/target/
+fuzz/corpus/
+fuzz/artifacts/
+# wasm-pack / wasm-bindgen output
+pkg/
+wasm-pack.log
+
+# --- Node ---
+node_modules/
+.pnpm-store/
+.pnpm-debug.log*
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+logs/
+*.log
+
+# --- Build output ---
+dist/
+build/
+.vite/
+*.tsbuildinfo
+
+# --- Tests and coverage ---
+coverage/
+.nyc_output/
+
+# --- Environment and secrets ---
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+
+# --- Editors and tools ---
+.idea/
+.vscode/
+*.swp
+*.swo
+.claude/settings.local.json
+
+# --- macOS ---
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+.AppleDB
+.AppleDesktop
+Network Trash Folder
+Temporary Items
+.apdisk
+
+# --- Linux ---
+*~
+.fuse_hidden*
+.directory
+.Trash-*
+.nfs*
+
+# --- Windows ---
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+Desktop.ini
+$RECYCLE.BIN/
+*.lnk
+*.cab
+*.msi
+*.msix
+*.msm
+*.msp
+*.stackdump
