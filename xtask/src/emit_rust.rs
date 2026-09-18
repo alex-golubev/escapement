@@ -21,6 +21,20 @@ pub fn emit(schema: &Schema, abi_version: u32, abi_hash: u32) -> String {
          #![allow(dead_code)]\n"
     );
 
+    // size_of has been in the prelude since 1.80; offset_of! is a macro and is
+    // not, so it is imported rather than written out at every assertion.
+    let asserts_offsets = schema
+        .records
+        .values()
+        .any(|record| !record.fields.is_empty())
+        || schema
+            .commands
+            .values()
+            .any(|command| !command.fields.is_empty());
+    if asserts_offsets {
+        let _ = writeln!(out, "use core::mem::offset_of;\n");
+    }
+
     let _ = writeln!(out, "pub const ABI_MAJOR: u32 = {};", schema.abi.major);
     let _ = writeln!(out, "pub const ABI_HASH: u32 = {abi_hash:#010x};");
     let _ = writeln!(out, "pub const ABI_VERSION: u32 = {abi_version:#010x};\n");
@@ -87,13 +101,13 @@ pub fn emit(schema: &Schema, abi_version: u32, abi_hash: u32) -> String {
 
         let _ = writeln!(
             out,
-            "const _: () = assert!(core::mem::size_of::<{type_name}>() == {});",
+            "const _: () = assert!(size_of::<{type_name}>() == {});",
             record.size
         );
         for field in &record.fields {
             let _ = writeln!(
                 out,
-                "const _: () = assert!(core::mem::offset_of!({type_name}, {}) == {});",
+                "const _: () = assert!(offset_of!({type_name}, {}) == {});",
                 field.name, field.offset
             );
         }
@@ -180,12 +194,12 @@ pub fn emit(schema: &Schema, abi_version: u32, abi_hash: u32) -> String {
 
         let _ = writeln!(
             out,
-            "const _: () = assert!(core::mem::size_of::<{type_name}>() <= {payload_size});"
+            "const _: () = assert!(size_of::<{type_name}>() <= {payload_size});"
         );
         for field in &command.fields {
             let _ = writeln!(
                 out,
-                "const _: () = assert!(core::mem::offset_of!({type_name}, {}) == {});",
+                "const _: () = assert!(offset_of!({type_name}, {}) == {});",
                 field.name, field.offset
             );
         }
