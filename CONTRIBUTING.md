@@ -1,8 +1,8 @@
 # Contributing to escapement
 
 escapement is a browser DAW with real-time collaborative editing. The
-project is in its design stage: the architecture is written down, the
-code is not there yet. Start with
+project is early: the architecture is written down, and the code so far
+is the engine boundary generated from `schema/`. Start with
 [docs/architecture.md](docs/architecture.md) and the
 [decision records](docs/adr/README.md) — they explain not just what the
 project is, but why it is shaped that way.

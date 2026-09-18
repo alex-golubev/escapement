@@ -1,6 +1,6 @@
 # escapement architecture
 
-> Status as of 2026-09-17: design stage, no code yet.
+> Status as of 2026-09-18: the architecture is settled; the code so far is the engine boundary, generated from `schema/boundary.toml`.
 > Every decision is written up in detail in the [ADRs](adr/README.md).
 
 ## What we are building
