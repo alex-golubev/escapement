@@ -14,7 +14,7 @@
 // the schema check pins the names and the widths it spells.
 
 use crate::names::{camel, pascal, screaming};
-use crate::schema::{ExportKind, Field, Schema, Type};
+use crate::schema::{ExportKind, Field, Record, Schema, Type};
 use std::fmt::Write as _;
 
 const PAYLOAD_BASE: &str = "slot + COMMAND_PAYLOAD_OFFSET";
@@ -155,6 +155,8 @@ pub fn emit(schema: &Schema, abi_version: u32, abi_hash: u32) -> String {
                 );
             }
         }
+
+        emit_record_view(&mut out, &type_name, name, record);
     }
 
     for (name, command) in &schema.commands {
@@ -272,6 +274,71 @@ pub fn emit(schema: &Schema, abi_version: u32, abi_hash: u32) -> String {
     let _ = writeln!(out, "}}");
 
     out
+}
+
+/// The cold-path accessor of ADR-0013: a record's free functions with the array
+/// and the base held for the caller. Every property delegates, so the offset
+/// arithmetic stays in one place and the class cannot drift from the functions.
+///
+/// The fields are written out rather than declared in the constructor's
+/// parameters: a parameter property is syntax that has to be compiled away, and
+/// this file is also read by tools that only strip types.
+fn emit_record_view(out: &mut String, type_name: &str, record_name: &str, record: &Record) {
+    // An array field has no accessor to delegate to, so it has no property.
+    let fields: Vec<&Field> = record
+        .fields
+        .iter()
+        .filter(|field| !field.is_array())
+        .collect();
+    if fields.is_empty() {
+        return;
+    }
+    let takes_view = fields.iter().any(|field| !field.atomic);
+    let takes_atoms = fields.iter().any(|field| field.atomic);
+
+    let mut params: Vec<&str> = Vec::new();
+    if takes_view {
+        params.push("view: DataView");
+    }
+    if takes_atoms {
+        params.push("atoms: Int32Array");
+    }
+    params.push("base: number");
+
+    let _ = writeln!(
+        out,
+        "/** Cold path: a `{record_name}` at a fixed base. Build one and keep it —\n \
+         * reading a property allocates nothing. */"
+    );
+    let _ = writeln!(out, "export class {type_name}View {{");
+    for param in &params {
+        let _ = writeln!(out, "  readonly {param}");
+    }
+    let _ = writeln!(out, "\n  constructor({}) {{", params.join(", "));
+    for param in &params {
+        let name = param.split(':').next().unwrap_or(param).trim();
+        let _ = writeln!(out, "    this.{name} = {name}");
+    }
+    let _ = writeln!(out, "  }}");
+
+    for field in fields {
+        let property = camel(&field.name);
+        let suffix = format!("{type_name}{}", pascal(&field.name));
+        let (source, reader, writer) = if field.atomic {
+            ("atoms", format!("load{suffix}"), format!("store{suffix}"))
+        } else {
+            ("view", format!("read{suffix}"), format!("write{suffix}"))
+        };
+        let _ = writeln!(
+            out,
+            "\n  get {property}(): number {{\n    return {reader}(this.{source}, this.base)\n  }}"
+        );
+        let _ = writeln!(
+            out,
+            "\n  set {property}(value: number) {{\n    {writer}(this.{source}, this.base, value)\n  }}"
+        );
+    }
+    let _ = writeln!(out, "}}\n");
 }
 
 /// The reader and writer for one array field of a command. The writer fills
