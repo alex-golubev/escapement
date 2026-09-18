@@ -6,6 +6,8 @@
 
 #![allow(dead_code)]
 
+use core::mem::offset_of;
+
 pub const ABI_MAJOR: u32 = 0;
 pub const ABI_HASH: u32 = 0x57a79934;
 pub const ABI_VERSION: u32 = 0x00a79934;
@@ -95,10 +97,10 @@ impl CommandSlot {
     pub const SIZE: usize = 32;
 }
 
-const _: () = assert!(core::mem::size_of::<CommandSlot>() == 32);
-const _: () = assert!(core::mem::offset_of!(CommandSlot, kind) == 0);
-const _: () = assert!(core::mem::offset_of!(CommandSlot, frame_offset) == 4);
-const _: () = assert!(core::mem::offset_of!(CommandSlot, payload) == 8);
+const _: () = assert!(size_of::<CommandSlot>() == 32);
+const _: () = assert!(offset_of!(CommandSlot, kind) == 0);
+const _: () = assert!(offset_of!(CommandSlot, frame_offset) == 4);
+const _: () = assert!(offset_of!(CommandSlot, payload) == 8);
 
 #[repr(C)]
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -117,11 +119,11 @@ impl MeterBlock {
     pub const SIZE: usize = 16;
 }
 
-const _: () = assert!(core::mem::size_of::<MeterBlock>() == 16);
-const _: () = assert!(core::mem::offset_of!(MeterBlock, block_counter) == 0);
-const _: () = assert!(core::mem::offset_of!(MeterBlock, position_frames) == 4);
-const _: () = assert!(core::mem::offset_of!(MeterBlock, peak_micro) == 8);
-const _: () = assert!(core::mem::offset_of!(MeterBlock, transport_state) == 12);
+const _: () = assert!(size_of::<MeterBlock>() == 16);
+const _: () = assert!(offset_of!(MeterBlock, block_counter) == 0);
+const _: () = assert!(offset_of!(MeterBlock, position_frames) == 4);
+const _: () = assert!(offset_of!(MeterBlock, peak_micro) == 8);
+const _: () = assert!(offset_of!(MeterBlock, transport_state) == 12);
 
 /// Command `play`, code 1. Laid out from the start of a slot's payload.
 #[repr(C)]
@@ -149,8 +151,8 @@ impl Play {
     }
 }
 
-const _: () = assert!(core::mem::size_of::<Play>() <= 24);
-const _: () = assert!(core::mem::offset_of!(Play, from_frame) == 0);
+const _: () = assert!(size_of::<Play>() <= 24);
+const _: () = assert!(offset_of!(Play, from_frame) == 0);
 
 /// Command `set_tempo`, code 3. Laid out from the start of a slot's payload.
 #[repr(C)]
@@ -178,8 +180,8 @@ impl SetTempo {
     }
 }
 
-const _: () = assert!(core::mem::size_of::<SetTempo>() <= 24);
-const _: () = assert!(core::mem::offset_of!(SetTempo, micro_bpm) == 0);
+const _: () = assert!(size_of::<SetTempo>() <= 24);
+const _: () = assert!(offset_of!(SetTempo, micro_bpm) == 0);
 
 /// Command `stop`, code 2. Laid out from the start of a slot's payload.
 #[repr(C)]
@@ -199,7 +201,7 @@ impl Stop {
     }
 }
 
-const _: () = assert!(core::mem::size_of::<Stop>() <= 24);
+const _: () = assert!(size_of::<Stop>() <= 24);
 
 /// The functions the engine must export (ADR-0015). The wasm host test
 /// checks the built module against this list.
