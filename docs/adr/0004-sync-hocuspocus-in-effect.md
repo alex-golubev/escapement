@@ -22,6 +22,7 @@ Yjs merges edits but does not move them across the network. We need a server: ro
 - The `Collab` layer creates the instance. Hooks call Effect services through an Effect→Promise bridge carrying their context:
   - `onAuthenticate` — validates the token and project permissions, including read-only access;
   - `onLoadDocument` / `onStoreDocument` — load and persist through the `Projects` service (Postgres). We do not use the Database extension.
+- **Yjs state is stored compressed**, and so are version snapshots. Measured on a 100k-note project ([ADR-0003](0003-crdt-yjs.md)): 7.2 MB raw against 0.8 MB gzipped. The CPU cost is negligible next to a factor of nine in storage and in what crosses the wire.
 - The layer's finalizer persists open documents and closes connections, so graceful shutdown falls out for free.
 
 ### Transport

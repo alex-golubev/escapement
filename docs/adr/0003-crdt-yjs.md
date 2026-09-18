@@ -44,7 +44,7 @@ doc
 └─ automation    Y.Map<id, Y.Map>
 ```
 
-The entities are described in [ADR-0006](0006-project-model-fl.md).
+The entities are described in [ADR-0006](0006-project-model.md).
 
 ### Storage principles
 
