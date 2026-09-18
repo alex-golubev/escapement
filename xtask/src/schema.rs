@@ -7,7 +7,7 @@
 // Every struct below refuses an unknown key: a key serde ignores is a line the
 // author believes they wrote.
 
-use crate::names::pascal;
+use crate::names::{pascal, screaming};
 use serde::Deserialize;
 use std::collections::BTreeMap;
 
@@ -342,21 +342,19 @@ impl Schema {
             }
         }
 
-        // An enum, a record and a command each generate one type, and the
-        // three share a namespace in both languages.
-        let mut generated: BTreeMap<String, String> = BTreeMap::new();
-        let declared = self
-            .enums
-            .keys()
-            .map(|name| ("enums", name))
-            .chain(self.records.keys().map(|name| ("records", name)))
-            .chain(self.commands.keys().map(|name| ("commands", name)));
-        for (section, name) in declared {
-            let type_name = pascal(name);
-            if let Some(other) = generated.insert(type_name.clone(), format!("{section}.{name}")) {
-                errors.push(format!(
-                    "{section}.{name} and {other} both generate the type {type_name}"
-                ));
+        // Two declarations that reach the same emitted name are a duplicate
+        // definition in that language. The type names are only part of it: an
+        // accessor is a record's name and a field's name run together, so
+        // `meter.block_counter` and `meter_block.counter` both ask for
+        // `loadMeterBlockCounter`.
+        for (language, names) in [("Rust", self.rust_names()), ("TypeScript", self.ts_names())] {
+            let mut seen: BTreeMap<String, String> = BTreeMap::new();
+            for (name, origin) in names {
+                if let Some(other) = seen.insert(name.clone(), origin.clone()) {
+                    errors.push(format!(
+                        "{origin} and {other} both generate the {language} name {name}"
+                    ));
+                }
             }
         }
 
@@ -412,6 +410,83 @@ impl Schema {
         }
     }
 
+    /// Every name the generator puts at the top level of the Rust file.
+    pub fn rust_names(&self) -> Vec<(String, String)> {
+        let mut names = abi_names();
+        for name in self.constants.keys() {
+            names.push((screaming(name), format!("constants.{name}")));
+        }
+        for name in self.enums.keys() {
+            names.push((pascal(name), format!("enums.{name}")));
+        }
+        for name in self.records.keys() {
+            names.push((pascal(name), format!("records.{name}")));
+        }
+        for name in self.commands.keys() {
+            names.push((pascal(name), format!("commands.{name}")));
+        }
+        names.push(("EXPORT_FUNCTIONS".to_owned(), "the export list".to_owned()));
+        names
+    }
+
+    /// The same for TypeScript, which puts far more at the top level: a record
+    /// spreads into an offset table, a size, two functions per field and a view.
+    pub fn ts_names(&self) -> Vec<(String, String)> {
+        let mut names = abi_names();
+        for name in self.constants.keys() {
+            names.push((screaming(name), format!("constants.{name}")));
+        }
+        for name in self.enums.keys() {
+            let from = format!("enums.{name}");
+            names.push((pascal(name), from.clone()));
+            names.push((format!("{}Code", pascal(name)), from));
+        }
+        for (name, record) in &self.records {
+            let type_name = pascal(name);
+            let from = format!("records.{name}");
+            names.push((format!("{type_name}Offsets"), from.clone()));
+            names.push((format!("{}_SIZE", screaming(name)), from.clone()));
+            let mut has_property = false;
+            for field in &record.fields {
+                if field.is_array() {
+                    continue;
+                }
+                has_property = true;
+                let stem = format!("{type_name}{}", pascal(&field.name));
+                let (read, write) = if field.atomic {
+                    ("load", "store")
+                } else {
+                    ("read", "write")
+                };
+                let field_from = format!("records.{name}.{}", field.name);
+                names.push((format!("{read}{stem}"), field_from.clone()));
+                names.push((format!("{write}{stem}"), field_from));
+            }
+            if has_property {
+                names.push((format!("{type_name}View"), from));
+            }
+        }
+        for (name, command) in &self.commands {
+            let type_name = pascal(name);
+            let from = format!("commands.{name}");
+            for field in &command.fields {
+                if !field.is_array() {
+                    continue;
+                }
+                let stem = format!("{type_name}{}", pascal(&field.name));
+                let field_from = format!("commands.{name}.{}", field.name);
+                names.push((format!("write{stem}"), field_from.clone()));
+                names.push((format!("read{stem}"), field_from));
+            }
+            names.push((format!("write{type_name}"), from.clone()));
+            if !command.fields.is_empty() {
+                names.push((format!("read{type_name}"), from));
+            }
+        }
+        names.push(("EngineExports".to_owned(), "the export list".to_owned()));
+        names
+    }
+
     /// Missing is an error like any other, not a reason to stop looking.
     fn optional_constant(&self, errors: &mut Vec<String>, name: &str) -> Option<usize> {
         match self.constant(name) {
@@ -422,6 +497,13 @@ impl Schema {
             }
         }
     }
+}
+
+fn abi_names() -> Vec<(String, String)> {
+    ["ABI_MAJOR", "ABI_HASH", "ABI_VERSION"]
+        .into_iter()
+        .map(|name| (name.to_owned(), "the ABI version".to_owned()))
+        .collect()
 }
 
 /// Records have no implicit padding: the fields must cover the declared size

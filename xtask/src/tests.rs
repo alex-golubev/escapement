@@ -6,6 +6,7 @@
 
 use crate::schema::Schema;
 use crate::{emit_rust, emit_ts};
+use std::collections::BTreeSet;
 
 /// A schema with one command, `probe`, whose fields the test supplies.
 fn probe_schema(payload_size: usize, fields: &str, extra: &str) -> Schema {
@@ -323,13 +324,19 @@ fn the_slot_header_the_command_writers_address_is_required() {
 fn two_names_that_would_generate_one_type_are_refused() {
     let clashing = format!("{VALID}\n[enums.probe]\nrunning = 1\n");
     let found = problems(&clashing);
-    assert!(found.contains("both generate the type Probe"), "{found}");
+    assert!(
+        found.contains("both generate the Rust name Probe"),
+        "{found}"
+    );
 
     let both = format!(
         "{VALID}\n[records.probe]\nsize = 4\nfields = [ {{ name = \"a\", type = \"u32\", offset = 0 }} ]\n"
     );
     let found = problems(&both);
-    assert!(found.contains("both generate the type Probe"), "{found}");
+    assert!(
+        found.contains("both generate the Rust name Probe"),
+        "{found}"
+    );
 }
 
 /// A repeated export is a repeated member of the generated interface.
@@ -585,4 +592,84 @@ fields = [
         "{ts}"
     );
     assert!(!ts.contains("get payload()"), "{ts}");
+}
+
+/// The identifiers a generated file declares at its top level.
+fn declared(source: &str, visibility: &str, keywords: &[&str]) -> BTreeSet<String> {
+    source
+        .lines()
+        .filter_map(|line| {
+            let (keyword, rest) = line.strip_prefix(visibility)?.split_once(' ')?;
+            if !keywords.contains(&keyword) {
+                return None;
+            }
+            let name: String = rest
+                .chars()
+                .take_while(|c| c.is_alphanumeric() || *c == '_')
+                .collect();
+            (!name.is_empty()).then_some(name)
+        })
+        .collect()
+}
+
+/// `rust_names` and `ts_names` are what the collision check reads, so a name an
+/// emitter writes and a list does not know is a hole in the check. Rather than
+/// trust the two to stay in step, compare them.
+#[test]
+fn the_name_lists_match_what_the_emitters_write() {
+    let schema = probe_schema(
+        24,
+        "{ name = \"tempo\", type = \"u32\", offset = 0 }, { name = \"tag\", type = \"u8\", count = 8, offset = 8 }",
+        "
+[records.meters]
+size = 8
+shared = true
+fields = [
+  { name = \"level\", type = \"i32\", offset = 0, atomic = true },
+  { name = \"peak\", type = \"i32\", offset = 4, atomic = true },
+]
+",
+    );
+
+    let listed: BTreeSet<String> = schema
+        .ts_names()
+        .into_iter()
+        .map(|(name, _)| name)
+        .collect();
+    let written = declared(
+        &ts_of(&schema),
+        "export ",
+        &["function", "class", "const", "type", "interface"],
+    );
+    assert_eq!(written, listed, "TypeScript");
+
+    let listed: BTreeSet<String> = schema
+        .rust_names()
+        .into_iter()
+        .map(|(name, _)| name)
+        .collect();
+    let written = declared(&rust_of(&schema), "pub ", &["const", "enum", "struct"]);
+    assert_eq!(written, listed, "Rust");
+}
+
+/// An accessor's name is a record's name and a field's name run together, so two
+/// records can reach the same one without sharing a type name.
+#[test]
+fn two_accessors_with_one_name_are_refused() {
+    let clashing = format!(
+        "{VALID}
+[records.meter]
+size = 4
+fields = [ {{ name = \"block_counter\", type = \"i32\", offset = 0 }} ]
+
+[records.meter_block]
+size = 4
+fields = [ {{ name = \"counter\", type = \"i32\", offset = 0 }} ]
+"
+    );
+    let found = problems(&clashing);
+    assert!(
+        found.contains("both generate the TypeScript name readMeterBlockCounter"),
+        "{found}"
+    );
 }
