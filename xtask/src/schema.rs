@@ -241,6 +241,17 @@ impl Schema {
     pub fn check(&self) -> Result<(), Vec<String>> {
         let mut errors = Vec::new();
 
+        // The version word is the major number in its top byte and the schema
+        // hash in the rest, so a major that does not fit a byte is not a large
+        // version: it is a shifted-out one, and the engine would answer a
+        // number no plugin could match.
+        if self.abi.major > 0xff {
+            errors.push(format!(
+                "abi.major is {}, but the ABI version word gives it one byte (0 to 255)",
+                self.abi.major
+            ));
+        }
+
         let payload_offset = self.constant("command_payload_offset");
         let payload_size = self.constant("command_payload_size");
         for missing in [&payload_offset, &payload_size] {
