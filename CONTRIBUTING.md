@@ -33,6 +33,11 @@ the architecture, expect the discussion to end in a new ADR.
 - **Every project edit goes through a domain operation.** Nothing writes
   into the Yjs document directly outside `packages/document`; see
   [ADR-0007](docs/adr/0007-domain-operations.md).
+- **Functional wherever it is possible.** Free functions and plain
+  immutable data, not objects carrying identity and mutable state; see
+  [ADR-0018](docs/adr/0018-functional-by-default.md). On the audio path
+  this is the same answer the real-time rules give: a function taking
+  data and returning data is the only shape that allocates nothing.
 - **Comments are rationed.** A file header may say what the file is for
   and record a non-obvious decision. Inside the code, comment only where
   the reason cannot be read off the code itself. Code buried in
