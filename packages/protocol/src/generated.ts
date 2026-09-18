@@ -7,8 +7,8 @@
 // 4-byte aligned; the generator refuses any field where it is not.
 
 export const ABI_MAJOR = 0
-export const ABI_HASH = 0x57a79934
-export const ABI_VERSION = 0x00a79934
+export const ABI_HASH = 0x175e3db4
+export const ABI_VERSION = 0x005e3db4
 
 export const COMMAND_PAYLOAD_OFFSET = 8
 export const COMMAND_PAYLOAD_SIZE = 24

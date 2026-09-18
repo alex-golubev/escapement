@@ -97,6 +97,20 @@ impl Type {
         }
     }
 
+    /// The spelling the schema uses. The ABI hash is taken over these, not
+    /// over Rust's Debug output, so that renaming a variant of this enum does
+    /// not move an ABI version that plugins depend on.
+    pub fn schema_name(self) -> &'static str {
+        match self {
+            Type::U8 => "u8",
+            Type::U16 => "u16",
+            Type::U32 => "u32",
+            Type::I32 => "i32",
+            Type::F32 => "f32",
+            Type::F64 => "f64",
+        }
+    }
+
     pub fn rust(self) -> &'static str {
         match self {
             Type::U8 => "u8",
@@ -191,6 +205,16 @@ impl Schema {
                 0,
                 record.size,
             );
+            // A record is a map of memory, and the emitted struct has only the
+            // fields declared here. A hole would make rustc compute a smaller
+            // struct than the schema claims, which the generated assertion
+            // would report as a size mismatch without naming the cause.
+            check_tiling(
+                &mut errors,
+                &format!("records.{name}"),
+                &record.fields,
+                record.size,
+            );
             if record.shared {
                 for field in &record.fields {
                     if !field.atomic {
@@ -200,6 +224,28 @@ impl Schema {
                         ));
                     }
                 }
+            }
+        }
+
+        // The payload region is declared twice — once as a pair of constants and
+        // once as the field that occupies it — so the two must be checked
+        // against each other or they will drift apart.
+        if !slot
+            .fields
+            .iter()
+            .any(|field| field.offset == payload_offset && field.bytes() == payload_size)
+        {
+            errors.push(format!(
+                "records.command_slot has no field covering the payload at {payload_offset}..{}, which command_payload_offset and command_payload_size declare",
+                payload_offset + payload_size
+            ));
+        }
+
+        for name in self.commands.keys() {
+            if self.records.contains_key(name) {
+                errors.push(format!(
+                    "{name} is both a record and a command, and the two would generate the same type"
+                ));
             }
         }
 
@@ -241,6 +287,29 @@ impl Schema {
         } else {
             Err(errors)
         }
+    }
+}
+
+/// Records have no implicit padding: the fields must cover the declared size
+/// exactly, with nothing left over at either end.
+fn check_tiling(errors: &mut Vec<String>, what: &str, fields: &[Field], size: usize) {
+    let mut ordered: Vec<&Field> = fields.iter().collect();
+    ordered.sort_by_key(|field| field.offset);
+
+    let mut covered = 0;
+    for field in ordered {
+        if field.offset > covered {
+            errors.push(format!(
+                "{what}: bytes {covered}..{} belong to no field, and the generated struct would be smaller than {size} bytes",
+                field.offset
+            ));
+        }
+        covered = covered.max(field.end());
+    }
+    if covered < size {
+        errors.push(format!(
+            "{what}: the fields cover {covered} of {size} bytes; either a field is missing or the size is wrong"
+        ));
     }
 }
 
