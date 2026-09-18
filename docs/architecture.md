@@ -192,7 +192,6 @@ Later: third-party plugins and sandboxing, AI features, full offline (PWA).
 
 ## Open questions
 
-- **Storing notes** as JSON values instead of `Y.Map`. Needs a prototype: a pattern with 10k notes, fast clip dragging.
 - **What generates the boundary code:** a small generator of our own from the schema, or an off-the-shelf format as the fallback ([ADR-0011](adr/0011-engine-boundary-schema.md)).
 - **Guarding against hung plugins:** time measurement or fuel metering.
 - **Third-party plugins:** a sandbox for TS (AssemblyScript?), signing, moderation, WAM 2.0 support.

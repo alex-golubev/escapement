@@ -3,9 +3,8 @@
 A browser DAW with real-time collaborative editing.
 
 - **A real product**, not a demo of a technique.
-- **FL Studio is the reference** for techniques and the feel of working —
-  patterns, channel rack, playlist, mixer. Not for the interface, which
-  is ours.
+- **Pattern-based workflow** — patterns, a channel rack, a playlist and a
+  mixer, with playlist tracks that are not tied to instruments.
 - **2–5 people in a room**, editing the same project at once, with the
   project surviving network drops.
 - **Rust engine** compiled to WASM, running in an AudioWorklet;
