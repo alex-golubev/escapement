@@ -53,7 +53,7 @@ One record for both residences bought nothing and cost two things: a comment cla
 - Staging is a `[CommandSlot; COMMAND_STAGING_CAPACITY]`: a typed array the engine indexes, not bytes it reinterprets. No `transmute`, no `bytemuck`.
 - The engine's state is the host's data, so the core has to be `const`-constructible and its voice pool is a fixed-size array. A pool that grows with the project is out, and that is the price of this decision.
 - Raising a buffer's maximum moves the ABI hash, which is correct: it moves a plane and the offsets JavaScript holds.
-- The module carries its maximum whether it uses it or not — 8 KB of wasm memory for an output buffer that a browser block fills a sixteenth of.
+- The module carries its maximum whether it uses it or not — 8 KB of wasm memory for an output buffer that a browser block of 128 frames fills an eighth of.
 - Two numbers that used to be the engine's business are now part of the ABI, so changing them is a schema edit under review rather than a constant somebody moves.
 
 ## Alternatives considered
