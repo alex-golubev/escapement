@@ -10,8 +10,8 @@
 // Every DataView call for a schema field is built by `view_get` and `view_set`
 // below, so the question "does this accessor take a byte-order argument?" is
 // answered in one place rather than at each call. The two exceptions are the
-// slot header written by each command writer, which this emitter still spells
-// out and still assumes `command_slot` declares as it does.
+// slot header written by each command writer, which this emitter spells out;
+// the schema check pins the names and the widths it spells.
 
 use crate::names::{camel, pascal, screaming};
 use crate::schema::{ExportKind, Field, Schema, Type};
