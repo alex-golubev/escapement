@@ -13,6 +13,7 @@
     clippy::unwrap_used
 )]
 
+use core::mem::offset_of;
 use protocol::*;
 use serde_json::Value;
 
@@ -42,6 +43,15 @@ fn top(vector: &Value, name: &str) -> u32 {
     hex(vector[name]
         .as_str()
         .unwrap_or_else(|| panic!("{name} is missing")))
+}
+
+/// Offsets, lengths and enum codes are decimal in the vectors: they are numbers
+/// to compare rather than bytes to read off.
+fn number(vector: &Value, name: &str) -> u32 {
+    let found = vector[name]
+        .as_u64()
+        .unwrap_or_else(|| panic!("{name} is missing"));
+    u32::try_from(found).expect("a value that fits the boundary's u32")
 }
 
 fn expected_bytes(vector: &Value) -> Vec<u8> {
@@ -202,6 +212,74 @@ fn commands_match_their_vectors() {
         set_tempo,
         "set_tempo decoding"
     );
+}
+
+/// The generated codes are what a third-party host or plugin SDK implements
+/// against, and [ADR-0011] counts them among what the golden vectors fix. Both
+/// sides read them from the file rather than from each other.
+#[test]
+fn enum_codes_match_their_vector() {
+    let all = vectors();
+
+    let kinds = &find(&all, "enums", "enum", "command_kind")["codes"];
+    assert_eq!(CommandKind::Play.code(), number(kinds, "play"));
+    assert_eq!(CommandKind::Stop.code(), number(kinds, "stop"));
+    assert_eq!(CommandKind::SetTempo.code(), number(kinds, "set_tempo"));
+
+    let errors = &find(&all, "enums", "enum", "engine_error")["codes"];
+    for (code, expected) in [
+        (EngineError::Ok, "ok"),
+        (EngineError::UnknownCommandKind, "unknown_command_kind"),
+        (EngineError::BadFrameCount, "bad_frame_count"),
+        (EngineError::BadSampleRate, "bad_sample_rate"),
+        (EngineError::NotInitialised, "not_initialised"),
+        (EngineError::TooManyCommands, "too_many_commands"),
+        (EngineError::BadCommandPayload, "bad_command_payload"),
+        (EngineError::BadFrameOffset, "bad_frame_offset"),
+        (EngineError::CommandsOutOfOrder, "commands_out_of_order"),
+    ] {
+        assert_eq!(code.code(), number(errors, expected), "{expected}");
+    }
+
+    let transport = &find(&all, "enums", "enum", "transport_state")["codes"];
+    assert_eq!(TransportState::Stopped.code(), number(transport, "stopped"));
+    assert_eq!(TransportState::Playing.code(), number(transport, "playing"));
+}
+
+/// A plane of samples has no byte vector, so what the two sides have to agree
+/// on is where it starts and how much of it there is. Here that is a static
+/// assertion rustc already checks; in TypeScript it is arithmetic inside a
+/// generated function, which is why the number lives in the file.
+#[test]
+fn array_fields_match_their_vector() {
+    let all = vectors();
+    let elements = |bytes: usize| u32::try_from(bytes / size_of::<f32>()).expect("a plane");
+
+    let left = find(&all, "arrays", "field", "left");
+    assert_eq!(offset_of!(AudioOut, left) as u32, number(left, "offset"));
+    assert_eq!(AudioOut::LEFT_OFFSET as u32, number(left, "offset"));
+    assert_eq!(
+        elements(AudioOut::RIGHT_OFFSET - AudioOut::LEFT_OFFSET),
+        number(left, "length"),
+        "the left plane runs up to the right one"
+    );
+
+    let right = find(&all, "arrays", "field", "right");
+    assert_eq!(offset_of!(AudioOut, right) as u32, number(right, "offset"));
+    assert_eq!(AudioOut::RIGHT_OFFSET as u32, number(right, "offset"));
+    assert_eq!(
+        elements(AudioOut::SIZE - AudioOut::RIGHT_OFFSET),
+        number(right, "length"),
+        "the right plane runs to the end of the record"
+    );
+
+    let payload = find(&all, "arrays", "field", "payload");
+    assert_eq!(
+        offset_of!(CommandSlot, payload) as u32,
+        number(payload, "offset")
+    );
+    assert_eq!(COMMAND_PAYLOAD_OFFSET as u32, number(payload, "offset"));
+    assert_eq!(COMMAND_PAYLOAD_SIZE as u32, number(payload, "length"));
 }
 
 #[test]

@@ -8,10 +8,35 @@
     "A command's zero bytes are a promise: a slot is reused, and a writer fills",
     "the whole payload rather than only the fields it declares. The tests start",
     "from a slot full of 0xaa so that the promise is what is being tested.",
-    "A buffer of samples has no vector here. Both sides take its plane offsets",
-    "from the schema and Rust asserts them against rustc, so there is no",
-    "hand-written codec for the two to disagree about; what needs checking is",
-    "behaviour, and that belongs to the tests of the host that renders."
+    "A buffer of samples has no byte vector: 8 KB of hex would prove nothing that",
+    "a plane offset does not. It has an entry under arrays instead, because in",
+    "Rust a plane offset is a static assertion rustc checks, while in TypeScript",
+    "it is arithmetic inside a generated function that nothing else checks.",
+    "Offsets, lengths and enum codes are written in decimal: they are numbers to",
+    "compare, not bytes to read off."
+  ],
+  "enums": [
+    { "enum": "command_kind", "codes": { "play": 1, "stop": 2, "set_tempo": 3 } },
+    {
+      "enum": "engine_error",
+      "codes": {
+        "ok": 0,
+        "unknown_command_kind": 1,
+        "bad_frame_count": 2,
+        "bad_sample_rate": 3,
+        "not_initialised": 4,
+        "too_many_commands": 5,
+        "bad_command_payload": 6,
+        "bad_frame_offset": 7,
+        "commands_out_of_order": 8
+      }
+    },
+    { "enum": "transport_state", "codes": { "stopped": 0, "playing": 1 } }
+  ],
+  "arrays": [
+    { "record": "audio_out", "field": "left", "offset": 0, "length": 1024 },
+    { "record": "audio_out", "field": "right", "offset": 4096, "length": 1024 },
+    { "record": "command_slot", "field": "payload", "offset": 8, "length": 24 }
   ],
   "records": [
     {
