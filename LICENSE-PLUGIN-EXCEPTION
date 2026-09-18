@@ -1,0 +1,58 @@
+escapement plugin exception
+
+Additional permission under GNU AGPL version 3 section 7
+
+Copyright (C) 2026 Aleksei Golubev
+
+
+DEFINITIONS
+
+"The Program" means escapement, licensed under the GNU Affero General
+Public License version 3 (the "AGPL").
+
+"The Plugin Interface" means the published plugin ABI and SDK of the
+Program, namely the contents of `schema/`, `crates/plugin-sdk` and
+`packages/plugin-sdk`, together with the code generated from them. The
+Plugin Interface is licensed under the Apache License, Version 2.0.
+
+"A Plugin" means a separate module that is loaded or invoked by the
+Program at run time and that interacts with the Program solely through
+the Plugin Interface.
+
+
+GRANT
+
+As a special exception, the copyright holders of the Program give you
+permission to combine the Program with a Plugin, and to convey the
+resulting combination.
+
+You may convey a Plugin under terms of your choice, including terms that
+are not compatible with the AGPL and including proprietary terms,
+provided that the Plugin:
+
+  (a) interacts with the Program only through the Plugin Interface, and
+
+  (b) does not incorporate source code or object code of the Program
+      other than the Plugin Interface itself.
+
+A Plugin that satisfies (a) and (b) is not treated as a work based on
+the Program for the purposes of the AGPL, and conveying it does not
+oblige you to make the Plugin's source code available.
+
+
+LIMITS
+
+This exception applies to the Plugin only. It does not apply to the
+Program or to any other combination, and in particular it grants no
+permission to convey the Program itself, or a modified version of it,
+under terms other than the AGPL. Making the Program's own code reachable
+through the Plugin Interface does not bring that code within this
+exception.
+
+This exception grants no rights in the name "escapement" or in any
+trademark or logo of the project; see TRADEMARK.md.
+
+If you modify the Program, you may extend this exception to your version
+of it, but you are not obliged to do so. As provided in section 7 of the
+AGPL, you may remove this additional permission from a copy of the
+Program that you convey.

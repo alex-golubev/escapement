@@ -1,0 +1,41 @@
+escapement
+Copyright (C) 2026 Aleksei Golubev
+
+
+LICENSES BY PART OF THIS REPOSITORY
+
+  Application and engine
+  (apps/, crates/engine-core, crates/engine-wasm, crates/engine-native,
+  crates/dsp, packages/document, packages/ui, packages/api)
+      GNU Affero General Public License, version 3 only (AGPL-3.0-only),
+      with the additional permission in LICENSE-PLUGIN-EXCEPTION.
+      Full text: LICENSE
+
+  Plugin contract and boundary schema
+  (schema/, crates/plugin-sdk, packages/plugin-sdk, packages/protocol,
+  plugin examples)
+      Apache License, Version 2.0 (Apache-2.0).
+      Full text: http://www.apache.org/licenses/LICENSE-2.0
+
+  Documentation
+  (docs/, including the architecture decision records)
+      Creative Commons Attribution 4.0 International (CC-BY-4.0).
+      Full text: https://creativecommons.org/licenses/by/4.0/legalcode
+
+  Samples, presets and fonts
+      Licensed per file. Only content under CC0, CC-BY or owned by the
+      project is included in this repository. See the accompanying
+      license file in each asset directory.
+
+Every source file carries an SPDX-License-Identifier line stating which
+of the above applies to it. Where a file and this notice disagree, the
+file's SPDX line governs.
+
+The name "escapement" and the project logo are not licensed by any of
+the above. See TRADEMARK.md.
+
+
+THIRD-PARTY SOFTWARE
+
+Third-party components and their notices are listed here as they are
+added. This section is empty because the project has no code yet.
