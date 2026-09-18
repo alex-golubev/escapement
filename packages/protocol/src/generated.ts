@@ -43,11 +43,11 @@ export const CommandSlotOffsets = {
 export const CommandSlotSize = 32
 
 export function readCommandSlotKind(view: DataView, base: number): number {
-  return view.getUint32(base + 0, true)
+  return view.getUint32(base, true)
 }
 
 export function writeCommandSlotKind(view: DataView, base: number, value: number): void {
-  view.setUint32(base + 0, value, true)
+  view.setUint32(base, value, true)
 }
 
 export function readCommandSlotFrameOffset(view: DataView, base: number): number {
@@ -67,11 +67,11 @@ export const MeterBlockOffsets = {
 export const MeterBlockSize = 16
 
 export function loadMeterBlockBlockCounter(atoms: Int32Array, base: number): number {
-  return Atomics.load(atoms, (base + 0) >> 2)
+  return Atomics.load(atoms, base >> 2)
 }
 
 export function storeMeterBlockBlockCounter(atoms: Int32Array, base: number, value: number): void {
-  Atomics.store(atoms, (base + 0) >> 2, value)
+  Atomics.store(atoms, base >> 2, value)
 }
 
 export function loadMeterBlockPositionFrames(atoms: Int32Array, base: number): number {
@@ -102,13 +102,13 @@ export function storeMeterBlockTransportState(atoms: Int32Array, base: number, v
 export function writePlay(view: DataView, slot: number, frameOffset: number, fromFrame: number): void {
   view.setUint32(slot + CommandSlotOffsets.kind, 1, true)
   view.setUint32(slot + CommandSlotOffsets.frameOffset, frameOffset, true)
-  view.setUint32(slot + 8 + 0, fromFrame, true)
+  view.setUint32(slot + COMMAND_PAYLOAD_OFFSET, fromFrame, true)
 }
 
 /** Cold path: allocates an object. Not for use inside process(). */
 export function readPlay(view: DataView, slot: number) {
   return {
-    fromFrame: view.getUint32(slot + 8 + 0, true),
+    fromFrame: view.getUint32(slot + COMMAND_PAYLOAD_OFFSET, true),
   }
 }
 
@@ -116,13 +116,13 @@ export function readPlay(view: DataView, slot: number) {
 export function writeSetTempo(view: DataView, slot: number, frameOffset: number, microBpm: number): void {
   view.setUint32(slot + CommandSlotOffsets.kind, 3, true)
   view.setUint32(slot + CommandSlotOffsets.frameOffset, frameOffset, true)
-  view.setUint32(slot + 8 + 0, microBpm, true)
+  view.setUint32(slot + COMMAND_PAYLOAD_OFFSET, microBpm, true)
 }
 
 /** Cold path: allocates an object. Not for use inside process(). */
 export function readSetTempo(view: DataView, slot: number) {
   return {
-    microBpm: view.getUint32(slot + 8 + 0, true),
+    microBpm: view.getUint32(slot + COMMAND_PAYLOAD_OFFSET, true),
   }
 }
 
