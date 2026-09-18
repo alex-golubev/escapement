@@ -41,6 +41,15 @@ const buffer = (size: number) => {
   return { bytes, view: new DataView(bytes), atoms: new Int32Array(bytes) }
 }
 
+/** A slot as the ring hands it back: still holding the command written into it
+ *  last time round. A command vector's zero bytes are a promise that a writer
+ *  fills the whole payload, so the tests have to start from something else. */
+const reusedSlot = () => {
+  const slot = buffer(protocol.COMMAND_SLOT_SIZE)
+  new Uint8Array(slot.bytes).fill(0xaa)
+  return slot
+}
+
 describe("records", () => {
   test("command_slot matches its vector", () => {
     const vector = find(vectors.records, "record", "command_slot")
@@ -75,7 +84,7 @@ describe("records", () => {
 describe("commands", () => {
   test("play matches its vector", () => {
     const vector = find(vectors.commands, "command", "play")
-    const slot = buffer(protocol.COMMAND_SLOT_SIZE)
+    const slot = reusedSlot()
 
     protocol.writePlay(
       slot.view,
@@ -92,7 +101,7 @@ describe("commands", () => {
 
   test("stop matches its vector", () => {
     const vector = find(vectors.commands, "command", "stop")
-    const slot = buffer(protocol.COMMAND_SLOT_SIZE)
+    const slot = reusedSlot()
 
     protocol.writeStop(slot.view, 0, hex(vector.frame_offset as string))
 
@@ -101,7 +110,7 @@ describe("commands", () => {
 
   test("set_tempo matches its vector", () => {
     const vector = find(vectors.commands, "command", "set_tempo")
-    const slot = buffer(protocol.COMMAND_SLOT_SIZE)
+    const slot = reusedSlot()
 
     protocol.writeSetTempo(
       slot.view,

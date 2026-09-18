@@ -187,9 +187,10 @@ pub fn emit(schema: &Schema, abi_version: u32, abi_hash: u32) -> String {
             out,
             "    pub fn write(&self, payload: &mut [u8; COMMAND_PAYLOAD_SIZE]) {{"
         );
-        if command.fields.is_empty() {
-            let _ = writeln!(out, "        let _ = payload;");
-        }
+        // A slot is reused. A writer that set only its own fields would leave
+        // the previous command's bytes in the rest of the payload, so the whole
+        // of it is cleared first and the fields written over the zeros.
+        let _ = writeln!(out, "        *payload = [0u8; COMMAND_PAYLOAD_SIZE];");
         for field in &command.fields {
             let _ = writeln!(out, "{}", write_statements(field));
         }

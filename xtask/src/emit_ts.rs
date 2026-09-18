@@ -188,7 +188,7 @@ pub fn emit(schema: &Schema, abi_version: u32, abi_hash: u32) -> String {
 
         let _ = writeln!(
             out,
-            "/** Writes a `{name}` slot (kind {kind}). Hot path: no allocation. */"
+            "/** Writes a complete `{name}` slot (kind {kind}). Hot path: no allocation. */"
         );
         let _ = writeln!(
             out,
@@ -201,6 +201,15 @@ pub fn emit(schema: &Schema, abi_version: u32, abi_hash: u32) -> String {
         let _ = writeln!(
             out,
             "  view.setUint32(slot + CommandSlotOffsets.frameOffset, frameOffset, true)"
+        );
+        // A slot is reused, so the payload is cleared before the fields are
+        // written over it. The stride of four is safe because the schema check
+        // makes the slot size and the payload offset multiples of eight, and
+        // the payload is the difference between them.
+        let _ = writeln!(
+            out,
+            "  for (let i = 0; i < COMMAND_PAYLOAD_SIZE; i += 4) {{\n    \
+             view.setUint32(slot + COMMAND_PAYLOAD_OFFSET + i, 0, true)\n  }}"
         );
         for field in &command.fields {
             let value = camel(&field.name);

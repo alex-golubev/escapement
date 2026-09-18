@@ -143,6 +143,7 @@ impl Play {
     }
 
     pub fn write(&self, payload: &mut [u8; COMMAND_PAYLOAD_SIZE]) {
+        *payload = [0u8; COMMAND_PAYLOAD_SIZE];
         let bytes = self.from_frame.to_le_bytes();
         payload[0] = bytes[0];
         payload[1] = bytes[1];
@@ -171,6 +172,7 @@ impl SetTempo {
     }
 
     pub fn write(&self, payload: &mut [u8; COMMAND_PAYLOAD_SIZE]) {
+        *payload = [0u8; COMMAND_PAYLOAD_SIZE];
         let bytes = self.micro_bpm.to_le_bytes();
         payload[0] = bytes[0];
         payload[1] = bytes[1];
@@ -195,7 +197,7 @@ impl Stop {
     }
 
     pub fn write(&self, payload: &mut [u8; COMMAND_PAYLOAD_SIZE]) {
-        let _ = payload;
+        *payload = [0u8; COMMAND_PAYLOAD_SIZE];
     }
 }
 
