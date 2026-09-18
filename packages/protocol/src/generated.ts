@@ -10,7 +10,9 @@ export const ABI_MAJOR = 0
 export const ABI_HASH = 0x8bc0ff11
 export const ABI_VERSION = 0x00c0ff11
 
+/** Where a slot's payload begins, in bytes from the slot. */
 export const COMMAND_PAYLOAD_OFFSET = 8
+/** How many bytes of a slot a command has to itself. */
 export const COMMAND_PAYLOAD_SIZE = 24
 /**
  * How many command slots the staging area holds. The glue copies at most this
@@ -94,6 +96,11 @@ export function audioOutRight(buffer: ArrayBufferLike, base: number): Float32Arr
   return new Float32Array(buffer, base + 4096, AUDIO_OUT_RIGHT_LENGTH)
 }
 
+/**
+ * One slot of the command ring, copied into the staging area as it stands. The
+ * header is what the engine reads of every slot; the payload only the slot's own
+ * kind knows how to read.
+ */
 export const CommandSlotOffsets = {
   kind: 0,
   frameOffset: 4,
@@ -101,25 +108,41 @@ export const CommandSlotOffsets = {
 } as const
 export const COMMAND_SLOT_SIZE = 32
 
+/** Which command this is, one of the `command_kind` codes. */
 export function readCommandSlotKind(view: DataView, base: number): number {
   return view.getUint32(base, true)
 }
 
+/** Which command this is, one of the `command_kind` codes. */
 export function writeCommandSlotKind(view: DataView, base: number, value: number): void {
   view.setUint32(base, value, true)
 }
 
+/**
+ * Where in the block the command takes effect, in frames from its start. The
+ * engine renders up to that point, applies the command and carries on; at or
+ * beyond the end of the block the command is dropped as `bad_frame_offset`.
+ */
 export function readCommandSlotFrameOffset(view: DataView, base: number): number {
   return view.getUint32(base + 4, true)
 }
 
+/**
+ * Where in the block the command takes effect, in frames from its start. The
+ * engine renders up to that point, applies the command and carries on; at or
+ * beyond the end of the block the command is dropped as `bad_frame_offset`.
+ */
 export function writeCommandSlotFrameOffset(view: DataView, base: number, value: number): void {
   view.setUint32(base + 4, value, true)
 }
 
+/** The command's own fields, laid out by its kind, and zero wherever the kind declares nothing. */
 export const COMMAND_SLOT_PAYLOAD_LENGTH = 24
 
-/** A `Uint8Array` over `payload` of `command_slot`. Cold path: the view is an allocation, so take it once and keep it. */
+/**
+ * The command's own fields, laid out by its kind, and zero wherever the kind declares nothing.
+ * A `Uint8Array` over `payload` of `command_slot`. Cold path: the view is an allocation, so take it once and keep it.
+ */
 export function commandSlotPayload(buffer: ArrayBufferLike, base: number): Uint8Array {
   return new Uint8Array(buffer, base + 8, COMMAND_SLOT_PAYLOAD_LENGTH)
 }
@@ -279,7 +302,11 @@ export function readMeterBlock(atoms: Int32Array, base: number) {
   }
 }
 
-/** Writes a complete `play` slot (kind 1). Hot path: no allocation. */
+/** Start the transport. */
+/**
+ * Writes a complete `play` slot (kind 1). Hot path: no allocation.
+ * @param fromFrame - Where to start, in frames from the start of the timeline.
+ */
 export function writePlay(view: DataView, slot: number, frameOffset: number, fromFrame: number): void {
   view.setUint32(slot + CommandSlotOffsets.kind, 1, true)
   view.setUint32(slot + CommandSlotOffsets.frameOffset, frameOffset, true)
@@ -296,6 +323,7 @@ export function readPlay(view: DataView, slot: number) {
   }
 }
 
+/** Set the tempo from this point in the block onwards. */
 /**
  * Writes a complete `set_tempo` slot (kind 3). Hot path: no allocation.
  * @param microBpm - Beats per minute times a million: 120 BPM is 120000000. Between `micro_bpm_min`
@@ -318,6 +346,7 @@ export function readSetTempo(view: DataView, slot: number) {
   }
 }
 
+/** Stop the transport. */
 /** Writes a complete `stop` slot (kind 2). Hot path: no allocation. */
 export function writeStop(view: DataView, slot: number, frameOffset: number): void {
   view.setUint32(slot + CommandSlotOffsets.kind, 2, true)
@@ -328,7 +357,17 @@ export function writeStop(view: DataView, slot: number, frameOffset: number): vo
 }
 
 export interface EngineExports {
+  /**
+   * The engine's own linear memory, unshared, and never grown after `init`: growing
+   * it detaches every view the glue holds over it (ADR-0015).
+   */
   memory: WebAssembly.Memory
+  /**
+   * The ABI this module was built against. The glue compares it with the
+   * `ABI_VERSION` generated from the same file and refuses the module if they
+   * differ: a stale binary does not fail, it reads the same bytes as something
+   * else (ADR-0015).
+   */
   abi_version(): number
   /**
    * Prepares the engine for a sample rate, and returns `ok` or `bad_sample_rate`.
@@ -336,7 +375,9 @@ export interface EngineExports {
    * (ADR-0020).
    */
   init(sampleRate: number): number
+  /** Where the glue copies the slots it drained. Stable for the life of the instance, so the glue takes its view once. */
   command_staging_ptr(): number
+  /** Where the engine leaves the block it rendered. Stable for the life of the instance, so the glue takes its views once. */
   audio_out_ptr(): number
   /** Where the engine writes its report. Stable for the life of the instance, so the glue takes its view once. */
   engine_report_ptr(): number

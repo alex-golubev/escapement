@@ -12,7 +12,9 @@ pub const ABI_MAJOR: u32 = 0;
 pub const ABI_HASH: u32 = 0x8bc0ff11;
 pub const ABI_VERSION: u32 = 0x00c0ff11;
 
+/// Where a slot's payload begins, in bytes from the slot.
 pub const COMMAND_PAYLOAD_OFFSET: usize = 8;
+/// How many bytes of a slot a command has to itself.
 pub const COMMAND_PAYLOAD_SIZE: usize = 24;
 /// How many command slots the staging area holds. The glue copies at most this
 /// many into it in one block and leaves the rest in the ring for the next, so
@@ -136,11 +138,19 @@ const _: () = assert!(size_of::<AudioOut>() == 8192);
 const _: () = assert!(offset_of!(AudioOut, left) == 0);
 const _: () = assert!(offset_of!(AudioOut, right) == 4096);
 
+/// One slot of the command ring, copied into the staging area as it stands. The
+/// header is what the engine reads of every slot; the payload only the slot's own
+/// kind knows how to read.
 #[repr(C)]
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub struct CommandSlot {
+    /// Which command this is, one of the `command_kind` codes.
     pub kind: u32,
+    /// Where in the block the command takes effect, in frames from its start. The
+    /// engine renders up to that point, applies the command and carries on; at or
+    /// beyond the end of the block the command is dropped as `bad_frame_offset`.
     pub frame_offset: u32,
+    /// The command's own fields, laid out by its kind, and zero wherever the kind declares nothing.
     pub payload: [u8; 24],
 }
 
@@ -221,10 +231,12 @@ const _: () = assert!(offset_of!(MeterBlock, position_frames) == 4);
 const _: () = assert!(offset_of!(MeterBlock, peak_amp_micro) == 8);
 const _: () = assert!(offset_of!(MeterBlock, transport_state) == 12);
 
+/// Start the transport.
 /// Command `play`, code 1, read from and written to a slot's payload.
 #[repr(C)]
 #[derive(Clone, Copy, PartialEq, Debug, Default)]
 pub struct Play {
+    /// Where to start, in frames from the start of the timeline.
     pub from_frame: u32,
 }
 
@@ -250,6 +262,7 @@ impl Play {
 
 const _: () = assert!(size_of::<Play>() <= 24);
 
+/// Set the tempo from this point in the block onwards.
 /// Command `set_tempo`, code 3, read from and written to a slot's payload.
 #[repr(C)]
 #[derive(Clone, Copy, PartialEq, Debug, Default)]
@@ -282,6 +295,7 @@ impl SetTempo {
 
 const _: () = assert!(size_of::<SetTempo>() <= 24);
 
+/// Stop the transport.
 /// Command `stop`, code 2, read from and written to a slot's payload.
 #[repr(C)]
 #[derive(Clone, Copy, PartialEq, Debug, Default)]
