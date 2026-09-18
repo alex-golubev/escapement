@@ -8,7 +8,7 @@
 A browser DAW with real-time collaborative editing.
 
 - This is a real product, not a pet project.
-- FL Studio is the reference for techniques and workflow (patterns, channel rack, playlist, mixer). We do not copy its interface.
+- A pattern-based workflow: channel rack, patterns, playlist, mixer, with playlist tracks that are not tied to instruments ([ADR-0006](adr/0006-project-model.md)).
 - A room holds 2–5 people.
 - Chromium is the only supported browser at launch.
 - Plugins are required. At first only the team writes them, in Rust and in TS/JS.

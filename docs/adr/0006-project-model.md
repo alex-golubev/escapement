@@ -1,13 +1,18 @@
-# ADR-0006. Project model and workflow drawn from FL Studio
+# ADR-0006. Project model and workflow
 
 - Status: accepted
 - Date: 2026-09-17
 
 ## Context
 
-FL Studio is escapement's reference for techniques and the feel of working. We do not copy FL's interface.
+escapement is built around a pattern-based workflow: notes live in
+patterns, and patterns are arranged on a playlist whose tracks are not
+tied to instruments.
 
-FL's pattern-based model differs markedly from Ableton-style models. It has to be baked into the data from the start; changing the model later is expensive.
+That differs markedly from the more common model where an instrument
+owns a track and its clips. The difference is structural, not cosmetic,
+so it has to be baked into the data from the start; changing the model
+later is expensive.
 
 ## Decision
 
@@ -18,7 +23,7 @@ FL's pattern-based model differs markedly from Ableton-style models. It has to b
 - **Arrangement** (playlist):
   - tracks are not bound to instruments;
   - any track takes clips of three kinds: pattern, audio, automation;
-  - a project can hold several arrangements (FL gained this in version 20). When collaborating, patterns are shared while each person can keep their own draft arrangement.
+  - a project can hold several arrangements. When collaborating, patterns are shared while each person can keep their own draft arrangement.
 - **Mixer** — inserts with effect slots, routing from any insert into any other, sends, sidechain, plugin delay compensation (PDC).
 - **Automation clip** — a separate entity, bound to any parameter.
 - **Make unique** — a pattern instance can be turned into an independent copy. In multiplayer this is also a way to avoid conflicts.
@@ -26,7 +31,7 @@ FL's pattern-based model differs markedly from Ableton-style models. It has to b
 
 Storage in Yjs is covered by [ADR-0003](0003-crdt-yjs.md).
 
-### Techniques we are taking
+### The workflow we are building
 
 This is a backlog, not an order of work.
 
@@ -35,15 +40,15 @@ This is a backlog, not an order of work.
 - Piano roll tools: chop, glue, strum, arpeggiate, quantize, scale highlighting, chord input.
 - Painting clips in the playlist: pick a pattern, then paint with the left button and erase with the right.
 - An action history with named steps.
-- Scripts for the piano roll and MIDI controllers (Python in FL), TS for us ([ADR-0008](0008-plugins.md)).
+- Scripts for the piano roll and MIDI controllers, written in TS ([ADR-0008](0008-plugins.md)).
 
 **Recording**
-- Score logger: a retrospective capture of everything played over MIDI in the last few minutes, which can be dumped into a pattern.
+- Retrospective MIDI capture: everything played over MIDI in the last few minutes is kept and can be dumped into a pattern after the fact.
 
 **Mixer and automation**
 - An automation clip for any parameter in one click.
 - "Last tweaked parameter", MIDI learn.
-- A modular plugin graph (like Patcher) in the future.
+- A modular plugin graph in the future.
 
 **Performance** — especially important in a browser
 - Smart disable: a plugin switches itself off when its input goes silent.
@@ -59,9 +64,9 @@ This is a backlog, not an order of work.
 - From day one the data model supports patterns, instrument-free tracks and multiple arrangements.
 - The same note data is shown in two editors, and both have to stay consistent.
 - Smart disable and freeze shape the plugin and engine APIs: a silence signal and offline rendering of part of a project ([ADR-0002](0002-engine-rust-wasm-audioworklet.md), [ADR-0008](0008-plugins.md)).
-- We design the interface ourselves, building on these techniques rather than on FL's looks.
+- The interface is ours to design. These entities and techniques constrain what it has to express, not what it has to look like.
 
 ## Alternatives considered
 
-- **An Ableton/Logic-style track model** (instrument = track). Not chosen: FL's workflow is the reference.
-- **Copying FL's interface.** Not wanted: we are taking the experience, not the looks.
+- **A track model where an instrument owns a track.** Simpler to implement and familiar to more people, but it gives up the pattern as a reusable unit shared across channels, which is the centre of the workflow we want.
+- **Patterns without multiple arrangements.** Cheaper, but a single arrangement forces collaborators to fight over one timeline instead of each keeping a draft.
