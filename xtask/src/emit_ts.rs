@@ -101,6 +101,7 @@ pub fn emit(schema: &Schema, abi_version: u32, abi_hash: u32) -> String {
         emit_doc(&mut out, "", record.doc.as_deref());
         let _ = writeln!(out, "export const {type_name}Offsets = {{");
         for field in &record.fields {
+            emit_doc(&mut out, "  ", field.doc.as_deref());
             let _ = writeln!(out, "  {}: {},", camel(&field.name), field.offset);
         }
         let _ = writeln!(out, "}} as const");
@@ -120,27 +121,23 @@ pub fn emit(schema: &Schema, abi_version: u32, abi_hash: u32) -> String {
             let at = offset_expr("base", field.offset, None);
             if field.atomic {
                 let index = atomic_index(field.offset);
-                emit_doc(&mut out, "", field.doc.as_deref());
                 let _ = writeln!(
                     out,
                     "export function load{type_name}{field_name}(atoms: Int32Array, base: number): number {{\n  \
                      return Atomics.load(atoms, {index})\n}}\n"
                 );
-                emit_doc(&mut out, "", field.doc.as_deref());
                 let _ = writeln!(
                     out,
                     "export function store{type_name}{field_name}(atoms: Int32Array, base: number, value: number): void {{\n  \
                      Atomics.store(atoms, {index}, value)\n}}\n"
                 );
             } else {
-                emit_doc(&mut out, "", field.doc.as_deref());
                 let _ = writeln!(
                     out,
                     "export function read{type_name}{field_name}(view: DataView, base: number): number {{\n  \
                      return {}\n}}\n",
                     view_get(field.ty, &at)
                 );
-                emit_doc(&mut out, "", field.doc.as_deref());
                 let _ = writeln!(
                     out,
                     "export function write{type_name}{field_name}(view: DataView, base: number, value: number): void {{\n  \
@@ -276,9 +273,10 @@ pub fn emit(schema: &Schema, abi_version: u32, abi_hash: u32) -> String {
     out
 }
 
-/// The schema's own prose as a JSDoc block: what a unit or a contract says
-/// reaches the editor of whoever calls the accessor, which a TOML comment does
-/// not. Where the lines break is the schema's to say.
+/// The schema's own prose as a JSDoc block, written once where the thing it
+/// describes is declared. An accessor is an operation over a field rather than a
+/// second declaration of it, so it carries nothing. Where the lines break is the
+/// schema's to say.
 fn emit_doc(out: &mut String, indent: &str, doc: Option<&str>) {
     let Some(text) = doc else { return };
     let mut lines = text.lines();
@@ -366,22 +364,16 @@ fn emit_record_array(out: &mut String, record_name: &str, field: &Field) {
     );
     let array = field.ty.ts_array();
 
-    emit_doc(out, "", field.doc.as_deref());
     let _ = writeln!(out, "export const {length} = {}\n", field.count);
 
     let mut doc = String::new();
-    if let Some(text) = field.doc.as_deref() {
-        doc.push_str(text);
-        doc.push('\n');
-    }
     let _ = write!(
         doc,
         "A `{array}` over `{}` of `{record_name}`. \
          Cold path: the view is an allocation, so take it once and keep it.",
         field.name
     );
-    // A single byte has no alignment to demand, and saying so is the noise the
-    // rest of this file leaves out.
+    // A single byte has no alignment to demand.
     if field.ty.size() > 1 {
         let _ = write!(doc, " `base` must be a multiple of {}.", field.ty.size());
     }

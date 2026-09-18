@@ -17,9 +17,7 @@ pub const COMMAND_PAYLOAD_OFFSET: usize = 8;
 /// How many bytes of a slot a command has to itself.
 pub const COMMAND_PAYLOAD_SIZE: usize = 24;
 /// How many command slots the staging area holds. The glue copies at most this
-/// many into it in one block and leaves the rest in the ring for the next, so
-/// `process` seeing more than this is a bug in the glue rather than a busy
-/// moment.
+/// many in a block and leaves the rest in the ring for the next.
 pub const COMMAND_STAGING_CAPACITY: usize = 256;
 /// The fastest tempo the engine accepts, in micro-BPM: 999 BPM.
 pub const MICRO_BPM_MAX: usize = 999000000;
@@ -114,11 +112,9 @@ impl TransportState {
     }
 }
 
-/// The block the engine renders into, in its own unshared memory. One run of
-/// samples per channel at a fixed offset: Web Audio hands the worklet a
-/// Float32Array per channel, and an offset is one number rather than a stride each
-/// side works out for itself. A block fills the first `frames` samples of each
-/// plane and leaves the rest of it as the previous block left it.
+/// The block the engine renders into, in its own unshared memory, one run of
+/// samples per channel. A block fills the first `frames` samples of each plane and
+/// leaves the rest of it as the previous block left it.
 #[repr(C)]
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub struct AudioOut {
@@ -139,16 +135,15 @@ const _: () = assert!(offset_of!(AudioOut, left) == 0);
 const _: () = assert!(offset_of!(AudioOut, right) == 4096);
 
 /// One slot of the command ring, copied into the staging area as it stands. The
-/// header is what the engine reads of every slot; the payload only the slot's own
-/// kind knows how to read.
+/// engine reads the header of every slot; the payload only the slot's own kind
+/// knows how to read.
 #[repr(C)]
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub struct CommandSlot {
     /// Which command this is, one of the `command_kind` codes.
     pub kind: u32,
-    /// Where in the block the command takes effect, in frames from its start. The
-    /// engine renders up to that point, applies the command and carries on; at or
-    /// beyond the end of the block the command is dropped as `bad_frame_offset`.
+    /// Where in the block the command takes effect, in frames from its start. At or
+    /// beyond the end of the block it is dropped as `bad_frame_offset`.
     pub frame_offset: u32,
     /// The command's own fields, laid out by its kind, and zero wherever the kind declares nothing.
     pub payload: [u8; 24],
@@ -166,23 +161,19 @@ const _: () = assert!(offset_of!(CommandSlot, kind) == 0);
 const _: () = assert!(offset_of!(CommandSlot, frame_offset) == 4);
 const _: () = assert!(offset_of!(CommandSlot, payload) == 8);
 
-/// What the engine has to say about the block it has just rendered, written into
-/// its own unshared memory. The glue reads it once `process` has returned and
-/// publishes what the interface needs into `meter_block`. The engine never sees
-/// the published copy.
+/// What the engine has to say about the block it has just rendered, in its own
+/// unshared memory. The glue reads it once `process` has returned and publishes
+/// what the interface needs into `meter_block`.
 #[repr(C)]
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub struct EngineReport {
     /// The playhead at the end of this block, in frames from the start of the timeline.
     pub position_frames: i32,
-    /// The largest sample of this block, over both channels, as an amplitude times a
-    /// million: 1.0 is 1000000. Linear and not dBFS, because `core` has no logarithm
-    /// and the curve to draw is the interface's to choose.
+    /// The largest sample of this block, over both channels, as an amplitude times a million: 1.0 is 1000000.
     pub peak_amp_micro: i32,
     /// The transport as this block left it, one of the `transport_state` codes.
     pub transport_state: i32,
-    /// How many of this block's commands the engine dropped, whatever the reason. Per
-    /// block rather than cumulative: the host logs it and the count starts again.
+    /// How many of this block's commands the engine dropped, whatever the reason. Per block, not cumulative.
     pub dropped_commands: u32,
 }
 
@@ -209,9 +200,8 @@ pub struct MeterBlock {
     /// The playhead as of the published block, in frames from the start of the timeline.
     pub position_frames: i32,
     /// The meter to draw, as an amplitude times a million. The glue holds and decays
-    /// the engine's per-block peak into this, because the interface reads about once
-    /// in six blocks and would otherwise miss the transients; what the interface adds
-    /// is the curve, not a second decay.
+    /// the engine's per-block peak into this; what the interface adds is the curve,
+    /// not a second decay.
     pub peak_amp_micro: i32,
     /// The transport as of the published block, one of the `transport_state` codes.
     pub transport_state: i32,
@@ -267,9 +257,8 @@ const _: () = assert!(size_of::<Play>() <= 24);
 #[repr(C)]
 #[derive(Clone, Copy, PartialEq, Debug, Default)]
 pub struct SetTempo {
-    /// Beats per minute times a million: 120 BPM is 120000000. Between `micro_bpm_min`
-    /// and `micro_bpm_max` inclusive — outside them the command is dropped and the
-    /// block reports `bad_command_payload`.
+    /// Beats per minute times a million: 120 BPM is 120000000. Outside `micro_bpm_min`
+    /// to `micro_bpm_max` the command is dropped as `bad_command_payload`.
     pub micro_bpm: u32,
 }
 
