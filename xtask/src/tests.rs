@@ -5,8 +5,8 @@
 // so a break in any other corner is invisible until someone writes the command
 // that needs it. Each test here is a bug that reached review once.
 
-use crate::emit_ts;
 use crate::schema::Schema;
+use crate::{emit_rust, emit_ts};
 
 /// A schema with one command, `probe`, whose fields the test supplies. Nothing
 /// here is load-bearing beyond satisfying `check`: the interest is in what the
@@ -49,8 +49,61 @@ fields = [{fields}]
     schema
 }
 
+fn rust_of(schema: &Schema) -> String {
+    emit_rust::emit(schema, 0, 0)
+}
+
 fn ts_of(schema: &Schema) -> String {
     emit_ts::emit(schema, 0, 0)
+}
+
+/// A field with a count reserves `count * size` bytes. Emitting it as a scalar
+/// compiled on both sides and carried the first element only, which no test and
+/// no differential fuzzer would have caught: both halves were wrong together.
+#[test]
+fn a_command_array_carries_every_byte_it_reserves() {
+    let schema = probe_schema(
+        24,
+        "{ name = \"gains\", type = \"f32\", count = 4, offset = 8 }",
+        "",
+    );
+    let rust = rust_of(&schema);
+    let ts = ts_of(&schema);
+
+    assert!(rust.contains("pub gains: [f32; 4],"), "{rust}");
+    assert!(!rust.contains("pub gains: f32,"), "{rust}");
+    // Four elements, four bytes apart, starting at the field's own offset.
+    assert!(rust.contains("let mut out = [0f32; 4];"), "{rust}");
+    assert!(rust.contains("let at = 8 + i * 4;"), "{rust}");
+
+    assert!(ts.contains("gains: Float32Array"), "{ts}");
+    assert!(ts.contains("for (let i = 0; i < 4; i++)"), "{ts}");
+    assert!(
+        ts.contains(
+            "view.setFloat32(slot + COMMAND_PAYLOAD_OFFSET + 8 + i * 4, gains[i] ?? 0, true)"
+        ),
+        "{ts}"
+    );
+}
+
+/// The stride and the offset are both dropped from the expression when they
+/// would read `* 1` or `+ 0`; clippy denies the first and CI runs it with
+/// `-D warnings`, and the second is noise in a file meant to be read.
+#[test]
+fn a_byte_array_indexes_without_identity_arithmetic() {
+    let schema = probe_schema(
+        24,
+        "{ name = \"label\", type = \"u8\", count = 8, offset = 0 }",
+        "",
+    );
+    let rust = rust_of(&schema);
+    let ts = ts_of(&schema);
+
+    assert!(rust.contains("let at = i;"), "{rust}");
+    assert!(!rust.contains("i * 1"), "{rust}");
+    assert!(!rust.contains("0 + i"), "{rust}");
+    assert!(ts.contains("COMMAND_PAYLOAD_OFFSET + i,"), "{ts}");
+    assert!(!ts.contains("i * 1"), "{ts}");
 }
 
 /// `DataView.setUint8` takes two arguments. Passing the byte-order flag anyway
@@ -60,7 +113,7 @@ fn ts_of(schema: &Schema) -> String {
 fn single_byte_accessors_take_no_byte_order_argument() {
     let schema = probe_schema(
         24,
-        r#"{ name = "flags", type = "u8", offset = 0 }, { name = "tempo", type = "u32", offset = 4 }"#,
+        "{ name = \"flags\", type = \"u8\", offset = 0 }, { name = \"tempo\", type = \"u32\", offset = 4 }",
         r#"
 [records.probe_byte]
 size = 1
@@ -84,5 +137,49 @@ fields = [ { name = "level", type = "u8", offset = 0 } ]
     assert!(
         ts.contains("view.setUint32(slot + COMMAND_PAYLOAD_OFFSET + 4, tempo, true)"),
         "{ts}"
+    );
+
+    // The Rust side reads a lone byte directly: from_le_bytes on one byte is
+    // ceremony around an index.
+    let rust = rust_of(&schema);
+    assert!(rust.contains("flags: payload[0],"), "{rust}");
+    assert!(rust.contains("payload[0] = self.flags;"), "{rust}");
+}
+
+/// `derive(Default)` reaches arrays only up to 32 elements. A longer one has to
+/// have the impl written out, or the generated file stops compiling for a
+/// reason that has nothing to do with the schema.
+#[test]
+fn a_long_array_gets_a_written_default() {
+    let schema = probe_schema(
+        48,
+        "{ name = \"name\", type = \"u8\", count = 40, offset = 0 }",
+        "",
+    );
+    let rust = rust_of(&schema);
+
+    assert!(rust.contains("impl Default for Probe"), "{rust}");
+    assert!(rust.contains("name: [0u8; 40],"), "{rust}");
+    assert!(
+        rust.contains("#[derive(Clone, Copy, PartialEq, Debug)]"),
+        "{rust}"
+    );
+}
+
+/// The short arrays that fit keep the derive, so the written impl stays the
+/// exception rather than noise on every command.
+#[test]
+fn a_short_array_keeps_the_derived_default() {
+    let schema = probe_schema(
+        24,
+        "{ name = \"name\", type = \"u8\", count = 8, offset = 0 }",
+        "",
+    );
+    let rust = rust_of(&schema);
+
+    assert!(!rust.contains("impl Default for Probe"), "{rust}");
+    assert!(
+        rust.contains("#[derive(Clone, Copy, PartialEq, Debug, Default)]"),
+        "{rust}"
     );
 }
