@@ -72,7 +72,12 @@ pub fn emit(schema: &Schema, abi_version: u32, abi_hash: u32) -> String {
             let _ = writeln!(out, "  {}: {},", camel(&field.name), field.offset);
         }
         let _ = writeln!(out, "}} as const");
-        let _ = writeln!(out, "export const {type_name}Size = {}\n", record.size);
+        let _ = writeln!(
+            out,
+            "export const {}_SIZE = {}\n",
+            screaming(name),
+            record.size
+        );
 
         for field in &record.fields {
             if field.is_array() {

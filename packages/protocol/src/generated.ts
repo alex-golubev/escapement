@@ -7,13 +7,11 @@
 // 4-byte aligned; the generator refuses any field where it is not.
 
 export const ABI_MAJOR = 0
-export const ABI_HASH = 0xcfb1bd5f
-export const ABI_VERSION = 0x00b1bd5f
+export const ABI_HASH = 0x57a79934
+export const ABI_VERSION = 0x00a79934
 
 export const COMMAND_PAYLOAD_OFFSET = 8
 export const COMMAND_PAYLOAD_SIZE = 24
-export const COMMAND_SLOT_SIZE = 32
-export const METER_BLOCK_SIZE = 16
 
 export const CommandKind = {
   play: 1,
@@ -40,7 +38,7 @@ export const CommandSlotOffsets = {
   frameOffset: 4,
   payload: 8,
 } as const
-export const CommandSlotSize = 32
+export const COMMAND_SLOT_SIZE = 32
 
 export function readCommandSlotKind(view: DataView, base: number): number {
   return view.getUint32(base, true)
@@ -64,7 +62,7 @@ export const MeterBlockOffsets = {
   peakMicro: 8,
   transportState: 12,
 } as const
-export const MeterBlockSize = 16
+export const METER_BLOCK_SIZE = 16
 
 export function loadMeterBlockBlockCounter(atoms: Int32Array, base: number): number {
   return Atomics.load(atoms, base >> 2)

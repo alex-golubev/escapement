@@ -14,11 +14,11 @@
 major = 0
 
 [constants]
-# A ring slot: an 8-byte header followed by an opaque payload (ADR-0015).
-command_slot_size = 32
+# A ring slot is an 8-byte header followed by an opaque payload (ADR-0015).
+# The slot's own size belongs to records.command_slot and is not repeated here:
+# one number, one place.
 command_payload_offset = 8
 command_payload_size = 24
-meter_block_size = 16
 
 [enums.command_kind]
 play = 1
