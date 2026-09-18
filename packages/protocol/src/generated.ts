@@ -7,8 +7,8 @@
 // 4-byte aligned; the generator refuses any field where it is not.
 
 export const ABI_MAJOR = 0
-export const ABI_HASH = 0x175e3db4
-export const ABI_VERSION = 0x005e3db4
+export const ABI_HASH = 0xb79977ee
+export const ABI_VERSION = 0x009977ee
 
 export const COMMAND_PAYLOAD_OFFSET = 8
 export const COMMAND_PAYLOAD_SIZE = 24
@@ -32,6 +32,41 @@ export const TransportState = {
   playing: 1,
 } as const
 export type TransportStateCode = (typeof TransportState)[keyof typeof TransportState]
+
+/**
+ * The block the engine renders into, in its own unshared memory. One run of
+ * samples per channel at a fixed offset: Web Audio hands the worklet a
+ * Float32Array per channel, and an offset is one number rather than a stride each
+ * side works out for itself. A block fills the first `frames` samples of each
+ * plane and leaves the rest of it as the previous block left it.
+ */
+export const AudioOutOffsets = {
+  left: 0,
+  right: 4096,
+} as const
+export const AUDIO_OUT_SIZE = 8192
+
+/** The left channel, as long as the largest block the engine accepts. */
+export const AUDIO_OUT_LEFT_LENGTH = 1024
+
+/**
+ * The left channel, as long as the largest block the engine accepts.
+ * A `Float32Array` over `left` of `audio_out`. Cold path: the view is an allocation, so take it once and keep it. `base` must be a multiple of 4.
+ */
+export function audioOutLeft(buffer: ArrayBufferLike, base: number): Float32Array {
+  return new Float32Array(buffer, base, AUDIO_OUT_LEFT_LENGTH)
+}
+
+/** The right channel, as long as the largest block the engine accepts. */
+export const AUDIO_OUT_RIGHT_LENGTH = 1024
+
+/**
+ * The right channel, as long as the largest block the engine accepts.
+ * A `Float32Array` over `right` of `audio_out`. Cold path: the view is an allocation, so take it once and keep it. `base` must be a multiple of 4.
+ */
+export function audioOutRight(buffer: ArrayBufferLike, base: number): Float32Array {
+  return new Float32Array(buffer, base + 4096, AUDIO_OUT_RIGHT_LENGTH)
+}
 
 export const CommandSlotOffsets = {
   kind: 0,
