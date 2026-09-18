@@ -57,7 +57,9 @@ the architecture, expect the discussion to end in a new ADR.
 - **Keep the subject line the whole message.** Add a body only for a
   decision the diff cannot show, and then one or two sentences. Nobody
   reads a wall of text, and an ADR is the place for reasoning.
-- One logical change per pull request. Keep unrelated cleanups out of it.
+- One logical change per pull request — the documentation a change adds
+  or makes stale is part of that change, not a separate one. Keep
+  unrelated cleanups out of it.
 - Say in the pull request how you tested the change.
 
 ## Licensing of your contribution
