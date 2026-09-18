@@ -8,6 +8,7 @@
 // source for the boundary, and a key serde quietly ignores is a line the author
 // believes they wrote.
 
+use crate::names::pascal;
 use serde::Deserialize;
 use std::collections::BTreeMap;
 
@@ -354,12 +355,35 @@ impl Schema {
             ));
         }
 
-        for name in self.commands.keys() {
-            if self.records.contains_key(name) {
+        // An enum, a record and a command each generate one type, and the
+        // three share a namespace in both languages. This subsumes the plain
+        // case of one name used twice: `records.play` and `commands.play` both
+        // arrive here as `Play`.
+        let mut generated: BTreeMap<String, String> = BTreeMap::new();
+        let declared = self
+            .enums
+            .keys()
+            .map(|name| ("enums", name))
+            .chain(self.records.keys().map(|name| ("records", name)))
+            .chain(self.commands.keys().map(|name| ("commands", name)));
+        for (section, name) in declared {
+            let type_name = pascal(name);
+            if let Some(other) = generated.insert(type_name.clone(), format!("{section}.{name}")) {
                 errors.push(format!(
-                    "{name} is both a record and a command, and the two would generate the same type"
+                    "{section}.{name} and {other} both generate the type {type_name}"
                 ));
             }
+        }
+
+        // A repeated export is a repeated member of the generated TypeScript
+        // interface, which does not compile, and a repeated entry in the list
+        // the wasm host test checks a module against.
+        let mut exported: Vec<&str> = Vec::new();
+        for export in &self.exports {
+            if exported.contains(&export.name.as_str()) {
+                errors.push(format!("exports: {} is declared twice", export.name));
+            }
+            exported.push(&export.name);
         }
 
         let kinds = self.enums.get("command_kind");

@@ -310,3 +310,32 @@ fn the_slot_header_the_command_writers_address_is_required() {
         "{found}"
     );
 }
+
+/// Records and commands were checked against each other; enums were not, and
+/// nothing looked at the name the generator actually emits. `pub enum Probe`
+/// beside `pub struct Probe` is a Rust error in generated code.
+#[test]
+fn two_names_that_would_generate_one_type_are_refused() {
+    let clashing = format!("{VALID}\n[enums.probe]\nrunning = 1\n");
+    let found = problems(&clashing);
+    assert!(found.contains("both generate the type Probe"), "{found}");
+
+    // The case that was already caught still is, through the same rule.
+    let both = format!(
+        "{VALID}\n[records.probe]\nsize = 4\nfields = [ {{ name = \"a\", type = \"u32\", offset = 0 }} ]\n"
+    );
+    let found = problems(&both);
+    assert!(found.contains("both generate the type Probe"), "{found}");
+}
+
+/// A repeated export is a repeated member of the generated interface, which
+/// TypeScript refuses, and a repeated entry in the list the host test uses.
+#[test]
+fn an_export_declared_twice_is_refused() {
+    let twice = VALID.replace(
+        "exports = []",
+        r#"exports = [{ name = "init", returns = "u32" }, { name = "init", returns = "u32" }]"#,
+    );
+    let found = problems(&twice);
+    assert!(found.contains("init is declared twice"), "{found}");
+}
