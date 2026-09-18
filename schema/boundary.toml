@@ -25,10 +25,19 @@ play = 1
 stop = 2
 set_tempo = 3
 
+# Every way a call into the engine can fail, so that the engine never has to
+# invent a number the TypeScript half does not know. What the codes mean for
+# the caller is on `process` and `init`, which return them.
 [enums.engine_error]
-ok = 0
-unknown_command_kind = 1
-bad_frame_count = 2
+ok = { value = 0, doc = "The call did what it was asked." }
+unknown_command_kind = { value = 1, doc = "A slot carried a kind the engine does not know." }
+bad_frame_count = { value = 2, doc = "A block of more frames than a plane of `audio_out` holds." }
+bad_sample_rate = { value = 3, doc = "A sample rate that is not a positive, finite number." }
+not_initialised = { value = 4, doc = "`process` before a successful `init`." }
+too_many_commands = { value = 5, doc = "More commands than the staging area holds." }
+bad_command_payload = { value = 6, doc = "A command of a kind the engine knows, carrying a value it cannot use." }
+bad_frame_offset = { value = 7, doc = "A command placed at or beyond the end of the block it arrived with." }
+commands_out_of_order = { value = 8, doc = "A command placed before the one ahead of it in the staging area." }
 
 [enums.transport_state]
 stopped = 0
@@ -165,6 +174,14 @@ returns = "u32"
 
 [[exports]]
 name = "process"
+doc = """
+Renders one block. The glue has copied `command_count` slots into the staging
+area, in non-decreasing `frame_offset`, each of them below `frames`; `frames`
+is at most as many as a plane of `audio_out` holds.
+
+An error is a report, not control flow: a command the engine cannot use is
+dropped and counted in `engine_report.dropped_commands`, the block is rendered
+regardless, and what comes back is the first code raised (ADR-0002)."""
 params = [
   { name = "command_count", type = "u32" },
   { name = "frames", type = "u32" },

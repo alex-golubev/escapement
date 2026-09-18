@@ -9,8 +9,8 @@
 use core::mem::offset_of;
 
 pub const ABI_MAJOR: u32 = 0;
-pub const ABI_HASH: u32 = 0xa10f1316;
-pub const ABI_VERSION: u32 = 0x000f1316;
+pub const ABI_HASH: u32 = 0x22b56abb;
+pub const ABI_VERSION: u32 = 0x00b56abb;
 
 pub const COMMAND_PAYLOAD_OFFSET: usize = 8;
 pub const COMMAND_PAYLOAD_SIZE: usize = 24;
@@ -41,9 +41,24 @@ impl CommandKind {
 #[repr(u32)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum EngineError {
+    /// The call did what it was asked.
     Ok = 0,
+    /// A slot carried a kind the engine does not know.
     UnknownCommandKind = 1,
+    /// A block of more frames than a plane of `audio_out` holds.
     BadFrameCount = 2,
+    /// A sample rate that is not a positive, finite number.
+    BadSampleRate = 3,
+    /// `process` before a successful `init`.
+    NotInitialised = 4,
+    /// More commands than the staging area holds.
+    TooManyCommands = 5,
+    /// A command of a kind the engine knows, carrying a value it cannot use.
+    BadCommandPayload = 6,
+    /// A command placed at or beyond the end of the block it arrived with.
+    BadFrameOffset = 7,
+    /// A command placed before the one ahead of it in the staging area.
+    CommandsOutOfOrder = 8,
 }
 
 impl EngineError {
@@ -52,6 +67,12 @@ impl EngineError {
             0 => Some(Self::Ok),
             1 => Some(Self::UnknownCommandKind),
             2 => Some(Self::BadFrameCount),
+            3 => Some(Self::BadSampleRate),
+            4 => Some(Self::NotInitialised),
+            5 => Some(Self::TooManyCommands),
+            6 => Some(Self::BadCommandPayload),
+            7 => Some(Self::BadFrameOffset),
+            8 => Some(Self::CommandsOutOfOrder),
             _ => None,
         }
     }
