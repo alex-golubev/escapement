@@ -226,31 +226,6 @@ fn bytes_at(offset: usize, size: usize) -> String {
         .join(", ")
 }
 
-fn bytes_from_at(size: usize) -> String {
-    (0..size)
-        .map(|i| {
-            if i == 0 {
-                "payload[at]".to_owned()
-            } else {
-                format!("payload[at + {i}]")
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(", ")
-}
-
-/// Neither `+ 0` nor `* 1` may reach the output: clippy denies both, and CI
-/// runs it with `-D warnings`.
-fn element_at(field: &Field) -> String {
-    let stride = field.ty.size();
-    match (field.offset, stride) {
-        (0, 1) => "i".to_owned(),
-        (0, _) => format!("i * {stride}"),
-        (offset, 1) => format!("{offset} + i"),
-        (offset, _) => format!("{offset} + i * {stride}"),
-    }
-}
-
 /// A single byte has no byte order, so it skips `from_le_bytes`.
 fn read_value(field: &Field) -> String {
     let size = field.ty.size();
@@ -263,17 +238,21 @@ fn read_value(field: &Field) -> String {
         };
     }
 
-    let element = if size == 1 {
-        "payload[at]".to_owned()
-    } else {
-        format!("{ty}::from_le_bytes([{}])", bytes_from_at(size))
-    };
-    // `for i in 0..n` here is clippy's needless_range_loop.
-    format!(
-        "{{\nlet mut out = {};\nfor (i, element) in out.iter_mut().enumerate() {{\nlet at = {};\n*element = {element};\n}}\nout\n}}",
-        field.rust_zero(),
-        element_at(field)
-    )
+    // Unrolled, so that every index is a constant into an array of known
+    // length: the compiler emits no bounds check, and there is no panic to
+    // reach the audio thread (ADR-0002). A command's payload is small, so the
+    // longest this can get is one line per byte of it.
+    let elements: Vec<String> = (0..field.count)
+        .map(|n| {
+            let at = field.offset + n * size;
+            if size == 1 {
+                format!("payload[{at}]")
+            } else {
+                format!("{ty}::from_le_bytes([{}])", bytes_at(at, size))
+            }
+        })
+        .collect();
+    format!("[{}]", elements.join(", "))
 }
 
 fn write_statements(field: &Field) -> String {
@@ -289,25 +268,19 @@ fn write_statements(field: &Field) -> String {
         return out;
     }
 
-    let body = if size == 1 {
-        "payload[at] = *element;".to_owned()
-    } else {
-        let mut out = String::from("let bytes = element.to_le_bytes();\n");
-        for i in 0..size {
-            let index = if i == 0 {
-                "at".to_owned()
-            } else {
-                format!("at + {i}")
-            };
-            let _ = writeln!(out, "payload[{index}] = bytes[{i}];");
+    let mut out = String::new();
+    for n in 0..field.count {
+        let at = field.offset + n * size;
+        if size == 1 {
+            let _ = writeln!(out, "payload[{at}] = self.{}[{n}];", field.name);
+            continue;
         }
-        out
-    };
-    format!(
-        "for (i, element) in self.{}.iter().enumerate() {{\nlet at = {};\n{body}\n}}",
-        field.name,
-        element_at(field)
-    )
+        let _ = writeln!(out, "let bytes = self.{}[{n}].to_le_bytes();", field.name);
+        for i in 0..size {
+            let _ = writeln!(out, "payload[{}] = bytes[{i}];", at + i);
+        }
+    }
+    out
 }
 
 /// Enum variants read best in code order, which is not the alphabetical order

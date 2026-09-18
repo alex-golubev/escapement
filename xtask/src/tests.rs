@@ -105,8 +105,15 @@ fn a_command_array_carries_every_byte_it_reserves() {
 
     assert!(rust.contains("pub gains: [f32; 4],"), "{rust}");
     assert!(!rust.contains("pub gains: f32,"), "{rust}");
-    assert!(rust.contains("let mut out = [0f32; 4];"), "{rust}");
-    assert!(rust.contains("let at = 8 + i * 4;"), "{rust}");
+    // Four elements, four bytes apart, from the field's own offset.
+    assert!(
+        rust.contains("f32::from_le_bytes([payload[8], payload[9], payload[10], payload[11]])"),
+        "{rust}"
+    );
+    assert!(
+        rust.contains("f32::from_le_bytes([payload[20], payload[21], payload[22], payload[23]])"),
+        "{rust}"
+    );
 
     assert!(ts.contains("gains: Float32Array"), "{ts}");
     assert!(ts.contains("for (let i = 0; i < 4; i++)"), "{ts}");
@@ -118,22 +125,45 @@ fn a_command_array_carries_every_byte_it_reserves() {
     );
 }
 
-/// `* 1` is clippy's identity_op, and CI runs it with `-D warnings`.
+/// TypeScript still loops, and `* 1` there is noise in a file committed to be
+/// read.
 #[test]
-fn a_byte_array_indexes_without_identity_arithmetic() {
+fn a_byte_array_loops_without_identity_arithmetic() {
     let schema = probe_schema(
         24,
         "{ name = \"label\", type = \"u8\", count = 8, offset = 0 }",
         "",
     );
-    let rust = rust_of(&schema);
     let ts = ts_of(&schema);
 
-    assert!(rust.contains("let at = i;"), "{rust}");
-    assert!(!rust.contains("i * 1"), "{rust}");
-    assert!(!rust.contains("0 + i"), "{rust}");
     assert!(ts.contains("COMMAND_PAYLOAD_OFFSET + i,"), "{ts}");
     assert!(!ts.contains("i * 1"), "{ts}");
+    assert!(!ts.contains("+ 0 + i"), "{ts}");
+}
+
+/// Indexing by a runtime value is a bounds check, and a bounds check on the
+/// audio path is a panic that can reach the engine (ADR-0002). `protocol` is
+/// under the workspace's real-time lints, so every index the generator emits is
+/// a constant into an array of known length.
+#[test]
+fn the_generated_rust_indexes_only_by_constant() {
+    let schema = probe_schema(
+        24,
+        "{ name = \"gains\", type = \"f32\", count = 4, offset = 0 }, { name = \"tag\", type = \"u8\", count = 8, offset = 16 }",
+        "",
+    );
+    let rust = rust_of(&schema);
+
+    for (at, _) in rust.match_indices("payload[") {
+        let rest = &rust[at + "payload[".len()..];
+        assert!(
+            matches!(rest.chars().next(), Some(c) if c.is_ascii_digit()),
+            "payload[{}… is not a constant index:\n{rust}",
+            rest.chars().take(12).collect::<String>()
+        );
+    }
+    assert!(rust.contains("tag: [payload[16], payload[17],"), "{rust}");
+    assert!(rust.contains("payload[16] = self.tag[0];"), "{rust}");
 }
 
 /// `tsc` rejects `setUint8(offset, value, true)`, so the generated file failed

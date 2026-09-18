@@ -4,6 +4,15 @@
 // TypeScript side, so a disagreement between the two shows up here or there
 // rather than as a click in the audio (ADR-0011).
 
+// The workspace's real-time rules are for the audio path (ADR-0002). A test is
+// not on it, and panicking is how it reports a failure.
+#![allow(
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::panic,
+    clippy::unwrap_used
+)]
+
 use protocol::*;
 use serde_json::Value;
 
