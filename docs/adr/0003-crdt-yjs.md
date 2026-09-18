@@ -48,7 +48,9 @@ The entities are described in [ADR-0006](0006-project-model-fl.md).
 
 ### Storage principles
 
-- **Notes, clips and automation points are stored as whole JSON values.** Keeping every note in its own `Y.Map` turns 10k notes into tens of thousands of internal Yjs objects. The price: when the same note is edited concurrently, one version wins wholesale. For notes that is acceptable. The decision needs confirming with a prototype.
+- **Notes, clips and automation points are stored as whole JSON values.** Keeping every note in its own `Y.Map` turns 10k notes into tens of thousands of internal Yjs objects. The price: when the same note is edited concurrently, one version wins wholesale, losing one note's worth of work. Measured and confirmed, see [Measurement](#measurement-2026-09-18).
+- **A note is a flat object.** Every field sits in the one value, including the rarely touched expression fields. Splitting a note into hot fields plus a nested sub-object was measured and is worse: it trades 30% off bulk edits for 20% onto the whole document.
+- **Values taken out of the document are never mutated in place.** Yjs hands back the stored reference itself, so mutating it changes local state, emits no update and silently desyncs the collaborators. `packages/document` therefore returns copies with `readonly` types, and a test enforces it. This failure mode is invisible in normal use, which is what makes it dangerous.
 - **Channels, parameters and the mixer are stored as nested `Y.Map`s.** Conflicts resolve per field: one collaborator turns the cutoff while another renames the channel.
 - **Ordering is an `order` field** with fractional indexing, ties broken by id. We do not use `Y.Array` for ordered entities: it has no move operation.
 - **Version history is periodic server-side snapshots** (`encodeStateAsUpdate`). Rolling back to a version is applied as a new edit. We do not use Yjs's built-in snapshots: they require `gc: false`, and the document then grows without bound.
@@ -56,6 +58,33 @@ The entities are described in [ADR-0006](0006-project-model-fl.md).
 - **Ephemeral data** (cursors, selections, intermediate values during a gesture) goes over awareness. Only the final value is written to the document.
 - **Validation on read.** Data coming out of the document is validated against a Schema (`packages/document`). Invalid entities are skipped and take down neither the client, nor the server, nor the engine.
 - **The server must validate an update before writing it.** This is not optional: one bad update, once persisted, breaks the project for everyone, permanently. On the server (64-bit) bad bytes are caught normally — the panic problem was browser-only.
+
+## Measurement (2026-09-18)
+
+A prototype compared the two layouts on a project of 100k notes across 60
+patterns (Node 24, yjs 13.6.32, single client, `gc: true`).
+
+| | note = `Y.Map` | note = JSON value |
+|---|---|---|
+| Heap after a cold load | 384 MB | 55 MB |
+| Applying the snapshot | 1026 ms | 260 ms |
+| Projecting a 10k-note pattern | 4.9 ms | 0.6 ms |
+| Whole document, gzipped | 2.7 MB | 0.8 MB |
+| One note edited | 23 B | 80 B |
+| 2000 notes dragged, one transaction | 48 KB | 129 KB |
+| Document growth after 10k edit operations | 1.33x | 1.47x |
+
+A `Y.Map` per note is not a close second: at 384 MB the document alone
+would crowd out the sample pool and the engine's WASM memory in the same
+tab. Storing notes as values costs larger edits — trivial in absolute
+terms — and the loss of per-field merging on a single note.
+
+Two worries turned out to be unfounded and need no further guarding: a
+note growing to 12 fields, and the document growing from editing churn,
+which server-side snapshots already cover.
+
+The raw document is 7.2 MB where its gzipped form is 0.8 MB, so Yjs
+state is stored compressed on the server ([ADR-0004](0004-sync-hocuspocus-in-effect.md)).
 
 ## Consequences
 
