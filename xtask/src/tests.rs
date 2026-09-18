@@ -231,15 +231,16 @@ fn a_command_may_leave_a_gap_and_asserts_no_layout() {
 /// `derive(Default)` reaches arrays only up to 32 elements.
 #[test]
 fn a_long_array_gets_a_written_default() {
+    // Thirty-three, the first array the derive cannot reach.
     let schema = probe_schema(
         48,
-        "{ name = \"name\", type = \"u8\", count = 40, offset = 0 }",
+        "{ name = \"name\", type = \"u8\", count = 33, offset = 0 }",
         "",
     );
     let rust = rust_of(&schema);
 
     assert!(rust.contains("impl Default for Probe"), "{rust}");
-    assert!(rust.contains("name: [0u8; 40],"), "{rust}");
+    assert!(rust.contains("name: [0u8; 33],"), "{rust}");
     assert!(
         rust.contains("#[derive(Clone, Copy, PartialEq, Debug)]"),
         "{rust}"
@@ -249,9 +250,10 @@ fn a_long_array_gets_a_written_default() {
 /// The arrays that fit keep the derive, so the written impl stays the exception.
 #[test]
 fn a_short_array_keeps_the_derived_default() {
+    // Exactly 32, the longest array the derive still reaches.
     let schema = probe_schema(
-        24,
-        "{ name = \"name\", type = \"u8\", count = 8, offset = 0 }",
+        32,
+        "{ name = \"name\", type = \"u8\", count = 32, offset = 0 }",
         "",
     );
     let rust = rust_of(&schema);
@@ -316,6 +318,36 @@ fn the_slot_header_the_command_writers_address_is_required() {
         found.contains("records.command_slot.frame_offset is u16"),
         "{found}"
     );
+
+    // Four bytes either way, so nothing else in the record complains and the
+    // count is the only thing left to catch.
+    let split = VALID.replace(
+        r#"{ name = "kind", type = "u32", offset = 0 }"#,
+        r#"{ name = "kind", type = "u8", count = 4, offset = 0 }"#,
+    );
+    let found = problems(&split);
+    assert!(
+        found.contains("records.command_slot.kind has a count of 4"),
+        "{found}"
+    );
+}
+
+/// Fields are free to be declared in any order, and two that touch do not
+/// overlap. The check compares each field with those already seen, so the pair
+/// has to be tried in the order that puts the later one first.
+#[test]
+fn fields_that_touch_do_not_overlap() {
+    let touching = format!(
+        "{VALID}
+[records.pair]
+size = 8
+fields = [
+  {{ name = \"second\", type = \"u32\", offset = 4 }},
+  {{ name = \"first\", type = \"u32\", offset = 0 }},
+]
+"
+    );
+    assert_eq!(problems(&touching), "", "adjacent is not overlapping");
 }
 
 /// Enums were not checked against anything, and nothing looked at the name the
