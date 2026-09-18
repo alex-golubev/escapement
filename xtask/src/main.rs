@@ -87,12 +87,12 @@ fn generate() -> Result<(), String> {
 fn abi_hash(schema: &Schema) -> u32 {
     let mut canonical = String::new();
     let _ = writeln!(canonical, "major={}", schema.abi.major);
-    for (name, value) in &schema.constants {
-        let _ = writeln!(canonical, "const {name}={value}");
+    for (name, constant) in &schema.constants {
+        let _ = writeln!(canonical, "const {name}={}", constant.value);
     }
     for (name, variants) in &schema.enums {
         for (variant, code) in variants {
-            let _ = writeln!(canonical, "enum {name}.{variant}={code}");
+            let _ = writeln!(canonical, "enum {name}.{variant}={}", code.value);
         }
     }
     for (name, record) in &schema.records {
