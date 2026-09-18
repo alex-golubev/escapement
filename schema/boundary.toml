@@ -20,6 +20,14 @@ major = 0
 command_payload_offset = 8
 command_payload_size = 24
 
+# Both halves judge a tempo — TypeScript before it writes the command, the
+# engine when it decodes one — so the bounds are one pair of numbers rather than
+# two criteria chosen separately. ADR-0011 counts musical time constants among
+# what this file describes; the tick resolution and the tempo map follow when
+# there is something to play.
+micro_bpm_min = { value = 10_000_000, doc = "The slowest tempo the engine accepts, in micro-BPM: 10 BPM." }
+micro_bpm_max = { value = 999_000_000, doc = "The fastest tempo the engine accepts, in micro-BPM: 999 BPM." }
+
 [enums.command_kind]
 play = 1
 stop = 2
@@ -129,7 +137,10 @@ fields = []
 # Integer micro-BPM rather than a float: the document holds exact values and
 # the engine must not disagree with the export about the tempo.
 fields = [
-  { name = "micro_bpm", type = "u32", offset = 0 },
+  { name = "micro_bpm", type = "u32", offset = 0, doc = """
+Beats per minute times a million: 120 BPM is 120000000. Between `micro_bpm_min`
+and `micro_bpm_max` inclusive — outside them the command is dropped and the
+block reports `bad_command_payload`.""" },
 ]
 
 # --- exports -----------------------------------------------------------

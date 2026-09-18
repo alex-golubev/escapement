@@ -7,11 +7,15 @@
 // 4-byte aligned; the generator refuses any field where it is not.
 
 export const ABI_MAJOR = 0
-export const ABI_HASH = 0x22b56abb
-export const ABI_VERSION = 0x00b56abb
+export const ABI_HASH = 0xd554b3e1
+export const ABI_VERSION = 0x0054b3e1
 
 export const COMMAND_PAYLOAD_OFFSET = 8
 export const COMMAND_PAYLOAD_SIZE = 24
+/** The fastest tempo the engine accepts, in micro-BPM: 999 BPM. */
+export const MICRO_BPM_MAX = 999000000
+/** The slowest tempo the engine accepts, in micro-BPM: 10 BPM. */
+export const MICRO_BPM_MIN = 10000000
 
 export const CommandKind = {
   play: 1,
@@ -285,7 +289,12 @@ export function readPlay(view: DataView, slot: number) {
   }
 }
 
-/** Writes a complete `set_tempo` slot (kind 3). Hot path: no allocation. */
+/**
+ * Writes a complete `set_tempo` slot (kind 3). Hot path: no allocation.
+ * @param microBpm - Beats per minute times a million: 120 BPM is 120000000. Between `micro_bpm_min`
+ *   and `micro_bpm_max` inclusive — outside them the command is dropped and the
+ *   block reports `bad_command_payload`.
+ */
 export function writeSetTempo(view: DataView, slot: number, frameOffset: number, microBpm: number): void {
   view.setUint32(slot + CommandSlotOffsets.kind, 3, true)
   view.setUint32(slot + CommandSlotOffsets.frameOffset, frameOffset, true)
