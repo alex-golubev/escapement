@@ -131,12 +131,10 @@ pub fn emit(schema: &Schema, abi_version: u32, abi_hash: u32) -> String {
 
     for (name, record) in &schema.records {
         let type_name = pascal(name);
-        let mut table = vec![format!("Byte offsets of the fields of `{name}`.")];
-        if let Some(text) = record.doc.as_deref() {
-            table = text.lines().map(str::to_owned).collect();
-            table.push(String::new());
-            table.push(format!("Byte offsets of the fields of `{name}`."));
-        }
+        let table = prose_then(
+            record.doc.as_deref(),
+            format!("Byte offsets of the fields of `{name}`."),
+        );
         emit_block(&mut out, "", &table);
         let _ = writeln!(out, "export const {type_name}Offsets = {{");
         for field in &record.fields {
@@ -249,14 +247,10 @@ pub fn emit(schema: &Schema, abi_version: u32, abi_hash: u32) -> String {
 
         // One block, not two: TypeScript attaches only the one that touches the
         // declaration, so a second above it would be text nothing reads.
-        let mut doc: Vec<String> = Vec::new();
-        if let Some(text) = command.doc.as_deref() {
-            doc.extend(text.lines().map(str::to_owned));
-            doc.push(String::new());
-        }
-        doc.push(format!(
-            "Writes a complete `{name}` slot (kind {kind}). Hot path: no allocation."
-        ));
+        let mut doc = prose_then(
+            command.doc.as_deref(),
+            format!("Writes a complete `{name}` slot (kind {kind}). Hot path: no allocation."),
+        );
         param(&mut doc, "view", Some(RING_VIEW));
         param(&mut doc, "slot", Some(SLOT_WRITE));
         param(
@@ -306,15 +300,13 @@ pub fn emit(schema: &Schema, abi_version: u32, abi_hash: u32) -> String {
         if command.fields.is_empty() {
             continue;
         }
-        let mut doc: Vec<String> = Vec::new();
-        if let Some(text) = command.doc.as_deref() {
-            doc.extend(text.lines().map(str::to_owned));
-            doc.push(String::new());
-        }
-        doc.push(format!(
-            "Reads a `{name}` slot back. Cold path: allocates an object, so not \
+        let mut doc = prose_then(
+            command.doc.as_deref(),
+            format!(
+                "Reads a `{name}` slot back. Cold path: allocates an object, so not \
              for use inside process()."
-        ));
+            ),
+        );
         param(&mut doc, "view", Some(RING_VIEW));
         param(&mut doc, "slot", Some(SLOT_READ));
         emit_block(&mut out, "", &doc);
@@ -375,6 +367,18 @@ fn emit_doc(out: &mut String, indent: &str, doc: Option<&str>) {
     let Some(text) = doc else { return };
     let lines: Vec<String> = text.lines().map(str::to_owned).collect();
     emit_block(out, indent, &lines);
+}
+
+/// A block that opens with the schema's own prose, where the schema has any,
+/// and then says what the generated name does.
+fn prose_then(prose: Option<&str>, about: String) -> Vec<String> {
+    let mut doc: Vec<String> = Vec::new();
+    if let Some(text) = prose {
+        doc.extend(text.lines().map(str::to_owned));
+        doc.push(String::new());
+    }
+    doc.push(about);
+    doc
 }
 
 fn emit_block(out: &mut String, indent: &str, lines: &[String]) {
@@ -446,14 +450,10 @@ fn emit_record_reader(out: &mut String, type_name: &str, record_name: &str, reco
     }
     params.push("base: number");
 
-    let mut doc: Vec<String> = Vec::new();
-    if let Some(text) = record.doc.as_deref() {
-        doc.extend(text.lines().map(str::to_owned));
-        doc.push(String::new());
-    }
-    doc.push(format!(
-        "Every field of `{record_name}` at once. Cold path: allocates one object."
-    ));
+    let mut doc = prose_then(
+        record.doc.as_deref(),
+        format!("Every field of `{record_name}` at once. Cold path: allocates one object."),
+    );
     if plain {
         param(&mut doc, "view", Some(&view_over(record_name)));
     }
@@ -502,16 +502,14 @@ fn emit_record_array(out: &mut String, record_name: &str, field: &Field) {
         field.name, field.count
     );
 
-    let mut doc: Vec<String> = Vec::new();
-    if let Some(text) = field.doc.as_deref() {
-        doc.extend(text.lines().map(str::to_owned));
-        doc.push(String::new());
-    }
-    doc.push(format!(
-        "A `{array}` over `{}` of `{record_name}`. Cold path: the view is an \
+    let mut doc = prose_then(
+        field.doc.as_deref(),
+        format!(
+            "A `{array}` over `{}` of `{record_name}`. Cold path: the view is an \
          allocation, so take it once and keep it.",
-        field.name
-    ));
+            field.name
+        ),
+    );
     param(
         &mut doc,
         "buffer",
@@ -549,16 +547,14 @@ fn emit_array_field(out: &mut String, type_name: &str, command: &str, field: &Fi
     let count = field.count;
     let at = offset_expr(PAYLOAD_BASE, field.offset, Some(field.ty.size()));
 
-    let mut doc: Vec<String> = Vec::new();
-    if let Some(text) = field.doc.as_deref() {
-        doc.extend(text.lines().map(str::to_owned));
-        doc.push(String::new());
-    }
-    doc.push(format!(
-        "Copies `{}` into a `{command}` slot, zero-filling anything the caller \
+    let mut doc = prose_then(
+        field.doc.as_deref(),
+        format!(
+            "Copies `{}` into a `{command}` slot, zero-filling anything the caller \
          left short. Hot path: no allocation.",
-        field.name
-    ));
+            field.name
+        ),
+    );
     param(&mut doc, "view", Some(RING_VIEW));
     param(&mut doc, "slot", Some(SLOT_WRITE));
     param(&mut doc, &value, field.doc.as_deref());
@@ -569,15 +565,13 @@ fn emit_array_field(out: &mut String, type_name: &str, command: &str, field: &Fi
          for (let i = 0; i < {count}; i++) {{\n    {}\n  }}\n}}\n",
         view_set(field.ty, &at, &format!("{value}[i] ?? 0"))
     );
-    let mut doc: Vec<String> = Vec::new();
-    if let Some(text) = field.doc.as_deref() {
-        doc.extend(text.lines().map(str::to_owned));
-        doc.push(String::new());
-    }
-    doc.push(format!(
-        "Reads `{}` back out of a `{command}` slot. Cold path: allocates the array.",
-        field.name
-    ));
+    let mut doc = prose_then(
+        field.doc.as_deref(),
+        format!(
+            "Reads `{}` back out of a `{command}` slot. Cold path: allocates the array.",
+            field.name
+        ),
+    );
     param(&mut doc, "view", Some(RING_VIEW));
     param(&mut doc, "slot", Some(SLOT_READ));
     emit_block(out, "", &doc);
