@@ -122,6 +122,19 @@ impl Type {
         }
     }
 
+    /// A zero of this type, spelled so that it needs no inference: `[0u8; 4]`
+    /// carries its own type where `[0; 4]` would not.
+    pub fn rust_zero(self) -> &'static str {
+        match self {
+            Type::U8 => "0u8",
+            Type::U16 => "0u16",
+            Type::U32 => "0u32",
+            Type::I32 => "0i32",
+            Type::F32 => "0f32",
+            Type::F64 => "0f64",
+        }
+    }
+
     /// The DataView accessor suffix, e.g. `getUint32` / `setUint32`.
     pub fn view_suffix(self) -> &'static str {
         match self {
@@ -141,6 +154,17 @@ impl Type {
     pub fn view_takes_endianness(self) -> bool {
         self.size() > 1
     }
+
+    pub fn ts_array(self) -> &'static str {
+        match self {
+            Type::U8 => "Uint8Array",
+            Type::U16 => "Uint16Array",
+            Type::U32 => "Uint32Array",
+            Type::I32 => "Int32Array",
+            Type::F32 => "Float32Array",
+            Type::F64 => "Float64Array",
+        }
+    }
 }
 
 impl Field {
@@ -154,6 +178,42 @@ impl Field {
 
     pub fn is_array(&self) -> bool {
         self.count != 1
+    }
+
+    /// The spelling of this field in Rust. Records and commands ask the same
+    /// question and must get the same answer: a field that answered `u8` for a
+    /// count of eight would carry one byte of the eight the schema reserved.
+    pub fn rust_type(&self) -> String {
+        if self.is_array() {
+            format!("[{}; {}]", self.ty.rust(), self.count)
+        } else {
+            self.ty.rust().to_owned()
+        }
+    }
+
+    pub fn rust_zero(&self) -> String {
+        if self.is_array() {
+            format!("[{}; {}]", self.ty.rust_zero(), self.count)
+        } else {
+            self.ty.rust_zero().to_owned()
+        }
+    }
+
+    /// An array field is passed as the typed array of its element type, never
+    /// as a single number.
+    pub fn ts_type(&self) -> &'static str {
+        if self.is_array() {
+            self.ty.ts_array()
+        } else {
+            "number"
+        }
+    }
+
+    /// `derive(Default)` covers arrays only up to 32 elements, so a longer one
+    /// needs the impl written out. Asking here keeps that std detail in one
+    /// place instead of in the emitter's head.
+    pub fn needs_written_default(&self) -> bool {
+        self.is_array() && self.count > 32
     }
 }
 

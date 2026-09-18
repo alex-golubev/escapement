@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //
-// The TypeScript half of the boundary. Two things this emitter exists to get
-// right, because both are wrong exactly once when written by hand (ADR-0013):
-// DataView defaults to big-endian while wasm is little-endian, and atomic
-// fields are reached through an Int32Array whose index counts elements.
+// The TypeScript half of the boundary. Three things this emitter exists to get
+// right, because all three are wrong exactly once when written by hand
+// (ADR-0013): DataView defaults to big-endian while wasm is little-endian,
+// atomic fields are reached through an Int32Array whose index counts elements,
+// and a field with a count is as many elements as the schema reserved bytes
+// for, not one.
 //
 // Every DataView call for a schema field is built by `view_get` and `view_set`
 // below, so the question "does this accessor take a byte-order argument?" is
@@ -12,16 +14,27 @@
 // out and still assumes `command_slot` declares as it does.
 
 use crate::names::{camel, pascal, screaming};
-use crate::schema::{ExportKind, Schema, Type};
+use crate::schema::{ExportKind, Field, Schema, Type};
 use std::fmt::Write as _;
 
-/// `base + 0` is noise, and generated code is committed to be read (ADR-0013).
-fn addend(offset: usize) -> String {
-    if offset == 0 {
-        String::new()
-    } else {
-        format!(" + {offset}")
+const PAYLOAD_BASE: &str = "slot + COMMAND_PAYLOAD_OFFSET";
+
+/// `base + 4 + i * 2`, with every `+ 0` and `* 1` left out: `base + 0` is
+/// noise, and generated code is committed to be read (ADR-0013). `element`
+/// carries the stride when the expression addresses element `i` of an array.
+fn offset_expr(base: &str, offset: usize, element: Option<usize>) -> String {
+    let mut out = base.to_owned();
+    if offset != 0 {
+        let _ = write!(out, " + {offset}");
     }
+    match element {
+        Some(1) => out.push_str(" + i"),
+        Some(stride) => {
+            let _ = write!(out, " + i * {stride}");
+        }
+        None => {}
+    }
+    out
 }
 
 /// `view.getUint32(<at>, true)` — or `view.getUint8(<at>)`, because one byte
@@ -44,7 +57,8 @@ fn view_set(ty: Type, at: &str, value: &str) -> String {
 }
 
 /// The Atomics index counts elements, so the byte offset is divided by four.
-/// The schema check guarantees the field is aligned to make that exact.
+/// The schema check guarantees the field's own offset is a multiple of four;
+/// the caller's `base` has to be one too.
 fn atomic_index(offset: usize) -> String {
     if offset == 0 {
         "base >> 2".to_owned()
@@ -105,14 +119,17 @@ pub fn emit(schema: &Schema, abi_version: u32, abi_hash: u32) -> String {
         );
 
         for field in &record.fields {
+            // An array field of a record gets no accessor. Copying it would be
+            // wrong for the one that exists — a slot's payload is written by
+            // the command writers below — and the offset above is what a caller
+            // needs to take its own view.
             if field.is_array() {
                 continue;
             }
             let field_name = pascal(&field.name);
-            let offset = field.offset;
-            let at = addend(offset);
+            let at = offset_expr("base", field.offset, None);
             if field.atomic {
-                let index = atomic_index(offset);
+                let index = atomic_index(field.offset);
                 let _ = writeln!(
                     out,
                     "export function load{type_name}{field_name}(atoms: Int32Array, base: number): number {{\n  \
@@ -124,7 +141,6 @@ pub fn emit(schema: &Schema, abi_version: u32, abi_hash: u32) -> String {
                      Atomics.store(atoms, {index}, value)\n}}\n"
                 );
             } else {
-                let at = format!("base{at}");
                 let _ = writeln!(
                     out,
                     "export function read{type_name}{field_name}(view: DataView, base: number): number {{\n  \
@@ -150,10 +166,19 @@ pub fn emit(schema: &Schema, abi_version: u32, abi_hash: u32) -> String {
             .copied()
             .unwrap_or_default();
 
+        // An array field is a loop, so it gets a function of its own rather
+        // than being inlined into the slot writer twice over.
+        for field in &command.fields {
+            if !field.is_array() {
+                continue;
+            }
+            emit_array_field(&mut out, &type_name, name, field);
+        }
+
         let params: Vec<String> = command
             .fields
             .iter()
-            .map(|field| format!("{}: number", camel(&field.name)))
+            .map(|field| format!("{}: {}", camel(&field.name), field.ts_type()))
             .collect();
         let signature = if params.is_empty() {
             String::new()
@@ -178,19 +203,20 @@ pub fn emit(schema: &Schema, abi_version: u32, abi_hash: u32) -> String {
             "  view.setUint32(slot + CommandSlotOffsets.frameOffset, frameOffset, true)"
         );
         for field in &command.fields {
-            let at = format!("slot + COMMAND_PAYLOAD_OFFSET{}", addend(field.offset));
-            let _ = writeln!(out, "  {}", view_set(field.ty, &at, &camel(&field.name)));
+            let value = camel(&field.name);
+            if field.is_array() {
+                let _ = writeln!(
+                    out,
+                    "  write{type_name}{}(view, slot, {value})",
+                    pascal(&field.name)
+                );
+            } else {
+                let at = offset_expr(PAYLOAD_BASE, field.offset, None);
+                let _ = writeln!(out, "  {}", view_set(field.ty, &at, &value));
+            }
         }
         let _ = writeln!(out, "}}\n");
 
-        let readers: Vec<String> = command
-            .fields
-            .iter()
-            .map(|field| {
-                let at = format!("slot + COMMAND_PAYLOAD_OFFSET{}", addend(field.offset));
-                format!("    {}: {},", camel(&field.name), view_get(field.ty, &at))
-            })
-            .collect();
         if command.fields.is_empty() {
             continue;
         }
@@ -202,8 +228,13 @@ pub fn emit(schema: &Schema, abi_version: u32, abi_hash: u32) -> String {
             out,
             "export function read{type_name}(view: DataView, slot: number) {{\n  return {{"
         );
-        for reader in readers {
-            let _ = writeln!(out, "{reader}");
+        for field in &command.fields {
+            let value = if field.is_array() {
+                format!("read{type_name}{}(view, slot)", pascal(&field.name))
+            } else {
+                view_get(field.ty, &offset_expr(PAYLOAD_BASE, field.offset, None))
+            };
+            let _ = writeln!(out, "    {}: {value},", camel(&field.name));
         }
         let _ = writeln!(out, "  }}\n}}\n");
     }
@@ -232,4 +263,37 @@ pub fn emit(schema: &Schema, abi_version: u32, abi_hash: u32) -> String {
     let _ = writeln!(out, "}}");
 
     out
+}
+
+/// The reader and writer for one array field of a command. The writer fills
+/// every byte the schema reserved: an element the caller left out is written
+/// as zero rather than leaving whatever the previous command put there.
+fn emit_array_field(out: &mut String, type_name: &str, command: &str, field: &Field) {
+    let field_name = pascal(&field.name);
+    let value = camel(&field.name);
+    let array = field.ty.ts_array();
+    let count = field.count;
+    let at = offset_expr(PAYLOAD_BASE, field.offset, Some(field.ty.size()));
+
+    let _ = writeln!(
+        out,
+        "/** Copies `{}` into a `{command}` slot, zero-filling anything the\n \
+         * caller left short. Hot path: no allocation. */",
+        field.name
+    );
+    let _ = writeln!(
+        out,
+        "export function write{type_name}{field_name}(view: DataView, slot: number, {value}: {array}): void {{\n  \
+         for (let i = 0; i < {count}; i++) {{\n    {}\n  }}\n}}\n",
+        view_set(field.ty, &at, &format!("{value}[i] ?? 0"))
+    );
+    let _ = writeln!(
+        out,
+        "/** Cold path: allocates. */\n\
+         export function read{type_name}{field_name}(view: DataView, slot: number): {array} {{\n  \
+         const out = new {array}({count})\n  \
+         for (let i = 0; i < {count}; i++) {{\n    out[i] = {}\n  }}\n  \
+         return out\n}}\n",
+        view_get(field.ty, &at)
+    );
 }

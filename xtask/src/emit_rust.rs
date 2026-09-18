@@ -5,7 +5,7 @@
 // rustc is a build error rather than a click in the audio (ADR-0013).
 
 use crate::names::{pascal, screaming};
-use crate::schema::{ExportKind, Schema};
+use crate::schema::{ExportKind, Field, Schema};
 use std::fmt::Write as _;
 
 pub fn emit(schema: &Schema, abi_version: u32, abi_hash: u32) -> String {
@@ -79,12 +79,7 @@ pub fn emit(schema: &Schema, abi_version: u32, abi_hash: u32) -> String {
             "#[repr(C)]\n#[derive(Clone, Copy, PartialEq, Debug)]\npub struct {type_name} {{"
         );
         for field in &record.fields {
-            let ty = if field.is_array() {
-                format!("[{}; {}]", field.ty.rust(), field.count)
-            } else {
-                field.ty.rust().to_owned()
-            };
-            let _ = writeln!(out, "    pub {}: {ty},", field.name);
+            let _ = writeln!(out, "    pub {}: {},", field.name, field.rust_type());
         }
         let _ = writeln!(out, "}}\n");
 
@@ -124,18 +119,38 @@ pub fn emit(schema: &Schema, abi_version: u32, abi_hash: u32) -> String {
             .copied()
             .unwrap_or_default();
 
+        // `derive(Default)` cannot reach an array longer than 32, so a command
+        // holding one gets the impl written out instead.
+        let written_default = command.fields.iter().any(Field::needs_written_default);
+        let derives = if written_default {
+            "Clone, Copy, PartialEq, Debug"
+        } else {
+            "Clone, Copy, PartialEq, Debug, Default"
+        };
+
         let _ = writeln!(
             out,
             "/// Command `{name}`, code {kind}. Laid out from the start of a slot's payload."
         );
         let _ = writeln!(
             out,
-            "#[repr(C)]\n#[derive(Clone, Copy, PartialEq, Debug, Default)]\npub struct {type_name} {{"
+            "#[repr(C)]\n#[derive({derives})]\npub struct {type_name} {{"
         );
         for field in &command.fields {
-            let _ = writeln!(out, "    pub {}: {},", field.name, field.ty.rust());
+            let _ = writeln!(out, "    pub {}: {},", field.name, field.rust_type());
         }
         let _ = writeln!(out, "}}\n");
+
+        if written_default {
+            let _ = writeln!(
+                out,
+                "impl Default for {type_name} {{\n    fn default() -> Self {{\n        Self {{"
+            );
+            for field in &command.fields {
+                let _ = writeln!(out, "            {}: {},", field.name, field.rust_zero());
+            }
+            let _ = writeln!(out, "        }}\n    }}\n}}\n");
+        }
 
         let _ = writeln!(out, "impl {type_name} {{");
         let _ = writeln!(
@@ -160,16 +175,7 @@ pub fn emit(schema: &Schema, abi_version: u32, abi_hash: u32) -> String {
         }
         let _ = writeln!(out, "        Self {{");
         for field in &command.fields {
-            let bytes = (0..field.ty.size())
-                .map(|i| format!("payload[{}]", field.offset + i))
-                .collect::<Vec<_>>()
-                .join(", ");
-            let _ = writeln!(
-                out,
-                "            {}: {}::from_le_bytes([{bytes}]),",
-                field.name,
-                field.ty.rust()
-            );
+            let _ = writeln!(out, "            {}: {},", field.name, read_value(field));
         }
         let _ = writeln!(out, "        }}\n    }}\n");
 
@@ -181,14 +187,7 @@ pub fn emit(schema: &Schema, abi_version: u32, abi_hash: u32) -> String {
             let _ = writeln!(out, "        let _ = payload;");
         }
         for field in &command.fields {
-            let _ = writeln!(
-                out,
-                "        let bytes = self.{}.to_le_bytes();",
-                field.name
-            );
-            for i in 0..field.ty.size() {
-                let _ = writeln!(out, "        payload[{}] = bytes[{i}];", field.offset + i);
-            }
+            let _ = writeln!(out, "{}", write_statements(field));
         }
         let _ = writeln!(out, "    }}\n}}\n");
 
@@ -228,6 +227,103 @@ pub fn emit(schema: &Schema, abi_version: u32, abi_hash: u32) -> String {
     let _ = writeln!(out, "];");
 
     out
+}
+
+/// `payload[4], payload[5], …` for a value starting at a literal offset.
+fn bytes_at(offset: usize, size: usize) -> String {
+    (0..size)
+        .map(|i| format!("payload[{}]", offset + i))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// The same for a value starting at the loop's `at`.
+fn bytes_from_at(size: usize) -> String {
+    (0..size)
+        .map(|i| {
+            if i == 0 {
+                "payload[at]".to_owned()
+            } else {
+                format!("payload[at + {i}]")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// Where element `i` of an array field begins. Written so that neither `+ 0`
+/// nor `* 1` reaches the output: clippy denies both and CI runs it with
+/// `-D warnings`.
+fn element_at(field: &Field) -> String {
+    let stride = field.ty.size();
+    match (field.offset, stride) {
+        (0, 1) => "i".to_owned(),
+        (0, _) => format!("i * {stride}"),
+        (offset, 1) => format!("{offset} + i"),
+        (offset, _) => format!("{offset} + i * {stride}"),
+    }
+}
+
+/// The expression that reads one field out of `payload`. A single byte has no
+/// byte order, so it is taken directly rather than through `from_le_bytes`.
+fn read_value(field: &Field) -> String {
+    let size = field.ty.size();
+    let ty = field.ty.rust();
+    if !field.is_array() {
+        return if size == 1 {
+            format!("payload[{}]", field.offset)
+        } else {
+            format!("{ty}::from_le_bytes([{}])", bytes_at(field.offset, size))
+        };
+    }
+
+    let element = if size == 1 {
+        "payload[at]".to_owned()
+    } else {
+        format!("{ty}::from_le_bytes([{}])", bytes_from_at(size))
+    };
+    // `iter_mut().enumerate()` rather than `for i in 0..n`, which clippy
+    // rejects as needless_range_loop when the index is used to index.
+    format!(
+        "{{\nlet mut out = {};\nfor (i, element) in out.iter_mut().enumerate() {{\nlet at = {};\n*element = {element};\n}}\nout\n}}",
+        field.rust_zero(),
+        element_at(field)
+    )
+}
+
+/// The statements that write one field into `payload`.
+fn write_statements(field: &Field) -> String {
+    let size = field.ty.size();
+    if !field.is_array() {
+        if size == 1 {
+            return format!("payload[{}] = self.{};", field.offset, field.name);
+        }
+        let mut out = format!("let bytes = self.{}.to_le_bytes();\n", field.name);
+        for i in 0..size {
+            let _ = writeln!(out, "payload[{}] = bytes[{i}];", field.offset + i);
+        }
+        return out;
+    }
+
+    let body = if size == 1 {
+        "payload[at] = *element;".to_owned()
+    } else {
+        let mut out = String::from("let bytes = element.to_le_bytes();\n");
+        for i in 0..size {
+            let index = if i == 0 {
+                "at".to_owned()
+            } else {
+                format!("at + {i}")
+            };
+            let _ = writeln!(out, "payload[{index}] = bytes[{i}];");
+        }
+        out
+    };
+    format!(
+        "for (i, element) in self.{}.iter().enumerate() {{\nlet at = {};\n{body}\n}}",
+        field.name,
+        element_at(field)
+    )
 }
 
 /// Enum variants read best in code order, which is not the alphabetical order
