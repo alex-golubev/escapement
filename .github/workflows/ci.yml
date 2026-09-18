@@ -21,6 +21,27 @@ jobs:
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
 
+  boundary:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: rustup show
+      # The generated code is committed so that a moved field is visible in
+      # review (ADR-0013). Here we check that it still is what the schema says.
+      - name: generated code matches the schema
+        run: |
+          cargo xtask generate
+          git diff --exit-code
+      # core::sync::atomic compiles on wasm32 without the atomics feature and
+      # lowers to plain loads and stores: code that looks synchronised and is
+      # not. Grep for it rather than trust anyone to remember (ADR-0013).
+      - name: no atomics in the engine
+        run: |
+          if grep -rn "sync::atomic" crates/; then
+            echo "::error::atomics belong on the JavaScript side of the boundary (ADR-0013)"
+            exit 1
+          fi
+
   ts:
     runs-on: ubuntu-latest
     steps:

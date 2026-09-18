@@ -1,0 +1,46 @@
+{
+  "note": [
+    "Hand-written, and deliberately not produced by the generator: vectors it",
+    "produced would only prove that it agrees with itself (ADR-0013).",
+    "Values are hex so that a reader can check a value against its bytes by eye —",
+    "0x01020304 little-endian is 04 03 02 01. Both languages read this file,",
+    "encode the values and compare bytes, then decode the bytes and compare values."
+  ],
+  "records": [
+    {
+      "record": "command_slot",
+      "fields": { "kind": "0x00000003", "frame_offset": "0x01020304" },
+      "bytes": "03000000 04030201 000000000000000000000000000000000000000000000000"
+    },
+    {
+      "record": "meter_block",
+      "fields": {
+        "block_counter": "0x00000001",
+        "position_frames": "0x01020304",
+        "peak_micro": "0xffffffff",
+        "transport_state": "0x00000001"
+      },
+      "bytes": "01000000 04030201 ffffffff 01000000"
+    }
+  ],
+  "commands": [
+    {
+      "command": "play",
+      "frame_offset": "0x00000000",
+      "fields": { "from_frame": "0xffffffff" },
+      "bytes": "01000000 00000000 ffffffff 0000000000000000000000000000000000000000"
+    },
+    {
+      "command": "stop",
+      "frame_offset": "0x0000007f",
+      "fields": {},
+      "bytes": "02000000 7f000000 000000000000000000000000000000000000000000000000"
+    },
+    {
+      "command": "set_tempo",
+      "frame_offset": "0x00000010",
+      "fields": { "micro_bpm": "0x0a0b0c0d" },
+      "bytes": "03000000 10000000 0d0c0b0a 0000000000000000000000000000000000000000"
+    }
+  ]
+}

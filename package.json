@@ -6,11 +6,16 @@
     "node": ">=24 <25"
   },
   "scripts": {
-    "check": "biome ci .",
-    "format": "biome format --write ."
+    "check": "biome ci . && tsc --noEmit -p packages/protocol && vitest run",
+    "format": "biome format --write .",
+    "test": "vitest run",
+    "generate": "cargo xtask generate"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.14",
-    "typescript": "6.0.3"
-  }
+    "@types/node": "^26.6.1",
+    "typescript": "6.0.3",
+    "vitest": "5.0.1"
+  },
+  "type": "module"
 }

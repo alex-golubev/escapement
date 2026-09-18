@@ -1,0 +1,125 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# The single source for the engine boundary (ADR-0011, ADR-0013, ADR-0015).
+#
+# Offsets are written here and never computed. The generator checks them for
+# alignment and overlap, emits them into both languages, and emits static
+# assertions so that rustc, not this file, has the final word.
+#
+# Anything of variable length, anything optional, and any field that two
+# command kinds would share a byte of, is a sign that we have drifted into
+# serialization. There is no such thing here on purpose.
+
+[abi]
+major = 0
+
+[constants]
+# A ring slot: an 8-byte header followed by an opaque payload (ADR-0015).
+command_slot_size = 32
+command_payload_offset = 8
+command_payload_size = 24
+meter_block_size = 16
+
+[enums.command_kind]
+play = 1
+stop = 2
+set_tempo = 3
+
+[enums.engine_error]
+ok = 0
+unknown_command_kind = 1
+bad_frame_count = 2
+
+[enums.transport_state]
+stopped = 0
+playing = 1
+
+# --- records -----------------------------------------------------------
+
+[records.command_slot]
+size = 32
+fields = [
+  { name = "kind", type = "u32", offset = 0 },
+  { name = "frame_offset", type = "u32", offset = 4 },
+  { name = "payload", type = "u8", count = 24, offset = 8 },
+]
+
+# Written by the worklet glue into the shared buffer after process() returns,
+# read by the UI every frame. The engine itself never touches this memory,
+# which is why the atomic fields exist only on the TypeScript side.
+[records.meter_block]
+size = 16
+shared = true
+fields = [
+  { name = "block_counter", type = "i32", offset = 0, atomic = true },
+  { name = "position_frames", type = "i32", offset = 4, atomic = true },
+  { name = "peak_micro", type = "i32", offset = 8, atomic = true },
+  { name = "transport_state", type = "i32", offset = 12, atomic = true },
+]
+
+# --- commands ----------------------------------------------------------
+#
+# One record per kind, offsets counted from the start of the payload. Two
+# kinds never share a layout, so there is nothing to reinterpret.
+
+[commands.play]
+fields = [
+  { name = "from_frame", type = "u32", offset = 0 },
+]
+
+[commands.stop]
+fields = []
+
+[commands.set_tempo]
+# Integer micro-BPM rather than a float: the document holds exact values and
+# the engine must not disagree with the export about the tempo.
+fields = [
+  { name = "micro_bpm", type = "u32", offset = 0 },
+]
+
+# --- exports -----------------------------------------------------------
+
+[[exports]]
+name = "memory"
+kind = "memory"
+
+[[exports]]
+name = "abi_version"
+params = []
+returns = "u32"
+
+[[exports]]
+name = "init"
+params = [
+  { name = "sample_rate", type = "f32" },
+  { name = "max_block_frames", type = "u32" },
+]
+returns = "u32"
+
+[[exports]]
+name = "command_staging_ptr"
+params = []
+returns = "u32"
+
+[[exports]]
+name = "command_staging_capacity"
+params = []
+returns = "u32"
+
+[[exports]]
+name = "audio_out_ptr"
+params = []
+returns = "u32"
+
+[[exports]]
+name = "meter_block_ptr"
+params = []
+returns = "u32"
+
+[[exports]]
+name = "process"
+params = [
+  { name = "command_count", type = "u32" },
+  { name = "frames", type = "u32" },
+]
+returns = "u32"
