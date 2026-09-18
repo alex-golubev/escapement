@@ -26,3 +26,4 @@ This is where the project's architecture decisions are recorded: what we decided
 | [0012](0012-license-and-public-repo.md) | License and the contents of the public repository | accepted |
 | [0013](0013-boundary-code-generation.md) | Generating the boundary code | accepted |
 | [0014](0014-tooling-and-ci.md) | Development tooling and CI | accepted |
+| [0015](0015-command-records-and-engine-abi.md) | Command records and the engine ABI surface | accepted |
