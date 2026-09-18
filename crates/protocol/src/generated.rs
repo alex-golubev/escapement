@@ -9,11 +9,15 @@
 use core::mem::offset_of;
 
 pub const ABI_MAJOR: u32 = 0;
-pub const ABI_HASH: u32 = 0x22b56abb;
-pub const ABI_VERSION: u32 = 0x00b56abb;
+pub const ABI_HASH: u32 = 0xd554b3e1;
+pub const ABI_VERSION: u32 = 0x0054b3e1;
 
 pub const COMMAND_PAYLOAD_OFFSET: usize = 8;
 pub const COMMAND_PAYLOAD_SIZE: usize = 24;
+/// The fastest tempo the engine accepts, in micro-BPM: 999 BPM.
+pub const MICRO_BPM_MAX: usize = 999000000;
+/// The slowest tempo the engine accepts, in micro-BPM: 10 BPM.
+pub const MICRO_BPM_MIN: usize = 10000000;
 
 #[repr(u32)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -245,6 +249,9 @@ const _: () = assert!(size_of::<Play>() <= 24);
 #[repr(C)]
 #[derive(Clone, Copy, PartialEq, Debug, Default)]
 pub struct SetTempo {
+    /// Beats per minute times a million: 120 BPM is 120000000. Between `micro_bpm_min`
+    /// and `micro_bpm_max` inclusive — outside them the command is dropped and the
+    /// block reports `bad_command_payload`.
     pub micro_bpm: u32,
 }
 
