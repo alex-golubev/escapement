@@ -150,6 +150,7 @@ crates/
   engine-wasm     AudioWorklet host
   engine-native   native host: tests, server-side rendering
   plugin-sdk      plugin contract for Rust + WASM export macro
+  protocol        generated boundary code for Rust (Apache-2.0, ADR-0016)
 schema/           declarative schema of the engine ↔ TS boundary (generation source)
 packages/
   protocol        generated boundary code: shared-memory layout and types
