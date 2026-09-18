@@ -7,7 +7,7 @@
 // Every struct below refuses an unknown key: a key serde ignores is a line the
 // author believes they wrote.
 
-use crate::names::{pascal, screaming};
+use crate::names::{camel, pascal, screaming};
 use serde::Deserialize;
 use serde::de::{self, MapAccess, Visitor};
 use std::collections::BTreeMap;
@@ -520,6 +520,12 @@ impl Schema {
             let mut has_property = false;
             for field in &record.fields {
                 if field.is_array() {
+                    let field_from = format!("records.{name}.{}", field.name);
+                    names.push((
+                        format!("{}_{}_LENGTH", screaming(name), screaming(&field.name)),
+                        field_from.clone(),
+                    ));
+                    names.push((camel(&format!("{name}_{}", field.name)), field_from));
                     continue;
                 }
                 has_property = true;

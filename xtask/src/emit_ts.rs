@@ -112,9 +112,8 @@ pub fn emit(schema: &Schema, abi_version: u32, abi_hash: u32) -> String {
         );
 
         for field in &record.fields {
-            // No accessor for an array: the offset above is what a caller
-            // needs to take its own view.
             if field.is_array() {
+                emit_record_array(&mut out, name, field);
                 continue;
             }
             let field_name = pascal(&field.name);
@@ -354,6 +353,46 @@ fn emit_record_reader(out: &mut String, type_name: &str, record_name: &str, reco
         );
     }
     let _ = writeln!(out, "  }}\n}}\n");
+}
+
+/// A record's array field is a region a caller takes its own view over. The
+/// offset alone left the length to be written by hand on the TypeScript side,
+/// and a length written by hand is the number the schema exists to remove.
+fn emit_record_array(out: &mut String, record_name: &str, field: &Field) {
+    let length = format!(
+        "{}_{}_LENGTH",
+        screaming(record_name),
+        screaming(&field.name)
+    );
+    let array = field.ty.ts_array();
+
+    emit_doc(out, "", field.doc.as_deref());
+    let _ = writeln!(out, "export const {length} = {}\n", field.count);
+
+    let mut doc = String::new();
+    if let Some(text) = field.doc.as_deref() {
+        doc.push_str(text);
+        doc.push('\n');
+    }
+    let _ = write!(
+        doc,
+        "A `{array}` over `{}` of `{record_name}`. \
+         Cold path: the view is an allocation, so take it once and keep it.",
+        field.name
+    );
+    // A single byte has no alignment to demand, and saying so is the noise the
+    // rest of this file leaves out.
+    if field.ty.size() > 1 {
+        let _ = write!(doc, " `base` must be a multiple of {}.", field.ty.size());
+    }
+    emit_doc(out, "", Some(&doc));
+    let _ = writeln!(
+        out,
+        "export function {}(buffer: ArrayBufferLike, base: number): {array} {{\n  \
+         return new {array}({}, {length})\n}}\n",
+        camel(&format!("{record_name}_{}", field.name)),
+        offset_expr("buffer, base", field.offset, None),
+    );
 }
 
 /// The writer fills every byte the field reserved: an element the caller left

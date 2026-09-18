@@ -778,3 +778,36 @@ fn a_misspelled_key_beside_a_doc_is_refused() {
     let misspelled = VALID.replace("probe = 1", r#"probe = { value = 1, dock = "why" }"#);
     assert!(problems(&misspelled).contains("dock"), "{misspelled}");
 }
+
+/// The offset was all TypeScript got, so the length of the region it points at
+/// was written by hand on that side — the one number the schema exists to keep
+/// both sides from choosing separately.
+#[test]
+fn a_record_array_gets_its_length_and_a_view() {
+    let schema = probe_schema(
+        24,
+        r#"{ name = "tempo", type = "u32", offset = 0 }"#,
+        r#"
+[records.block]
+size = 32
+fields = [
+  { name = "samples", type = "f32", count = 8, offset = 0 },
+]
+"#,
+    );
+    let ts = ts_of(&schema);
+
+    for expected in [
+        "export const BLOCK_SAMPLES_LENGTH = 8",
+        "export function blockSamples(buffer: ArrayBufferLike, base: number): Float32Array {",
+        "return new Float32Array(buffer, base, BLOCK_SAMPLES_LENGTH)",
+        "`base` must be a multiple of 4.",
+        "export const COMMAND_SLOT_PAYLOAD_LENGTH = 24",
+        "return new Uint8Array(buffer, base + 8, COMMAND_SLOT_PAYLOAD_LENGTH)",
+    ] {
+        assert!(ts.contains(expected), "missing {expected:?} in:\n{ts}");
+    }
+
+    // A byte has no alignment to demand.
+    assert!(!ts.contains("multiple of 1"), "{ts}");
+}

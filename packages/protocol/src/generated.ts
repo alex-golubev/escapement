@@ -56,6 +56,13 @@ export function writeCommandSlotFrameOffset(view: DataView, base: number, value:
   view.setUint32(base + 4, value, true)
 }
 
+export const COMMAND_SLOT_PAYLOAD_LENGTH = 24
+
+/** A `Uint8Array` over `payload` of `command_slot`. Cold path: the view is an allocation, so take it once and keep it. */
+export function commandSlotPayload(buffer: ArrayBufferLike, base: number): Uint8Array {
+  return new Uint8Array(buffer, base + 8, COMMAND_SLOT_PAYLOAD_LENGTH)
+}
+
 /** Cold path: a snapshot of `command_slot`. Allocates one object. */
 export function readCommandSlot(view: DataView, base: number) {
   return {
