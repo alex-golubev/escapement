@@ -75,7 +75,8 @@ pub fn emit(schema: &Schema, abi_version: u32, abi_hash: u32) -> String {
         let _ = writeln!(out, "}}\n\nimpl {type_name} {{");
         let _ = writeln!(
             out,
-            "    pub fn from_code(code: u32) -> Option<Self> {{\n        match code {{"
+            "    /// The variant a code names, or `None` if the code names none.\n    \
+             pub fn from_code(code: u32) -> Option<Self> {{\n        match code {{"
         );
         for (variant, code) in &variants {
             let _ = writeln!(
@@ -87,7 +88,9 @@ pub fn emit(schema: &Schema, abi_version: u32, abi_hash: u32) -> String {
         }
         let _ = writeln!(
             out,
-            "            _ => None,\n        }}\n    }}\n\n    pub fn code(self) -> u32 {{\n        self as u32\n    }}\n}}\n"
+            "            _ => None,\n        }}\n    }}\n\n    \
+             /// The code that names this variant on the boundary.\n    \
+             pub fn code(self) -> u32 {{\n        self as u32\n    }}\n}}\n"
         );
     }
 

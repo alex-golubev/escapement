@@ -37,6 +37,7 @@ pub enum CommandKind {
 }
 
 impl CommandKind {
+    /// The variant a code names, or `None` if the code names none.
     pub fn from_code(code: u32) -> Option<Self> {
         match code {
             1 => Some(Self::Play),
@@ -46,6 +47,7 @@ impl CommandKind {
         }
     }
 
+    /// The code that names this variant on the boundary.
     pub fn code(self) -> u32 {
         self as u32
     }
@@ -75,6 +77,7 @@ pub enum EngineError {
 }
 
 impl EngineError {
+    /// The variant a code names, or `None` if the code names none.
     pub fn from_code(code: u32) -> Option<Self> {
         match code {
             0 => Some(Self::Ok),
@@ -90,6 +93,7 @@ impl EngineError {
         }
     }
 
+    /// The code that names this variant on the boundary.
     pub fn code(self) -> u32 {
         self as u32
     }
@@ -103,6 +107,7 @@ pub enum TransportState {
 }
 
 impl TransportState {
+    /// The variant a code names, or `None` if the code names none.
     pub fn from_code(code: u32) -> Option<Self> {
         match code {
             0 => Some(Self::Stopped),
@@ -111,6 +116,7 @@ impl TransportState {
         }
     }
 
+    /// The code that names this variant on the boundary.
     pub fn code(self) -> u32 {
         self as u32
     }
