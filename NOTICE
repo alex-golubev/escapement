@@ -7,7 +7,8 @@ LICENSES BY PART OF THIS REPOSITORY
 
   Application and engine
   (apps/, crates/engine-core, crates/engine-wasm, crates/engine-native,
-  crates/dsp, packages/document, packages/ui, packages/api)
+  crates/dsp, packages/document, packages/engine-host, packages/ui,
+  packages/api)
       GNU Affero General Public License, version 3 only (AGPL-3.0-only),
       with the additional permission in LICENSE-PLUGIN-EXCEPTION.
       Full text: LICENSE
