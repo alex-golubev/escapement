@@ -12,6 +12,9 @@ use std::fmt::Write as _;
 
 const PAYLOAD_BASE: &str = "slot + COMMAND_PAYLOAD_OFFSET";
 const BASE: &str = "Byte offset of the record inside that memory.";
+const RING_VIEW: &str = "A view over the memory the ring slot lives in.";
+const SLOT_READ: &str = "Byte offset of the slot to read.";
+const SLOT_WRITE: &str = "Byte offset of the slot to write.";
 const ALIGNED_BASE: &str = "Byte offset of the record, itself a multiple of 4.";
 
 fn view_over(record: &str) -> String {
@@ -254,12 +257,8 @@ pub fn emit(schema: &Schema, abi_version: u32, abi_hash: u32) -> String {
         doc.push(format!(
             "Writes a complete `{name}` slot (kind {kind}). Hot path: no allocation."
         ));
-        param(
-            &mut doc,
-            "view",
-            Some("The view over the memory the ring slot lives in."),
-        );
-        param(&mut doc, "slot", Some("Byte offset of the slot to write."));
+        param(&mut doc, "view", Some(RING_VIEW));
+        param(&mut doc, "slot", Some(SLOT_WRITE));
         param(
             &mut doc,
             "frameOffset",
@@ -307,10 +306,18 @@ pub fn emit(schema: &Schema, abi_version: u32, abi_hash: u32) -> String {
         if command.fields.is_empty() {
             continue;
         }
-        let _ = writeln!(
-            out,
-            "/** Cold path: allocates an object. Not for use inside process(). */"
-        );
+        let mut doc: Vec<String> = Vec::new();
+        if let Some(text) = command.doc.as_deref() {
+            doc.extend(text.lines().map(str::to_owned));
+            doc.push(String::new());
+        }
+        doc.push(format!(
+            "Reads a `{name}` slot back. Cold path: allocates an object, so not \
+             for use inside process()."
+        ));
+        param(&mut doc, "view", Some(RING_VIEW));
+        param(&mut doc, "slot", Some(SLOT_READ));
+        emit_block(&mut out, "", &doc);
         let _ = writeln!(
             out,
             "export function read{type_name}(view: DataView, slot: number) {{\n  return {{"
@@ -326,7 +333,14 @@ pub fn emit(schema: &Schema, abi_version: u32, abi_hash: u32) -> String {
         let _ = writeln!(out, "  }}\n}}\n");
     }
 
-    let _ = writeln!(out, "export interface EngineExports {{");
+    let _ = writeln!(
+        out,
+        "/**\n \
+         * What the engine module exports, checked against the same schema the\n \
+         * records come from rather than against a comment (ADR-0015).\n \
+         */\n\
+         export interface EngineExports {{"
+    );
     for export in &schema.exports {
         emit_doc(&mut out, "  ", export.doc.as_deref());
         match export.kind {
@@ -421,19 +435,37 @@ fn emit_record_reader(out: &mut String, type_name: &str, record_name: &str, reco
         return;
     }
 
+    let plain = fields.iter().any(|field| !field.atomic);
+    let atomic = fields.iter().any(|field| field.atomic);
     let mut params: Vec<&str> = Vec::new();
-    if fields.iter().any(|field| !field.atomic) {
+    if plain {
         params.push("view: DataView");
     }
-    if fields.iter().any(|field| field.atomic) {
+    if atomic {
         params.push("atoms: Int32Array");
     }
     params.push("base: number");
 
-    let _ = writeln!(
-        out,
-        "/** Cold path: a snapshot of `{record_name}`. Allocates one object. */"
+    let mut doc: Vec<String> = Vec::new();
+    if let Some(text) = record.doc.as_deref() {
+        doc.extend(text.lines().map(str::to_owned));
+        doc.push(String::new());
+    }
+    doc.push(format!(
+        "Every field of `{record_name}` at once. Cold path: allocates one object."
+    ));
+    if plain {
+        param(&mut doc, "view", Some(&view_over(record_name)));
+    }
+    if atomic {
+        param(&mut doc, "atoms", Some(&shared_array(record_name)));
+    }
+    param(
+        &mut doc,
+        "base",
+        Some(if atomic { ALIGNED_BASE } else { BASE }),
     );
+    emit_block(out, "", &doc);
     let _ = writeln!(
         out,
         "export function read{type_name}({}) {{\n  return {{",
@@ -463,20 +495,42 @@ fn emit_record_array(out: &mut String, record_name: &str, field: &Field) {
     );
     let array = field.ty.ts_array();
 
-    let _ = writeln!(out, "export const {length} = {}\n", field.count);
+    let _ = writeln!(
+        out,
+        "/** How many elements `{}` of `{record_name}` holds. */\n\
+         export const {length} = {}\n",
+        field.name, field.count
+    );
 
-    let mut doc = String::new();
-    let _ = write!(
-        doc,
-        "A `{array}` over `{}` of `{record_name}`. \
-         Cold path: the view is an allocation, so take it once and keep it.",
+    let mut doc: Vec<String> = Vec::new();
+    if let Some(text) = field.doc.as_deref() {
+        doc.extend(text.lines().map(str::to_owned));
+        doc.push(String::new());
+    }
+    doc.push(format!(
+        "A `{array}` over `{}` of `{record_name}`. Cold path: the view is an \
+         allocation, so take it once and keep it.",
         field.name
+    ));
+    param(
+        &mut doc,
+        "buffer",
+        Some(&format!("The memory `{record_name}` lives in.")),
     );
     // A single byte has no alignment to demand.
-    if field.ty.size() > 1 {
-        let _ = write!(doc, " `base` must be a multiple of {}.", field.ty.size());
-    }
-    emit_doc(out, "", Some(&doc));
+    param(
+        &mut doc,
+        "base",
+        Some(&if field.ty.size() > 1 {
+            format!(
+                "Byte offset of the record, itself a multiple of {}.",
+                field.ty.size()
+            )
+        } else {
+            BASE.to_owned()
+        }),
+    );
+    emit_block(out, "", &doc);
     let _ = writeln!(
         out,
         "export function {}(buffer: ArrayBufferLike, base: number): {array} {{\n  \
@@ -495,22 +549,41 @@ fn emit_array_field(out: &mut String, type_name: &str, command: &str, field: &Fi
     let count = field.count;
     let at = offset_expr(PAYLOAD_BASE, field.offset, Some(field.ty.size()));
 
-    let _ = writeln!(
-        out,
-        "/** Copies `{}` into a `{command}` slot, zero-filling anything the\n \
-         * caller left short. Hot path: no allocation. */",
+    let mut doc: Vec<String> = Vec::new();
+    if let Some(text) = field.doc.as_deref() {
+        doc.extend(text.lines().map(str::to_owned));
+        doc.push(String::new());
+    }
+    doc.push(format!(
+        "Copies `{}` into a `{command}` slot, zero-filling anything the caller \
+         left short. Hot path: no allocation.",
         field.name
-    );
+    ));
+    param(&mut doc, "view", Some(RING_VIEW));
+    param(&mut doc, "slot", Some(SLOT_WRITE));
+    param(&mut doc, &value, field.doc.as_deref());
+    emit_block(out, "", &doc);
     let _ = writeln!(
         out,
         "export function write{type_name}{field_name}(view: DataView, slot: number, {value}: {array}): void {{\n  \
          for (let i = 0; i < {count}; i++) {{\n    {}\n  }}\n}}\n",
         view_set(field.ty, &at, &format!("{value}[i] ?? 0"))
     );
+    let mut doc: Vec<String> = Vec::new();
+    if let Some(text) = field.doc.as_deref() {
+        doc.extend(text.lines().map(str::to_owned));
+        doc.push(String::new());
+    }
+    doc.push(format!(
+        "Reads `{}` back out of a `{command}` slot. Cold path: allocates the array.",
+        field.name
+    ));
+    param(&mut doc, "view", Some(RING_VIEW));
+    param(&mut doc, "slot", Some(SLOT_READ));
+    emit_block(out, "", &doc);
     let _ = writeln!(
         out,
-        "/** Cold path: allocates. */\n\
-         export function read{type_name}{field_name}(view: DataView, slot: number): {array} {{\n  \
+        "export function read{type_name}{field_name}(view: DataView, slot: number): {array} {{\n  \
          const out = new {array}({count})\n  \
          for (let i = 0; i < {count}; i++) {{\n    out[i] = {}\n  }}\n  \
          return out\n}}\n",

@@ -819,7 +819,8 @@ fields = [
         "export const BLOCK_SAMPLES_LENGTH = 8",
         "export function blockSamples(buffer: ArrayBufferLike, base: number): Float32Array {",
         "return new Float32Array(buffer, base, BLOCK_SAMPLES_LENGTH)",
-        "`base` must be a multiple of 4.",
+        " * @param base - Byte offset of the record, itself a multiple of 4.",
+        " * @param buffer - The memory `block` lives in.",
         "export const COMMAND_SLOT_PAYLOAD_LENGTH = 24",
         "return new Uint8Array(buffer, base + 8, COMMAND_SLOT_PAYLOAD_LENGTH)",
     ] {
@@ -860,4 +861,106 @@ fn a_command_writer_carries_one_block_and_every_parameter() {
     ] {
         assert!(ts.contains(expected), "missing {expected:?} in:\n{ts}");
     }
+}
+
+/// A schema exercising every shape the emitters have a branch for.
+fn every_shape() -> Schema {
+    parse(
+        r#"
+[abi]
+major = 0
+
+[constants]
+# A constant carries only what the schema says of it, so the fixture says
+# something: the generator has nothing of its own to write here.
+command_payload_offset = { value = 8, doc = "Where the payload begins." }
+command_payload_size = { value = 24, doc = "Bytes a command has to itself." }
+
+[enums.command_kind]
+probe = { value = 1, doc = "The only kind these tests have." }
+
+[enums.engine_error]
+ok = { value = 0, doc = "Nothing went wrong." }
+
+[records.command_slot]
+size = 32
+fields = [
+  { name = "kind", type = "u32", offset = 0, doc = "Which command this is." },
+  { name = "frame_offset", type = "u32", offset = 4, doc = "Where in the block it lands." },
+  { name = "payload", type = "u8", count = 24, offset = 8, doc = "The command's own fields." },
+]
+
+[records.meters]
+size = 8
+shared = true
+fields = [
+  { name = "level", type = "i32", offset = 0, atomic = true, doc = "The level to draw." },
+  { name = "peak", type = "i32", offset = 4, atomic = true, doc = "The peak to draw." },
+]
+
+[records.block]
+size = 32
+fields = [
+  { name = "samples", type = "f32", count = 8, offset = 0, doc = "One run of samples." },
+]
+
+[commands.probe]
+fields = [
+  { name = "tempo", type = "u32", offset = 0, doc = "Micro-BPM." },
+  { name = "gains", type = "f32", count = 4, offset = 8, doc = "A gain per channel." },
+]
+
+[[exports]]
+name = "memory"
+kind = "memory"
+
+[[exports]]
+name = "process"
+params = [{ name = "frames", type = "u32" }]
+returns = "u32"
+"#,
+    )
+}
+
+/// This is the Apache-licensed surface plugin authors build against, so an
+/// export without a doc block is a hole in their reference — and the holes were
+/// found by eye twice, in a snapshot reader and in a view helper.
+#[test]
+fn every_exported_name_carries_a_doc() {
+    let schema = every_shape();
+
+    let ts = ts_of(&schema);
+    let lines: Vec<&str> = ts.lines().collect();
+    let bare: Vec<&str> = lines
+        .iter()
+        .enumerate()
+        .filter(|(at, line)| {
+            line.starts_with("export ")
+                && !at
+                    .checked_sub(1)
+                    .and_then(|previous| lines.get(previous))
+                    .is_some_and(|previous| previous.ends_with("*/") || previous.starts_with("/**"))
+        })
+        .map(|(_, line)| *line)
+        .collect();
+    assert!(bare.is_empty(), "undocumented in TypeScript: {bare:#?}");
+
+    let rust = rust_of(&schema);
+    let lines: Vec<&str> = rust.lines().collect();
+    let bare: Vec<&str> = lines
+        .iter()
+        .enumerate()
+        .filter(|(at, line)| {
+            line.trim_start().starts_with("pub ")
+                && !at
+                    .checked_sub(1)
+                    .and_then(|previous| lines.get(previous))
+                    .map(|previous| previous.trim_start())
+                    .is_some_and(|previous| {
+                        previous.starts_with("///") || previous.starts_with("#[")
+                    })
+        })
+        .map(|(_, line)| line.trim_start())
+        .collect();
+    assert!(bare.is_empty(), "undocumented in Rust: {bare:#?}");
 }

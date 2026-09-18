@@ -87,16 +87,30 @@ export const AudioOutOffsets = {
 /** `audio_out` in bytes. */
 export const AUDIO_OUT_SIZE = 8192
 
+/** How many elements `left` of `audio_out` holds. */
 export const AUDIO_OUT_LEFT_LENGTH = 1024
 
-/** A `Float32Array` over `left` of `audio_out`. Cold path: the view is an allocation, so take it once and keep it. `base` must be a multiple of 4. */
+/**
+ * The left channel, as long as the largest block the engine accepts.
+ *
+ * A `Float32Array` over `left` of `audio_out`. Cold path: the view is an allocation, so take it once and keep it.
+ * @param buffer - The memory `audio_out` lives in.
+ * @param base - Byte offset of the record, itself a multiple of 4.
+ */
 export function audioOutLeft(buffer: ArrayBufferLike, base: number): Float32Array {
   return new Float32Array(buffer, base, AUDIO_OUT_LEFT_LENGTH)
 }
 
+/** How many elements `right` of `audio_out` holds. */
 export const AUDIO_OUT_RIGHT_LENGTH = 1024
 
-/** A `Float32Array` over `right` of `audio_out`. Cold path: the view is an allocation, so take it once and keep it. `base` must be a multiple of 4. */
+/**
+ * The right channel, as long as the largest block the engine accepts.
+ *
+ * A `Float32Array` over `right` of `audio_out`. Cold path: the view is an allocation, so take it once and keep it.
+ * @param buffer - The memory `audio_out` lives in.
+ * @param base - Byte offset of the record, itself a multiple of 4.
+ */
 export function audioOutRight(buffer: ArrayBufferLike, base: number): Float32Array {
   return new Float32Array(buffer, base + 4096, AUDIO_OUT_RIGHT_LENGTH)
 }
@@ -162,14 +176,29 @@ export function writeCommandSlotFrameOffset(view: DataView, base: number, value:
   view.setUint32(base + 4, value, true)
 }
 
+/** How many elements `payload` of `command_slot` holds. */
 export const COMMAND_SLOT_PAYLOAD_LENGTH = 24
 
-/** A `Uint8Array` over `payload` of `command_slot`. Cold path: the view is an allocation, so take it once and keep it. */
+/**
+ * The command's own fields, laid out by its kind, and zero wherever the kind declares nothing.
+ *
+ * A `Uint8Array` over `payload` of `command_slot`. Cold path: the view is an allocation, so take it once and keep it.
+ * @param buffer - The memory `command_slot` lives in.
+ * @param base - Byte offset of the record inside that memory.
+ */
 export function commandSlotPayload(buffer: ArrayBufferLike, base: number): Uint8Array {
   return new Uint8Array(buffer, base + 8, COMMAND_SLOT_PAYLOAD_LENGTH)
 }
 
-/** Cold path: a snapshot of `command_slot`. Allocates one object. */
+/**
+ * One slot of the command ring, copied into the staging area as it stands. The
+ * engine reads the header of every slot; the payload only the slot's own kind
+ * knows how to read.
+ *
+ * Every field of `command_slot` at once. Cold path: allocates one object.
+ * @param view - A view over the memory `command_slot` lives in.
+ * @param base - Byte offset of the record inside that memory.
+ */
 export function readCommandSlot(view: DataView, base: number) {
   return {
     kind: readCommandSlotKind(view, base),
@@ -273,7 +302,15 @@ export function writeEngineReportDroppedCommands(view: DataView, base: number, v
   view.setUint32(base + 12, value, true)
 }
 
-/** Cold path: a snapshot of `engine_report`. Allocates one object. */
+/**
+ * What the engine has to say about the block it has just rendered, in its own
+ * unshared memory. The glue reads it once `process` has returned and publishes
+ * what the interface needs into `meter_block`.
+ *
+ * Every field of `engine_report` at once. Cold path: allocates one object.
+ * @param view - A view over the memory `engine_report` lives in.
+ * @param base - Byte offset of the record inside that memory.
+ */
 export function readEngineReport(view: DataView, base: number) {
   return {
     positionFrames: readEngineReportPositionFrames(view, base),
@@ -401,7 +438,13 @@ export function storeMeterBlockTransportState(atoms: Int32Array, base: number, v
   Atomics.store(atoms, (base + 12) >> 2, value)
 }
 
-/** Cold path: a snapshot of `meter_block`. Allocates one object. */
+/**
+ * What the interface reads, in the shared buffer, published by the glue.
+ *
+ * Every field of `meter_block` at once. Cold path: allocates one object.
+ * @param atoms - An `Int32Array` over the shared buffer `meter_block` lives in.
+ * @param base - Byte offset of the record, itself a multiple of 4.
+ */
 export function readMeterBlock(atoms: Int32Array, base: number) {
   return {
     blockCounter: loadMeterBlockBlockCounter(atoms, base),
@@ -415,7 +458,7 @@ export function readMeterBlock(atoms: Int32Array, base: number) {
  * Start the transport.
  *
  * Writes a complete `play` slot (kind 1). Hot path: no allocation.
- * @param view - The view over the memory the ring slot lives in.
+ * @param view - A view over the memory the ring slot lives in.
  * @param slot - Byte offset of the slot to write.
  * @param frameOffset - Where in the block the command takes effect, in frames from its start. At or
  *   beyond the end of the block it is dropped as `bad_frame_offset`.
@@ -430,7 +473,13 @@ export function writePlay(view: DataView, slot: number, frameOffset: number, fro
   view.setUint32(slot + COMMAND_PAYLOAD_OFFSET, fromFrame, true)
 }
 
-/** Cold path: allocates an object. Not for use inside process(). */
+/**
+ * Start the transport.
+ *
+ * Reads a `play` slot back. Cold path: allocates an object, so not for use inside process().
+ * @param view - A view over the memory the ring slot lives in.
+ * @param slot - Byte offset of the slot to read.
+ */
 export function readPlay(view: DataView, slot: number) {
   return {
     fromFrame: view.getUint32(slot + COMMAND_PAYLOAD_OFFSET, true),
@@ -441,7 +490,7 @@ export function readPlay(view: DataView, slot: number) {
  * Set the tempo from this point in the block onwards.
  *
  * Writes a complete `set_tempo` slot (kind 3). Hot path: no allocation.
- * @param view - The view over the memory the ring slot lives in.
+ * @param view - A view over the memory the ring slot lives in.
  * @param slot - Byte offset of the slot to write.
  * @param frameOffset - Where in the block the command takes effect, in frames from its start. At or
  *   beyond the end of the block it is dropped as `bad_frame_offset`.
@@ -457,7 +506,13 @@ export function writeSetTempo(view: DataView, slot: number, frameOffset: number,
   view.setUint32(slot + COMMAND_PAYLOAD_OFFSET, microBpm, true)
 }
 
-/** Cold path: allocates an object. Not for use inside process(). */
+/**
+ * Set the tempo from this point in the block onwards.
+ *
+ * Reads a `set_tempo` slot back. Cold path: allocates an object, so not for use inside process().
+ * @param view - A view over the memory the ring slot lives in.
+ * @param slot - Byte offset of the slot to read.
+ */
 export function readSetTempo(view: DataView, slot: number) {
   return {
     microBpm: view.getUint32(slot + COMMAND_PAYLOAD_OFFSET, true),
@@ -468,7 +523,7 @@ export function readSetTempo(view: DataView, slot: number) {
  * Stop the transport.
  *
  * Writes a complete `stop` slot (kind 2). Hot path: no allocation.
- * @param view - The view over the memory the ring slot lives in.
+ * @param view - A view over the memory the ring slot lives in.
  * @param slot - Byte offset of the slot to write.
  * @param frameOffset - Where in the block the command takes effect, in frames from its start. At or
  *   beyond the end of the block it is dropped as `bad_frame_offset`.
@@ -481,6 +536,10 @@ export function writeStop(view: DataView, slot: number, frameOffset: number): vo
   }
 }
 
+/**
+ * What the engine module exports, checked against the same schema the
+ * records come from rather than against a comment (ADR-0015).
+ */
 export interface EngineExports {
   /** The engine's own linear memory, unshared, and never grown after `init` — growing it detaches every view the glue holds (ADR-0015). */
   memory: WebAssembly.Memory
