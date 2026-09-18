@@ -9,11 +9,16 @@
 use core::mem::offset_of;
 
 pub const ABI_MAJOR: u32 = 0;
-pub const ABI_HASH: u32 = 0xd554b3e1;
-pub const ABI_VERSION: u32 = 0x0054b3e1;
+pub const ABI_HASH: u32 = 0x8bc0ff11;
+pub const ABI_VERSION: u32 = 0x00c0ff11;
 
 pub const COMMAND_PAYLOAD_OFFSET: usize = 8;
 pub const COMMAND_PAYLOAD_SIZE: usize = 24;
+/// How many command slots the staging area holds. The glue copies at most this
+/// many into it in one block and leaves the rest in the ring for the next, so
+/// `process` seeing more than this is a bug in the glue rather than a busy
+/// moment.
+pub const COMMAND_STAGING_CAPACITY: usize = 256;
 /// The fastest tempo the engine accepts, in micro-BPM: 999 BPM.
 pub const MICRO_BPM_MAX: usize = 999000000;
 /// The slowest tempo the engine accepts, in micro-BPM: 10 BPM.
@@ -299,11 +304,10 @@ const _: () = assert!(size_of::<Stop>() <= 24);
 
 /// The functions the engine must export (ADR-0015). The wasm host test
 /// checks the built module against this list.
-pub const EXPORT_FUNCTIONS: [&str; 7] = [
+pub const EXPORT_FUNCTIONS: [&str; 6] = [
     "abi_version",
     "init",
     "command_staging_ptr",
-    "command_staging_capacity",
     "audio_out_ptr",
     "engine_report_ptr",
     "process",
