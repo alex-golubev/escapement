@@ -264,6 +264,29 @@ impl Schema {
             return Err(errors);
         };
         let slot_size = slot.size;
+
+        // Every command writer spells the slot header out: the TypeScript one
+        // writes `CommandSlotOffsets.kind` with `setUint32`. Renaming either
+        // field, or narrowing it, used to generate a file that does not
+        // compile, so the dependency is stated here rather than assumed there.
+        for (header, expected) in [("kind", Type::U32), ("frame_offset", Type::U32)] {
+            match slot.fields.iter().find(|field| field.name == header) {
+                None => errors.push(format!(
+                    "records.command_slot has no field {header}, which every command writer addresses by name"
+                )),
+                Some(field) if field.is_array() => errors.push(format!(
+                    "records.command_slot.{header} has a count of {}, but the command writers address it as one value",
+                    field.count
+                )),
+                Some(field) if field.ty != expected => errors.push(format!(
+                    "records.command_slot.{header} is {}, but the command writers address it as {}",
+                    field.ty.schema_name(),
+                    expected.schema_name()
+                )),
+                Some(_) => {}
+            }
+        }
+
         let (Ok(payload_offset), Ok(payload_size)) = (payload_offset, payload_size) else {
             return Err(errors);
         };

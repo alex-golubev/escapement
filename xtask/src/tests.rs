@@ -290,3 +290,23 @@ fn an_abi_major_that_does_not_fit_its_byte_is_refused() {
     let biggest = VALID.replace("major = 0", "major = 255");
     assert_eq!(problems(&biggest), "", "255 still fits");
 }
+
+/// The command writers reach the slot header by name and by width. Renaming
+/// `kind` generated TypeScript that referred to an offset table entry which no
+/// longer existed — a `tsc` error in a file nobody edits.
+#[test]
+fn the_slot_header_the_command_writers_address_is_required() {
+    let renamed = VALID.replace(r#"name = "kind""#, r#"name = "opcode""#);
+    let found = problems(&renamed);
+    assert!(found.contains("has no field kind"), "{found}");
+
+    let narrowed = VALID.replace(
+        r#"{ name = "frame_offset", type = "u32", offset = 4 }"#,
+        r#"{ name = "frame_offset", type = "u16", offset = 4 }"#,
+    );
+    let found = problems(&narrowed);
+    assert!(
+        found.contains("records.command_slot.frame_offset is u16"),
+        "{found}"
+    );
+}
