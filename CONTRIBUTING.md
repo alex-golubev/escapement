@@ -74,8 +74,8 @@ project could not grant commercial exceptions to its own license.
 Your contribution is licensed under whichever license applies to the
 part of the repository it lands in, as set out in [NOTICE](NOTICE). Note
 in particular that the plugin contract and the boundary schema
-(`schema/`, `crates/plugin-sdk`, `packages/plugin-sdk`,
-`packages/protocol`) are **Apache-2.0**, not AGPL, so that plugin
+(`schema/`, `crates/plugin-sdk`, `crates/protocol`,
+`packages/plugin-sdk`, `packages/protocol`) are **Apache-2.0**, not AGPL, so that plugin
 authors never have to think about our license.
 
 ## Security
