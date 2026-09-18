@@ -1,17 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //
-// The TypeScript half of the boundary. Three things this emitter exists to get
-// right, because all three are wrong exactly once when written by hand
-// (ADR-0013): DataView defaults to big-endian while wasm is little-endian,
-// atomic fields are reached through an Int32Array whose index counts elements,
-// and a field with a count is as many elements as the schema reserved bytes
-// for, not one.
-//
-// Every DataView call for a schema field is built by `view_get` and `view_set`
-// below, so the question "does this accessor take a byte-order argument?" is
-// answered in one place rather than at each call. The two exceptions are the
-// slot header written by each command writer, which this emitter spells out;
-// the schema check pins the names and the widths it spells.
+// The TypeScript half of the boundary. Three things are wrong exactly once
+// when written by hand (ADR-0013): DataView is big-endian by default, an
+// Atomics index counts elements rather than bytes, and a field with a count is
+// as many elements as it reserved bytes for. Every DataView call goes through
+// `view_get` / `view_set`, so the byte-order question is answered once.
 
 use crate::names::{camel, pascal, screaming};
 use crate::schema::{ExportKind, Field, Record, Schema, Type};
@@ -19,9 +12,8 @@ use std::fmt::Write as _;
 
 const PAYLOAD_BASE: &str = "slot + COMMAND_PAYLOAD_OFFSET";
 
-/// `base + 4 + i * 2`, with every `+ 0` and `* 1` left out: `base + 0` is
-/// noise, and generated code is committed to be read (ADR-0013). `element`
-/// carries the stride when the expression addresses element `i` of an array.
+/// `base + 4 + i * 2`, with every `+ 0` and `* 1` left out: generated code is
+/// committed to be read (ADR-0013).
 fn offset_expr(base: &str, offset: usize, element: Option<usize>) -> String {
     let mut out = base.to_owned();
     if offset != 0 {
@@ -37,9 +29,8 @@ fn offset_expr(base: &str, offset: usize, element: Option<usize>) -> String {
     out
 }
 
-/// `view.getUint32(<at>, true)` — or `view.getUint8(<at>)`, because one byte
-/// has no byte order and the accessor takes no third argument. TypeScript
-/// rejects the call that passes one, so this is not a matter of taste.
+/// `getUint8` takes no third argument, and TypeScript rejects the call that
+/// passes one.
 fn view_get(ty: Type, at: &str) -> String {
     if ty.view_takes_endianness() {
         format!("view.get{}({at}, true)", ty.view_suffix())
@@ -56,9 +47,8 @@ fn view_set(ty: Type, at: &str, value: &str) -> String {
     }
 }
 
-/// The Atomics index counts elements, so the byte offset is divided by four.
-/// The schema check guarantees the field's own offset is a multiple of four;
-/// the caller's `base` has to be one too.
+/// The index counts elements. The check guarantees the field's own offset is a
+/// multiple of four; the caller's `base` has to be one too.
 fn atomic_index(offset: usize) -> String {
     if offset == 0 {
         "base >> 2".to_owned()
@@ -119,9 +109,7 @@ pub fn emit(schema: &Schema, abi_version: u32, abi_hash: u32) -> String {
         );
 
         for field in &record.fields {
-            // An array field of a record gets no accessor. Copying it would be
-            // wrong for the one that exists — a slot's payload is written by
-            // the command writers below — and the offset above is what a caller
+            // No accessor for an array: the offset above is what a caller
             // needs to take its own view.
             if field.is_array() {
                 continue;
@@ -168,8 +156,6 @@ pub fn emit(schema: &Schema, abi_version: u32, abi_hash: u32) -> String {
             .copied()
             .unwrap_or_default();
 
-        // An array field is a loop, so it gets a function of its own rather
-        // than being inlined into the slot writer twice over.
         for field in &command.fields {
             if !field.is_array() {
                 continue;
@@ -204,10 +190,9 @@ pub fn emit(schema: &Schema, abi_version: u32, abi_hash: u32) -> String {
             out,
             "  view.setUint32(slot + CommandSlotOffsets.frameOffset, frameOffset, true)"
         );
-        // A slot is reused, so the payload is cleared before the fields are
-        // written over it. The stride of four is safe because the schema check
-        // makes the slot size and the payload offset multiples of eight, and
-        // the payload is the difference between them.
+        // A slot is reused, so the payload is cleared first. The stride of
+        // four is safe: the check makes the slot size and the payload offset
+        // multiples of eight, and the payload is their difference.
         let _ = writeln!(
             out,
             "  for (let i = 0; i < COMMAND_PAYLOAD_SIZE; i += 4) {{\n    \
@@ -276,15 +261,11 @@ pub fn emit(schema: &Schema, abi_version: u32, abi_hash: u32) -> String {
     out
 }
 
-/// The cold-path accessor of ADR-0013: a record's free functions with the array
-/// and the base held for the caller. Every property delegates, so the offset
-/// arithmetic stays in one place and the class cannot drift from the functions.
-///
-/// The fields are written out rather than declared in the constructor's
-/// parameters: a parameter property is syntax that has to be compiled away, and
-/// this file is also read by tools that only strip types.
+/// The cold-path accessor of ADR-0013. Properties delegate to the free
+/// functions, so the offsets stay in one place. The fields are written out
+/// rather than declared as constructor parameters, which is syntax that has to
+/// be compiled away rather than stripped.
 fn emit_record_view(out: &mut String, type_name: &str, record_name: &str, record: &Record) {
-    // An array field has no accessor to delegate to, so it has no property.
     let fields: Vec<&Field> = record
         .fields
         .iter()
@@ -341,9 +322,8 @@ fn emit_record_view(out: &mut String, type_name: &str, record_name: &str, record
     let _ = writeln!(out, "}}\n");
 }
 
-/// The reader and writer for one array field of a command. The writer fills
-/// every byte the schema reserved: an element the caller left out is written
-/// as zero rather than leaving whatever the previous command put there.
+/// The writer fills every byte the field reserved: an element the caller left
+/// out is written as zero.
 fn emit_array_field(out: &mut String, type_name: &str, command: &str, field: &Field) {
     let field_name = pascal(&field.name);
     let value = camel(&field.name);
