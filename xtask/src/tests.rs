@@ -540,10 +540,10 @@ fn a_command_writer_fills_the_whole_payload() {
     );
 }
 
-/// The cold-path accessor of ADR-0013: it delegates rather than repeating the
-/// offsets, and takes only the arrays its fields need.
+/// The cold-path read of ADR-0018: a snapshot that delegates to the free
+/// functions, taking only the arrays its fields need, and no class anywhere.
 #[test]
-fn a_record_gets_a_view_that_delegates() {
+fn a_record_gets_a_snapshot_reader() {
     let schema = probe_schema(
         24,
         r#"{ name = "tempo", type = "u32", offset = 0 }"#,
@@ -566,32 +566,28 @@ fields = [
     );
     let ts = ts_of(&schema);
 
-    assert!(ts.contains("export class MetersView {"), "{ts}");
+    assert!(!ts.contains("class"), "{ts}");
     assert!(
-        ts.contains("constructor(atoms: Int32Array, base: number)"),
+        ts.contains("export function readMeters(atoms: Int32Array, base: number) {"),
         "{ts}"
     );
-    assert!(
-        ts.contains("return loadMetersLevel(this.atoms, this.base)"),
-        "{ts}"
-    );
-    assert!(
-        ts.contains("storeMetersPeak(this.atoms, this.base, value)"),
-        "{ts}"
-    );
+    assert!(ts.contains("level: loadMetersLevel(atoms, base),"), "{ts}");
+    assert!(ts.contains("peak: loadMetersPeak(atoms, base),"), "{ts}");
 
+    // A record with both kinds of field needs both arrays.
     assert!(
-        ts.contains("constructor(view: DataView, atoms: Int32Array, base: number)"),
+        ts.contains("export function readMixed(view: DataView, atoms: Int32Array, base: number) {"),
         "{ts}"
     );
+    assert!(ts.contains("count: loadMixedCount(atoms, base),"), "{ts}");
+    assert!(ts.contains("flag: readMixedFlag(view, base),"), "{ts}");
 
-    // The payload is an array: nothing to delegate to, so no property.
-    assert!(ts.contains("export class CommandSlotView {"), "{ts}");
+    // The payload is an array: nothing to delegate to, so it is not in the snapshot.
     assert!(
-        ts.contains("return readCommandSlotKind(this.view, this.base)"),
+        ts.contains("export function readCommandSlot(view: DataView, base: number) {"),
         "{ts}"
     );
-    assert!(!ts.contains("get payload()"), "{ts}");
+    assert!(!ts.contains("payload: readCommandSlotPayload"), "{ts}");
 }
 
 /// The identifiers a generated file declares at its top level.

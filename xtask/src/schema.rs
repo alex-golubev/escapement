@@ -463,7 +463,7 @@ impl Schema {
                 names.push((format!("{write}{stem}"), field_from));
             }
             if has_property {
-                names.push((format!("{type_name}View"), from));
+                names.push((format!("read{type_name}"), from));
             }
         }
         for (name, command) in &self.commands {
