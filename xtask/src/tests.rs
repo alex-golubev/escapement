@@ -146,6 +146,36 @@ fields = [ { name = "level", type = "u8", offset = 0 } ]
     assert!(rust.contains("payload[0] = self.flags;"), "{rust}");
 }
 
+/// A command may leave a gap — to reserve payload for a field that does not
+/// exist yet, or simply because its author chose the offsets that way. The
+/// struct is a value and its Rust layout means nothing, so no offset is
+/// asserted for it (ADR-0017). Records are the opposite and keep theirs.
+#[test]
+fn a_command_may_leave_a_gap_and_asserts_no_layout() {
+    let schema = probe_schema(
+        24,
+        "{ name = \"tempo\", type = \"u32\", offset = 0 }, { name = \"ramp\", type = \"u32\", offset = 8 }",
+        "",
+    );
+    let rust = rust_of(&schema);
+
+    assert!(
+        rust.contains("const _: () = assert!(size_of::<Probe>() <= 24);"),
+        "{rust}"
+    );
+    assert!(!rust.contains("offset_of!(Probe"), "{rust}");
+    // read and write still use the schema's offsets, gap and all.
+    assert!(
+        rust.contains("payload[8], payload[9], payload[10], payload[11]"),
+        "{rust}"
+    );
+    // The record next to it is a map of memory and still says so.
+    assert!(
+        rust.contains("const _: () = assert!(offset_of!(CommandSlot, frame_offset) == 4);"),
+        "{rust}"
+    );
+}
+
 /// `derive(Default)` reaches arrays only up to 32 elements. A longer one has to
 /// have the impl written out, or the generated file stops compiling for a
 /// reason that has nothing to do with the schema.

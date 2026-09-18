@@ -1,8 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //
-// The Rust half of the boundary. Every offset the schema states is repeated
-// here as a static assertion, so that a disagreement between the schema and
-// rustc is a build error rather than a click in the audio (ADR-0013).
+// The Rust half of the boundary.
+//
+// A record is a map of memory: it is reinterpreted from bytes, so every offset
+// the schema states is repeated here as a static assertion and a disagreement
+// between the schema and rustc is a build error rather than a click in the
+// audio (ADR-0013).
+//
+// A command is a value: `read` and `write` marshal it field by field at the
+// schema's offsets, so the struct's own layout carries no meaning and is not
+// asserted (ADR-0017).
 
 use crate::names::{pascal, screaming};
 use crate::schema::{ExportKind, Field, Schema};
@@ -22,15 +29,12 @@ pub fn emit(schema: &Schema, abi_version: u32, abi_hash: u32) -> String {
     );
 
     // size_of has been in the prelude since 1.80; offset_of! is a macro and is
-    // not, so it is imported rather than written out at every assertion.
+    // not, so it is imported rather than written out at every assertion. Only
+    // records assert offsets, so only records can call for the import.
     let asserts_offsets = schema
         .records
         .values()
-        .any(|record| !record.fields.is_empty())
-        || schema
-            .commands
-            .values()
-            .any(|command| !command.fields.is_empty());
+        .any(|record| !record.fields.is_empty());
     if asserts_offsets {
         let _ = writeln!(out, "use core::mem::offset_of;\n");
     }
@@ -130,7 +134,7 @@ pub fn emit(schema: &Schema, abi_version: u32, abi_hash: u32) -> String {
 
         let _ = writeln!(
             out,
-            "/// Command `{name}`, code {kind}. Laid out from the start of a slot's payload."
+            "/// Command `{name}`, code {kind}, read from and written to a slot's payload."
         );
         let _ = writeln!(
             out,
@@ -191,18 +195,13 @@ pub fn emit(schema: &Schema, abi_version: u32, abi_hash: u32) -> String {
         }
         let _ = writeln!(out, "    }}\n}}\n");
 
+        // The size assertion stays (ADR-0015): a command must fit the payload.
+        // The offset assertions do not, because nothing reads this struct as
+        // memory — `read` and `write` above use the schema's offsets directly.
         let _ = writeln!(
             out,
-            "const _: () = assert!(size_of::<{type_name}>() <= {payload_size});"
+            "const _: () = assert!(size_of::<{type_name}>() <= {payload_size});\n"
         );
-        for field in &command.fields {
-            let _ = writeln!(
-                out,
-                "const _: () = assert!(offset_of!({type_name}, {}) == {});",
-                field.name, field.offset
-            );
-        }
-        out.push('\n');
     }
 
     let functions: Vec<&str> = schema
