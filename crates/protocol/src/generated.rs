@@ -9,8 +9,8 @@
 use core::mem::offset_of;
 
 pub const ABI_MAJOR: u32 = 0;
-pub const ABI_HASH: u32 = 0x57a79934;
-pub const ABI_VERSION: u32 = 0x00a79934;
+pub const ABI_HASH: u32 = 0x175e3db4;
+pub const ABI_VERSION: u32 = 0x005e3db4;
 
 pub const COMMAND_PAYLOAD_OFFSET: usize = 8;
 pub const COMMAND_PAYLOAD_SIZE: usize = 24;

@@ -7,7 +7,7 @@ mod emit_ts;
 mod names;
 mod schema;
 
-use schema::Schema;
+use schema::{Export, ExportKind, Field, Schema};
 use sha2::{Digest, Sha256};
 use std::fmt::Write as _;
 use std::io::Write as _;
@@ -75,9 +75,13 @@ fn generate() -> Result<(), String> {
     Ok(())
 }
 
-/// A hash of the schema as parsed, not as written: reformatting the TOML or
-/// reordering its tables must not move the ABI version, while editing a field
-/// must (ADR-0013).
+/// A hash of what the boundary *is*, not of how the file is written. Editing a
+/// field must move it (ADR-0013); reformatting the TOML, reordering fields that
+/// keep their offsets, or renaming a variant of `Type` must not — a spurious
+/// bump tells every plugin author that an ABI changed when it did not.
+///
+/// So: fields in offset order, tables in name order, type names as the schema
+/// spells them.
 fn abi_hash(schema: &Schema) -> u32 {
     let mut canonical = String::new();
     let _ = writeln!(canonical, "major={}", schema.abi.major);
@@ -95,34 +99,54 @@ fn abi_hash(schema: &Schema) -> u32 {
             "record {name} size={} shared={}",
             record.size, record.shared
         );
-        for field in &record.fields {
+        for field in in_offset_order(&record.fields) {
             let _ = writeln!(
                 canonical,
-                "  field {} {:?} count={} offset={} atomic={}",
-                field.name, field.ty, field.count, field.offset, field.atomic
+                "  field {} {} count={} offset={} atomic={}",
+                field.name,
+                field.ty.schema_name(),
+                field.count,
+                field.offset,
+                field.atomic
             );
         }
     }
     for (name, command) in &schema.commands {
         let _ = writeln!(canonical, "command {name}");
-        for field in &command.fields {
+        for field in in_offset_order(&command.fields) {
             let _ = writeln!(
                 canonical,
-                "  field {} {:?} count={} offset={}",
-                field.name, field.ty, field.count, field.offset
+                "  field {} {} count={} offset={}",
+                field.name,
+                field.ty.schema_name(),
+                field.count,
+                field.offset
             );
         }
     }
-    for export in &schema.exports {
-        let _ = write!(canonical, "export {}(", export.name);
+    let mut exports: Vec<&Export> = schema.exports.iter().collect();
+    exports.sort_by(|a, b| a.name.cmp(&b.name));
+    for export in exports {
+        let kind = match export.kind {
+            ExportKind::Function => "function",
+            ExportKind::Memory => "memory",
+        };
+        let _ = write!(canonical, "export {kind} {}(", export.name);
         for param in &export.params {
-            let _ = write!(canonical, "{}:{:?},", param.name, param.ty);
+            let _ = write!(canonical, "{}:{},", param.name, param.ty.schema_name());
         }
-        let _ = writeln!(canonical, ") -> {:?}", export.returns);
+        let returns = export.returns.map_or("void", |ty| ty.schema_name());
+        let _ = writeln!(canonical, ") -> {returns}");
     }
 
     let digest = Sha256::digest(canonical.as_bytes());
     u32::from_be_bytes([digest[0], digest[1], digest[2], digest[3]])
+}
+
+fn in_offset_order(fields: &[Field]) -> Vec<&Field> {
+    let mut ordered: Vec<&Field> = fields.iter().collect();
+    ordered.sort_by_key(|field| field.offset);
+    ordered
 }
 
 /// The emitter does not think about line widths: rustfmt is in the pinned
