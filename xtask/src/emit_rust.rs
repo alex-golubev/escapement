@@ -32,9 +32,23 @@ pub fn emit(schema: &Schema, abi_version: u32, abi_hash: u32) -> String {
         let _ = writeln!(out, "use core::mem::offset_of;\n");
     }
 
-    let _ = writeln!(out, "pub const ABI_MAJOR: u32 = {};", schema.abi.major);
-    let _ = writeln!(out, "pub const ABI_HASH: u32 = {abi_hash:#010x};");
-    let _ = writeln!(out, "pub const ABI_VERSION: u32 = {abi_version:#010x};\n");
+    let _ = writeln!(
+        out,
+        "/// The boundary's major version, set by hand in the schema.\n\
+         pub const ABI_MAJOR: u32 = {};",
+        schema.abi.major
+    );
+    let _ = writeln!(
+        out,
+        "/// A hash of the schema, so that editing a field moves the version.\n\
+         pub const ABI_HASH: u32 = {abi_hash:#010x};"
+    );
+    let _ = writeln!(
+        out,
+        "/// The version the engine must report from `abi_version`: the major\n\
+         /// number in the top byte, the hash of the schema in the rest.\n\
+         pub const ABI_VERSION: u32 = {abi_version:#010x};\n"
+    );
 
     for (name, constant) in &schema.constants {
         emit_doc(&mut out, "", constant.doc.as_deref());
@@ -94,12 +108,18 @@ pub fn emit(schema: &Schema, abi_version: u32, abi_hash: u32) -> String {
         for field in &record.fields {
             let _ = writeln!(
                 out,
-                "    pub const {}_OFFSET: usize = {};",
+                "    /// Byte offset of `{}` inside `{name}`.\n    \
+                 pub const {}_OFFSET: usize = {};",
+                field.name,
                 screaming(&field.name),
                 field.offset
             );
         }
-        let _ = writeln!(out, "    pub const SIZE: usize = {};\n}}\n", record.size);
+        let _ = writeln!(
+            out,
+            "    /// `{name}` in bytes.\n    pub const SIZE: usize = {};\n}}\n",
+            record.size
+        );
 
         let _ = writeln!(
             out,
@@ -164,12 +184,15 @@ pub fn emit(schema: &Schema, abi_version: u32, abi_hash: u32) -> String {
         let _ = writeln!(out, "impl {type_name} {{");
         let _ = writeln!(
             out,
-            "    pub const KIND: CommandKind = CommandKind::{type_name};"
+            "    /// The code a slot carries to name this command.\n    \
+             pub const KIND: CommandKind = CommandKind::{type_name};"
         );
         for field in &command.fields {
             let _ = writeln!(
                 out,
-                "    pub const {}_OFFSET: usize = {};",
+                "    /// Byte offset of `{}` inside the slot's payload.\n    \
+                 pub const {}_OFFSET: usize = {};",
+                field.name,
                 screaming(&field.name),
                 field.offset
             );
@@ -177,7 +200,8 @@ pub fn emit(schema: &Schema, abi_version: u32, abi_hash: u32) -> String {
 
         let _ = writeln!(
             out,
-            "\n    pub fn read(payload: &[u8; COMMAND_PAYLOAD_SIZE]) -> Self {{"
+            "\n    /// Reads `{name}` out of a slot's payload.\n    \
+             pub fn read(payload: &[u8; COMMAND_PAYLOAD_SIZE]) -> Self {{"
         );
         if command.fields.is_empty() {
             let _ = writeln!(out, "        let _ = payload;");
@@ -190,7 +214,9 @@ pub fn emit(schema: &Schema, abi_version: u32, abi_hash: u32) -> String {
 
         let _ = writeln!(
             out,
-            "    pub fn write(&self, payload: &mut [u8; COMMAND_PAYLOAD_SIZE]) {{"
+            "    /// Writes `{name}` into a slot's payload, clearing every byte the\n    \
+             /// command does not use: a slot is reused.\n    \
+             pub fn write(&self, payload: &mut [u8; COMMAND_PAYLOAD_SIZE]) {{"
         );
         // A slot is reused: clearing it is what keeps the previous command's
         // bytes out of this one.

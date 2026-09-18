@@ -727,27 +727,29 @@ fn schema_prose_reaches_both_languages() {
     for expected in [
         "/** Bytes a command may use. */\nexport const COMMAND_PAYLOAD_SIZE",
         "  /** The only kind these tests have. */\n  probe: 1,",
-        "/** A slot in the ring. */\nexport const CommandSlotOffsets",
+        "/**\n * A slot in the ring.\n *\n * Byte offsets of the fields of `command_slot`.\n */",
         "  /** The command this slot carries. */\n  kind: 0,",
         " * @param tempo - Micro-BPM.",
     ] {
         assert!(ts.contains(expected), "missing {expected:?} in:\n{ts}");
     }
 
-    // The same paragraph above a reader and its writer is the noise this file
-    // leaves out everywhere else: a field is declared once, in the offset
-    // table, and an accessor over it is an operation rather than a second
-    // declaration.
-    assert_eq!(
-        ts.matches("The command this slot carries.").count(),
-        1,
-        "the field's prose is written once:\n{ts}"
+    // This file is the Apache-licensed surface a plugin author builds against
+    // (ADR-0008, NOTICE), so the prose stands over each accessor a caller
+    // reaches for, reader and writer alike, rather than once out of hover's way.
+    let over = concat!(
+        " * The command this slot carries.\n",
+        " * @param view - A view over the memory `command_slot` lives in.\n",
+        " * @param base - Byte offset of the record inside that memory.\n"
     );
-    assert_eq!(
-        rust.matches("The command this slot carries.").count(),
-        1,
-        "the field's prose is written once:\n{rust}"
-    );
+    for expected in [
+        format!("{over} */\nexport function readCommandSlotKind"),
+        format!(
+            "{over} * @param value - The value to write.\n */\nexport function writeCommandSlotKind"
+        ),
+    ] {
+        assert!(ts.contains(&expected), "missing {expected:?} in:\n{ts}");
+    }
 }
 
 /// rustfmt does not rewrap a doc comment and the generated TypeScript is not
@@ -765,8 +767,10 @@ fn a_doc_of_several_lines_keeps_its_line_breaks() {
         "{}",
         rust_of(&schema)
     );
+    // The block runs on into the writer's own line and its parameters, so the
+    // closing `*/` is not what follows.
     assert!(
-        ts_of(&schema).contains("/**\n * First.\n *\n * Second.\n */\n"),
+        ts_of(&schema).contains("/**\n * First.\n *\n * Second.\n"),
         "{}",
         ts_of(&schema)
     );
@@ -824,4 +828,36 @@ fields = [
 
     // A byte has no alignment to demand.
     assert!(!ts.contains("multiple of 1"), "{ts}");
+}
+
+/// Two blocks above one declaration: TypeScript attaches the one that touches
+/// it and the other is text nothing reads, so the command's own prose was
+/// invisible in every editor. The writer also documented one argument of four.
+#[test]
+fn a_command_writer_carries_one_block_and_every_parameter() {
+    let source = VALID
+        .replace(
+            "[commands.probe]\n",
+            "[commands.probe]\ndoc = \"What the probe does.\"\n",
+        )
+        .replace(
+            r#"{ name = "tempo", type = "u32", offset = 0 }"#,
+            r#"{ name = "tempo", type = "u32", offset = 0, doc = "Micro-BPM." }"#,
+        )
+        .replace(
+            r#"{ name = "frame_offset", type = "u32", offset = 4 }"#,
+            r#"{ name = "frame_offset", type = "u32", offset = 4, doc = "Where in the block it lands." }"#,
+        );
+    let ts = ts_of(&parse(&source));
+
+    assert!(!ts.contains("*/\n/**"), "one block per declaration:\n{ts}");
+    for expected in [
+        " * What the probe does.\n *\n * Writes a complete `probe` slot",
+        " * @param view - ",
+        " * @param slot - ",
+        " * @param frameOffset - Where in the block it lands.",
+        " * @param tempo - Micro-BPM.",
+    ] {
+        assert!(ts.contains(expected), "missing {expected:?} in:\n{ts}");
+    }
 }
