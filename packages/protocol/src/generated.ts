@@ -7,8 +7,8 @@
 // 4-byte aligned; the generator refuses any field where it is not.
 
 export const ABI_MAJOR = 0
-export const ABI_HASH = 0xb79977ee
-export const ABI_VERSION = 0x009977ee
+export const ABI_HASH = 0xa10f1316
+export const ABI_VERSION = 0x000f1316
 
 export const COMMAND_PAYLOAD_OFFSET = 8
 export const COMMAND_PAYLOAD_SIZE = 24
@@ -106,42 +106,139 @@ export function readCommandSlot(view: DataView, base: number) {
   }
 }
 
+/**
+ * What the engine has to say about the block it has just rendered, written into
+ * its own unshared memory. The glue reads it once `process` has returned and
+ * publishes what the interface needs into `meter_block`. The engine never sees
+ * the published copy.
+ */
+export const EngineReportOffsets = {
+  positionFrames: 0,
+  peakAmpMicro: 4,
+  transportState: 8,
+  droppedCommands: 12,
+} as const
+export const ENGINE_REPORT_SIZE = 16
+
+/** The playhead at the end of this block, in frames from the start of the timeline. */
+export function readEngineReportPositionFrames(view: DataView, base: number): number {
+  return view.getInt32(base, true)
+}
+
+/** The playhead at the end of this block, in frames from the start of the timeline. */
+export function writeEngineReportPositionFrames(view: DataView, base: number, value: number): void {
+  view.setInt32(base, value, true)
+}
+
+/**
+ * The largest sample of this block, over both channels, as an amplitude times a
+ * million: 1.0 is 1000000. Linear and not dBFS, because `core` has no logarithm
+ * and the curve to draw is the interface's to choose.
+ */
+export function readEngineReportPeakAmpMicro(view: DataView, base: number): number {
+  return view.getInt32(base + 4, true)
+}
+
+/**
+ * The largest sample of this block, over both channels, as an amplitude times a
+ * million: 1.0 is 1000000. Linear and not dBFS, because `core` has no logarithm
+ * and the curve to draw is the interface's to choose.
+ */
+export function writeEngineReportPeakAmpMicro(view: DataView, base: number, value: number): void {
+  view.setInt32(base + 4, value, true)
+}
+
+/** The transport as this block left it, one of the `transport_state` codes. */
+export function readEngineReportTransportState(view: DataView, base: number): number {
+  return view.getInt32(base + 8, true)
+}
+
+/** The transport as this block left it, one of the `transport_state` codes. */
+export function writeEngineReportTransportState(view: DataView, base: number, value: number): void {
+  view.setInt32(base + 8, value, true)
+}
+
+/**
+ * How many of this block's commands the engine dropped, whatever the reason. Per
+ * block rather than cumulative: the host logs it and the count starts again.
+ */
+export function readEngineReportDroppedCommands(view: DataView, base: number): number {
+  return view.getUint32(base + 12, true)
+}
+
+/**
+ * How many of this block's commands the engine dropped, whatever the reason. Per
+ * block rather than cumulative: the host logs it and the count starts again.
+ */
+export function writeEngineReportDroppedCommands(view: DataView, base: number, value: number): void {
+  view.setUint32(base + 12, value, true)
+}
+
+/** Cold path: a snapshot of `engine_report`. Allocates one object. */
+export function readEngineReport(view: DataView, base: number) {
+  return {
+    positionFrames: readEngineReportPositionFrames(view, base),
+    peakAmpMicro: readEngineReportPeakAmpMicro(view, base),
+    transportState: readEngineReportTransportState(view, base),
+    droppedCommands: readEngineReportDroppedCommands(view, base),
+  }
+}
+
+/** What the interface reads, in the shared buffer, published by the glue. */
 export const MeterBlockOffsets = {
   blockCounter: 0,
   positionFrames: 4,
-  peakMicro: 8,
+  peakAmpMicro: 8,
   transportState: 12,
 } as const
 export const METER_BLOCK_SIZE = 16
 
+/** How many blocks the glue has published. The engine does not count blocks. */
 export function loadMeterBlockBlockCounter(atoms: Int32Array, base: number): number {
   return Atomics.load(atoms, base >> 2)
 }
 
+/** How many blocks the glue has published. The engine does not count blocks. */
 export function storeMeterBlockBlockCounter(atoms: Int32Array, base: number, value: number): void {
   Atomics.store(atoms, base >> 2, value)
 }
 
+/** The playhead as of the published block, in frames from the start of the timeline. */
 export function loadMeterBlockPositionFrames(atoms: Int32Array, base: number): number {
   return Atomics.load(atoms, (base + 4) >> 2)
 }
 
+/** The playhead as of the published block, in frames from the start of the timeline. */
 export function storeMeterBlockPositionFrames(atoms: Int32Array, base: number, value: number): void {
   Atomics.store(atoms, (base + 4) >> 2, value)
 }
 
-export function loadMeterBlockPeakMicro(atoms: Int32Array, base: number): number {
+/**
+ * The meter to draw, as an amplitude times a million. The glue holds and decays
+ * the engine's per-block peak into this, because the interface reads about once
+ * in six blocks and would otherwise miss the transients; what the interface adds
+ * is the curve, not a second decay.
+ */
+export function loadMeterBlockPeakAmpMicro(atoms: Int32Array, base: number): number {
   return Atomics.load(atoms, (base + 8) >> 2)
 }
 
-export function storeMeterBlockPeakMicro(atoms: Int32Array, base: number, value: number): void {
+/**
+ * The meter to draw, as an amplitude times a million. The glue holds and decays
+ * the engine's per-block peak into this, because the interface reads about once
+ * in six blocks and would otherwise miss the transients; what the interface adds
+ * is the curve, not a second decay.
+ */
+export function storeMeterBlockPeakAmpMicro(atoms: Int32Array, base: number, value: number): void {
   Atomics.store(atoms, (base + 8) >> 2, value)
 }
 
+/** The transport as of the published block, one of the `transport_state` codes. */
 export function loadMeterBlockTransportState(atoms: Int32Array, base: number): number {
   return Atomics.load(atoms, (base + 12) >> 2)
 }
 
+/** The transport as of the published block, one of the `transport_state` codes. */
 export function storeMeterBlockTransportState(atoms: Int32Array, base: number, value: number): void {
   Atomics.store(atoms, (base + 12) >> 2, value)
 }
@@ -151,7 +248,7 @@ export function readMeterBlock(atoms: Int32Array, base: number) {
   return {
     blockCounter: loadMeterBlockBlockCounter(atoms, base),
     positionFrames: loadMeterBlockPositionFrames(atoms, base),
-    peakMicro: loadMeterBlockPeakMicro(atoms, base),
+    peakAmpMicro: loadMeterBlockPeakAmpMicro(atoms, base),
     transportState: loadMeterBlockTransportState(atoms, base),
   }
 }
@@ -206,6 +303,7 @@ export interface EngineExports {
   command_staging_ptr(): number
   command_staging_capacity(): number
   audio_out_ptr(): number
-  meter_block_ptr(): number
+  /** Where the engine writes its report. Stable for the life of the instance, so the glue takes its view once. */
+  engine_report_ptr(): number
   process(commandCount: number, frames: number): number
 }

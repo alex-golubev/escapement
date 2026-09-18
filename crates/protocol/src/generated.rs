@@ -9,8 +9,8 @@
 use core::mem::offset_of;
 
 pub const ABI_MAJOR: u32 = 0;
-pub const ABI_HASH: u32 = 0xb79977ee;
-pub const ABI_VERSION: u32 = 0x009977ee;
+pub const ABI_HASH: u32 = 0xa10f1316;
+pub const ABI_VERSION: u32 = 0x000f1316;
 
 pub const COMMAND_PAYLOAD_OFFSET: usize = 8;
 pub const COMMAND_PAYLOAD_SIZE: usize = 24;
@@ -126,19 +126,61 @@ const _: () = assert!(offset_of!(CommandSlot, kind) == 0);
 const _: () = assert!(offset_of!(CommandSlot, frame_offset) == 4);
 const _: () = assert!(offset_of!(CommandSlot, payload) == 8);
 
+/// What the engine has to say about the block it has just rendered, written into
+/// its own unshared memory. The glue reads it once `process` has returned and
+/// publishes what the interface needs into `meter_block`. The engine never sees
+/// the published copy.
+#[repr(C)]
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct EngineReport {
+    /// The playhead at the end of this block, in frames from the start of the timeline.
+    pub position_frames: i32,
+    /// The largest sample of this block, over both channels, as an amplitude times a
+    /// million: 1.0 is 1000000. Linear and not dBFS, because `core` has no logarithm
+    /// and the curve to draw is the interface's to choose.
+    pub peak_amp_micro: i32,
+    /// The transport as this block left it, one of the `transport_state` codes.
+    pub transport_state: i32,
+    /// How many of this block's commands the engine dropped, whatever the reason. Per
+    /// block rather than cumulative: the host logs it and the count starts again.
+    pub dropped_commands: u32,
+}
+
+impl EngineReport {
+    pub const POSITION_FRAMES_OFFSET: usize = 0;
+    pub const PEAK_AMP_MICRO_OFFSET: usize = 4;
+    pub const TRANSPORT_STATE_OFFSET: usize = 8;
+    pub const DROPPED_COMMANDS_OFFSET: usize = 12;
+    pub const SIZE: usize = 16;
+}
+
+const _: () = assert!(size_of::<EngineReport>() == 16);
+const _: () = assert!(offset_of!(EngineReport, position_frames) == 0);
+const _: () = assert!(offset_of!(EngineReport, peak_amp_micro) == 4);
+const _: () = assert!(offset_of!(EngineReport, transport_state) == 8);
+const _: () = assert!(offset_of!(EngineReport, dropped_commands) == 12);
+
+/// What the interface reads, in the shared buffer, published by the glue.
 #[repr(C)]
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub struct MeterBlock {
+    /// How many blocks the glue has published. The engine does not count blocks.
     pub block_counter: i32,
+    /// The playhead as of the published block, in frames from the start of the timeline.
     pub position_frames: i32,
-    pub peak_micro: i32,
+    /// The meter to draw, as an amplitude times a million. The glue holds and decays
+    /// the engine's per-block peak into this, because the interface reads about once
+    /// in six blocks and would otherwise miss the transients; what the interface adds
+    /// is the curve, not a second decay.
+    pub peak_amp_micro: i32,
+    /// The transport as of the published block, one of the `transport_state` codes.
     pub transport_state: i32,
 }
 
 impl MeterBlock {
     pub const BLOCK_COUNTER_OFFSET: usize = 0;
     pub const POSITION_FRAMES_OFFSET: usize = 4;
-    pub const PEAK_MICRO_OFFSET: usize = 8;
+    pub const PEAK_AMP_MICRO_OFFSET: usize = 8;
     pub const TRANSPORT_STATE_OFFSET: usize = 12;
     pub const SIZE: usize = 16;
 }
@@ -146,7 +188,7 @@ impl MeterBlock {
 const _: () = assert!(size_of::<MeterBlock>() == 16);
 const _: () = assert!(offset_of!(MeterBlock, block_counter) == 0);
 const _: () = assert!(offset_of!(MeterBlock, position_frames) == 4);
-const _: () = assert!(offset_of!(MeterBlock, peak_micro) == 8);
+const _: () = assert!(offset_of!(MeterBlock, peak_amp_micro) == 8);
 const _: () = assert!(offset_of!(MeterBlock, transport_state) == 12);
 
 /// Command `play`, code 1, read from and written to a slot's payload.
@@ -235,6 +277,6 @@ pub const EXPORT_FUNCTIONS: [&str; 7] = [
     "command_staging_ptr",
     "command_staging_capacity",
     "audio_out_ptr",
-    "meter_block_ptr",
+    "engine_report_ptr",
     "process",
 ];

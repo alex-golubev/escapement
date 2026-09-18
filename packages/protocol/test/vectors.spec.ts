@@ -65,6 +65,32 @@ describe("records", () => {
     )
   })
 
+  /** The engine's own half of the meters: plain memory the glue reads, not the
+   *  shared copy it publishes. */
+  test("engine_report matches its vector", () => {
+    const vector = find(vectors.records, "record", "engine_report")
+    const report = buffer(protocol.ENGINE_REPORT_SIZE)
+    const signed = (name: string) => hex(vector.fields[name] as string) | 0
+
+    protocol.writeEngineReportPositionFrames(report.view, 0, signed("position_frames"))
+    protocol.writeEngineReportPeakAmpMicro(report.view, 0, signed("peak_amp_micro"))
+    protocol.writeEngineReportTransportState(report.view, 0, signed("transport_state"))
+    protocol.writeEngineReportDroppedCommands(
+      report.view,
+      0,
+      hex(vector.fields.dropped_commands as string),
+    )
+
+    expect(new Uint8Array(report.bytes)).toEqual(bytes(vector.bytes))
+    expect(protocol.readEngineReport(report.view, 0)).toEqual({
+      positionFrames: signed("position_frames"),
+      // An amplitude times a million, so this one is 1.0.
+      peakAmpMicro: 1_000_000,
+      transportState: signed("transport_state"),
+      droppedCommands: 2,
+    })
+  })
+
   test("meter_block matches its vector", () => {
     const vector = find(vectors.records, "record", "meter_block")
     const block = buffer(protocol.METER_BLOCK_SIZE)
@@ -73,11 +99,11 @@ describe("records", () => {
 
     protocol.storeMeterBlockBlockCounter(block.atoms, 0, signed("block_counter"))
     protocol.storeMeterBlockPositionFrames(block.atoms, 0, signed("position_frames"))
-    protocol.storeMeterBlockPeakMicro(block.atoms, 0, signed("peak_micro"))
+    protocol.storeMeterBlockPeakAmpMicro(block.atoms, 0, signed("peak_amp_micro"))
     protocol.storeMeterBlockTransportState(block.atoms, 0, signed("transport_state"))
 
     expect(new Uint8Array(block.bytes)).toEqual(bytes(vector.bytes))
-    expect(protocol.loadMeterBlockPeakMicro(block.atoms, 0)).toBe(-1)
+    expect(protocol.loadMeterBlockPeakAmpMicro(block.atoms, 0)).toBe(-1)
   })
 
   test("meter_block reads back as a snapshot", () => {
@@ -87,13 +113,13 @@ describe("records", () => {
 
     protocol.storeMeterBlockBlockCounter(block.atoms, 0, signed("block_counter"))
     protocol.storeMeterBlockPositionFrames(block.atoms, 0, signed("position_frames"))
-    protocol.storeMeterBlockPeakMicro(block.atoms, 0, signed("peak_micro"))
+    protocol.storeMeterBlockPeakAmpMicro(block.atoms, 0, signed("peak_amp_micro"))
     protocol.storeMeterBlockTransportState(block.atoms, 0, signed("transport_state"))
 
     expect(protocol.readMeterBlock(block.atoms, 0)).toEqual({
       blockCounter: signed("block_counter"),
       positionFrames: signed("position_frames"),
-      peakMicro: -1,
+      peakAmpMicro: -1,
       transportState: signed("transport_state"),
     })
   })

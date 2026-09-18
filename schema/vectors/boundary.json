@@ -20,11 +20,21 @@
       "bytes": "03000000 04030201 000000000000000000000000000000000000000000000000"
     },
     {
+      "record": "engine_report",
+      "fields": {
+        "position_frames": "0x01020304",
+        "peak_amp_micro": "0x000f4240",
+        "transport_state": "0x00000001",
+        "dropped_commands": "0x00000002"
+      },
+      "bytes": "04030201 40420f00 01000000 02000000"
+    },
+    {
       "record": "meter_block",
       "fields": {
         "block_counter": "0x00000001",
         "position_frames": "0x01020304",
-        "peak_micro": "0xffffffff",
+        "peak_amp_micro": "0xffffffff",
         "transport_state": "0x00000001"
       },
       "bytes": "01000000 04030201 ffffffff 01000000"
