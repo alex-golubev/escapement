@@ -144,7 +144,7 @@ pub fn emit(schema: &Schema, abi_version: u32, abi_hash: u32) -> String {
             }
         }
 
-        emit_record_view(&mut out, &type_name, name, record);
+        emit_record_reader(&mut out, &type_name, name, record);
     }
 
     for (name, command) in &schema.commands {
@@ -261,11 +261,10 @@ pub fn emit(schema: &Schema, abi_version: u32, abi_hash: u32) -> String {
     out
 }
 
-/// The cold-path accessor of ADR-0013. Properties delegate to the free
-/// functions, so the offsets stay in one place. The fields are written out
-/// rather than declared as constructor parameters, which is syntax that has to
-/// be compiled away rather than stripped.
-fn emit_record_view(out: &mut String, type_name: &str, record_name: &str, record: &Record) {
+/// The cold-path read of ADR-0018: a snapshot rather than a view, so that a
+/// caller holds values instead of an object over live memory. Writes stay the
+/// separate `store`/`write` functions.
+fn emit_record_reader(out: &mut String, type_name: &str, record_name: &str, record: &Record) {
     let fields: Vec<&Field> = record
         .fields
         .iter()
@@ -274,52 +273,36 @@ fn emit_record_view(out: &mut String, type_name: &str, record_name: &str, record
     if fields.is_empty() {
         return;
     }
-    let takes_view = fields.iter().any(|field| !field.atomic);
-    let takes_atoms = fields.iter().any(|field| field.atomic);
 
     let mut params: Vec<&str> = Vec::new();
-    if takes_view {
+    if fields.iter().any(|field| !field.atomic) {
         params.push("view: DataView");
     }
-    if takes_atoms {
+    if fields.iter().any(|field| field.atomic) {
         params.push("atoms: Int32Array");
     }
     params.push("base: number");
 
     let _ = writeln!(
         out,
-        "/** Cold path: a `{record_name}` at a fixed base. Build one and keep it —\n \
-         * reading a property allocates nothing. */"
+        "/** Cold path: a snapshot of `{record_name}`. Allocates one object. */"
     );
-    let _ = writeln!(out, "export class {type_name}View {{");
-    for param in &params {
-        let _ = writeln!(out, "  readonly {param}");
-    }
-    let _ = writeln!(out, "\n  constructor({}) {{", params.join(", "));
-    for param in &params {
-        let name = param.split(':').next().unwrap_or(param).trim();
-        let _ = writeln!(out, "    this.{name} = {name}");
-    }
-    let _ = writeln!(out, "  }}");
-
+    let _ = writeln!(
+        out,
+        "export function read{type_name}({}) {{\n  return {{",
+        params.join(", ")
+    );
     for field in fields {
-        let property = camel(&field.name);
-        let suffix = format!("{type_name}{}", pascal(&field.name));
-        let (source, reader, writer) = if field.atomic {
-            ("atoms", format!("load{suffix}"), format!("store{suffix}"))
-        } else {
-            ("view", format!("read{suffix}"), format!("write{suffix}"))
-        };
+        let source = if field.atomic { "atoms" } else { "view" };
+        let verb = if field.atomic { "load" } else { "read" };
         let _ = writeln!(
             out,
-            "\n  get {property}(): number {{\n    return {reader}(this.{source}, this.base)\n  }}"
-        );
-        let _ = writeln!(
-            out,
-            "\n  set {property}(value: number) {{\n    {writer}(this.{source}, this.base, value)\n  }}"
+            "    {}: {verb}{type_name}{}({source}, base),",
+            camel(&field.name),
+            pascal(&field.name)
         );
     }
-    let _ = writeln!(out, "}}\n");
+    let _ = writeln!(out, "  }}\n}}\n");
 }
 
 /// The writer fills every byte the field reserved: an element the caller left

@@ -56,31 +56,11 @@ export function writeCommandSlotFrameOffset(view: DataView, base: number, value:
   view.setUint32(base + 4, value, true)
 }
 
-/** Cold path: a `command_slot` at a fixed base. Build one and keep it —
- * reading a property allocates nothing. */
-export class CommandSlotView {
-  readonly view: DataView
-  readonly base: number
-
-  constructor(view: DataView, base: number) {
-    this.view = view
-    this.base = base
-  }
-
-  get kind(): number {
-    return readCommandSlotKind(this.view, this.base)
-  }
-
-  set kind(value: number) {
-    writeCommandSlotKind(this.view, this.base, value)
-  }
-
-  get frameOffset(): number {
-    return readCommandSlotFrameOffset(this.view, this.base)
-  }
-
-  set frameOffset(value: number) {
-    writeCommandSlotFrameOffset(this.view, this.base, value)
+/** Cold path: a snapshot of `command_slot`. Allocates one object. */
+export function readCommandSlot(view: DataView, base: number) {
+  return {
+    kind: readCommandSlotKind(view, base),
+    frameOffset: readCommandSlotFrameOffset(view, base),
   }
 }
 
@@ -124,47 +104,13 @@ export function storeMeterBlockTransportState(atoms: Int32Array, base: number, v
   Atomics.store(atoms, (base + 12) >> 2, value)
 }
 
-/** Cold path: a `meter_block` at a fixed base. Build one and keep it —
- * reading a property allocates nothing. */
-export class MeterBlockView {
-  readonly atoms: Int32Array
-  readonly base: number
-
-  constructor(atoms: Int32Array, base: number) {
-    this.atoms = atoms
-    this.base = base
-  }
-
-  get blockCounter(): number {
-    return loadMeterBlockBlockCounter(this.atoms, this.base)
-  }
-
-  set blockCounter(value: number) {
-    storeMeterBlockBlockCounter(this.atoms, this.base, value)
-  }
-
-  get positionFrames(): number {
-    return loadMeterBlockPositionFrames(this.atoms, this.base)
-  }
-
-  set positionFrames(value: number) {
-    storeMeterBlockPositionFrames(this.atoms, this.base, value)
-  }
-
-  get peakMicro(): number {
-    return loadMeterBlockPeakMicro(this.atoms, this.base)
-  }
-
-  set peakMicro(value: number) {
-    storeMeterBlockPeakMicro(this.atoms, this.base, value)
-  }
-
-  get transportState(): number {
-    return loadMeterBlockTransportState(this.atoms, this.base)
-  }
-
-  set transportState(value: number) {
-    storeMeterBlockTransportState(this.atoms, this.base, value)
+/** Cold path: a snapshot of `meter_block`. Allocates one object. */
+export function readMeterBlock(atoms: Int32Array, base: number) {
+  return {
+    blockCounter: loadMeterBlockBlockCounter(atoms, base),
+    positionFrames: loadMeterBlockPositionFrames(atoms, base),
+    peakMicro: loadMeterBlockPeakMicro(atoms, base),
+    transportState: loadMeterBlockTransportState(atoms, base),
   }
 }
 

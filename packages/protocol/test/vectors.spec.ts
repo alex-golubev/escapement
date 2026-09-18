@@ -80,20 +80,22 @@ describe("records", () => {
     expect(protocol.loadMeterBlockPeakMicro(block.atoms, 0)).toBe(-1)
   })
 
-  test("meter_block reaches the same bytes through the view", () => {
+  test("meter_block reads back as a snapshot", () => {
     const vector = find(vectors.records, "record", "meter_block")
     const block = buffer(protocol.METER_BLOCK_SIZE)
     const signed = (name: string) => hex(vector.fields[name] as string) | 0
-    const meters = new protocol.MeterBlockView(block.atoms, 0)
 
-    meters.blockCounter = signed("block_counter")
-    meters.positionFrames = signed("position_frames")
-    meters.peakMicro = signed("peak_micro")
-    meters.transportState = signed("transport_state")
+    protocol.storeMeterBlockBlockCounter(block.atoms, 0, signed("block_counter"))
+    protocol.storeMeterBlockPositionFrames(block.atoms, 0, signed("position_frames"))
+    protocol.storeMeterBlockPeakMicro(block.atoms, 0, signed("peak_micro"))
+    protocol.storeMeterBlockTransportState(block.atoms, 0, signed("transport_state"))
 
-    expect(new Uint8Array(block.bytes)).toEqual(bytes(vector.bytes))
-    expect(meters.peakMicro).toBe(-1)
-    expect(meters.positionFrames).toBe(signed("position_frames"))
+    expect(protocol.readMeterBlock(block.atoms, 0)).toEqual({
+      blockCounter: signed("block_counter"),
+      positionFrames: signed("position_frames"),
+      peakMicro: -1,
+      transportState: signed("transport_state"),
+    })
   })
 })
 
