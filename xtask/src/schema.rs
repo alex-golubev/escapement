@@ -3,11 +3,16 @@
 // The schema as parsed, and the checks that make writing offsets by hand safe.
 // Nothing here computes a layout: every offset in the file is taken as given
 // and only tested for alignment, overlap and fit (ADR-0013).
+//
+// Every struct below refuses a key it does not know. The schema is the single
+// source for the boundary, and a key serde quietly ignores is a line the author
+// believes they wrote.
 
 use serde::Deserialize;
 use std::collections::BTreeMap;
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Schema {
     pub abi: Abi,
     pub constants: BTreeMap<String, u64>,
@@ -18,11 +23,13 @@ pub struct Schema {
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Abi {
     pub major: u32,
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Record {
     pub size: usize,
     #[serde(default)]
@@ -31,11 +38,13 @@ pub struct Record {
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Command {
     pub fields: Vec<Field>,
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Field {
     pub name: String,
     #[serde(rename = "type")]
@@ -63,6 +72,7 @@ pub enum Type {
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Export {
     pub name: String,
     #[serde(default)]
@@ -73,6 +83,7 @@ pub struct Export {
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Param {
     pub name: String,
     #[serde(rename = "type")]
