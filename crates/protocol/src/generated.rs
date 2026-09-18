@@ -9,8 +9,8 @@
 use core::mem::offset_of;
 
 pub const ABI_MAJOR: u32 = 0;
-pub const ABI_HASH: u32 = 0x175e3db4;
-pub const ABI_VERSION: u32 = 0x005e3db4;
+pub const ABI_HASH: u32 = 0xb79977ee;
+pub const ABI_VERSION: u32 = 0x009977ee;
 
 pub const COMMAND_PAYLOAD_OFFSET: usize = 8;
 pub const COMMAND_PAYLOAD_SIZE: usize = 24;
@@ -81,6 +81,30 @@ impl TransportState {
         self as u32
     }
 }
+
+/// The block the engine renders into, in its own unshared memory. One run of
+/// samples per channel at a fixed offset: Web Audio hands the worklet a
+/// Float32Array per channel, and an offset is one number rather than a stride each
+/// side works out for itself. A block fills the first `frames` samples of each
+/// plane and leaves the rest of it as the previous block left it.
+#[repr(C)]
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct AudioOut {
+    /// The left channel, as long as the largest block the engine accepts.
+    pub left: [f32; 1024],
+    /// The right channel, as long as the largest block the engine accepts.
+    pub right: [f32; 1024],
+}
+
+impl AudioOut {
+    pub const LEFT_OFFSET: usize = 0;
+    pub const RIGHT_OFFSET: usize = 4096;
+    pub const SIZE: usize = 8192;
+}
+
+const _: () = assert!(size_of::<AudioOut>() == 8192);
+const _: () = assert!(offset_of!(AudioOut, left) == 0);
+const _: () = assert!(offset_of!(AudioOut, right) == 4096);
 
 #[repr(C)]
 #[derive(Clone, Copy, PartialEq, Debug)]

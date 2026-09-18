@@ -44,6 +44,24 @@ fields = [
   { name = "payload", type = "u8", count = 24, offset = 8 },
 ]
 
+# The block the engine renders into. It is a static in the wasm host, so its
+# size is fixed when the code is compiled rather than asked for at init
+# (ADR-0020). 1024 frames is eight times the browser's render quantum of 128,
+# with room for the larger blocks an offline render asks for; raising it moves
+# a plane, which is why it is an ABI change like any other.
+[records.audio_out]
+size = 8192
+doc = """
+The block the engine renders into, in its own unshared memory. One run of
+samples per channel at a fixed offset: Web Audio hands the worklet a
+Float32Array per channel, and an offset is one number rather than a stride each
+side works out for itself. A block fills the first `frames` samples of each
+plane and leaves the rest of it as the previous block left it."""
+fields = [
+  { name = "left", type = "f32", count = 1024, offset = 0, doc = "The left channel, as long as the largest block the engine accepts." },
+  { name = "right", type = "f32", count = 1024, offset = 4096, doc = "The right channel, as long as the largest block the engine accepts." },
+]
+
 # Written by the worklet glue into the shared buffer after process() returns,
 # read by the UI every frame. The engine itself never touches this memory,
 # which is why the atomic fields exist only on the TypeScript side.
