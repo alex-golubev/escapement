@@ -4,9 +4,15 @@
 // right, because both are wrong exactly once when written by hand (ADR-0013):
 // DataView defaults to big-endian while wasm is little-endian, and atomic
 // fields are reached through an Int32Array whose index counts elements.
+//
+// Every DataView call for a schema field is built by `view_get` and `view_set`
+// below, so the question "does this accessor take a byte-order argument?" is
+// answered in one place rather than at each call. The two exceptions are the
+// slot header written by each command writer, which this emitter still spells
+// out and still assumes `command_slot` declares as it does.
 
 use crate::names::{camel, pascal, screaming};
-use crate::schema::{ExportKind, Schema};
+use crate::schema::{ExportKind, Schema, Type};
 use std::fmt::Write as _;
 
 /// `base + 0` is noise, and generated code is committed to be read (ADR-0013).
@@ -15,6 +21,25 @@ fn addend(offset: usize) -> String {
         String::new()
     } else {
         format!(" + {offset}")
+    }
+}
+
+/// `view.getUint32(<at>, true)` — or `view.getUint8(<at>)`, because one byte
+/// has no byte order and the accessor takes no third argument. TypeScript
+/// rejects the call that passes one, so this is not a matter of taste.
+fn view_get(ty: Type, at: &str) -> String {
+    if ty.view_takes_endianness() {
+        format!("view.get{}({at}, true)", ty.view_suffix())
+    } else {
+        format!("view.get{}({at})", ty.view_suffix())
+    }
+}
+
+fn view_set(ty: Type, at: &str, value: &str) -> String {
+    if ty.view_takes_endianness() {
+        format!("view.set{}({at}, {value}, true)", ty.view_suffix())
+    } else {
+        format!("view.set{}({at}, {value})", ty.view_suffix())
     }
 }
 
@@ -36,7 +61,7 @@ pub fn emit(schema: &Schema, abi_version: u32, abi_hash: u32) -> String {
          // SPDX-License-Identifier: Apache-2.0\n\
          //\n\
          // The boundary between the engine and the TypeScript half.\n\
-         // Every read and write below passes the little-endian flag explicitly.\n\
+         // Every multi-byte read and write below passes the little-endian flag.\n\
          // Atomic accessors take an Int32Array and a byte offset that must be\n\
          // 4-byte aligned; the generator refuses any field where it is not.\n"
     );
@@ -99,16 +124,18 @@ pub fn emit(schema: &Schema, abi_version: u32, abi_hash: u32) -> String {
                      Atomics.store(atoms, {index}, value)\n}}\n"
                 );
             } else {
-                let suffix = field.ty.view_suffix();
+                let at = format!("base{at}");
                 let _ = writeln!(
                     out,
                     "export function read{type_name}{field_name}(view: DataView, base: number): number {{\n  \
-                     return view.get{suffix}(base{at}, true)\n}}\n"
+                     return {}\n}}\n",
+                    view_get(field.ty, &at)
                 );
                 let _ = writeln!(
                     out,
                     "export function write{type_name}{field_name}(view: DataView, base: number, value: number): void {{\n  \
-                     view.set{suffix}(base{at}, value, true)\n}}\n"
+                     {}\n}}\n",
+                    view_set(field.ty, &at, "value")
                 );
             }
         }
@@ -136,7 +163,7 @@ pub fn emit(schema: &Schema, abi_version: u32, abi_hash: u32) -> String {
 
         let _ = writeln!(
             out,
-            "/** Writes a complete `{name}` slot (kind {kind}). Hot path: no allocation. */"
+            "/** Writes a `{name}` slot (kind {kind}). Hot path: no allocation. */"
         );
         let _ = writeln!(
             out,
@@ -151,13 +178,8 @@ pub fn emit(schema: &Schema, abi_version: u32, abi_hash: u32) -> String {
             "  view.setUint32(slot + CommandSlotOffsets.frameOffset, frameOffset, true)"
         );
         for field in &command.fields {
-            let suffix = field.ty.view_suffix();
-            let _ = writeln!(
-                out,
-                "  view.set{suffix}(slot + COMMAND_PAYLOAD_OFFSET{}, {}, true)",
-                addend(field.offset),
-                camel(&field.name)
-            );
+            let at = format!("slot + COMMAND_PAYLOAD_OFFSET{}", addend(field.offset));
+            let _ = writeln!(out, "  {}", view_set(field.ty, &at, &camel(&field.name)));
         }
         let _ = writeln!(out, "}}\n");
 
@@ -165,12 +187,8 @@ pub fn emit(schema: &Schema, abi_version: u32, abi_hash: u32) -> String {
             .fields
             .iter()
             .map(|field| {
-                format!(
-                    "    {}: view.get{}(slot + COMMAND_PAYLOAD_OFFSET{}, true),",
-                    camel(&field.name),
-                    field.ty.view_suffix(),
-                    addend(field.offset)
-                )
+                let at = format!("slot + COMMAND_PAYLOAD_OFFSET{}", addend(field.offset));
+                format!("    {}: {},", camel(&field.name), view_get(field.ty, &at))
             })
             .collect();
         if command.fields.is_empty() {
