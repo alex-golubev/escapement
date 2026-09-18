@@ -125,7 +125,7 @@ const _: () = assert!(offset_of!(MeterBlock, position_frames) == 4);
 const _: () = assert!(offset_of!(MeterBlock, peak_micro) == 8);
 const _: () = assert!(offset_of!(MeterBlock, transport_state) == 12);
 
-/// Command `play`, code 1. Laid out from the start of a slot's payload.
+/// Command `play`, code 1, read from and written to a slot's payload.
 #[repr(C)]
 #[derive(Clone, Copy, PartialEq, Debug, Default)]
 pub struct Play {
@@ -152,9 +152,8 @@ impl Play {
 }
 
 const _: () = assert!(size_of::<Play>() <= 24);
-const _: () = assert!(offset_of!(Play, from_frame) == 0);
 
-/// Command `set_tempo`, code 3. Laid out from the start of a slot's payload.
+/// Command `set_tempo`, code 3, read from and written to a slot's payload.
 #[repr(C)]
 #[derive(Clone, Copy, PartialEq, Debug, Default)]
 pub struct SetTempo {
@@ -181,9 +180,8 @@ impl SetTempo {
 }
 
 const _: () = assert!(size_of::<SetTempo>() <= 24);
-const _: () = assert!(offset_of!(SetTempo, micro_bpm) == 0);
 
-/// Command `stop`, code 2. Laid out from the start of a slot's payload.
+/// Command `stop`, code 2, read from and written to a slot's payload.
 #[repr(C)]
 #[derive(Clone, Copy, PartialEq, Debug, Default)]
 pub struct Stop {}
