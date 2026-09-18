@@ -277,3 +277,16 @@ fn a_misspelled_flag_is_not_read_as_an_absent_one() {
     let misspelled = VALID.replace("size = 32\n", "size = 32\nsharred = true\n");
     assert!(problems(&misspelled).contains("sharred"), "{misspelled}");
 }
+
+/// `major = 256` used to shift straight out of the version word: ABI_MAJOR said
+/// 256, ABI_VERSION reported 0, and only a TypeScript assertion noticed, at run
+/// time, in a file nobody reads when editing a schema.
+#[test]
+fn an_abi_major_that_does_not_fit_its_byte_is_refused() {
+    let too_big = VALID.replace("major = 0", "major = 256");
+    let found = problems(&too_big);
+    assert!(found.contains("abi.major is 256"), "{found}");
+
+    let biggest = VALID.replace("major = 0", "major = 255");
+    assert_eq!(problems(&biggest), "", "255 still fits");
+}
