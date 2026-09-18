@@ -62,17 +62,45 @@ fields = [
   { name = "right", type = "f32", count = 1024, offset = 4096, doc = "The right channel, as long as the largest block the engine accepts." },
 ]
 
-# Written by the worklet glue into the shared buffer after process() returns,
-# read by the UI every frame. The engine itself never touches this memory,
-# which is why the atomic fields exist only on the TypeScript side.
+# The same four numbers live twice on this boundary, in two kinds of memory
+# with two writers, so they are two records (ADR-0020). Keeping one would mean a
+# comment carrying a difference the field names contradict.
+[records.engine_report]
+size = 16
+doc = """
+What the engine has to say about the block it has just rendered, written into
+its own unshared memory. The glue reads it once `process` has returned and
+publishes what the interface needs into `meter_block`. The engine never sees
+the published copy."""
+fields = [
+  { name = "position_frames", type = "i32", offset = 0, doc = "The playhead at the end of this block, in frames from the start of the timeline." },
+  { name = "peak_amp_micro", type = "i32", offset = 4, doc = """
+The largest sample of this block, over both channels, as an amplitude times a
+million: 1.0 is 1000000. Linear and not dBFS, because `core` has no logarithm
+and the curve to draw is the interface's to choose.""" },
+  { name = "transport_state", type = "i32", offset = 8, doc = "The transport as this block left it, one of the `transport_state` codes." },
+  { name = "dropped_commands", type = "u32", offset = 12, doc = """
+How many of this block's commands the engine dropped, whatever the reason. Per
+block rather than cumulative: the host logs it and the count starts again."""
+  },
+]
+
+# Published by the worklet glue after process() returns, read by the UI every
+# frame. The engine itself never touches this memory, which is why the atomic
+# fields exist only on the TypeScript side.
 [records.meter_block]
 size = 16
 shared = true
+doc = "What the interface reads, in the shared buffer, published by the glue."
 fields = [
-  { name = "block_counter", type = "i32", offset = 0, atomic = true },
-  { name = "position_frames", type = "i32", offset = 4, atomic = true },
-  { name = "peak_micro", type = "i32", offset = 8, atomic = true },
-  { name = "transport_state", type = "i32", offset = 12, atomic = true },
+  { name = "block_counter", type = "i32", offset = 0, atomic = true, doc = "How many blocks the glue has published. The engine does not count blocks." },
+  { name = "position_frames", type = "i32", offset = 4, atomic = true, doc = "The playhead as of the published block, in frames from the start of the timeline." },
+  { name = "peak_amp_micro", type = "i32", offset = 8, atomic = true, doc = """
+The meter to draw, as an amplitude times a million. The glue holds and decays
+the engine's per-block peak into this, because the interface reads about once
+in six blocks and would otherwise miss the transients; what the interface adds
+is the curve, not a second decay.""" },
+  { name = "transport_state", type = "i32", offset = 12, atomic = true, doc = "The transport as of the published block, one of the `transport_state` codes." },
 ]
 
 # --- commands ----------------------------------------------------------
@@ -130,7 +158,8 @@ params = []
 returns = "u32"
 
 [[exports]]
-name = "meter_block_ptr"
+name = "engine_report_ptr"
+doc = "Where the engine writes its report. Stable for the life of the instance, so the glue takes its view once."
 params = []
 returns = "u32"
 

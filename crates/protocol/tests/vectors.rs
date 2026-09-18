@@ -100,6 +100,32 @@ fn command_slot_matches_its_vector() {
     );
 }
 
+/// The engine's own half of the meters: plain memory the glue reads, not the
+/// shared copy it publishes.
+#[test]
+fn engine_report_matches_its_vector() {
+    let all = vectors();
+    let vector = find(&all, "records", "record", "engine_report");
+
+    let report = EngineReport {
+        position_frames: word(vector, "fields", "position_frames") as i32,
+        peak_amp_micro: word(vector, "fields", "peak_amp_micro") as i32,
+        transport_state: word(vector, "fields", "transport_state") as i32,
+        dropped_commands: word(vector, "fields", "dropped_commands"),
+    };
+
+    assert_eq!(as_bytes(&report), expected_bytes(vector), "encoding");
+    assert_eq!(
+        from_bytes::<EngineReport>(&expected_bytes(vector)),
+        report,
+        "decoding"
+    );
+    assert_eq!(
+        report.peak_amp_micro, 1_000_000,
+        "the peak is an amplitude times a million, so this one is 1.0"
+    );
+}
+
 #[test]
 fn meter_block_matches_its_vector() {
     let all = vectors();
@@ -108,7 +134,7 @@ fn meter_block_matches_its_vector() {
     let block = MeterBlock {
         block_counter: word(vector, "fields", "block_counter") as i32,
         position_frames: word(vector, "fields", "position_frames") as i32,
-        peak_micro: word(vector, "fields", "peak_micro") as i32,
+        peak_amp_micro: word(vector, "fields", "peak_amp_micro") as i32,
         transport_state: word(vector, "fields", "transport_state") as i32,
     };
 
@@ -119,7 +145,7 @@ fn meter_block_matches_its_vector() {
         "decoding"
     );
     assert_eq!(
-        block.peak_micro, -1,
+        block.peak_amp_micro, -1,
         "0xffffffff is a negative peak, not a huge one"
     );
 }
