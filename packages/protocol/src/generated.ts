@@ -6,8 +6,14 @@
 // Atomic accessors take an Int32Array and a byte offset that must be
 // 4-byte aligned; the generator refuses any field where it is not.
 
+/** The boundary's major version, set by hand in the schema. */
 export const ABI_MAJOR = 0
+/** A hash of the schema, so that editing a field moves the version. */
 export const ABI_HASH = 0x8bc0ff11
+/**
+ * The version the engine module must report from `abi_version`: the major
+ * number in the top byte, the hash of the schema in the rest.
+ */
 export const ABI_VERSION = 0x00c0ff11
 
 /** Where a slot's payload begins, in bytes from the slot. */
@@ -24,13 +30,16 @@ export const MICRO_BPM_MAX = 999000000
 /** The slowest tempo the engine accepts, in micro-BPM: 10 BPM. */
 export const MICRO_BPM_MIN = 10000000
 
+/** The `command_kind` codes. */
 export const CommandKind = {
   play: 1,
   stop: 2,
   setTempo: 3,
 } as const
+/** Any one of the `command_kind` codes. */
 export type CommandKindCode = (typeof CommandKind)[keyof typeof CommandKind]
 
+/** The `engine_error` codes. */
 export const EngineError = {
   /** The call did what it was asked. */
   ok: 0,
@@ -51,18 +60,23 @@ export const EngineError = {
   /** A command placed before the one ahead of it in the staging area. */
   commandsOutOfOrder: 8,
 } as const
+/** Any one of the `engine_error` codes. */
 export type EngineErrorCode = (typeof EngineError)[keyof typeof EngineError]
 
+/** The `transport_state` codes. */
 export const TransportState = {
   stopped: 0,
   playing: 1,
 } as const
+/** Any one of the `transport_state` codes. */
 export type TransportStateCode = (typeof TransportState)[keyof typeof TransportState]
 
 /**
  * The block the engine renders into, in its own unshared memory, one run of
  * samples per channel. A block fills the first `frames` samples of each plane and
  * leaves the rest of it as the previous block left it.
+ *
+ * Byte offsets of the fields of `audio_out`.
  */
 export const AudioOutOffsets = {
   /** The left channel, as long as the largest block the engine accepts. */
@@ -70,6 +84,7 @@ export const AudioOutOffsets = {
   /** The right channel, as long as the largest block the engine accepts. */
   right: 4096,
 } as const
+/** `audio_out` in bytes. */
 export const AUDIO_OUT_SIZE = 8192
 
 export const AUDIO_OUT_LEFT_LENGTH = 1024
@@ -90,6 +105,8 @@ export function audioOutRight(buffer: ArrayBufferLike, base: number): Float32Arr
  * One slot of the command ring, copied into the staging area as it stands. The
  * engine reads the header of every slot; the payload only the slot's own kind
  * knows how to read.
+ *
+ * Byte offsets of the fields of `command_slot`.
  */
 export const CommandSlotOffsets = {
   /** Which command this is, one of the `command_kind` codes. */
@@ -102,20 +119,45 @@ export const CommandSlotOffsets = {
   /** The command's own fields, laid out by its kind, and zero wherever the kind declares nothing. */
   payload: 8,
 } as const
+/** `command_slot` in bytes. */
 export const COMMAND_SLOT_SIZE = 32
 
+/**
+ * Which command this is, one of the `command_kind` codes.
+ * @param view - A view over the memory `command_slot` lives in.
+ * @param base - Byte offset of the record inside that memory.
+ */
 export function readCommandSlotKind(view: DataView, base: number): number {
   return view.getUint32(base, true)
 }
 
+/**
+ * Which command this is, one of the `command_kind` codes.
+ * @param view - A view over the memory `command_slot` lives in.
+ * @param base - Byte offset of the record inside that memory.
+ * @param value - The value to write.
+ */
 export function writeCommandSlotKind(view: DataView, base: number, value: number): void {
   view.setUint32(base, value, true)
 }
 
+/**
+ * Where in the block the command takes effect, in frames from its start. At or
+ * beyond the end of the block it is dropped as `bad_frame_offset`.
+ * @param view - A view over the memory `command_slot` lives in.
+ * @param base - Byte offset of the record inside that memory.
+ */
 export function readCommandSlotFrameOffset(view: DataView, base: number): number {
   return view.getUint32(base + 4, true)
 }
 
+/**
+ * Where in the block the command takes effect, in frames from its start. At or
+ * beyond the end of the block it is dropped as `bad_frame_offset`.
+ * @param view - A view over the memory `command_slot` lives in.
+ * @param base - Byte offset of the record inside that memory.
+ * @param value - The value to write.
+ */
 export function writeCommandSlotFrameOffset(view: DataView, base: number, value: number): void {
   view.setUint32(base + 4, value, true)
 }
@@ -139,6 +181,8 @@ export function readCommandSlot(view: DataView, base: number) {
  * What the engine has to say about the block it has just rendered, in its own
  * unshared memory. The glue reads it once `process` has returned and publishes
  * what the interface needs into `meter_block`.
+ *
+ * Byte offsets of the fields of `engine_report`.
  */
 export const EngineReportOffsets = {
   /** The playhead at the end of this block, in frames from the start of the timeline. */
@@ -150,36 +194,81 @@ export const EngineReportOffsets = {
   /** How many of this block's commands the engine dropped, whatever the reason. Per block, not cumulative. */
   droppedCommands: 12,
 } as const
+/** `engine_report` in bytes. */
 export const ENGINE_REPORT_SIZE = 16
 
+/**
+ * The playhead at the end of this block, in frames from the start of the timeline.
+ * @param view - A view over the memory `engine_report` lives in.
+ * @param base - Byte offset of the record inside that memory.
+ */
 export function readEngineReportPositionFrames(view: DataView, base: number): number {
   return view.getInt32(base, true)
 }
 
+/**
+ * The playhead at the end of this block, in frames from the start of the timeline.
+ * @param view - A view over the memory `engine_report` lives in.
+ * @param base - Byte offset of the record inside that memory.
+ * @param value - The value to write.
+ */
 export function writeEngineReportPositionFrames(view: DataView, base: number, value: number): void {
   view.setInt32(base, value, true)
 }
 
+/**
+ * The largest sample of this block, over both channels, as an amplitude times a million: 1.0 is 1000000.
+ * @param view - A view over the memory `engine_report` lives in.
+ * @param base - Byte offset of the record inside that memory.
+ */
 export function readEngineReportPeakAmpMicro(view: DataView, base: number): number {
   return view.getInt32(base + 4, true)
 }
 
+/**
+ * The largest sample of this block, over both channels, as an amplitude times a million: 1.0 is 1000000.
+ * @param view - A view over the memory `engine_report` lives in.
+ * @param base - Byte offset of the record inside that memory.
+ * @param value - The value to write.
+ */
 export function writeEngineReportPeakAmpMicro(view: DataView, base: number, value: number): void {
   view.setInt32(base + 4, value, true)
 }
 
+/**
+ * The transport as this block left it, one of the `transport_state` codes.
+ * @param view - A view over the memory `engine_report` lives in.
+ * @param base - Byte offset of the record inside that memory.
+ */
 export function readEngineReportTransportState(view: DataView, base: number): number {
   return view.getInt32(base + 8, true)
 }
 
+/**
+ * The transport as this block left it, one of the `transport_state` codes.
+ * @param view - A view over the memory `engine_report` lives in.
+ * @param base - Byte offset of the record inside that memory.
+ * @param value - The value to write.
+ */
 export function writeEngineReportTransportState(view: DataView, base: number, value: number): void {
   view.setInt32(base + 8, value, true)
 }
 
+/**
+ * How many of this block's commands the engine dropped, whatever the reason. Per block, not cumulative.
+ * @param view - A view over the memory `engine_report` lives in.
+ * @param base - Byte offset of the record inside that memory.
+ */
 export function readEngineReportDroppedCommands(view: DataView, base: number): number {
   return view.getUint32(base + 12, true)
 }
 
+/**
+ * How many of this block's commands the engine dropped, whatever the reason. Per block, not cumulative.
+ * @param view - A view over the memory `engine_report` lives in.
+ * @param base - Byte offset of the record inside that memory.
+ * @param value - The value to write.
+ */
 export function writeEngineReportDroppedCommands(view: DataView, base: number, value: number): void {
   view.setUint32(base + 12, value, true)
 }
@@ -194,7 +283,11 @@ export function readEngineReport(view: DataView, base: number) {
   }
 }
 
-/** What the interface reads, in the shared buffer, published by the glue. */
+/**
+ * What the interface reads, in the shared buffer, published by the glue.
+ *
+ * Byte offsets of the fields of `meter_block`.
+ */
 export const MeterBlockOffsets = {
   /** How many blocks the glue has published. The engine does not count blocks. */
   blockCounter: 0,
@@ -209,36 +302,101 @@ export const MeterBlockOffsets = {
   /** The transport as of the published block, one of the `transport_state` codes. */
   transportState: 12,
 } as const
+/** `meter_block` in bytes. */
 export const METER_BLOCK_SIZE = 16
 
+/**
+ * How many blocks the glue has published. The engine does not count blocks.
+ *
+ * Read with `Atomics.load`.
+ * @param atoms - An `Int32Array` over the shared buffer `meter_block` lives in.
+ * @param base - Byte offset of the record, itself a multiple of 4.
+ */
 export function loadMeterBlockBlockCounter(atoms: Int32Array, base: number): number {
   return Atomics.load(atoms, base >> 2)
 }
 
+/**
+ * How many blocks the glue has published. The engine does not count blocks.
+ *
+ * Published with `Atomics.store`.
+ * @param atoms - An `Int32Array` over the shared buffer `meter_block` lives in.
+ * @param base - Byte offset of the record, itself a multiple of 4.
+ * @param value - The value to publish.
+ */
 export function storeMeterBlockBlockCounter(atoms: Int32Array, base: number, value: number): void {
   Atomics.store(atoms, base >> 2, value)
 }
 
+/**
+ * The playhead as of the published block, in frames from the start of the timeline.
+ *
+ * Read with `Atomics.load`.
+ * @param atoms - An `Int32Array` over the shared buffer `meter_block` lives in.
+ * @param base - Byte offset of the record, itself a multiple of 4.
+ */
 export function loadMeterBlockPositionFrames(atoms: Int32Array, base: number): number {
   return Atomics.load(atoms, (base + 4) >> 2)
 }
 
+/**
+ * The playhead as of the published block, in frames from the start of the timeline.
+ *
+ * Published with `Atomics.store`.
+ * @param atoms - An `Int32Array` over the shared buffer `meter_block` lives in.
+ * @param base - Byte offset of the record, itself a multiple of 4.
+ * @param value - The value to publish.
+ */
 export function storeMeterBlockPositionFrames(atoms: Int32Array, base: number, value: number): void {
   Atomics.store(atoms, (base + 4) >> 2, value)
 }
 
+/**
+ * The meter to draw, as an amplitude times a million. The glue holds and decays
+ * the engine's per-block peak into this; what the interface adds is the curve,
+ * not a second decay.
+ *
+ * Read with `Atomics.load`.
+ * @param atoms - An `Int32Array` over the shared buffer `meter_block` lives in.
+ * @param base - Byte offset of the record, itself a multiple of 4.
+ */
 export function loadMeterBlockPeakAmpMicro(atoms: Int32Array, base: number): number {
   return Atomics.load(atoms, (base + 8) >> 2)
 }
 
+/**
+ * The meter to draw, as an amplitude times a million. The glue holds and decays
+ * the engine's per-block peak into this; what the interface adds is the curve,
+ * not a second decay.
+ *
+ * Published with `Atomics.store`.
+ * @param atoms - An `Int32Array` over the shared buffer `meter_block` lives in.
+ * @param base - Byte offset of the record, itself a multiple of 4.
+ * @param value - The value to publish.
+ */
 export function storeMeterBlockPeakAmpMicro(atoms: Int32Array, base: number, value: number): void {
   Atomics.store(atoms, (base + 8) >> 2, value)
 }
 
+/**
+ * The transport as of the published block, one of the `transport_state` codes.
+ *
+ * Read with `Atomics.load`.
+ * @param atoms - An `Int32Array` over the shared buffer `meter_block` lives in.
+ * @param base - Byte offset of the record, itself a multiple of 4.
+ */
 export function loadMeterBlockTransportState(atoms: Int32Array, base: number): number {
   return Atomics.load(atoms, (base + 12) >> 2)
 }
 
+/**
+ * The transport as of the published block, one of the `transport_state` codes.
+ *
+ * Published with `Atomics.store`.
+ * @param atoms - An `Int32Array` over the shared buffer `meter_block` lives in.
+ * @param base - Byte offset of the record, itself a multiple of 4.
+ * @param value - The value to publish.
+ */
 export function storeMeterBlockTransportState(atoms: Int32Array, base: number, value: number): void {
   Atomics.store(atoms, (base + 12) >> 2, value)
 }
@@ -253,9 +411,14 @@ export function readMeterBlock(atoms: Int32Array, base: number) {
   }
 }
 
-/** Start the transport. */
 /**
+ * Start the transport.
+ *
  * Writes a complete `play` slot (kind 1). Hot path: no allocation.
+ * @param view - The view over the memory the ring slot lives in.
+ * @param slot - Byte offset of the slot to write.
+ * @param frameOffset - Where in the block the command takes effect, in frames from its start. At or
+ *   beyond the end of the block it is dropped as `bad_frame_offset`.
  * @param fromFrame - Where to start, in frames from the start of the timeline.
  */
 export function writePlay(view: DataView, slot: number, frameOffset: number, fromFrame: number): void {
@@ -274,9 +437,14 @@ export function readPlay(view: DataView, slot: number) {
   }
 }
 
-/** Set the tempo from this point in the block onwards. */
 /**
+ * Set the tempo from this point in the block onwards.
+ *
  * Writes a complete `set_tempo` slot (kind 3). Hot path: no allocation.
+ * @param view - The view over the memory the ring slot lives in.
+ * @param slot - Byte offset of the slot to write.
+ * @param frameOffset - Where in the block the command takes effect, in frames from its start. At or
+ *   beyond the end of the block it is dropped as `bad_frame_offset`.
  * @param microBpm - Beats per minute times a million: 120 BPM is 120000000. Outside `micro_bpm_min`
  *   to `micro_bpm_max` the command is dropped as `bad_command_payload`.
  */
@@ -296,8 +464,15 @@ export function readSetTempo(view: DataView, slot: number) {
   }
 }
 
-/** Stop the transport. */
-/** Writes a complete `stop` slot (kind 2). Hot path: no allocation. */
+/**
+ * Stop the transport.
+ *
+ * Writes a complete `stop` slot (kind 2). Hot path: no allocation.
+ * @param view - The view over the memory the ring slot lives in.
+ * @param slot - Byte offset of the slot to write.
+ * @param frameOffset - Where in the block the command takes effect, in frames from its start. At or
+ *   beyond the end of the block it is dropped as `bad_frame_offset`.
+ */
 export function writeStop(view: DataView, slot: number, frameOffset: number): void {
   view.setUint32(slot + CommandSlotOffsets.kind, 2, true)
   view.setUint32(slot + CommandSlotOffsets.frameOffset, frameOffset, true)

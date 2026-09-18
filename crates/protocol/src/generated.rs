@@ -8,8 +8,12 @@
 
 use core::mem::offset_of;
 
+/// The boundary's major version, set by hand in the schema.
 pub const ABI_MAJOR: u32 = 0;
+/// A hash of the schema, so that editing a field moves the version.
 pub const ABI_HASH: u32 = 0x8bc0ff11;
+/// The version the engine must report from `abi_version`: the major
+/// number in the top byte, the hash of the schema in the rest.
 pub const ABI_VERSION: u32 = 0x00c0ff11;
 
 /// Where a slot's payload begins, in bytes from the slot.
@@ -125,8 +129,11 @@ pub struct AudioOut {
 }
 
 impl AudioOut {
+    /// Byte offset of `left` inside `audio_out`.
     pub const LEFT_OFFSET: usize = 0;
+    /// Byte offset of `right` inside `audio_out`.
     pub const RIGHT_OFFSET: usize = 4096;
+    /// `audio_out` in bytes.
     pub const SIZE: usize = 8192;
 }
 
@@ -150,9 +157,13 @@ pub struct CommandSlot {
 }
 
 impl CommandSlot {
+    /// Byte offset of `kind` inside `command_slot`.
     pub const KIND_OFFSET: usize = 0;
+    /// Byte offset of `frame_offset` inside `command_slot`.
     pub const FRAME_OFFSET_OFFSET: usize = 4;
+    /// Byte offset of `payload` inside `command_slot`.
     pub const PAYLOAD_OFFSET: usize = 8;
+    /// `command_slot` in bytes.
     pub const SIZE: usize = 32;
 }
 
@@ -178,10 +189,15 @@ pub struct EngineReport {
 }
 
 impl EngineReport {
+    /// Byte offset of `position_frames` inside `engine_report`.
     pub const POSITION_FRAMES_OFFSET: usize = 0;
+    /// Byte offset of `peak_amp_micro` inside `engine_report`.
     pub const PEAK_AMP_MICRO_OFFSET: usize = 4;
+    /// Byte offset of `transport_state` inside `engine_report`.
     pub const TRANSPORT_STATE_OFFSET: usize = 8;
+    /// Byte offset of `dropped_commands` inside `engine_report`.
     pub const DROPPED_COMMANDS_OFFSET: usize = 12;
+    /// `engine_report` in bytes.
     pub const SIZE: usize = 16;
 }
 
@@ -208,10 +224,15 @@ pub struct MeterBlock {
 }
 
 impl MeterBlock {
+    /// Byte offset of `block_counter` inside `meter_block`.
     pub const BLOCK_COUNTER_OFFSET: usize = 0;
+    /// Byte offset of `position_frames` inside `meter_block`.
     pub const POSITION_FRAMES_OFFSET: usize = 4;
+    /// Byte offset of `peak_amp_micro` inside `meter_block`.
     pub const PEAK_AMP_MICRO_OFFSET: usize = 8;
+    /// Byte offset of `transport_state` inside `meter_block`.
     pub const TRANSPORT_STATE_OFFSET: usize = 12;
+    /// `meter_block` in bytes.
     pub const SIZE: usize = 16;
 }
 
@@ -231,15 +252,20 @@ pub struct Play {
 }
 
 impl Play {
+    /// The code a slot carries to name this command.
     pub const KIND: CommandKind = CommandKind::Play;
+    /// Byte offset of `from_frame` inside the slot's payload.
     pub const FROM_FRAME_OFFSET: usize = 0;
 
+    /// Reads `play` out of a slot's payload.
     pub fn read(payload: &[u8; COMMAND_PAYLOAD_SIZE]) -> Self {
         Self {
             from_frame: u32::from_le_bytes([payload[0], payload[1], payload[2], payload[3]]),
         }
     }
 
+    /// Writes `play` into a slot's payload, clearing every byte the
+    /// command does not use: a slot is reused.
     pub fn write(&self, payload: &mut [u8; COMMAND_PAYLOAD_SIZE]) {
         *payload = [0u8; COMMAND_PAYLOAD_SIZE];
         let bytes = self.from_frame.to_le_bytes();
@@ -263,15 +289,20 @@ pub struct SetTempo {
 }
 
 impl SetTempo {
+    /// The code a slot carries to name this command.
     pub const KIND: CommandKind = CommandKind::SetTempo;
+    /// Byte offset of `micro_bpm` inside the slot's payload.
     pub const MICRO_BPM_OFFSET: usize = 0;
 
+    /// Reads `set_tempo` out of a slot's payload.
     pub fn read(payload: &[u8; COMMAND_PAYLOAD_SIZE]) -> Self {
         Self {
             micro_bpm: u32::from_le_bytes([payload[0], payload[1], payload[2], payload[3]]),
         }
     }
 
+    /// Writes `set_tempo` into a slot's payload, clearing every byte the
+    /// command does not use: a slot is reused.
     pub fn write(&self, payload: &mut [u8; COMMAND_PAYLOAD_SIZE]) {
         *payload = [0u8; COMMAND_PAYLOAD_SIZE];
         let bytes = self.micro_bpm.to_le_bytes();
@@ -291,13 +322,17 @@ const _: () = assert!(size_of::<SetTempo>() <= 24);
 pub struct Stop {}
 
 impl Stop {
+    /// The code a slot carries to name this command.
     pub const KIND: CommandKind = CommandKind::Stop;
 
+    /// Reads `stop` out of a slot's payload.
     pub fn read(payload: &[u8; COMMAND_PAYLOAD_SIZE]) -> Self {
         let _ = payload;
         Self {}
     }
 
+    /// Writes `stop` into a slot's payload, clearing every byte the
+    /// command does not use: a slot is reused.
     pub fn write(&self, payload: &mut [u8; COMMAND_PAYLOAD_SIZE]) {
         *payload = [0u8; COMMAND_PAYLOAD_SIZE];
     }
