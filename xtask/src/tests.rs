@@ -49,6 +49,45 @@ fields = [{fields}]
     schema
 }
 
+/// A schema with nothing wrong with it, in one piece, so that a test can break
+/// exactly one thing in it and say what it expects to hear back.
+const VALID: &str = r#"
+exports = []
+
+[abi]
+major = 0
+
+[constants]
+command_payload_offset = 8
+command_payload_size = 24
+
+[enums.command_kind]
+probe = 1
+
+[records.command_slot]
+size = 32
+fields = [
+  { name = "kind", type = "u32", offset = 0 },
+  { name = "frame_offset", type = "u32", offset = 4 },
+  { name = "payload", type = "u8", count = 24, offset = 8 },
+]
+
+[commands.probe]
+fields = [{ name = "tempo", type = "u32", offset = 0 }]
+"#;
+
+/// What the generator says about a schema: the parse error if it does not
+/// parse, otherwise everything `check` found, one problem per line.
+fn problems(source: &str) -> String {
+    match toml::from_str::<Schema>(source) {
+        Err(error) => error.to_string(),
+        Ok(schema) => match schema.check() {
+            Ok(()) => String::new(),
+            Err(found) => found.join("\n"),
+        },
+    }
+}
+
 fn rust_of(schema: &Schema) -> String {
     emit_rust::emit(schema, 0, 0)
 }
@@ -212,4 +251,29 @@ fn a_short_array_keeps_the_derived_default() {
         rust.contains("#[derive(Clone, Copy, PartialEq, Debug, Default)]"),
         "{rust}"
     );
+}
+
+#[test]
+fn the_base_schema_of_these_tests_is_sound() {
+    assert_eq!(problems(VALID), "", "the schema the tests below break");
+}
+
+/// serde ignores an unknown key by default, so a misspelling in the one file
+/// that defines the boundary used to read as a line the author never wrote.
+#[test]
+fn a_key_the_generator_does_not_know_is_refused() {
+    let misspelled = VALID.replace("atomic", "atomik").replace(
+        r#"{ name = "tempo", type = "u32", offset = 0 }"#,
+        r#"{ name = "tempo", type = "u32", offset = 0, atomik = true }"#,
+    );
+    assert!(problems(&misspelled).contains("atomik"), "{misspelled}");
+}
+
+/// The dangerous shape of the same bug: a flag whose absence turns a check off.
+/// `sharred = true` left `records.command_slot` unshared and every atomic rule
+/// unapplied, and said nothing.
+#[test]
+fn a_misspelled_flag_is_not_read_as_an_absent_one() {
+    let misspelled = VALID.replace("size = 32\n", "size = 32\nsharred = true\n");
+    assert!(problems(&misspelled).contains("sharred"), "{misspelled}");
 }
