@@ -1,0 +1,16 @@
+[workspace]
+resolver = "3"
+members = ["xtask"]
+
+[workspace.package]
+edition = "2024"
+license = "AGPL-3.0-only"
+repository = "https://github.com/alex-golubev/escapement"
+
+# ADR-0002: the real-time rules are not style preferences. Crates on the audio
+# path opt in with `[lints] workspace = true`; xtask and tests do not.
+[workspace.lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+indexing_slicing = "deny"
+panic = "deny"
