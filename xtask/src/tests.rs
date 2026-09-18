@@ -339,3 +339,30 @@ fn an_export_declared_twice_is_refused() {
     let found = problems(&twice);
     assert!(found.contains("init is declared twice"), "{found}");
 }
+
+/// `check` promised every problem at once and then returned at the first
+/// missing constant, so a schema with a typo in `[constants]` reported that and
+/// nothing else, run after run.
+#[test]
+fn a_missing_constant_does_not_hide_the_rest_of_the_file() {
+    let broken = VALID
+        .replace("command_payload_size = 24", "")
+        .replace("probe = 1", "probe = 1\nstop = 1");
+    let found = problems(&broken);
+    assert!(
+        found.contains("constants.command_payload_size is missing"),
+        "{found}"
+    );
+    assert!(found.contains("share the code 1"), "{found}");
+}
+
+/// The same for the record the whole boundary is built around.
+#[test]
+fn a_missing_command_slot_does_not_hide_the_rest_of_the_file() {
+    let broken = VALID
+        .replace("[records.command_slot]", "[records.other_block]")
+        .replace("probe = 1", "probe = 1\nstop = 1");
+    let found = problems(&broken);
+    assert!(found.contains("records.command_slot is missing"), "{found}");
+    assert!(found.contains("share the code 1"), "{found}");
+}

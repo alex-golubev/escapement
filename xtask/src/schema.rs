@@ -237,8 +237,9 @@ impl Schema {
             .ok_or_else(|| format!("constants.{name} is missing"))
     }
 
-    /// Every problem at once: a generator that reports one error per run
-    /// turns a schema edit into a guessing game.
+    /// Every problem at once: a generator that reports one error per run turns
+    /// a schema edit into a guessing game. A check whose input is itself
+    /// missing is the only one skipped, and the missing input is reported.
     pub fn check(&self) -> Result<(), Vec<String>> {
         let mut errors = Vec::new();
 
@@ -253,62 +254,76 @@ impl Schema {
             ));
         }
 
-        let payload_offset = self.constant("command_payload_offset");
-        let payload_size = self.constant("command_payload_size");
-        for missing in [&payload_offset, &payload_size] {
-            if let Err(message) = missing {
-                errors.push(message.clone());
-            }
-        }
-        let Some(slot) = self.records.get("command_slot") else {
+        let payload_offset = self.optional_constant(&mut errors, "command_payload_offset");
+        let payload_size = self.optional_constant(&mut errors, "command_payload_size");
+        let slot = self.records.get("command_slot");
+        if slot.is_none() {
             errors.push("records.command_slot is missing".to_owned());
-            return Err(errors);
-        };
-        let slot_size = slot.size;
+        }
 
-        // Every command writer spells the slot header out: the TypeScript one
-        // writes `CommandSlotOffsets.kind` with `setUint32`. Renaming either
-        // field, or narrowing it, used to generate a file that does not
-        // compile, so the dependency is stated here rather than assumed there.
-        for (header, expected) in [("kind", Type::U32), ("frame_offset", Type::U32)] {
-            match slot.fields.iter().find(|field| field.name == header) {
-                None => errors.push(format!(
-                    "records.command_slot has no field {header}, which every command writer addresses by name"
-                )),
-                Some(field) if field.is_array() => errors.push(format!(
-                    "records.command_slot.{header} has a count of {}, but the command writers address it as one value",
-                    field.count
-                )),
-                Some(field) if field.ty != expected => errors.push(format!(
-                    "records.command_slot.{header} is {}, but the command writers address it as {}",
-                    field.ty.schema_name(),
-                    expected.schema_name()
-                )),
-                Some(_) => {}
+        if let Some(slot) = slot {
+            // Every command writer spells the slot header out: the TypeScript
+            // one writes `CommandSlotOffsets.kind` with `setUint32`. Renaming
+            // either field, or narrowing it, used to generate a file that does
+            // not compile, so the dependency is stated here rather than
+            // assumed there.
+            for (header, expected) in [("kind", Type::U32), ("frame_offset", Type::U32)] {
+                match slot.fields.iter().find(|field| field.name == header) {
+                    None => errors.push(format!(
+                        "records.command_slot has no field {header}, which every command writer addresses by name"
+                    )),
+                    Some(field) if field.is_array() => errors.push(format!(
+                        "records.command_slot.{header} has a count of {}, but the command writers address it as one value",
+                        field.count
+                    )),
+                    Some(field) if field.ty != expected => errors.push(format!(
+                        "records.command_slot.{header} is {}, but the command writers address it as {}",
+                        field.ty.schema_name(),
+                        expected.schema_name()
+                    )),
+                    Some(_) => {}
+                }
+            }
+
+            // Slots sit next to each other in the ring, so a slot that is not a
+            // multiple of 8 would misalign every field of the following slot.
+            if !slot.size.is_multiple_of(8) {
+                errors.push(format!(
+                    "records.command_slot.size {} is not a multiple of 8",
+                    slot.size
+                ));
             }
         }
 
-        let (Ok(payload_offset), Ok(payload_size)) = (payload_offset, payload_size) else {
-            return Err(errors);
-        };
+        if let Some(offset) = payload_offset
+            && !offset.is_multiple_of(8)
+        {
+            errors.push(format!(
+                "command_payload_offset {offset} is not a multiple of 8"
+            ));
+        }
 
-        if payload_offset + payload_size != slot_size {
-            errors.push(format!(
-                "command_payload_offset + command_payload_size is {}, but records.command_slot.size is {slot_size}",
-                payload_offset + payload_size
-            ));
-        }
-        // Slots sit next to each other in the ring, so a slot that is not a
-        // multiple of 8 would misalign every field of the following slot.
-        if !slot_size.is_multiple_of(8) {
-            errors.push(format!(
-                "records.command_slot.size {slot_size} is not a multiple of 8"
-            ));
-        }
-        if !payload_offset.is_multiple_of(8) {
-            errors.push(format!(
-                "command_payload_offset {payload_offset} is not a multiple of 8"
-            ));
+        // The payload region is declared twice — once as a pair of constants and
+        // once as the field that occupies it — so the two must be checked
+        // against each other or they will drift apart.
+        if let (Some(slot), Some(offset), Some(size)) = (slot, payload_offset, payload_size) {
+            if offset + size != slot.size {
+                errors.push(format!(
+                    "command_payload_offset + command_payload_size is {}, but records.command_slot.size is {}",
+                    offset + size,
+                    slot.size
+                ));
+            }
+            if !slot
+                .fields
+                .iter()
+                .any(|field| field.offset == offset && field.bytes() == size)
+            {
+                errors.push(format!(
+                    "records.command_slot has no field covering the payload at {offset}..{}, which command_payload_offset and command_payload_size declare",
+                    offset + size
+                ));
+            }
         }
 
         for (name, record) in &self.records {
@@ -339,20 +354,6 @@ impl Schema {
                     }
                 }
             }
-        }
-
-        // The payload region is declared twice — once as a pair of constants and
-        // once as the field that occupies it — so the two must be checked
-        // against each other or they will drift apart.
-        if !slot
-            .fields
-            .iter()
-            .any(|field| field.offset == payload_offset && field.bytes() == payload_size)
-        {
-            errors.push(format!(
-                "records.command_slot has no field covering the payload at {payload_offset}..{}, which command_payload_offset and command_payload_size declare",
-                payload_offset + payload_size
-            ));
         }
 
         // An enum, a record and a command each generate one type, and the
@@ -391,13 +392,17 @@ impl Schema {
             if kinds.is_none_or(|k| !k.contains_key(name)) {
                 errors.push(format!("commands.{name} has no code in enums.command_kind"));
             }
-            check_fields(
-                &mut errors,
-                &format!("commands.{name}"),
-                &command.fields,
-                payload_offset,
-                payload_size,
-            );
+            // Only the offsets need the payload constants; everything else
+            // about a command can still be judged without them.
+            if let (Some(offset), Some(size)) = (payload_offset, payload_size) {
+                check_fields(
+                    &mut errors,
+                    &format!("commands.{name}"),
+                    &command.fields,
+                    offset,
+                    size,
+                );
+            }
             for field in &command.fields {
                 if field.atomic {
                     errors.push(format!(
@@ -423,6 +428,18 @@ impl Schema {
             Ok(())
         } else {
             Err(errors)
+        }
+    }
+
+    /// A constant the caller can carry on without: missing is an error like any
+    /// other, not a reason to stop looking at the rest of the file.
+    fn optional_constant(&self, errors: &mut Vec<String>, name: &str) -> Option<usize> {
+        match self.constant(name) {
+            Ok(value) => Some(value),
+            Err(message) => {
+                errors.push(message);
+                None
+            }
         }
     }
 }
