@@ -1,6 +1,6 @@
 # ADR-0015. Command records and the engine ABI surface
 
-- Status: accepted, amended by [ADR-0017](0017-command-records-are-values.md)
+- Status: accepted, amended by [ADR-0017](0017-command-records-are-values.md), [ADR-0020](0020-engine-core-owns-no-memory.md)
 - Date: 2026-09-18
 
 ## Context
