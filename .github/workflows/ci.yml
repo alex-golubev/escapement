@@ -28,16 +28,25 @@ jobs:
       - run: rustup show
       # The generated code is committed so that a moved field is visible in
       # review (ADR-0013). Here we check that it still is what the schema says.
+      # `git diff` alone would miss a file the generator newly creates, so the
+      # whole working tree has to come back clean.
       - name: generated code matches the schema
         run: |
           cargo xtask generate
-          git diff --exit-code
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "::error::the generated code is not what schema/boundary.toml says; run \`cargo xtask generate\`"
+            git status --porcelain
+            git diff
+            exit 1
+          fi
       # core::sync::atomic compiles on wasm32 without the atomics feature and
       # lowers to plain loads and stores: code that looks synchronised and is
       # not. Grep for it rather than trust anyone to remember (ADR-0013).
+      # The pattern has to survive the spellings that hide the word: a grep for
+      # "sync::atomic" alone walks straight past `sync::{atomic::Ordering}`.
       - name: no atomics in the engine
         run: |
-          if grep -rn "sync::atomic" crates/; then
+          if grep -rnE 'sync::\{?[^}]*atomic|Atomic(Bool|I8|I16|I32|I64|Isize|U8|U16|U32|U64|Usize|Ptr)' crates/; then
             echo "::error::atomics belong on the JavaScript side of the boundary (ADR-0013)"
             exit 1
           fi
