@@ -1,6 +1,6 @@
 # ADR-0013. Generating the boundary code
 
-- Status: accepted
+- Status: accepted, amended by [ADR-0018](0018-functional-by-default.md)
 - Date: 2026-09-18
 
 ## Context
@@ -104,7 +104,9 @@ Not covered:
   `writeSlotKind(view, base, value)`, for the hot path — monomorphic,
   allocation-free, and inlined by the engine that runs them. Class-style
   accessors are emitted as well for cold paths such as reading meters
-  once a frame.
+  once a frame. (The class was withdrawn by
+  [ADR-0018](0018-functional-by-default.md); the cold path returns a
+  snapshot instead.)
 
 Two details the generator exists to get right, because they are wrong
 exactly once when written by hand:
