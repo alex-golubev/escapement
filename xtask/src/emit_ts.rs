@@ -9,6 +9,25 @@ use crate::names::{camel, pascal, screaming};
 use crate::schema::{ExportKind, Schema};
 use std::fmt::Write as _;
 
+/// `base + 0` is noise, and generated code is committed to be read (ADR-0013).
+fn addend(offset: usize) -> String {
+    if offset == 0 {
+        String::new()
+    } else {
+        format!(" + {offset}")
+    }
+}
+
+/// The Atomics index counts elements, so the byte offset is divided by four.
+/// The schema check guarantees the field is aligned to make that exact.
+fn atomic_index(offset: usize) -> String {
+    if offset == 0 {
+        "base >> 2".to_owned()
+    } else {
+        format!("(base + {offset}) >> 2")
+    }
+}
+
 pub fn emit(schema: &Schema, abi_version: u32, abi_hash: u32) -> String {
     let mut out = String::new();
     let _ = writeln!(
@@ -61,36 +80,35 @@ pub fn emit(schema: &Schema, abi_version: u32, abi_hash: u32) -> String {
             }
             let field_name = pascal(&field.name);
             let offset = field.offset;
+            let at = addend(offset);
             if field.atomic {
+                let index = atomic_index(offset);
                 let _ = writeln!(
                     out,
                     "export function load{type_name}{field_name}(atoms: Int32Array, base: number): number {{\n  \
-                     return Atomics.load(atoms, (base + {offset}) >> 2)\n}}\n"
+                     return Atomics.load(atoms, {index})\n}}\n"
                 );
                 let _ = writeln!(
                     out,
                     "export function store{type_name}{field_name}(atoms: Int32Array, base: number, value: number): void {{\n  \
-                     Atomics.store(atoms, (base + {offset}) >> 2, value)\n}}\n"
+                     Atomics.store(atoms, {index}, value)\n}}\n"
                 );
             } else {
                 let suffix = field.ty.view_suffix();
                 let _ = writeln!(
                     out,
                     "export function read{type_name}{field_name}(view: DataView, base: number): number {{\n  \
-                     return view.get{suffix}(base + {offset}, true)\n}}\n"
+                     return view.get{suffix}(base{at}, true)\n}}\n"
                 );
                 let _ = writeln!(
                     out,
                     "export function write{type_name}{field_name}(view: DataView, base: number, value: number): void {{\n  \
-                     view.set{suffix}(base + {offset}, value, true)\n}}\n"
+                     view.set{suffix}(base{at}, value, true)\n}}\n"
                 );
             }
         }
     }
 
-    let payload_offset = schema
-        .constant("command_payload_offset")
-        .unwrap_or_default();
     for (name, command) in &schema.commands {
         let type_name = pascal(name);
         let kind = schema
@@ -131,9 +149,8 @@ pub fn emit(schema: &Schema, abi_version: u32, abi_hash: u32) -> String {
             let suffix = field.ty.view_suffix();
             let _ = writeln!(
                 out,
-                "  view.set{suffix}(slot + {} + {}, {}, true)",
-                payload_offset,
-                field.offset,
+                "  view.set{suffix}(slot + COMMAND_PAYLOAD_OFFSET{}, {}, true)",
+                addend(field.offset),
                 camel(&field.name)
             );
         }
@@ -144,11 +161,10 @@ pub fn emit(schema: &Schema, abi_version: u32, abi_hash: u32) -> String {
             .iter()
             .map(|field| {
                 format!(
-                    "    {}: view.get{}(slot + {} + {}, true),",
+                    "    {}: view.get{}(slot + COMMAND_PAYLOAD_OFFSET{}, true),",
                     camel(&field.name),
                     field.ty.view_suffix(),
-                    payload_offset,
-                    field.offset
+                    addend(field.offset)
                 )
             })
             .collect();
