@@ -7,13 +7,11 @@
 #![allow(dead_code)]
 
 pub const ABI_MAJOR: u32 = 0;
-pub const ABI_HASH: u32 = 0xcfb1bd5f;
-pub const ABI_VERSION: u32 = 0x00b1bd5f;
+pub const ABI_HASH: u32 = 0x57a79934;
+pub const ABI_VERSION: u32 = 0x00a79934;
 
 pub const COMMAND_PAYLOAD_OFFSET: usize = 8;
 pub const COMMAND_PAYLOAD_SIZE: usize = 24;
-pub const COMMAND_SLOT_SIZE: usize = 32;
-pub const METER_BLOCK_SIZE: usize = 16;
 
 #[repr(u32)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

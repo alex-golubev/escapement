@@ -148,23 +148,25 @@ impl Schema {
     pub fn check(&self) -> Result<(), Vec<String>> {
         let mut errors = Vec::new();
 
-        let slot_size = self.constant("command_slot_size");
         let payload_offset = self.constant("command_payload_offset");
         let payload_size = self.constant("command_payload_size");
-        for missing in [&slot_size, &payload_offset, &payload_size] {
+        for missing in [&payload_offset, &payload_size] {
             if let Err(message) = missing {
                 errors.push(message.clone());
             }
         }
-        let (Ok(slot_size), Ok(payload_offset), Ok(payload_size)) =
-            (slot_size, payload_offset, payload_size)
-        else {
+        let Some(slot) = self.records.get("command_slot") else {
+            errors.push("records.command_slot is missing".to_owned());
+            return Err(errors);
+        };
+        let slot_size = slot.size;
+        let (Ok(payload_offset), Ok(payload_size)) = (payload_offset, payload_size) else {
             return Err(errors);
         };
 
         if payload_offset + payload_size != slot_size {
             errors.push(format!(
-                "command_payload_offset + command_payload_size is {}, but command_slot_size is {slot_size}",
+                "command_payload_offset + command_payload_size is {}, but records.command_slot.size is {slot_size}",
                 payload_offset + payload_size
             ));
         }
@@ -172,7 +174,7 @@ impl Schema {
         // multiple of 8 would misalign every field of the following slot.
         if !slot_size.is_multiple_of(8) {
             errors.push(format!(
-                "command_slot_size {slot_size} is not a multiple of 8"
+                "records.command_slot.size {slot_size} is not a multiple of 8"
             ));
         }
         if !payload_offset.is_multiple_of(8) {
@@ -197,18 +199,6 @@ impl Schema {
                             field.name
                         ));
                     }
-                }
-            }
-        }
-
-        match self.records.get("command_slot") {
-            None => errors.push("records.command_slot is missing".to_owned()),
-            Some(slot) => {
-                if slot.size != slot_size {
-                    errors.push(format!(
-                        "records.command_slot.size is {}, but command_slot_size is {slot_size}",
-                        slot.size
-                    ));
                 }
             }
         }
