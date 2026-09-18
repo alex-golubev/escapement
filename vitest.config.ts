@@ -3,7 +3,7 @@
 // with the client (ADR-0014).
 export default {
   test: {
-    include: ["packages/*/test/**/*.test.ts"],
+    include: ["packages/*/test/**/*.spec.ts"],
     environment: "node",
   },
 }
