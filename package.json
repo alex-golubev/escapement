@@ -1,0 +1,16 @@
+{
+  "name": "escapement",
+  "private": true,
+  "packageManager": "pnpm@12.4.2",
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "scripts": {
+    "check": "biome ci .",
+    "format": "biome format --write ."
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.14",
+    "typescript": "6.0.3"
+  }
+}

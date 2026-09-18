@@ -1,0 +1,7 @@
+[alias]
+xtask = "run --package xtask --quiet --"
+
+# ADR-0002: SIMD is used; ADR-0013: the atomics feature stays off, so that the
+# engine's own memory is unshared and Rust needs no atomics.
+[target.wasm32-unknown-unknown]
+rustflags = ["-C", "target-feature=+simd128"]
