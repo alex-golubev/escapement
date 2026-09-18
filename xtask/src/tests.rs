@@ -728,12 +728,26 @@ fn schema_prose_reaches_both_languages() {
         "/** Bytes a command may use. */\nexport const COMMAND_PAYLOAD_SIZE",
         "  /** The only kind these tests have. */\n  probe: 1,",
         "/** A slot in the ring. */\nexport const CommandSlotOffsets",
-        "/** The command this slot carries. */\nexport function readCommandSlotKind",
-        "/** The command this slot carries. */\nexport function writeCommandSlotKind",
+        "  /** The command this slot carries. */\n  kind: 0,",
         " * @param tempo - Micro-BPM.",
     ] {
         assert!(ts.contains(expected), "missing {expected:?} in:\n{ts}");
     }
+
+    // The same paragraph above a reader and its writer is the noise this file
+    // leaves out everywhere else: a field is declared once, in the offset
+    // table, and an accessor over it is an operation rather than a second
+    // declaration.
+    assert_eq!(
+        ts.matches("The command this slot carries.").count(),
+        1,
+        "the field's prose is written once:\n{ts}"
+    );
+    assert_eq!(
+        rust.matches("The command this slot carries.").count(),
+        1,
+        "the field's prose is written once:\n{rust}"
+    );
 }
 
 /// rustfmt does not rewrap a doc comment and the generated TypeScript is not

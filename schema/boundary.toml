@@ -25,9 +25,7 @@ command_payload_size = { value = 24, doc = "How many bytes of a slot a command h
 # because the glue fills it and would otherwise have to be told.
 command_staging_capacity = { value = 256, doc = """
 How many command slots the staging area holds. The glue copies at most this
-many into it in one block and leaves the rest in the ring for the next, so
-`process` seeing more than this is a bug in the glue rather than a busy
-moment.""" }
+many in a block and leaves the rest in the ring for the next.""" }
 
 # Both halves judge a tempo — TypeScript before it writes the command, the
 # engine when it decodes one — so the bounds are one pair of numbers rather than
@@ -66,30 +64,29 @@ playing = 1
 size = 32
 doc = """
 One slot of the command ring, copied into the staging area as it stands. The
-header is what the engine reads of every slot; the payload only the slot's own
-kind knows how to read."""
+engine reads the header of every slot; the payload only the slot's own kind
+knows how to read."""
 fields = [
   { name = "kind", type = "u32", offset = 0, doc = "Which command this is, one of the `command_kind` codes." },
   { name = "frame_offset", type = "u32", offset = 4, doc = """
-Where in the block the command takes effect, in frames from its start. The
-engine renders up to that point, applies the command and carries on; at or
-beyond the end of the block the command is dropped as `bad_frame_offset`.""" },
+Where in the block the command takes effect, in frames from its start. At or
+beyond the end of the block it is dropped as `bad_frame_offset`.""" },
   { name = "payload", type = "u8", count = 24, offset = 8, doc = "The command's own fields, laid out by its kind, and zero wherever the kind declares nothing." },
 ]
 
 # The block the engine renders into. It is a static in the wasm host, so its
 # size is fixed when the code is compiled rather than asked for at init
-# (ADR-0020). 1024 frames is eight times the browser's render quantum of 128,
-# with room for the larger blocks an offline render asks for; raising it moves
-# a plane, which is why it is an ABI change like any other.
+# (ADR-0020). Planar because Web Audio hands the worklet a Float32Array per
+# channel, and at fixed offsets because a stride is a number each side would
+# work out for itself. 1024 frames is eight times the browser's render quantum
+# of 128, with room for the larger blocks an offline render asks for; raising it
+# moves a plane, which is an ABI change like any other.
 [records.audio_out]
 size = 8192
 doc = """
-The block the engine renders into, in its own unshared memory. One run of
-samples per channel at a fixed offset: Web Audio hands the worklet a
-Float32Array per channel, and an offset is one number rather than a stride each
-side works out for itself. A block fills the first `frames` samples of each
-plane and leaves the rest of it as the previous block left it."""
+The block the engine renders into, in its own unshared memory, one run of
+samples per channel. A block fills the first `frames` samples of each plane and
+leaves the rest of it as the previous block left it."""
 fields = [
   { name = "left", type = "f32", count = 1024, offset = 0, doc = "The left channel, as long as the largest block the engine accepts." },
   { name = "right", type = "f32", count = 1024, offset = 4096, doc = "The right channel, as long as the largest block the engine accepts." },
@@ -101,21 +98,16 @@ fields = [
 [records.engine_report]
 size = 16
 doc = """
-What the engine has to say about the block it has just rendered, written into
-its own unshared memory. The glue reads it once `process` has returned and
-publishes what the interface needs into `meter_block`. The engine never sees
-the published copy."""
+What the engine has to say about the block it has just rendered, in its own
+unshared memory. The glue reads it once `process` has returned and publishes
+what the interface needs into `meter_block`."""
 fields = [
   { name = "position_frames", type = "i32", offset = 0, doc = "The playhead at the end of this block, in frames from the start of the timeline." },
-  { name = "peak_amp_micro", type = "i32", offset = 4, doc = """
-The largest sample of this block, over both channels, as an amplitude times a
-million: 1.0 is 1000000. Linear and not dBFS, because `core` has no logarithm
-and the curve to draw is the interface's to choose.""" },
+  # Linear and not dBFS: `core` has no logarithm, so dBFS would be a dependency
+  # in the worklet, and the curve to draw is the interface's to choose anyway.
+  { name = "peak_amp_micro", type = "i32", offset = 4, doc = "The largest sample of this block, over both channels, as an amplitude times a million: 1.0 is 1000000." },
   { name = "transport_state", type = "i32", offset = 8, doc = "The transport as this block left it, one of the `transport_state` codes." },
-  { name = "dropped_commands", type = "u32", offset = 12, doc = """
-How many of this block's commands the engine dropped, whatever the reason. Per
-block rather than cumulative: the host logs it and the count starts again."""
-  },
+  { name = "dropped_commands", type = "u32", offset = 12, doc = "How many of this block's commands the engine dropped, whatever the reason. Per block, not cumulative." },
 ]
 
 # Published by the worklet glue after process() returns, read by the UI every
@@ -128,11 +120,12 @@ doc = "What the interface reads, in the shared buffer, published by the glue."
 fields = [
   { name = "block_counter", type = "i32", offset = 0, atomic = true, doc = "How many blocks the glue has published. The engine does not count blocks." },
   { name = "position_frames", type = "i32", offset = 4, atomic = true, doc = "The playhead as of the published block, in frames from the start of the timeline." },
+  # The decay is the glue's because it sees every block, where the interface
+  # reads about one in six and would miss the transients between.
   { name = "peak_amp_micro", type = "i32", offset = 8, atomic = true, doc = """
 The meter to draw, as an amplitude times a million. The glue holds and decays
-the engine's per-block peak into this, because the interface reads about once
-in six blocks and would otherwise miss the transients; what the interface adds
-is the curve, not a second decay.""" },
+the engine's per-block peak into this; what the interface adds is the curve,
+not a second decay.""" },
   { name = "transport_state", type = "i32", offset = 12, atomic = true, doc = "The transport as of the published block, one of the `transport_state` codes." },
 ]
 
@@ -157,9 +150,8 @@ doc = "Set the tempo from this point in the block onwards."
 # the engine must not disagree with the export about the tempo.
 fields = [
   { name = "micro_bpm", type = "u32", offset = 0, doc = """
-Beats per minute times a million: 120 BPM is 120000000. Between `micro_bpm_min`
-and `micro_bpm_max` inclusive — outside them the command is dropped and the
-block reports `bad_command_payload`.""" },
+Beats per minute times a million: 120 BPM is 120000000. Outside `micro_bpm_min`
+to `micro_bpm_max` the command is dropped as `bad_command_payload`.""" },
 ]
 
 # --- exports -----------------------------------------------------------
@@ -167,26 +159,19 @@ block reports `bad_command_payload`.""" },
 [[exports]]
 name = "memory"
 kind = "memory"
-doc = """
-The engine's own linear memory, unshared, and never grown after `init`: growing
-it detaches every view the glue holds over it (ADR-0015)."""
+doc = "The engine's own linear memory, unshared, and never grown after `init` — growing it detaches every view the glue holds (ADR-0015)."
 
 [[exports]]
 name = "abi_version"
-doc = """
-The ABI this module was built against. The glue compares it with the
-`ABI_VERSION` generated from the same file and refuses the module if they
-differ: a stale binary does not fail, it reads the same bytes as something
-else (ADR-0015)."""
+# A stale binary does not fail on its own: it reads the same bytes as something
+# else, which is why the glue refuses it rather than trusting it.
+doc = "The ABI this module was built against. The glue refuses a module whose version differs from the generated `ABI_VERSION` (ADR-0015)."
 params = []
 returns = "u32"
 
 [[exports]]
 name = "init"
-doc = """
-Prepares the engine for a sample rate, and returns `ok` or `bad_sample_rate`.
-Nothing is sized here: the buffers are statics whose sizes this file states
-(ADR-0020)."""
+doc = "Prepares the engine for a sample rate, and returns `ok` or `bad_sample_rate`. Nothing is sized here: the buffers are statics this file measures (ADR-0020)."
 params = [
   { name = "sample_rate", type = "f32" },
 ]
