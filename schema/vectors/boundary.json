@@ -13,7 +13,10 @@
     "Rust a plane offset is a static assertion rustc checks, while in TypeScript",
     "it is arithmetic inside a generated function that nothing else checks.",
     "Offsets, lengths and enum codes are written in decimal: they are numbers to",
-    "compare, not bytes to read off."
+    "compare, not bytes to read off.",
+    "No value here reads the same backwards. 0x00000000 and 0xffffffff would let",
+    "a writer that forgot the little-endian flag pass, which is the one mistake",
+    "these vectors exist to catch."
   ],
   "enums": [
     { "enum": "command_kind", "codes": { "play": 1, "stop": 2, "set_tempo": 3 } },
@@ -68,9 +71,9 @@
   "commands": [
     {
       "command": "play",
-      "frame_offset": "0x00000000",
-      "fields": { "from_frame": "0xffffffff" },
-      "bytes": "01000000 00000000 ffffffff 0000000000000000000000000000000000000000"
+      "frame_offset": "0x00000045",
+      "fields": { "from_frame": "0xfffffffe" },
+      "bytes": "01000000 45000000 feffffff 0000000000000000000000000000000000000000"
     },
     {
       "command": "stop",
