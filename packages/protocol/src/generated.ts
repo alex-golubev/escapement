@@ -7,11 +7,18 @@
 // 4-byte aligned; the generator refuses any field where it is not.
 
 export const ABI_MAJOR = 0
-export const ABI_HASH = 0xd554b3e1
-export const ABI_VERSION = 0x0054b3e1
+export const ABI_HASH = 0x8bc0ff11
+export const ABI_VERSION = 0x00c0ff11
 
 export const COMMAND_PAYLOAD_OFFSET = 8
 export const COMMAND_PAYLOAD_SIZE = 24
+/**
+ * How many command slots the staging area holds. The glue copies at most this
+ * many into it in one block and leaves the rest in the ring for the next, so
+ * `process` seeing more than this is a bug in the glue rather than a busy
+ * moment.
+ */
+export const COMMAND_STAGING_CAPACITY = 256
 /** The fastest tempo the engine accepts, in micro-BPM: 999 BPM. */
 export const MICRO_BPM_MAX = 999000000
 /** The slowest tempo the engine accepts, in micro-BPM: 10 BPM. */
@@ -323,9 +330,13 @@ export function writeStop(view: DataView, slot: number, frameOffset: number): vo
 export interface EngineExports {
   memory: WebAssembly.Memory
   abi_version(): number
-  init(sampleRate: number, maxBlockFrames: number): number
+  /**
+   * Prepares the engine for a sample rate, and returns `ok` or `bad_sample_rate`.
+   * Nothing is sized here: the buffers are statics whose sizes this file states
+   * (ADR-0020).
+   */
+  init(sampleRate: number): number
   command_staging_ptr(): number
-  command_staging_capacity(): number
   audio_out_ptr(): number
   /** Where the engine writes its report. Stable for the life of the instance, so the glue takes its view once. */
   engine_report_ptr(): number

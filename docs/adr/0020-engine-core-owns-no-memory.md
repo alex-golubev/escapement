@@ -28,9 +28,13 @@ A static's size is known when the code is compiled. So every buffer the boundary
 
 For the audio buffer this also answers a question the schema could not otherwise state: a plane is at a fixed offset rather than a stride computed from the block size, so the two halves cannot disagree about where the right channel begins. `frames` stops being part of the layout and becomes what it is, the number of samples in the plane that this block filled.
 
-### `init` no longer takes a maximum block size
+### The exports stop repeating what the schema states
 
-The export becomes `init(sample_rate) -> u32`. The parameter sized the buffers; the schema sizes them now, and a second number describing the same limit is a second thing that can disagree. `process` checks `frames` against the schema's maximum and reports `bad_frame_count`. This amends the stage 0 surface of [ADR-0015](0015-command-records-and-engine-abi.md).
+Two of them carried a number the schema now holds, and a number in two places is a number that can disagree. This amends the stage 0 surface of [ADR-0015](0015-command-records-and-engine-abi.md).
+
+`init` becomes `init(sample_rate) -> u32`. Its second parameter sized the buffers; the schema sizes them, and `process` checks `frames` against the schema's maximum and reports `bad_frame_count`.
+
+`command_staging_capacity()` goes. It answered a question the glue can now ask the schema, and a module built from a different schema is already refused: `abi_version()` covers the whole file, this constant included.
 
 ### The engine's report is not the published meter block
 
