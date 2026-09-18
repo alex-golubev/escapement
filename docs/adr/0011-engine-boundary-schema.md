@@ -38,6 +38,8 @@ The layout is shaped by atomic operations and real-time constraints, so **a smal
 
 An off-the-shelf format stays the fallback if our own generator turns out to cost more than it looks.
 
+Decided in detail by [ADR-0013](0013-boundary-code-generation.md), which also moves the ring container out of the schema.
+
 ### 4. Checks that tie the two implementations together
 
 - **Golden layout vectors.** A language-neutral file: "these field values ↔ these bytes". Both sides decode the bytes and must arrive at the same values; both encode the values and must produce byte-for-byte identical output. The file lives in the repository and both Rust and TS run it.

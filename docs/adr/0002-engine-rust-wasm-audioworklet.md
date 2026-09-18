@@ -24,6 +24,7 @@ Our experience with Loro and yrs showed that a Rust panic inside WASM breaks the
   - commands travel from the main thread to the engine;
   - the engine writes meter levels and playback position into shared memory, and the UI reads them every frame.
 - No `postMessage` in the hot path.
+- The engine's own memory stays unshared and the synchronisation sits in the worklet's JavaScript glue, which keeps the engine on stable Rust; see [ADR-0013](0013-boundary-code-generation.md).
 - The ring layout and the command slot format are described by a single declarative schema from which code is generated for both sides ([ADR-0011](0011-engine-boundary-schema.md)). Offsets and enum values are never written by hand in TS.
 - The command decoder returns a `Result`: a malformed command is dropped and logged, and the engine stays up. The decoder is checked with `cargo-fuzz` against the native build.
 
