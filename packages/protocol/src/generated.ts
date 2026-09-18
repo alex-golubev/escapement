@@ -7,8 +7,8 @@
 // 4-byte aligned; the generator refuses any field where it is not.
 
 export const ABI_MAJOR = 0
-export const ABI_HASH = 0xa10f1316
-export const ABI_VERSION = 0x000f1316
+export const ABI_HASH = 0x22b56abb
+export const ABI_VERSION = 0x00b56abb
 
 export const COMMAND_PAYLOAD_OFFSET = 8
 export const COMMAND_PAYLOAD_SIZE = 24
@@ -21,9 +21,24 @@ export const CommandKind = {
 export type CommandKindCode = (typeof CommandKind)[keyof typeof CommandKind]
 
 export const EngineError = {
+  /** The call did what it was asked. */
   ok: 0,
+  /** A slot carried a kind the engine does not know. */
   unknownCommandKind: 1,
+  /** A block of more frames than a plane of `audio_out` holds. */
   badFrameCount: 2,
+  /** A sample rate that is not a positive, finite number. */
+  badSampleRate: 3,
+  /** `process` before a successful `init`. */
+  notInitialised: 4,
+  /** More commands than the staging area holds. */
+  tooManyCommands: 5,
+  /** A command of a kind the engine knows, carrying a value it cannot use. */
+  badCommandPayload: 6,
+  /** A command placed at or beyond the end of the block it arrived with. */
+  badFrameOffset: 7,
+  /** A command placed before the one ahead of it in the staging area. */
+  commandsOutOfOrder: 8,
 } as const
 export type EngineErrorCode = (typeof EngineError)[keyof typeof EngineError]
 
@@ -305,5 +320,14 @@ export interface EngineExports {
   audio_out_ptr(): number
   /** Where the engine writes its report. Stable for the life of the instance, so the glue takes its view once. */
   engine_report_ptr(): number
+  /**
+   * Renders one block. The glue has copied `command_count` slots into the staging
+   * area, in non-decreasing `frame_offset`, each of them below `frames`; `frames`
+   * is at most as many as a plane of `audio_out` holds.
+   *
+   * An error is a report, not control flow: a command the engine cannot use is
+   * dropped and counted in `engine_report.dropped_commands`, the block is rendered
+   * regardless, and what comes back is the first code raised (ADR-0002).
+   */
   process(commandCount: number, frames: number): number
 }
