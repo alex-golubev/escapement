@@ -108,6 +108,19 @@ describe("records", () => {
     })
   })
 
+  test("command_slot reads back as a snapshot", () => {
+    const vector = find(vectors.records, "record", "command_slot")
+    const slot = buffer(protocol.COMMAND_SLOT_SIZE)
+
+    protocol.writeCommandSlotKind(slot.view, 0, hex(vector.fields.kind as string))
+    protocol.writeCommandSlotFrameOffset(slot.view, 0, hex(vector.fields.frame_offset as string))
+
+    expect(protocol.readCommandSlot(slot.view, 0)).toEqual({
+      kind: hex(vector.fields.kind as string),
+      frameOffset: hex(vector.fields.frame_offset as string),
+    })
+  })
+
   test("meter_block matches its vector", () => {
     const vector = find(vectors.records, "record", "meter_block")
     const block = buffer(protocol.METER_BLOCK_SIZE)
