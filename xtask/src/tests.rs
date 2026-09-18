@@ -366,3 +366,140 @@ fn a_missing_command_slot_does_not_hide_the_rest_of_the_file() {
     assert!(found.contains("records.command_slot is missing"), "{found}");
     assert!(found.contains("share the code 1"), "{found}");
 }
+
+/// Everything `check` refuses, and the sentence it refuses it with. These are
+/// the rules the generator had from the start and never had a test for: the
+/// schema is written by hand, so the message is the whole user interface.
+#[test]
+fn check_names_what_is_wrong() {
+    let broken = |from: &str, to: &str| VALID.replace(from, to);
+    let cases: Vec<(&str, String, &str)> = vec![
+        (
+            "the constants and the slot size disagree",
+            broken("command_payload_size = 24", "command_payload_size = 16"),
+            "but records.command_slot.size is 32",
+        ),
+        (
+            "a slot that would misalign the next one",
+            broken("size = 32", "size = 36"),
+            "records.command_slot.size 36 is not a multiple of 8",
+        ),
+        (
+            "a payload that does not start on eight",
+            broken("command_payload_offset = 8", "command_payload_offset = 4"),
+            "command_payload_offset 4 is not a multiple of 8",
+        ),
+        (
+            "one name used twice in a record",
+            broken(r#"name = "frame_offset""#, r#"name = "kind""#),
+            "duplicate field name",
+        ),
+        (
+            "an array of nothing",
+            broken("count = 24", "count = 0"),
+            "count is zero",
+        ),
+        (
+            "a field that starts mid-word",
+            broken(
+                r#"{ name = "frame_offset", type = "u32", offset = 4 }"#,
+                r#"{ name = "frame_offset", type = "u32", offset = 5 }"#,
+            ),
+            "is not aligned to 4 bytes",
+        ),
+        (
+            "a command field past the end of the payload",
+            broken(
+                r#"{ name = "tempo", type = "u32", offset = 0 }"#,
+                r#"{ name = "tempo", type = "u32", offset = 24 }"#,
+            ),
+            "but only 24 bytes are available",
+        ),
+        (
+            "an atomic field Atomics cannot read",
+            broken(
+                r#"{ name = "kind", type = "u32", offset = 0 }"#,
+                r#"{ name = "kind", type = "u32", offset = 0, atomic = true }"#,
+            ),
+            "an atomic field must be i32",
+        ),
+        (
+            "an atomic field off a four-byte boundary",
+            format!(
+                "{VALID}\n[records.meters]\nsize = 6\nfields = [ {{ name = \"a\", type = \"u16\", offset = 0 }}, {{ name = \"b\", type = \"i32\", offset = 2, atomic = true }} ]\n"
+            ),
+            "an atomic field must be 4-byte aligned",
+        ),
+        (
+            "an atomic array",
+            broken(
+                r#"{ name = "payload", type = "u8", count = 24, offset = 8 }"#,
+                r#"{ name = "payload", type = "u8", count = 24, offset = 8, atomic = true }"#,
+            ),
+            "an atomic field cannot be an array",
+        ),
+        (
+            "two fields over the same bytes",
+            broken(
+                r#"{ name = "frame_offset", type = "u32", offset = 4 }"#,
+                r#"{ name = "frame_offset", type = "u32", offset = 0 }"#,
+            ),
+            "overlap kind at 0..4",
+        ),
+        (
+            "a hole in a record",
+            broken(
+                "  { name = \"frame_offset\", type = \"u32\", offset = 4 },\n",
+                "",
+            ),
+            "bytes 4..8 belong to no field",
+        ),
+        (
+            "a record that does not fill its size",
+            broken("count = 24, offset = 8", "count = 16, offset = 8"),
+            "the fields cover 24 of 32 bytes",
+        ),
+        (
+            "a shared record reached without Atomics",
+            broken("size = 32", "size = 32\nshared = true"),
+            "every field must be atomic",
+        ),
+        (
+            "a payload no single field covers",
+            broken(
+                r#"{ name = "payload", type = "u8", count = 24, offset = 8 },"#,
+                r#"{ name = "a", type = "u8", count = 12, offset = 8 }, { name = "b", type = "u8", count = 12, offset = 20 },"#,
+            ),
+            "has no field covering the payload at 8..32",
+        ),
+        (
+            "a command the ring cannot name",
+            broken("[commands.probe]", "[commands.halt]"),
+            "commands.halt has no code in enums.command_kind",
+        ),
+        (
+            "an atomic command field",
+            broken(
+                r#"{ name = "tempo", type = "u32", offset = 0 }"#,
+                r#"{ name = "tempo", type = "i32", offset = 0, atomic = true }"#,
+            ),
+            "commands live in unshared memory and cannot be atomic",
+        ),
+        (
+            "two enum variants on one code",
+            broken("probe = 1", "probe = 1\nhalt = 1"),
+            "share the code 1",
+        ),
+    ];
+
+    // Report every case that does not hold, not the first: the point of the
+    // function under test is the same point.
+    let mut failures = Vec::new();
+    for (what, source, expected) in &cases {
+        let found = problems(source);
+        if !found.contains(expected) {
+            failures.push(format!("{what}: expected {expected:?}, got:\n{found}"));
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n\n"));
+}
