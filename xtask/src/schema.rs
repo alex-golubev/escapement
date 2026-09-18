@@ -1,0 +1,321 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+//
+// The schema as parsed, and the checks that make writing offsets by hand safe.
+// Nothing here computes a layout: every offset in the file is taken as given
+// and only tested for alignment, overlap and fit (ADR-0013).
+
+use serde::Deserialize;
+use std::collections::BTreeMap;
+
+#[derive(Deserialize)]
+pub struct Schema {
+    pub abi: Abi,
+    pub constants: BTreeMap<String, u64>,
+    pub enums: BTreeMap<String, BTreeMap<String, u32>>,
+    pub records: BTreeMap<String, Record>,
+    pub commands: BTreeMap<String, Command>,
+    pub exports: Vec<Export>,
+}
+
+#[derive(Deserialize)]
+pub struct Abi {
+    pub major: u32,
+}
+
+#[derive(Deserialize)]
+pub struct Record {
+    pub size: usize,
+    #[serde(default)]
+    pub shared: bool,
+    pub fields: Vec<Field>,
+}
+
+#[derive(Deserialize)]
+pub struct Command {
+    pub fields: Vec<Field>,
+}
+
+#[derive(Deserialize)]
+pub struct Field {
+    pub name: String,
+    #[serde(rename = "type")]
+    pub ty: Type,
+    pub offset: usize,
+    #[serde(default = "one")]
+    pub count: usize,
+    #[serde(default)]
+    pub atomic: bool,
+}
+
+fn one() -> usize {
+    1
+}
+
+#[derive(Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
+#[serde(rename_all = "lowercase")]
+pub enum Type {
+    U8,
+    U16,
+    U32,
+    I32,
+    F32,
+    F64,
+}
+
+#[derive(Deserialize)]
+pub struct Export {
+    pub name: String,
+    #[serde(default)]
+    pub kind: ExportKind,
+    #[serde(default)]
+    pub params: Vec<Param>,
+    pub returns: Option<Type>,
+}
+
+#[derive(Deserialize)]
+pub struct Param {
+    pub name: String,
+    #[serde(rename = "type")]
+    pub ty: Type,
+}
+
+#[derive(Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ExportKind {
+    #[default]
+    Function,
+    Memory,
+}
+
+impl Type {
+    pub fn size(self) -> usize {
+        match self {
+            Type::U8 => 1,
+            Type::U16 => 2,
+            Type::U32 | Type::I32 | Type::F32 => 4,
+            Type::F64 => 8,
+        }
+    }
+
+    pub fn rust(self) -> &'static str {
+        match self {
+            Type::U8 => "u8",
+            Type::U16 => "u16",
+            Type::U32 => "u32",
+            Type::I32 => "i32",
+            Type::F32 => "f32",
+            Type::F64 => "f64",
+        }
+    }
+
+    /// The DataView accessor suffix, e.g. `getUint32` / `setUint32`.
+    pub fn view_suffix(self) -> &'static str {
+        match self {
+            Type::U8 => "Uint8",
+            Type::U16 => "Uint16",
+            Type::U32 => "Uint32",
+            Type::I32 => "Int32",
+            Type::F32 => "Float32",
+            Type::F64 => "Float64",
+        }
+    }
+}
+
+impl Field {
+    pub fn bytes(&self) -> usize {
+        self.ty.size() * self.count
+    }
+
+    pub fn end(&self) -> usize {
+        self.offset + self.bytes()
+    }
+
+    pub fn is_array(&self) -> bool {
+        self.count != 1
+    }
+}
+
+impl Schema {
+    pub fn constant(&self, name: &str) -> Result<usize, String> {
+        self.constants
+            .get(name)
+            .map(|v| *v as usize)
+            .ok_or_else(|| format!("constants.{name} is missing"))
+    }
+
+    /// Every problem at once: a generator that reports one error per run
+    /// turns a schema edit into a guessing game.
+    pub fn check(&self) -> Result<(), Vec<String>> {
+        let mut errors = Vec::new();
+
+        let slot_size = self.constant("command_slot_size");
+        let payload_offset = self.constant("command_payload_offset");
+        let payload_size = self.constant("command_payload_size");
+        for missing in [&slot_size, &payload_offset, &payload_size] {
+            if let Err(message) = missing {
+                errors.push(message.clone());
+            }
+        }
+        let (Ok(slot_size), Ok(payload_offset), Ok(payload_size)) =
+            (slot_size, payload_offset, payload_size)
+        else {
+            return Err(errors);
+        };
+
+        if payload_offset + payload_size != slot_size {
+            errors.push(format!(
+                "command_payload_offset + command_payload_size is {}, but command_slot_size is {slot_size}",
+                payload_offset + payload_size
+            ));
+        }
+        // Slots sit next to each other in the ring, so a slot that is not a
+        // multiple of 8 would misalign every field of the following slot.
+        if !slot_size.is_multiple_of(8) {
+            errors.push(format!(
+                "command_slot_size {slot_size} is not a multiple of 8"
+            ));
+        }
+        if !payload_offset.is_multiple_of(8) {
+            errors.push(format!(
+                "command_payload_offset {payload_offset} is not a multiple of 8"
+            ));
+        }
+
+        for (name, record) in &self.records {
+            check_fields(
+                &mut errors,
+                &format!("records.{name}"),
+                &record.fields,
+                0,
+                record.size,
+            );
+            if record.shared {
+                for field in &record.fields {
+                    if !field.atomic {
+                        errors.push(format!(
+                            "records.{name}.{}: a shared record is published with Atomics, so every field must be atomic",
+                            field.name
+                        ));
+                    }
+                }
+            }
+        }
+
+        match self.records.get("command_slot") {
+            None => errors.push("records.command_slot is missing".to_owned()),
+            Some(slot) => {
+                if slot.size != slot_size {
+                    errors.push(format!(
+                        "records.command_slot.size is {}, but command_slot_size is {slot_size}",
+                        slot.size
+                    ));
+                }
+            }
+        }
+
+        let kinds = self.enums.get("command_kind");
+        for (name, command) in &self.commands {
+            if kinds.is_none_or(|k| !k.contains_key(name)) {
+                errors.push(format!("commands.{name} has no code in enums.command_kind"));
+            }
+            check_fields(
+                &mut errors,
+                &format!("commands.{name}"),
+                &command.fields,
+                payload_offset,
+                payload_size,
+            );
+            for field in &command.fields {
+                if field.atomic {
+                    errors.push(format!(
+                        "commands.{name}.{}: commands live in unshared memory and cannot be atomic",
+                        field.name
+                    ));
+                }
+            }
+        }
+
+        for (name, values) in &self.enums {
+            let mut seen = BTreeMap::new();
+            for (variant, value) in values {
+                if let Some(other) = seen.insert(*value, variant) {
+                    errors.push(format!(
+                        "enums.{name}: {variant} and {other} share the code {value}"
+                    ));
+                }
+            }
+        }
+
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors)
+        }
+    }
+}
+
+/// `base` is where the record starts inside the containing memory, which for a
+/// command payload is not zero: alignment has to be judged from there.
+fn check_fields(
+    errors: &mut Vec<String>,
+    what: &str,
+    fields: &[Field],
+    base: usize,
+    capacity: usize,
+) {
+    let mut seen_names: Vec<&str> = Vec::new();
+    let mut occupied: Vec<(usize, usize, &str)> = Vec::new();
+
+    for field in fields {
+        let where_ = format!("{what}.{}", field.name);
+
+        if seen_names.contains(&field.name.as_str()) {
+            errors.push(format!("{where_}: duplicate field name"));
+        }
+        seen_names.push(&field.name);
+
+        if field.count == 0 {
+            errors.push(format!("{where_}: count is zero"));
+        }
+
+        let align = field.ty.size();
+        if !(base + field.offset).is_multiple_of(align) {
+            errors.push(format!(
+                "{where_}: offset {} is not aligned to {align} bytes (the record starts at {base})",
+                field.offset
+            ));
+        }
+
+        if field.end() > capacity {
+            errors.push(format!(
+                "{where_}: ends at {} but only {capacity} bytes are available",
+                field.end()
+            ));
+        }
+
+        if field.atomic {
+            if field.ty != Type::I32 {
+                errors.push(format!(
+                    "{where_}: an atomic field must be i32, because Atomics reads it through an Int32Array"
+                ));
+            }
+            if !(base + field.offset).is_multiple_of(4) {
+                errors.push(format!("{where_}: an atomic field must be 4-byte aligned"));
+            }
+            if field.is_array() {
+                errors.push(format!("{where_}: an atomic field cannot be an array"));
+            }
+        }
+
+        for (start, end, other) in &occupied {
+            if field.offset < *end && *start < field.end() {
+                errors.push(format!(
+                    "{where_}: bytes {}..{} overlap {other} at {start}..{end}",
+                    field.offset,
+                    field.end()
+                ));
+            }
+        }
+        occupied.push((field.offset, field.end(), &field.name));
+    }
+}

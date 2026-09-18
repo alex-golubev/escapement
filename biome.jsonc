@@ -16,6 +16,16 @@
   "javascript": {
     "formatter": { "quoteStyle": "double", "semicolons": "asNeeded" }
   },
+  "overrides": [
+    {
+      // Generated files are reviewed as the generator's output. Line wrapping
+      // is the formatter's taste and would move whenever a field is added, so
+      // the formatter stays out; the linter does not, because a finding here
+      // is a finding about the generator.
+      "includes": ["**/generated.ts"],
+      "formatter": { "enabled": false }
+    }
+  ],
   "html": {
     "experimentalFullSupportEnabled": true,
     "formatter": { "enabled": true }
