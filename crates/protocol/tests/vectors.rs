@@ -127,12 +127,15 @@ fn slot_for(
     }
 }
 
+/// The payloads start full of 0xaa rather than zero: a slot in the ring is
+/// reused, and the vector's zero bytes are a promise that a writer fills the
+/// whole payload, not an artefact of starting from a fresh buffer.
 #[test]
 fn commands_match_their_vectors() {
     let all = vectors();
 
     let vector = find(&all, "commands", "command", "play");
-    let mut payload = [0u8; COMMAND_PAYLOAD_SIZE];
+    let mut payload = [0xaa; COMMAND_PAYLOAD_SIZE];
     let play = Play {
         from_frame: word(vector, "fields", "from_frame"),
     };
@@ -142,13 +145,13 @@ fn commands_match_their_vectors() {
     assert_eq!(Play::read(&slot.payload), play, "play decoding");
 
     let vector = find(&all, "commands", "command", "stop");
-    let mut payload = [0u8; COMMAND_PAYLOAD_SIZE];
+    let mut payload = [0xaa; COMMAND_PAYLOAD_SIZE];
     Stop {}.write(&mut payload);
     let slot = slot_for(CommandKind::Stop, top(vector, "frame_offset"), payload);
     assert_eq!(as_bytes(&slot), expected_bytes(vector), "stop encoding");
 
     let vector = find(&all, "commands", "command", "set_tempo");
-    let mut payload = [0u8; COMMAND_PAYLOAD_SIZE];
+    let mut payload = [0xaa; COMMAND_PAYLOAD_SIZE];
     let set_tempo = SetTempo {
         micro_bpm: word(vector, "fields", "micro_bpm"),
     };

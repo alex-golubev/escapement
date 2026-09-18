@@ -4,7 +4,10 @@
     "produced would only prove that it agrees with itself (ADR-0013).",
     "Values are hex so that a reader can check a value against its bytes by eye —",
     "0x01020304 little-endian is 04 03 02 01. Both languages read this file,",
-    "encode the values and compare bytes, then decode the bytes and compare values."
+    "encode the values and compare bytes, then decode the bytes and compare values.",
+    "A command's zero bytes are a promise: a slot is reused, and a writer fills",
+    "the whole payload rather than only the fields it declares. The tests start",
+    "from a slot full of 0xaa so that the promise is what is being tested."
   ],
   "records": [
     {

@@ -503,3 +503,35 @@ fn check_names_what_is_wrong() {
     }
     assert!(failures.is_empty(), "{}", failures.join("\n\n"));
 }
+
+/// A slot is reused. A writer that set only its own fields left the previous
+/// command's bytes in the rest of the payload, while the golden vectors
+/// asserted zeros there — a promise nothing kept.
+#[test]
+fn a_command_writer_fills_the_whole_payload() {
+    let schema = probe_schema(24, r#"{ name = "tempo", type = "u32", offset = 0 }"#, "");
+    assert!(
+        rust_of(&schema).contains("*payload = [0u8; COMMAND_PAYLOAD_SIZE];"),
+        "{}",
+        rust_of(&schema)
+    );
+    assert!(
+        ts_of(&schema).contains("for (let i = 0; i < COMMAND_PAYLOAD_SIZE; i += 4) {"),
+        "{}",
+        ts_of(&schema)
+    );
+
+    // A command with no fields is the case that matters most: it used to write
+    // nothing into the payload at all.
+    let empty = probe_schema(24, "", "");
+    assert!(
+        rust_of(&empty).contains("*payload = [0u8; COMMAND_PAYLOAD_SIZE];"),
+        "{}",
+        rust_of(&empty)
+    );
+    assert!(
+        ts_of(&empty).contains("view.setUint32(slot + COMMAND_PAYLOAD_OFFSET + i, 0, true)"),
+        "{}",
+        ts_of(&empty)
+    );
+}
