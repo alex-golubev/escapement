@@ -1,16 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //
-// The generator's own tests. They exist because the production schema uses one
-// corner of what the schema language allows — scalar u32 fields, packed tight —
-// so a break in any other corner is invisible until someone writes the command
-// that needs it. Each test here is a bug that reached review once.
+// The generator's own tests. The production schema uses one corner of what the
+// schema language allows, so each test here is a bug that lived in another
+// corner until review found it.
 
 use crate::schema::Schema;
 use crate::{emit_rust, emit_ts};
 
-/// A schema with one command, `probe`, whose fields the test supplies. Nothing
-/// here is load-bearing beyond satisfying `check`: the interest is in what the
-/// emitters do with `fields`.
+/// A schema with one command, `probe`, whose fields the test supplies.
 fn probe_schema(payload_size: usize, fields: &str, extra: &str) -> Schema {
     let slot_size = 8 + payload_size;
     let source = format!(
@@ -49,8 +46,7 @@ fields = [{fields}]
     schema
 }
 
-/// A schema with nothing wrong with it, in one piece, so that a test can break
-/// exactly one thing in it and say what it expects to hear back.
+/// A sound schema, for the tests that break exactly one thing in it.
 const VALID: &str = r#"
 exports = []
 
@@ -76,8 +72,7 @@ fields = [
 fields = [{ name = "tempo", type = "u32", offset = 0 }]
 "#;
 
-/// What the generator says about a schema: the parse error if it does not
-/// parse, otherwise everything `check` found, one problem per line.
+/// The parse error, or everything `check` found, one problem per line.
 fn problems(source: &str) -> String {
     match toml::from_str::<Schema>(source) {
         Err(error) => error.to_string(),
@@ -96,9 +91,8 @@ fn ts_of(schema: &Schema) -> String {
     emit_ts::emit(schema, 0, 0)
 }
 
-/// A field with a count reserves `count * size` bytes. Emitting it as a scalar
-/// compiled on both sides and carried the first element only, which no test and
-/// no differential fuzzer would have caught: both halves were wrong together.
+/// Emitted as a scalar, this carried one element of the several it reserved —
+/// on both sides, so even differential fuzzing would have passed it.
 #[test]
 fn a_command_array_carries_every_byte_it_reserves() {
     let schema = probe_schema(
@@ -111,7 +105,6 @@ fn a_command_array_carries_every_byte_it_reserves() {
 
     assert!(rust.contains("pub gains: [f32; 4],"), "{rust}");
     assert!(!rust.contains("pub gains: f32,"), "{rust}");
-    // Four elements, four bytes apart, starting at the field's own offset.
     assert!(rust.contains("let mut out = [0f32; 4];"), "{rust}");
     assert!(rust.contains("let at = 8 + i * 4;"), "{rust}");
 
@@ -125,9 +118,7 @@ fn a_command_array_carries_every_byte_it_reserves() {
     );
 }
 
-/// The stride and the offset are both dropped from the expression when they
-/// would read `* 1` or `+ 0`; clippy denies the first and CI runs it with
-/// `-D warnings`, and the second is noise in a file meant to be read.
+/// `* 1` is clippy's identity_op, and CI runs it with `-D warnings`.
 #[test]
 fn a_byte_array_indexes_without_identity_arithmetic() {
     let schema = probe_schema(
@@ -145,9 +136,8 @@ fn a_byte_array_indexes_without_identity_arithmetic() {
     assert!(!ts.contains("i * 1"), "{ts}");
 }
 
-/// `DataView.setUint8` takes two arguments. Passing the byte-order flag anyway
-/// is not a harmless extra: `tsc` rejects the call, so the generated file did
-/// not compile the moment any field was one byte wide.
+/// `tsc` rejects `setUint8(offset, value, true)`, so the generated file failed
+/// to compile the moment any field was one byte wide.
 #[test]
 fn single_byte_accessors_take_no_byte_order_argument() {
     let schema = probe_schema(
@@ -169,26 +159,20 @@ fields = [ { name = "level", type = "u8", offset = 0 } ]
         !ts.contains("getUint8(slot + COMMAND_PAYLOAD_OFFSET, true)"),
         "{ts}"
     );
-    // A record's own single-byte accessor answers the same way.
     assert!(ts.contains("return view.getUint8(base)"), "{ts}");
     assert!(ts.contains("view.setUint8(base, value)"), "{ts}");
-    // And everything wider still says which end it is writing from.
     assert!(
         ts.contains("view.setUint32(slot + COMMAND_PAYLOAD_OFFSET + 4, tempo, true)"),
         "{ts}"
     );
 
-    // The Rust side reads a lone byte directly: from_le_bytes on one byte is
-    // ceremony around an index.
     let rust = rust_of(&schema);
     assert!(rust.contains("flags: payload[0],"), "{rust}");
     assert!(rust.contains("payload[0] = self.flags;"), "{rust}");
 }
 
-/// A command may leave a gap — to reserve payload for a field that does not
-/// exist yet, or simply because its author chose the offsets that way. The
-/// struct is a value and its Rust layout means nothing, so no offset is
-/// asserted for it (ADR-0017). Records are the opposite and keep theirs.
+/// A command may leave a gap: it is a value, so no offset is asserted for it
+/// (ADR-0017). A record is a map of memory and keeps its assertions.
 #[test]
 fn a_command_may_leave_a_gap_and_asserts_no_layout() {
     let schema = probe_schema(
@@ -203,21 +187,17 @@ fn a_command_may_leave_a_gap_and_asserts_no_layout() {
         "{rust}"
     );
     assert!(!rust.contains("offset_of!(Probe"), "{rust}");
-    // read and write still use the schema's offsets, gap and all.
     assert!(
         rust.contains("payload[8], payload[9], payload[10], payload[11]"),
         "{rust}"
     );
-    // The record next to it is a map of memory and still says so.
     assert!(
         rust.contains("const _: () = assert!(offset_of!(CommandSlot, frame_offset) == 4);"),
         "{rust}"
     );
 }
 
-/// `derive(Default)` reaches arrays only up to 32 elements. A longer one has to
-/// have the impl written out, or the generated file stops compiling for a
-/// reason that has nothing to do with the schema.
+/// `derive(Default)` reaches arrays only up to 32 elements.
 #[test]
 fn a_long_array_gets_a_written_default() {
     let schema = probe_schema(
@@ -235,8 +215,7 @@ fn a_long_array_gets_a_written_default() {
     );
 }
 
-/// The short arrays that fit keep the derive, so the written impl stays the
-/// exception rather than noise on every command.
+/// The arrays that fit keep the derive, so the written impl stays the exception.
 #[test]
 fn a_short_array_keeps_the_derived_default() {
     let schema = probe_schema(
@@ -258,8 +237,8 @@ fn the_base_schema_of_these_tests_is_sound() {
     assert_eq!(problems(VALID), "", "the schema the tests below break");
 }
 
-/// serde ignores an unknown key by default, so a misspelling in the one file
-/// that defines the boundary used to read as a line the author never wrote.
+/// serde ignores an unknown key by default, so a misspelling used to read as a
+/// line the author never wrote.
 #[test]
 fn a_key_the_generator_does_not_know_is_refused() {
     let misspelled = VALID.replace("atomic", "atomik").replace(
@@ -269,18 +248,16 @@ fn a_key_the_generator_does_not_know_is_refused() {
     assert!(problems(&misspelled).contains("atomik"), "{misspelled}");
 }
 
-/// The dangerous shape of the same bug: a flag whose absence turns a check off.
-/// `sharred = true` left `records.command_slot` unshared and every atomic rule
-/// unapplied, and said nothing.
+/// The dangerous shape of it: `sharred = true` left the record unshared and
+/// every atomic rule unapplied, without a word.
 #[test]
 fn a_misspelled_flag_is_not_read_as_an_absent_one() {
     let misspelled = VALID.replace("size = 32\n", "size = 32\nsharred = true\n");
     assert!(problems(&misspelled).contains("sharred"), "{misspelled}");
 }
 
-/// `major = 256` used to shift straight out of the version word: ABI_MAJOR said
-/// 256, ABI_VERSION reported 0, and only a TypeScript assertion noticed, at run
-/// time, in a file nobody reads when editing a schema.
+/// `major = 256` used to shift straight out of the version word, and only a
+/// TypeScript assertion noticed, at run time.
 #[test]
 fn an_abi_major_that_does_not_fit_its_byte_is_refused() {
     let too_big = VALID.replace("major = 0", "major = 256");
@@ -291,9 +268,8 @@ fn an_abi_major_that_does_not_fit_its_byte_is_refused() {
     assert_eq!(problems(&biggest), "", "255 still fits");
 }
 
-/// The command writers reach the slot header by name and by width. Renaming
-/// `kind` generated TypeScript that referred to an offset table entry which no
-/// longer existed — a `tsc` error in a file nobody edits.
+/// Renaming `kind` used to generate TypeScript referring to an offset table
+/// entry that no longer existed.
 #[test]
 fn the_slot_header_the_command_writers_address_is_required() {
     let renamed = VALID.replace(r#"name = "kind""#, r#"name = "opcode""#);
@@ -311,16 +287,14 @@ fn the_slot_header_the_command_writers_address_is_required() {
     );
 }
 
-/// Records and commands were checked against each other; enums were not, and
-/// nothing looked at the name the generator actually emits. `pub enum Probe`
-/// beside `pub struct Probe` is a Rust error in generated code.
+/// Enums were not checked against anything, and nothing looked at the name the
+/// generator actually emits.
 #[test]
 fn two_names_that_would_generate_one_type_are_refused() {
     let clashing = format!("{VALID}\n[enums.probe]\nrunning = 1\n");
     let found = problems(&clashing);
     assert!(found.contains("both generate the type Probe"), "{found}");
 
-    // The case that was already caught still is, through the same rule.
     let both = format!(
         "{VALID}\n[records.probe]\nsize = 4\nfields = [ {{ name = \"a\", type = \"u32\", offset = 0 }} ]\n"
     );
@@ -328,8 +302,7 @@ fn two_names_that_would_generate_one_type_are_refused() {
     assert!(found.contains("both generate the type Probe"), "{found}");
 }
 
-/// A repeated export is a repeated member of the generated interface, which
-/// TypeScript refuses, and a repeated entry in the list the host test uses.
+/// A repeated export is a repeated member of the generated interface.
 #[test]
 fn an_export_declared_twice_is_refused() {
     let twice = VALID.replace(
@@ -341,8 +314,7 @@ fn an_export_declared_twice_is_refused() {
 }
 
 /// `check` promised every problem at once and then returned at the first
-/// missing constant, so a schema with a typo in `[constants]` reported that and
-/// nothing else, run after run.
+/// missing constant.
 #[test]
 fn a_missing_constant_does_not_hide_the_rest_of_the_file() {
     let broken = VALID
@@ -367,9 +339,8 @@ fn a_missing_command_slot_does_not_hide_the_rest_of_the_file() {
     assert!(found.contains("share the code 1"), "{found}");
 }
 
-/// Everything `check` refuses, and the sentence it refuses it with. These are
-/// the rules the generator had from the start and never had a test for: the
-/// schema is written by hand, so the message is the whole user interface.
+/// Everything `check` refuses, and the sentence it refuses it with. The schema
+/// is written by hand, so the message is the whole user interface.
 #[test]
 fn check_names_what_is_wrong() {
     let broken = |from: &str, to: &str| VALID.replace(from, to);
@@ -492,8 +463,6 @@ fn check_names_what_is_wrong() {
         ),
     ];
 
-    // Report every case that does not hold, not the first: the point of the
-    // function under test is the same point.
     let mut failures = Vec::new();
     for (what, source, expected) in &cases {
         let found = problems(source);
@@ -504,9 +473,8 @@ fn check_names_what_is_wrong() {
     assert!(failures.is_empty(), "{}", failures.join("\n\n"));
 }
 
-/// A slot is reused. A writer that set only its own fields left the previous
-/// command's bytes in the rest of the payload, while the golden vectors
-/// asserted zeros there — a promise nothing kept.
+/// A slot is reused, and the golden vectors assert zeros in the payload — a
+/// promise nothing kept while a writer set only its own fields.
 #[test]
 fn a_command_writer_fills_the_whole_payload() {
     let schema = probe_schema(24, r#"{ name = "tempo", type = "u32", offset = 0 }"#, "");
@@ -521,8 +489,7 @@ fn a_command_writer_fills_the_whole_payload() {
         ts_of(&schema)
     );
 
-    // A command with no fields is the case that matters most: it used to write
-    // nothing into the payload at all.
+    // The case that matters most: this used to write nothing at all.
     let empty = probe_schema(24, "", "");
     assert!(
         rust_of(&empty).contains("*payload = [0u8; COMMAND_PAYLOAD_SIZE];"),
@@ -536,9 +503,8 @@ fn a_command_writer_fills_the_whole_payload() {
     );
 }
 
-/// ADR-0013 asks for a class-style accessor beside the free functions, for the
-/// cold path that reads the meters once a frame. It delegates to them rather
-/// than repeating the offsets, and takes only the arrays its fields need.
+/// The cold-path accessor of ADR-0013: it delegates rather than repeating the
+/// offsets, and takes only the arrays its fields need.
 #[test]
 fn a_record_gets_a_view_that_delegates() {
     let schema = probe_schema(
@@ -577,14 +543,12 @@ fields = [
         "{ts}"
     );
 
-    // A record with both kinds of field needs both arrays.
     assert!(
         ts.contains("constructor(view: DataView, atoms: Int32Array, base: number)"),
         "{ts}"
     );
 
-    // The slot's payload is an array, so it has no function to delegate to and
-    // no property; its header has both.
+    // The payload is an array: nothing to delegate to, so no property.
     assert!(ts.contains("export class CommandSlotView {"), "{ts}");
     assert!(
         ts.contains("return readCommandSlotKind(this.view, this.base)"),

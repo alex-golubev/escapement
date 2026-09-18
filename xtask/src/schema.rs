@@ -4,9 +4,8 @@
 // Nothing here computes a layout: every offset in the file is taken as given
 // and only tested for alignment, overlap and fit (ADR-0013).
 //
-// Every struct below refuses a key it does not know. The schema is the single
-// source for the boundary, and a key serde quietly ignores is a line the author
-// believes they wrote.
+// Every struct below refuses an unknown key: a key serde ignores is a line the
+// author believes they wrote.
 
 use crate::names::pascal;
 use serde::Deserialize;
@@ -134,8 +133,6 @@ impl Type {
         }
     }
 
-    /// A zero of this type, spelled so that it needs no inference: `[0u8; 4]`
-    /// carries its own type where `[0; 4]` would not.
     pub fn rust_zero(self) -> &'static str {
         match self {
             Type::U8 => "0u8",
@@ -159,10 +156,8 @@ impl Type {
         }
     }
 
-    /// `getUint8` and `setUint8` take no byte-order argument, because one byte
-    /// has no byte order. Every other accessor takes it and the generated code
-    /// always passes it (ADR-0013). Handing a third argument to `setUint8` is
-    /// not a harmless extra: TypeScript rejects the call.
+    /// `setUint8` takes no byte-order argument, and TypeScript rejects the
+    /// call that passes one.
     pub fn view_takes_endianness(self) -> bool {
         self.size() > 1
     }
@@ -192,9 +187,8 @@ impl Field {
         self.count != 1
     }
 
-    /// The spelling of this field in Rust. Records and commands ask the same
-    /// question and must get the same answer: a field that answered `u8` for a
-    /// count of eight would carry one byte of the eight the schema reserved.
+    /// Records and commands must get the same answer: a field that answered
+    /// `u8` for a count of eight would carry one byte of the eight.
     pub fn rust_type(&self) -> String {
         if self.is_array() {
             format!("[{}; {}]", self.ty.rust(), self.count)
@@ -211,8 +205,6 @@ impl Field {
         }
     }
 
-    /// An array field is passed as the typed array of its element type, never
-    /// as a single number.
     pub fn ts_type(&self) -> &'static str {
         if self.is_array() {
             self.ty.ts_array()
@@ -221,9 +213,7 @@ impl Field {
         }
     }
 
-    /// `derive(Default)` covers arrays only up to 32 elements, so a longer one
-    /// needs the impl written out. Asking here keeps that std detail in one
-    /// place instead of in the emitter's head.
+    /// `derive(Default)` covers arrays only up to 32 elements.
     pub fn needs_written_default(&self) -> bool {
         self.is_array() && self.count > 32
     }
@@ -243,10 +233,8 @@ impl Schema {
     pub fn check(&self) -> Result<(), Vec<String>> {
         let mut errors = Vec::new();
 
-        // The version word is the major number in its top byte and the schema
-        // hash in the rest, so a major that does not fit a byte is not a large
-        // version: it is a shifted-out one, and the engine would answer a
-        // number no plugin could match.
+        // The version word gives the major its top byte, so anything above
+        // 255 is not a large version but a shifted-out one.
         if self.abi.major > 0xff {
             errors.push(format!(
                 "abi.major is {}, but the ABI version word gives it one byte (0 to 255)",
@@ -262,11 +250,9 @@ impl Schema {
         }
 
         if let Some(slot) = slot {
-            // Every command writer spells the slot header out: the TypeScript
-            // one writes `CommandSlotOffsets.kind` with `setUint32`. Renaming
-            // either field, or narrowing it, used to generate a file that does
-            // not compile, so the dependency is stated here rather than
-            // assumed there.
+            // Every command writer spells the slot header out, so renaming or
+            // narrowing either field would generate a file that does not
+            // compile. Stated here rather than assumed there.
             for (header, expected) in [("kind", Type::U32), ("frame_offset", Type::U32)] {
                 match slot.fields.iter().find(|field| field.name == header) {
                     None => errors.push(format!(
@@ -357,9 +343,7 @@ impl Schema {
         }
 
         // An enum, a record and a command each generate one type, and the
-        // three share a namespace in both languages. This subsumes the plain
-        // case of one name used twice: `records.play` and `commands.play` both
-        // arrive here as `Play`.
+        // three share a namespace in both languages.
         let mut generated: BTreeMap<String, String> = BTreeMap::new();
         let declared = self
             .enums
@@ -376,9 +360,8 @@ impl Schema {
             }
         }
 
-        // A repeated export is a repeated member of the generated TypeScript
-        // interface, which does not compile, and a repeated entry in the list
-        // the wasm host test checks a module against.
+        // A repeated export is a repeated member of the generated interface,
+        // which does not compile.
         let mut exported: Vec<&str> = Vec::new();
         for export in &self.exports {
             if exported.contains(&export.name.as_str()) {
@@ -392,8 +375,6 @@ impl Schema {
             if kinds.is_none_or(|k| !k.contains_key(name)) {
                 errors.push(format!("commands.{name} has no code in enums.command_kind"));
             }
-            // Only the offsets need the payload constants; everything else
-            // about a command can still be judged without them.
             if let (Some(offset), Some(size)) = (payload_offset, payload_size) {
                 check_fields(
                     &mut errors,
@@ -431,8 +412,7 @@ impl Schema {
         }
     }
 
-    /// A constant the caller can carry on without: missing is an error like any
-    /// other, not a reason to stop looking at the rest of the file.
+    /// Missing is an error like any other, not a reason to stop looking.
     fn optional_constant(&self, errors: &mut Vec<String>, name: &str) -> Option<usize> {
         match self.constant(name) {
             Ok(value) => Some(value),

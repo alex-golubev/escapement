@@ -1,14 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //
-// The Rust half of the boundary.
-//
-// A record is a map of memory: it is reinterpreted from bytes, so every offset
-// the schema states is repeated here as a static assertion and a disagreement
-// between the schema and rustc is a build error rather than a click in the
-// audio (ADR-0013).
-//
-// A command is a value: `read` and `write` marshal it field by field at the
-// schema's offsets, so the struct's own layout carries no meaning and is not
+// The Rust half of the boundary. A record is a map of memory, so its offsets
+// are repeated as static assertions and rustc has the final word (ADR-0013).
+// A command is a value, marshalled field by field, so its layout is not
 // asserted (ADR-0017).
 
 use crate::names::{pascal, screaming};
@@ -28,9 +22,8 @@ pub fn emit(schema: &Schema, abi_version: u32, abi_hash: u32) -> String {
          #![allow(dead_code)]\n"
     );
 
-    // size_of has been in the prelude since 1.80; offset_of! is a macro and is
-    // not, so it is imported rather than written out at every assertion. Only
-    // records assert offsets, so only records can call for the import.
+    // offset_of! is a macro and not in the prelude. Only records assert
+    // offsets, so only records call for the import.
     let asserts_offsets = schema
         .records
         .values()
@@ -187,18 +180,15 @@ pub fn emit(schema: &Schema, abi_version: u32, abi_hash: u32) -> String {
             out,
             "    pub fn write(&self, payload: &mut [u8; COMMAND_PAYLOAD_SIZE]) {{"
         );
-        // A slot is reused. A writer that set only its own fields would leave
-        // the previous command's bytes in the rest of the payload, so the whole
-        // of it is cleared first and the fields written over the zeros.
+        // A slot is reused: clearing it is what keeps the previous command's
+        // bytes out of this one.
         let _ = writeln!(out, "        *payload = [0u8; COMMAND_PAYLOAD_SIZE];");
         for field in &command.fields {
             let _ = writeln!(out, "{}", write_statements(field));
         }
         let _ = writeln!(out, "    }}\n}}\n");
 
-        // The size assertion stays (ADR-0015): a command must fit the payload.
-        // The offset assertions do not, because nothing reads this struct as
-        // memory — `read` and `write` above use the schema's offsets directly.
+        // No offset assertion: nothing reads this struct as memory (ADR-0017).
         let _ = writeln!(
             out,
             "const _: () = assert!(size_of::<{type_name}>() <= {payload_size});\n"
@@ -229,7 +219,6 @@ pub fn emit(schema: &Schema, abi_version: u32, abi_hash: u32) -> String {
     out
 }
 
-/// `payload[4], payload[5], …` for a value starting at a literal offset.
 fn bytes_at(offset: usize, size: usize) -> String {
     (0..size)
         .map(|i| format!("payload[{}]", offset + i))
@@ -237,7 +226,6 @@ fn bytes_at(offset: usize, size: usize) -> String {
         .join(", ")
 }
 
-/// The same for a value starting at the loop's `at`.
 fn bytes_from_at(size: usize) -> String {
     (0..size)
         .map(|i| {
@@ -251,9 +239,8 @@ fn bytes_from_at(size: usize) -> String {
         .join(", ")
 }
 
-/// Where element `i` of an array field begins. Written so that neither `+ 0`
-/// nor `* 1` reaches the output: clippy denies both and CI runs it with
-/// `-D warnings`.
+/// Neither `+ 0` nor `* 1` may reach the output: clippy denies both, and CI
+/// runs it with `-D warnings`.
 fn element_at(field: &Field) -> String {
     let stride = field.ty.size();
     match (field.offset, stride) {
@@ -264,8 +251,7 @@ fn element_at(field: &Field) -> String {
     }
 }
 
-/// The expression that reads one field out of `payload`. A single byte has no
-/// byte order, so it is taken directly rather than through `from_le_bytes`.
+/// A single byte has no byte order, so it skips `from_le_bytes`.
 fn read_value(field: &Field) -> String {
     let size = field.ty.size();
     let ty = field.ty.rust();
@@ -282,8 +268,7 @@ fn read_value(field: &Field) -> String {
     } else {
         format!("{ty}::from_le_bytes([{}])", bytes_from_at(size))
     };
-    // `iter_mut().enumerate()` rather than `for i in 0..n`, which clippy
-    // rejects as needless_range_loop when the index is used to index.
+    // `for i in 0..n` here is clippy's needless_range_loop.
     format!(
         "{{\nlet mut out = {};\nfor (i, element) in out.iter_mut().enumerate() {{\nlet at = {};\n*element = {element};\n}}\nout\n}}",
         field.rust_zero(),
@@ -291,7 +276,6 @@ fn read_value(field: &Field) -> String {
     )
 }
 
-/// The statements that write one field into `payload`.
 fn write_statements(field: &Field) -> String {
     let size = field.ty.size();
     if !field.is_array() {
