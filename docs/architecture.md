@@ -64,7 +64,7 @@ Browser (Chromium)
   - `Operations` — domain operations on the document;
   - `Document` — the Yjs document, projections into atoms;
   - `Collab` — `HocuspocusProvider`, presence;
-  - `Engine` — the bridge to the AudioWorklet: commands, SAB, crash recovery;
+  - `Engine` — the bridge to the AudioWorklet: commands, SAB, crash recovery; it and the ring below it live in `packages/engine-host` ([ADR-0019](adr/0019-typescript-engine-host.md));
   - `Transport` — play/stop, position, tempo;
   - `Selection`, `Undo`, `Assets`, `Api` (`HttpApiClient` from `packages/api`).
 - **Editors** (piano roll, playlist, waveforms, meters) are drawn on canvas (WebGL/WebGPU). The frame function is plain TS with no Effect.
@@ -154,6 +154,7 @@ crates/
 schema/           declarative schema of the engine ↔ TS boundary (generation source)
 packages/
   protocol        generated boundary code: shared-memory layout and types
+  engine-host     ring, worklet glue, Engine service (ADR-0019)
   document        Schema for project entities, domain operations
   api             HttpApi definition, shared by server and client
   plugin-sdk      plugin contract for TS
