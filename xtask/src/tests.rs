@@ -3,6 +3,9 @@
 // The generator's own tests. The production schema uses one corner of what the
 // schema language allows, so each test here is a bug that lived in another
 // corner until review found it.
+//
+// `main` is left out: it is argv and an exit code, and reaching it means
+// running the binary. Everything under it is covered from here.
 
 use crate::schema::Schema;
 use crate::{emit_rust, emit_ts};
@@ -116,7 +119,19 @@ fn a_command_array_carries_every_byte_it_reserves() {
         "{rust}"
     );
 
-    assert!(ts.contains("gains: Float32Array"), "{ts}");
+    // The writer walks the same stride back out.
+    assert!(
+        rust.contains("let bytes = self.gains[3].to_le_bytes();"),
+        "{rust}"
+    );
+    assert!(rust.contains("payload[20] = bytes[0];"), "{rust}");
+
+    assert!(
+        ts.contains(
+            "export function writeProbe(view: DataView, slot: number, frameOffset: number, gains: Float32Array): void {"
+        ),
+        "{ts}"
+    );
     assert!(ts.contains("for (let i = 0; i < 4; i++)"), "{ts}");
     assert!(
         ts.contains(
@@ -218,6 +233,7 @@ fn a_command_may_leave_a_gap_and_asserts_no_layout() {
         "{rust}"
     );
     assert!(!rust.contains("offset_of!(Probe"), "{rust}");
+    assert!(rust.contains("use core::mem::offset_of;"), "{rust}");
     assert!(
         rust.contains("payload[8], payload[9], payload[10], payload[11]"),
         "{rust}"
@@ -622,6 +638,37 @@ fields = [
     assert!(!ts.contains("payload: readCommandSlotPayload"), "{ts}");
 }
 
+/// An Atomics index counts elements, not bytes — one of the three things
+/// ADR-0013 says are written wrong exactly once by hand. The call sites were
+/// tested; the index inside them was not.
+#[test]
+fn an_atomic_accessor_indexes_by_element() {
+    let schema = probe_schema(
+        24,
+        r#"{ name = "tempo", type = "u32", offset = 0 }"#,
+        r#"
+[records.meters]
+size = 8
+shared = true
+fields = [
+  { name = "level", type = "i32", offset = 0, atomic = true },
+  { name = "peak", type = "i32", offset = 4, atomic = true },
+]
+"#,
+    );
+    let ts = ts_of(&schema);
+
+    for expected in [
+        "return Atomics.load(atoms, base >> 2)",
+        "Atomics.store(atoms, base >> 2, value)",
+        "return Atomics.load(atoms, (base + 4) >> 2)",
+        "Atomics.store(atoms, (base + 4) >> 2, value)",
+        " * @param atoms - An `Int32Array` over the shared buffer `meters` lives in.",
+    ] {
+        assert!(ts.contains(expected), "missing {expected:?} in:\n{ts}");
+    }
+}
+
 /// The identifiers a generated file declares at its top level.
 fn declared(source: &str, visibility: &str, keywords: &[&str]) -> BTreeSet<String> {
     source
@@ -808,6 +855,17 @@ fn a_doc_of_several_lines_keeps_its_line_breaks() {
     );
 }
 
+/// A doc the schema author emptied is not a doc: an empty block is prose
+/// nothing reads, in the hover a caller opened for the field.
+#[test]
+fn an_empty_doc_writes_no_block() {
+    let schema = parse(&VALID.replace("probe = 1", r#"probe = { value = 1, doc = "" }"#));
+    let ts = ts_of(&schema);
+
+    assert!(!ts.contains("  /**\n   */"), "{ts}");
+    assert!(ts.contains("  probe: 1,"), "{ts}");
+}
+
 /// The ABI version is what the boundary is, not how the file is written. A
 /// bumped version tells every plugin author that an offset moved, so editing a
 /// comment must not move it.
@@ -820,6 +878,80 @@ fn prose_is_not_part_of_the_abi() {
     );
 }
 
+/// The other half of it: what must move the version. A hash that answered the
+/// same for two boundaries would let a plugin built against one load against
+/// the other.
+#[test]
+fn editing_the_boundary_moves_the_hash() {
+    let base = crate::abi_hash(&parse(VALID));
+    let edits = [
+        (
+            "an offset",
+            VALID.replace(
+                r#"{ name = "tempo", type = "u32", offset = 0 }"#,
+                r#"{ name = "tempo", type = "u32", offset = 4 }"#,
+            ),
+        ),
+        (
+            "a type",
+            VALID.replace(
+                r#"name = "tempo", type = "u32""#,
+                r#"name = "tempo", type = "i32""#,
+            ),
+        ),
+        (
+            "a count",
+            VALID.replace(
+                r#"{ name = "tempo", type = "u32", offset = 0 }"#,
+                r#"{ name = "tempo", type = "u32", count = 2, offset = 0 }"#,
+            ),
+        ),
+        (
+            "a name",
+            VALID.replace(r#"name = "tempo""#, r#"name = "bpm""#),
+        ),
+        ("an enum code", VALID.replace("probe = 1", "probe = 2")),
+        (
+            "a constant",
+            VALID.replace(
+                "command_payload_size = 24",
+                "command_payload_size = 24\nmicro_bpm_min = 10",
+            ),
+        ),
+        (
+            "an export",
+            VALID.replace(
+                "exports = []",
+                r#"exports = [{ name = "init", returns = "u32" }]"#,
+            ),
+        ),
+        ("the major", VALID.replace("major = 0", "major = 1")),
+    ];
+    for (what, edited) in edits {
+        assert_ne!(base, crate::abi_hash(&parse(&edited)), "{what}");
+    }
+
+    // The same fields in another order are the same boundary.
+    let reordered = VALID.replace(
+        "  { name = \"kind\", type = \"u32\", offset = 0 },\n  { name = \"frame_offset\", type = \"u32\", offset = 4 },\n",
+        "  { name = \"frame_offset\", type = \"u32\", offset = 4 },\n  { name = \"kind\", type = \"u32\", offset = 0 },\n",
+    );
+    assert_ne!(reordered, VALID, "the fixture reorders something");
+    assert_eq!(base, crate::abi_hash(&parse(&reordered)));
+}
+
+/// The version word is the major in its top byte and the hash in the rest
+/// (ADR-0015). The schema has stood at major 0, where the shift and the mask
+/// are both invisible.
+#[test]
+fn the_version_word_carries_the_major_in_its_top_byte() {
+    assert_eq!(crate::abi_version(255, 0xdead_beef), 0xffad_beef);
+    assert_eq!(crate::abi_version(1, 0), 0x0100_0000);
+    // The top byte of the hash belongs to the major and never reaches the word.
+    assert_eq!(crate::abi_version(0, 0xff00_0000), 0);
+    assert_ne!(crate::abi_version(1, 7), crate::abi_version(2, 7));
+}
+
 /// A documented value is a table, and an untagged enum would have reported a
 /// misspelled key in it as a value matching no shape — the same silence
 /// `deny_unknown_fields` exists to break.
@@ -827,6 +959,21 @@ fn prose_is_not_part_of_the_abi() {
 fn a_misspelled_key_beside_a_doc_is_refused() {
     let misspelled = VALID.replace("probe = 1", r#"probe = { value = 1, dock = "why" }"#);
     assert!(problems(&misspelled).contains("dock"), "{misspelled}");
+}
+
+/// A value that is neither a number nor a table is a shape the schema language
+/// does not have, and the message has to name the shapes it does.
+#[test]
+fn a_value_that_is_neither_a_number_nor_a_table_says_so() {
+    let wrong = VALID.replace(
+        "command_payload_size = 24",
+        r#"command_payload_size = "twenty-four""#,
+    );
+    let found = problems(&wrong);
+    assert!(
+        found.contains("a number, or a table of `value` and `doc`"),
+        "{found}"
+    );
 }
 
 /// The offset was all TypeScript got, so the length of the region it points at
@@ -884,6 +1031,12 @@ fn a_command_writer_carries_one_block_and_every_parameter() {
     let ts = ts_of(&parse(&source));
 
     assert!(!ts.contains("*/\n/**"), "one block per declaration:\n{ts}");
+    assert!(
+        ts.contains(
+            "export function writeProbe(view: DataView, slot: number, frameOffset: number, tempo: number): void {"
+        ),
+        "{ts}"
+    );
     for expected in [
         " * What the probe does.\n *\n * Writes a complete `probe` slot",
         " * @param view - ",
@@ -954,6 +1107,19 @@ returns = "u32"
     )
 }
 
+/// The wasm host test checks the built module against this list (ADR-0015), so
+/// a list carrying the memory export instead of the functions would check the
+/// wrong thing and pass.
+#[test]
+fn the_export_list_holds_the_functions() {
+    let rust = rust_of(&every_shape());
+
+    assert!(
+        rust.contains("pub const EXPORT_FUNCTIONS: [&str; 1] = [\n    \"process\",\n];"),
+        "{rust}"
+    );
+}
+
 /// This is the Apache-licensed surface plugin authors build against, so an
 /// export without a doc block is a hole in their reference — and the holes were
 /// found by eye twice, in a snapshot reader and in a view helper.
@@ -995,4 +1161,73 @@ fn every_exported_name_carries_a_doc() {
         .map(|(_, line)| line.trim_start())
         .collect();
     assert!(bare.is_empty(), "undocumented in Rust: {bare:#?}");
+}
+
+/// A directory of this test's own, outside the workspace and empty to start.
+fn scratch(what: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!("xtask-{what}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    dir
+}
+
+/// `generate` reads the schema and writes both files through this path, and a
+/// root pointing anywhere else would be found only by running the task.
+#[test]
+fn the_workspace_root_is_where_the_schema_is() {
+    assert!(crate::workspace_root().join(crate::SCHEMA_PATH).is_file());
+}
+
+/// The emitter does not think about line widths: the pinned rustfmt formats
+/// what it writes, and a failure there is an error rather than a file written
+/// as it came.
+#[test]
+fn the_emitted_rust_comes_back_formatted() {
+    let formatted =
+        crate::rustfmt("pub const A:u32=1;").expect("rustfmt is in the pinned toolchain");
+
+    assert_eq!(formatted, "pub const A: u32 = 1;\n");
+}
+
+/// CI regenerates and fails on a difference, so a write that decided nothing
+/// had changed would leave a stale file behind a green build.
+#[test]
+fn a_file_is_written_when_and_only_when_it_changes() {
+    let dir = scratch("write");
+    let path = dir.join("protocol").join("generated.rs");
+
+    crate::write_if_changed(&path, "first").expect("the directory is made on the way");
+    assert_eq!(std::fs::read_to_string(&path).expect("written"), "first");
+
+    crate::write_if_changed(&path, "second").expect("a second run rewrites it");
+    assert_eq!(std::fs::read_to_string(&path).expect("rewritten"), "second");
+
+    crate::write_if_changed(&path, "second").expect("and leaves it alone");
+    assert_eq!(std::fs::read_to_string(&path).expect("kept"), "second");
+
+    std::fs::remove_dir_all(&dir).expect("the fixture cleans up after itself");
+}
+
+/// The task end to end, in a root of its own. CI regenerates and fails on a
+/// difference, which says nothing about a generator that writes nothing at all:
+/// the committed files are compared with themselves.
+#[test]
+fn the_task_writes_the_files_that_are_committed() {
+    let root = crate::workspace_root();
+    let into = scratch("generate");
+    let schema = into.join(crate::SCHEMA_PATH);
+    std::fs::create_dir_all(schema.parent().expect("the schema sits in a directory"))
+        .expect("a root to generate into");
+    std::fs::copy(root.join(crate::SCHEMA_PATH), &schema).expect("the schema is copied");
+
+    crate::generate(&into).expect("the task runs");
+
+    for out in [crate::RUST_OUT, crate::TS_OUT] {
+        assert_eq!(
+            std::fs::read_to_string(into.join(out)).expect("the task wrote it"),
+            std::fs::read_to_string(root.join(out)).expect("the committed file reads"),
+            "{out} is stale: run `cargo xtask generate`"
+        );
+    }
+
+    std::fs::remove_dir_all(&into).expect("the fixture cleans up after itself");
 }
