@@ -216,18 +216,26 @@ fn commands_match_their_vectors() {
 
 /// The generated codes are what a third-party host or plugin SDK implements
 /// against, and [ADR-0011] counts them among what the golden vectors fix. Both
-/// sides read them from the file rather than from each other.
+/// sides read them from the file rather than from each other, and both
+/// directions are checked: a variant gives its code, and the code names the
+/// variant back.
 #[test]
 fn enum_codes_match_their_vector() {
     let all = vectors();
 
     let kinds = &find(&all, "enums", "enum", "command_kind")["codes"];
-    assert_eq!(CommandKind::Play.code(), number(kinds, "play"));
-    assert_eq!(CommandKind::Stop.code(), number(kinds, "stop"));
-    assert_eq!(CommandKind::SetTempo.code(), number(kinds, "set_tempo"));
+    for (kind, named) in [
+        (CommandKind::Play, "play"),
+        (CommandKind::Stop, "stop"),
+        (CommandKind::SetTempo, "set_tempo"),
+    ] {
+        let code = number(kinds, named);
+        assert_eq!(kind.code(), code, "{named}");
+        assert_eq!(CommandKind::from_code(code), Some(kind), "{named}");
+    }
 
     let errors = &find(&all, "enums", "enum", "engine_error")["codes"];
-    for (code, expected) in [
+    for (error, named) in [
         (EngineError::Ok, "ok"),
         (EngineError::UnknownCommandKind, "unknown_command_kind"),
         (EngineError::BadFrameCount, "bad_frame_count"),
@@ -238,12 +246,20 @@ fn enum_codes_match_their_vector() {
         (EngineError::BadFrameOffset, "bad_frame_offset"),
         (EngineError::CommandsOutOfOrder, "commands_out_of_order"),
     ] {
-        assert_eq!(code.code(), number(errors, expected), "{expected}");
+        let code = number(errors, named);
+        assert_eq!(error.code(), code, "{named}");
+        assert_eq!(EngineError::from_code(code), Some(error), "{named}");
     }
 
     let transport = &find(&all, "enums", "enum", "transport_state")["codes"];
-    assert_eq!(TransportState::Stopped.code(), number(transport, "stopped"));
-    assert_eq!(TransportState::Playing.code(), number(transport, "playing"));
+    for (state, named) in [
+        (TransportState::Stopped, "stopped"),
+        (TransportState::Playing, "playing"),
+    ] {
+        let code = number(transport, named);
+        assert_eq!(state.code(), code, "{named}");
+        assert_eq!(TransportState::from_code(code), Some(state), "{named}");
+    }
 }
 
 /// A plane of samples has no byte vector, so what the two sides have to agree
@@ -282,9 +298,12 @@ fn array_fields_match_their_vector() {
     assert_eq!(COMMAND_PAYLOAD_SIZE as u32, number(payload, "length"));
 }
 
+/// A code no variant has is not a variant: the engine answers
+/// `unknown_command_kind` rather than reading the slot as something else.
 #[test]
-fn unknown_command_codes_are_rejected() {
-    assert_eq!(CommandKind::from_code(1), Some(CommandKind::Play));
+fn codes_no_variant_has_are_rejected() {
     assert_eq!(CommandKind::from_code(0), None);
     assert_eq!(CommandKind::from_code(u32::MAX), None);
+    assert_eq!(EngineError::from_code(9), None);
+    assert_eq!(TransportState::from_code(2), None);
 }
