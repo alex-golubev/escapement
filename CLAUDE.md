@@ -15,6 +15,8 @@ pnpm check                       # biome, tsc, vitest
 
 cargo xtask generate             # regenerate the boundary; CI fails on drift
 pnpm format                      # biome format --write .
+cargo mutants --workspace        # mutation testing (ADR-0021); a pull request runs its own diff
+pnpm mutate                      # the same for TypeScript, through Stryker
 
 # a single test
 cargo test -p xtask check_names_what_is_wrong

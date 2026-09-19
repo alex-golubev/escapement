@@ -1,0 +1,65 @@
+# Third-party actions are pinned by commit SHA, not by tag (ADR-0014).
+name: mutants
+
+on:
+  pull_request:
+  schedule:
+    # Weekly, early Monday. The whole workspace is minutes today and grows with
+    # the engine (ADR-0021).
+    - cron: "17 4 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The diff a pull request is measured against needs its base branch.
+          fetch-depth: 0
+      - run: rustup show
+      - uses: taiki-e/install-action@9114bf4d891761788c546334fd37538eae1bf8b3 # v2.87.16
+        with:
+          tool: cargo-mutants@27.1.0
+      # A pull request pays for the code it changed; the whole workspace is the
+      # schedule's job (ADR-0021). A branch name is not interpolated into the
+      # script: it comes from the pull request and reaches the shell as data.
+      - name: mutants in what this pull request changes
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          git diff "origin/$BASE_REF...HEAD" > "$RUNNER_TEMP/pull-request.diff"
+          cargo mutants --workspace --in-diff "$RUNNER_TEMP/pull-request.diff"
+      - name: every mutant in the workspace
+        if: github.event_name != 'pull_request'
+        run: cargo mutants --workspace
+
+  ts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: corepack enable
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # Seconds for the whole surface, so there is nothing to scope to a diff
+      # here yet (ADR-0021). Stryker warns and exits zero when its glob matches
+      # no file, so green would otherwise be indistinguishable from measuring
+      # nothing at all.
+      - name: mutants in the TypeScript half
+        run: |
+          set -o pipefail
+          pnpm mutate | tee "$RUNNER_TEMP/stryker.log"
+          if grep -q "No files found for mutation" "$RUNNER_TEMP/stryker.log"; then
+            echo "::error::the mutate glob matched no file, so nothing was measured"
+            exit 1
+          fi
