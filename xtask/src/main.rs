@@ -23,7 +23,7 @@ const TS_OUT: &str = "packages/protocol/src/generated.ts";
 fn main() -> ExitCode {
     let task = std::env::args().nth(1);
     match task.as_deref() {
-        Some("generate") => match generate() {
+        Some("generate") => match generate(&workspace_root()) {
             Ok(()) => ExitCode::SUCCESS,
             Err(message) => {
                 eprintln!("{message}");
@@ -53,8 +53,9 @@ fn workspace_root() -> PathBuf {
         .to_path_buf()
 }
 
-fn generate() -> Result<(), String> {
-    let root = workspace_root();
+/// `root` is the workspace the task reads and writes in; the binary always
+/// passes the one it was built in.
+fn generate(root: &Path) -> Result<(), String> {
     let source = std::fs::read_to_string(root.join(SCHEMA_PATH))
         .map_err(|err| format!("cannot read {SCHEMA_PATH}: {err}"))?;
     let schema: Schema =
@@ -69,12 +70,19 @@ fn generate() -> Result<(), String> {
     })?;
 
     let hash = abi_hash(&schema);
-    let version = (schema.abi.major << 24) | (hash & 0x00ff_ffff);
+    let version = abi_version(schema.abi.major, hash);
 
     let rust = rustfmt(&emit_rust::emit(&schema, version, hash))?;
     write_if_changed(&root.join(RUST_OUT), &rust)?;
     write_if_changed(&root.join(TS_OUT), &emit_ts::emit(&schema, version, hash))?;
     Ok(())
+}
+
+/// The word the engine reports from `abi_version` (ADR-0015): the major in the
+/// top byte, the hash of the schema in the three below it. `check` keeps the
+/// major inside that byte.
+fn abi_version(major: u32, hash: u32) -> u32 {
+    (major << 24) | (hash & 0x00ff_ffff)
 }
 
 /// A hash of what the boundary *is*, not of how the file is written. Editing a
