@@ -9,10 +9,12 @@
     "check": "biome ci . && tsc --noEmit -p packages/protocol && vitest run",
     "format": "biome format --write .",
     "test": "vitest run",
+    "mutate": "stryker run",
     "generate": "cargo xtask generate"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.14",
+    "@stryker-mutator/core": "10.0.0",
     "@types/node": "^26.6.1",
     "typescript": "6.0.3",
     "vitest": "5.0.1"

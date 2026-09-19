@@ -1,0 +1,15 @@
+# Mutation testing (ADR-0021). `cargo mutants` reads this file by itself.
+#
+# Every line here is a mutant no test can kill, with the reason it cannot. A
+# mutant that is merely untested does not belong here: it belongs in a test.
+exclude_re = [
+  # argv and an exit code. Reaching it means running the binary, which CI does
+  # on every pull request.
+  'replace main -> ExitCode',
+  # `(major << 24) | (hash & 0x00ff_ffff)`: the operands share no bit, so OR
+  # and XOR write the same word for every input.
+  'replace \| with \^ in abi_version',
+  # A command with no fields has one value, and it is also its default. This
+  # line goes the day `stop` carries a field.
+  'replace Stop::read -> Self',
+]

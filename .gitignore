@@ -9,6 +9,8 @@ target/
 fuzz/target/
 fuzz/corpus/
 fuzz/artifacts/
+# cargo-mutants, which rotates the previous run into mutants.out.old
+mutants.out*/
 # wasm-pack / wasm-bindgen output
 pkg/
 wasm-pack.log
@@ -32,6 +34,9 @@ build/
 # --- Tests and coverage ---
 coverage/
 .nyc_output/
+# Stryker's sandbox and its reports
+.stryker-tmp/
+reports/
 
 # --- Environment and secrets ---
 .env
