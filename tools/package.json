@@ -1,6 +1,8 @@
 {
   "name": "@escapement/tools",
   "version": "0.0.0",
+  "description": "Repository scripts: code generation from the engine schema and the plugin catalog, and the debug samples.",
+  "license": "AGPL-3.0-only",
   "private": true,
   "type": "module",
   "exports": {

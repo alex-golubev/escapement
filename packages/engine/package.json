@@ -1,6 +1,8 @@
 {
   "name": "@escapement/engine",
   "version": "0.0.0",
+  "description": "Runs the audio engine in the browser: the WebAssembly build thread, the AudioWorklet and the shared memory between them.",
+  "license": "AGPL-3.0-only",
   "private": true,
   "type": "module",
   "exports": {

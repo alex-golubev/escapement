@@ -1,6 +1,8 @@
 {
   "name": "@escapement/compiler",
   "version": "0.0.0",
+  "description": "Turns the project into what the engine plays, sending only what changed.",
+  "license": "AGPL-3.0-only",
   "private": true,
   "type": "module",
   "exports": {

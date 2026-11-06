@@ -1,6 +1,8 @@
 {
   "name": "@escapement/engine-description",
   "version": "0.0.0",
+  "description": "What the engine and the page agree on: time, notes, the plugin catalog and its parameters.",
+  "license": "AGPL-3.0-only",
   "private": true,
   "type": "module",
   "exports": {
