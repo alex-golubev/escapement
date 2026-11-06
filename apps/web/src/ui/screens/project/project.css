@@ -1,0 +1,8 @@
+/* The transport on top, the hint line at the foot, the desk with the windows between. */
+.app {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: calc(var(--u) * 2);
+  height: 100%;
+  padding: calc(var(--u) * 2);
+}

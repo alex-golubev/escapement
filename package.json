@@ -1,0 +1,30 @@
+{
+  "name": "escapement",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@12.16.1",
+  "devEngines": {
+    "runtime": {
+      "name": "node",
+      "version": "^26.12.0",
+      "onFail": "error"
+    }
+  },
+  "scripts": {
+    "dev": "pnpm --filter @escapement/engine build:wasm && pnpm --filter @escapement/web dev",
+    "build": "pnpm --filter @escapement/engine build:wasm && pnpm --filter @escapement/web build",
+    "gen": "pnpm --filter @escapement/tools gen",
+    "samples": "pnpm --filter @escapement/tools samples",
+    "format": "biome format --write && cargo fmt",
+    "test": "biome check --error-on-warnings && cargo fmt --check && pnpm -r typecheck && pnpm -r test && cargo test",
+    "test:e2e": "pnpm --filter @escapement/web test:e2e",
+    "test:property": "pnpm --filter @escapement/engine build:wasm && pnpm --filter @escapement/compiler test:property",
+    "typecheck": "pnpm -r typecheck",
+    "prepare": "effect-tsgo patch --typescript"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.14",
+    "@effect/tsgo": "0.63.0",
+    "typescript": "7.0.2"
+  }
+}

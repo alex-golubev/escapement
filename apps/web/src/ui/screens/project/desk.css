@@ -1,0 +1,177 @@
+/* The windows on the desk, in the interface's language: dockview's theme set from the tokens. */
+.dockview-theme-escapement {
+  color-scheme: dark;
+
+  --dv-group-view-background-color: var(--s-strip);
+  --dv-tabs-and-actions-container-background-color: var(--s-strip);
+  --dv-tabs-and-actions-container-height: 28px;
+  --dv-tabs-and-actions-container-font-size: 11px;
+  --dv-tabs-container-scrollbar-color: var(--line);
+  --dv-tab-font-size: inherit;
+  --dv-tab-margin: 0;
+  --dv-tab-divider-color: var(--line-soft);
+  --dv-activegroup-visiblepanel-tab-background-color: var(--s-strip);
+  --dv-activegroup-hiddenpanel-tab-background-color: var(--s-sunk);
+  --dv-inactivegroup-visiblepanel-tab-background-color: var(--s-strip);
+  --dv-inactivegroup-hiddenpanel-tab-background-color: var(--s-sunk);
+  --dv-activegroup-visiblepanel-tab-color: var(--t-hi);
+  --dv-activegroup-hiddenpanel-tab-color: var(--t-mid);
+  --dv-inactivegroup-visiblepanel-tab-color: var(--t-hi);
+  --dv-inactivegroup-hiddenpanel-tab-color: var(--t-lo);
+  --dv-separator-border: var(--line-soft);
+  --dv-paneview-header-border-color: var(--line-soft);
+  --dv-paneview-active-outline-color: var(--focus);
+  --dv-icon-hover-background-color: var(--s-raise);
+
+  /* Where a dragged window would land: a lighter shade, as the playhead, no colour of its own. */
+  --dv-drag-over-background-color: color-mix(in srgb, var(--t-hi) 8%, transparent);
+  --dv-drag-over-border-color: var(--line);
+  --dv-drag-over-border: none;
+  --dv-edge-dock-indicator-color: var(--t-mid);
+
+  --dv-floating-box-shadow: 0 0 0 1px var(--line-soft), 0 10px 30px rgb(0 0 0 / 0.45);
+  --dv-floating-border: none;
+  --dv-floating-group-border: none;
+  --dv-floating-group-dragging-opacity: 0.85;
+  --dv-floating-titlebar-height: 10px;
+  --dv-floating-titlebar-background-color: var(--s-strip);
+  --dv-floating-titlebar-border-bottom: none;
+
+  --dv-border-radius: var(--r-lg);
+  --dv-tab-border-radius: 0px;
+  --dv-sash-border-radius: 0px;
+  --dv-dropdown-border-radius: var(--r-md);
+  --dv-sash-color: transparent;
+  --dv-active-sash-color: var(--line);
+  --dv-active-sash-transition-duration: 0.1s;
+  --dv-active-sash-transition-delay: 0.3s;
+  --dv-spacing-padding: 0px;
+  --dv-tab-close-icon-size: inherit;
+  --dv-overlay-z-index: 999;
+
+  --dv-tab-group-color-grey: var(--t-lo);
+  --dv-tab-group-color-blue: var(--t-lo);
+  --dv-tab-group-color-red: var(--t-lo);
+  --dv-tab-group-color-yellow: var(--t-lo);
+  --dv-tab-group-color-green: var(--t-lo);
+  --dv-tab-group-color-pink: var(--t-lo);
+  --dv-tab-group-color-purple: var(--t-lo);
+  --dv-tab-group-color-cyan: var(--t-lo);
+  --dv-tab-group-color-orange: var(--t-lo);
+  --dv-tab-group-chip-padding: 4px 8px;
+  --dv-tab-group-chip-border-radius: var(--r-md);
+  --dv-tab-group-chip-font-size: 11px;
+  --dv-tab-group-line-height: 2px;
+  --dv-tab-group-line-opacity: 0.6;
+}
+
+/* The desk the windows stand on: as deep as the page, so they stand out on it. */
+.desk {
+  min-height: 0;
+}
+
+.desk .dv-dockview {
+  background-color: var(--s-well);
+}
+
+.desk .dv-groupview,
+.desk .dv-resize-container {
+  border-radius: var(--r-lg);
+}
+
+.desk .dv-groupview {
+  overflow: hidden;
+}
+
+.desk .dv-tabs-and-actions-container {
+  border-bottom: 1px solid var(--line-soft);
+}
+
+/* ─── Tab ────────────────────────────────────────────────────────────────── */
+
+/* A window's title: the old title bar, now a tab that moves and docks the window. */
+.dock-tab {
+  display: flex;
+  align-items: baseline;
+  gap: calc(var(--u) * 2);
+  height: 100%;
+  padding: 0 4px 0 10px;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.dock-tab__sub {
+  color: var(--t-mid);
+  font-weight: 400;
+}
+
+.dock-tab__close {
+  display: grid;
+  place-items: center;
+  align-self: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: none;
+  color: var(--t-lo);
+  cursor: pointer;
+}
+
+.dock-tab__close:hover {
+  background: var(--s-raise);
+  color: var(--t-hi);
+}
+
+.dock-tab__close svg {
+  width: 10px;
+  height: 10px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+}
+
+/* ─── Body ───────────────────────────────────────────────────────────────── */
+
+/* Its padding as a variable, so what pins itself inside can reach past it to the window's edge. A swipe across it
+   scrolls it, not the page back. */
+.dock-body {
+  --dock-pad: calc(var(--u) * 2);
+
+  display: block;
+  height: 100%;
+  padding: var(--dock-pad);
+  overflow: auto;
+  overscroll-behavior-x: none;
+}
+
+/* As wide as what is in it, not the window, and holding its children's margins: the window is fitted to it. */
+.dock-fit {
+  display: flow-root;
+  width: max-content;
+}
+
+/* The strip a floating window moves by, whatever its width: a grip in the middle says so. */
+.desk .dv-floating-titlebar {
+  position: relative;
+  cursor: grab;
+}
+
+.desk .dv-floating-titlebar::after {
+  content: "";
+  position: absolute;
+  left: calc(50% - 12px);
+  top: 4px;
+  width: 24px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--line);
+}
+
+/* A body that fills its window, as the piano roll's grid does, has nothing past it to scroll to. */
+.dock-body--fill {
+  overflow: hidden;
+}

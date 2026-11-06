@@ -1,0 +1,23 @@
+[target.wasm32-unknown-unknown]
+rustflags = [
+  "-C", "target-feature=+simd128",
+  # Shared memory needs atomics, which only this unstable flag enables.
+  "-Z", "llvm-target-feature=+atomics",
+  "-C", "link-arg=--shared-memory",
+  "-C", "link-arg=--import-memory",
+  # Must match `memoryPages` in packages/engine/src/memory.ts.
+  "-C", "link-arg=--initial-memory=2097152",
+  "-C", "link-arg=--max-memory=4294967296",
+  # Each thread takes its own stack and thread-local data with these; see `packages/engine/src/threads.ts`.
+  "-C", "link-arg=--export=__stack_pointer",
+  "-C", "link-arg=--export=__stack_low",
+  "-C", "link-arg=--export=__stack_high",
+  "-C", "link-arg=--export=__wasm_init_tls",
+  "-C", "link-arg=--export=__tls_base",
+  "-C", "link-arg=--export=__tls_size",
+  "-C", "link-arg=--export=__tls_align",
+]
+
+# Only builds with `--target` rebuild std: every wasm build, never the native tests.
+[unstable]
+build-std = ["panic_abort", "std"]

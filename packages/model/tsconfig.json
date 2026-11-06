@@ -1,0 +1,9 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // The server reads projects in Node, the page in the browser: `tsconfig.browser.json` checks the other.
+    "lib": ["ES2024"],
+    "types": ["node"]
+  },
+  "include": ["src"]
+}

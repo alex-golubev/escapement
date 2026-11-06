@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Escapement</title>
+    <script>
+      // Served without cross-origin isolation, so the browser gave this page a process of its own and ends the one the
+      // app left, with its hung audio thread. Straight back, only ever to this site.
+      const back = (() => {
+        try {
+          return new URL(sessionStorage.getItem('escapement.back') ?? '/', location.href)
+        } catch {
+          return new URL('/', location.href)
+        }
+      })()
+      location.replace(back.origin === location.origin ? back.href : '/')
+    </script>
+  </head>
+</html>

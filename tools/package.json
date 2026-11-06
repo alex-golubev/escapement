@@ -1,0 +1,25 @@
+{
+  "name": "@escapement/tools",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./hash": "./src/hash.ts"
+  },
+  "scripts": {
+    "gen": "node src/gen.ts",
+    "samples": "node src/samples.ts",
+    "typecheck": "tsc",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@effect/platform-node": "4.1.1",
+    "effect": "4.1.1",
+    "fflate": "^0.8.3"
+  },
+  "devDependencies": {
+    "@effect/vitest": "4.1.1",
+    "@types/node": "^26.6.5",
+    "vitest": "^5.0.2"
+  }
+}

@@ -1,0 +1,116 @@
+.transport {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: calc(var(--u) * 2);
+  padding: 6px 8px;
+  border-radius: var(--r-md);
+  background: var(--s-strip);
+  box-shadow: 0 0 0 1px var(--line-soft);
+}
+
+.transport__group {
+  display: flex;
+  align-items: center;
+  gap: var(--u);
+}
+
+.transport__rule {
+  width: 1px;
+  align-self: stretch;
+  background: var(--line-soft);
+}
+
+.transport .field {
+  width: 52px;
+  font-size: 13px;
+}
+
+/* Two halves of one switch, Pattern and Arrangement. */
+.play-mode {
+  display: flex;
+  gap: 2px;
+}
+
+/* As wide as a name it is likely to show; a longer one is cut short, whole in the hint. */
+.pattern-pick {
+  display: inline-flex;
+  gap: 6px;
+  justify-content: space-between;
+  width: 112px;
+  color: var(--t-hi);
+}
+
+.pattern-pick__name {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* In the name's place, as wide. */
+.pattern-pick__field {
+  width: 112px;
+  height: 26px;
+  padding: 0 8px;
+  font-size: 11px;
+}
+
+.pattern-pick svg {
+  flex: none;
+  width: 10px;
+  height: 10px;
+}
+
+/* What is wrong, on the right; nothing while all is well. */
+.status {
+  display: flex;
+  gap: calc(var(--u) * 3);
+  margin-left: auto;
+  color: var(--t-mid);
+  font-size: 11px;
+}
+
+.status__notice {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Red is an alarm: something is lost or stopped. */
+.status__notice[data-alarm="true"] {
+  color: var(--t-hi);
+}
+
+.status__notice[data-alarm="true"]::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--clip);
+}
+
+/* A window's button: in sight, a lamp lights under its name, in the colour of what is yours alone; a lamp, not a
+ * fill, as three lit names side by side would flood the bar. */
+.btn--window {
+  position: relative;
+}
+
+.btn--window::after {
+  content: "";
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: 3px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--line);
+}
+
+.btn--window[aria-pressed="true"] {
+  color: var(--t-hi);
+}
+
+.btn--window[aria-pressed="true"]::after {
+  background: var(--local);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--local) 55%, transparent);
+}

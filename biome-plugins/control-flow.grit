@@ -1,0 +1,40 @@
+// biome.jsonc leaves out what the architecture keeps plain JS: the threads, the protocol, the frame, the synthesis. Its
+// patterns match the whole path, so they start with **. A file mixing plain JS with Effect marks each place instead.
+language js
+
+or {
+  or {
+    JsIfStatement(),
+    JsConditionalExpression(),
+    JsSwitchStatement()
+  } as $branch where {
+    register_diagnostic(span=$branch, message="Choose with Effect, not if, ?: or switch: Option, Boolean.match, Match, $match, or a lookup in a record.", severity="error")
+  },
+  or {
+    JsExpressionStatement(expression=JsLogicalExpression()),
+    JsAssignmentExpression() as $assignment where {
+      $assignment <: or {
+        contains `??=`,
+        contains `||=`,
+        contains `&&=`
+      }
+    }
+  } as $short where {
+    register_diagnostic(span=$short, message="A && or || run for its effect, or ??=, ||= or &&=, is an if: use Effect.when, Option.match or Boolean.match.", severity="error")
+  },
+  or {
+    JsWhileStatement(),
+    JsDoWhileStatement(),
+    JsForStatement(),
+    JsForOfStatement(),
+    JsForInStatement()
+  } as $loop where {
+    register_diagnostic(span=$loop, message="Repeat with Effect.repeat and a Schedule, or with Array's functions, not a loop.", severity="error")
+  },
+  or {
+    JsTryStatement(),
+    JsTryFinallyStatement()
+  } as $try where {
+    register_diagnostic(span=$try, message="Handle failures with Effect (Effect.try, catchTag, ensuring), not try.", severity="error")
+  }
+}

@@ -1,0 +1,128 @@
+/* A fader and its scale side by side; `--fader-h` and `--cap-h` come from `fader.tsx`, whose drag is the cap's travel. */
+.fader-with-scale {
+  display: flex;
+  align-items: flex-start;
+  gap: 2px;
+}
+
+/* `--v` is the position, from 0 at the bottom to 1 at the top. */
+.fader {
+  --v: 0;
+  position: relative;
+  width: 30px;
+  height: var(--fader-h);
+  flex: none;
+  cursor: ns-resize;
+  touch-action: none;
+  user-select: none;
+}
+
+.fader:focus-visible {
+  border-radius: var(--r-sm);
+}
+
+.fader__track {
+  position: absolute;
+  left: calc(50% - 3px);
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  border-radius: 3px;
+  background: var(--s-sunk);
+  box-shadow: inset 0 1px 2px rgb(0 0 0 / 0.6);
+}
+
+/* What the cap's middle passes over, not the whole height: at either end the cap would stick out past the track. */
+.fader__travel {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(var(--cap-h) / 2);
+  bottom: calc(var(--cap-h) / 2);
+}
+
+.fader__fill {
+  position: absolute;
+  left: calc(50% - 2px);
+  width: 4px;
+  bottom: 0;
+  height: calc(var(--v) * 100%);
+  border-radius: 2px;
+  background: var(--value);
+}
+
+.fader__cap {
+  position: absolute;
+  left: 1px;
+  right: 1px;
+  bottom: calc(var(--v) * 100%);
+  height: var(--cap-h);
+  transform: translateY(50%);
+  border-radius: var(--r-sm);
+  background: linear-gradient(180deg, #39414d, #232a33);
+  border: 1px solid #10141a;
+  box-shadow: 0 2px 4px rgb(0 0 0 / 0.55);
+}
+
+/* A notch in the cap's middle, for the eye to set it by. */
+.fader__cap::after {
+  content: "";
+  position: absolute;
+  left: 4px;
+  right: 4px;
+  top: calc(50% - 1px);
+  height: 2px;
+  border-radius: 1px;
+  background: #0d1116;
+  box-shadow: 0 1px 0 rgb(255 255 255 / 0.06);
+}
+
+.fader:hover .fader__cap {
+  background: linear-gradient(180deg, #424b58, #29313b);
+}
+
+.fader-scale {
+  position: relative;
+  width: 22px;
+  height: var(--fader-h);
+  flex: none;
+}
+
+/* Bare, the marks alone. */
+.fader-scale[data-numbered="false"] {
+  width: 3px;
+}
+
+.fader-scale__inner {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(var(--cap-h) / 2);
+  bottom: calc(var(--cap-h) / 2);
+}
+
+/* `--t` is where the mark stands along the travel, as the fader's `--v`. */
+.fader-scale__tick {
+  position: absolute;
+  left: 0;
+  bottom: calc(var(--t) * 100%);
+  transform: translateY(50%);
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 8px;
+  line-height: 1;
+  color: var(--t-lo);
+  white-space: nowrap;
+}
+
+.fader-scale__tick::before {
+  content: "";
+  width: 3px;
+  height: 1px;
+  background: var(--line);
+}
+
+.fader-scale__tick[data-unity="true"] {
+  color: var(--t-mid);
+}

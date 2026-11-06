@@ -1,0 +1,28 @@
+# SetParam {"node":1,"param":2,"value":0.5}
+0d000000 01010000 00020000 00000000
+3f
+# SetParam {"node":1,"param":1,"value":0.25}
+0d000000 01010000 00010000 00000080
+3e
+# AfterBatch {"batch":7}
+05000000 02070000 00
+# NoteOn {"node":1,"key":60,"velocity":0.75,"note":7}
+11000000 03010000 003c0000 00000040
+3f070000 00
+# SetTempo {"bpm":128.5}
+05000000 04008000 43
+# SetTransport {"playing":true,"loopTicks":3840,"arrangement":true}
+0d000000 05010000 00000f00 00010000
+00
+# SetTransport {"playing":false,"loopTicks":4294967295,"arrangement":false}
+0d000000 05000000 00ffffff ff000000
+00
+# PanicAudio {"code":7}
+05000000 06070000 00
+# HangAudio {"code":8}
+05000000 07080000 00
+# NoteOff {"node":1,"note":7}
+09000000 08010000 00070000 00
+# SetStripParam {"node":1,"param":2,"value":-0.5}
+0d000000 09010000 00020000 00000000
+bf

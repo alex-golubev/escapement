@@ -1,0 +1,52 @@
+/* The roll fills its window: the grid follows the window's size, not the window the grid's. Its colours are read by
+   the canvases it draws on: rows a black key's deeper, lines brighter from a step's to a bar's, keys light as on a
+   piano. */
+.roll {
+  --roll-white-row: #12161b;
+  --roll-black-row: #0b0d10;
+  --roll-row-line: #171b20;
+  --roll-octave-line: #262b33;
+  --roll-step-line: #1a1e24;
+  --roll-beat-line: #2a3039;
+  --roll-bar-line: #3a414c;
+  --roll-past: rgb(10 12 15 / 0.6);
+  --roll-white-key: #c9ced6;
+  --roll-key-edge: #8a919b;
+  --roll-black-key: #0e1114;
+  --roll-pressed-key: var(--shared);
+  --roll-key-name: #3b424c;
+  --roll-note-edge: #b97a22;
+
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  border-radius: var(--r-md);
+  background: var(--s-well);
+  box-shadow: inset 0 0 0 1px var(--line-soft);
+  touch-action: none;
+}
+
+.roll canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  /* The roll takes the pointer: a canvas holding it would let go of it under the roll's capture. */
+  pointer-events: none;
+}
+
+.roll-none {
+  margin: 0;
+  padding: calc(var(--u) * 2);
+  color: var(--t-mid);
+  font-size: 11px;
+}
+
+.roll[data-grab="move"] {
+  cursor: move;
+}
+
+.roll[data-grab="stretch"] {
+  cursor: ew-resize;
+}

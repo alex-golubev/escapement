@@ -1,0 +1,147 @@
+/* The panel above, the hint line at the foot, as on a project's page. */
+.projects-screen {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  height: 100%;
+  padding: calc(var(--u) * 2);
+}
+
+/* A panel in the middle of the page, standing on it as a window stands on the desk. */
+.projects {
+  display: grid;
+  justify-items: center;
+  align-content: start;
+  height: 100%;
+  padding: calc(var(--u) * 16) calc(var(--u) * 4);
+  overflow: auto;
+}
+
+.projects__panel {
+  width: min(100%, 520px);
+  border-radius: var(--r-md);
+  background: var(--s-strip);
+  box-shadow:
+    0 0 0 1px var(--line-soft),
+    0 10px 30px rgb(0 0 0 / 0.45);
+  overflow: hidden;
+}
+
+.projects__head {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--u) * 2);
+  padding: 8px 8px 8px 12px;
+}
+
+.projects__title {
+  flex: 1;
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.projects__list {
+  --bin: 30px;
+  display: grid;
+  background: var(--s-sunk);
+  border-top: 1px solid var(--line-soft);
+}
+
+.projects__row {
+  display: flex;
+  align-items: center;
+  min-height: 34px;
+  padding-right: 4px;
+}
+
+.projects__row + .projects__row {
+  border-top: 1px solid var(--line-soft);
+}
+
+.projects__row:hover {
+  background: var(--s-raise);
+}
+
+.projects__open {
+  display: flex;
+  flex: 1;
+  align-items: baseline;
+  gap: calc(var(--u) * 4);
+  min-width: 0;
+  padding: 9px 8px 9px 12px;
+  color: var(--t-hi);
+  text-decoration: none;
+}
+
+.projects__open:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+
+/* Out of sight until the row is pointed at or has the focus, but in the order of Tab all the same; always in sight
+   where nothing points. */
+.projects__delete {
+  width: var(--bin);
+  min-width: 0;
+  opacity: 0;
+}
+
+.projects__row:hover .projects__delete,
+.projects__row:focus-within .projects__delete {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .projects__delete {
+    opacity: 1;
+  }
+}
+
+/* The date stays where it was: the bin's place is kept. */
+.projects__open--editing {
+  margin-right: var(--bin);
+}
+
+.projects__delete:hover:not(:disabled) {
+  color: var(--clip);
+}
+
+/* Its letters where the name's were. */
+.projects__field {
+  flex: 1;
+  margin: -3px 0 -3px -5px;
+  padding: 2px 4px;
+}
+
+.projects__row--asking {
+  gap: calc(var(--u) * 2);
+  padding-left: 12px;
+  background: var(--s-raise);
+}
+
+.projects__ask {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.projects__name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.projects__opened {
+  color: var(--t-lo);
+  font-size: 11px;
+}
+
+.projects__note {
+  margin: 0;
+  padding: 12px;
+  border-top: 1px solid var(--line-soft);
+  color: var(--t-mid);
+}

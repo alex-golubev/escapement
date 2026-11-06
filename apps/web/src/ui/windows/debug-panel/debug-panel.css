@@ -1,0 +1,25 @@
+/* The slice's checks: lines of numbers and the buttons that break things on purpose. */
+.debug {
+  max-width: 72ch;
+  color: var(--t-mid);
+  font-size: 11px;
+}
+
+.debug p,
+.debug ul {
+  margin: 0 0 calc(var(--u) * 2);
+}
+
+.debug ul {
+  padding-left: calc(var(--u) * 4);
+}
+
+.debug output {
+  color: var(--t-hi);
+  font-family: var(--font-num);
+  font-variant-numeric: tabular-nums;
+}
+
+.debug .btn {
+  margin: 0 var(--u) var(--u) 0;
+}

@@ -1,0 +1,17 @@
+/* A group's name, then its controls, as an oscillator's: in a row, unless the window says otherwise. */
+.control-group {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--u) * 3);
+}
+
+.control-group__name {
+  white-space: nowrap;
+}
+
+/* The controls' names stand on one line at the bottom, so a row of buttons stands where the knobs' numbers do. */
+.control-group__controls {
+  display: flex;
+  align-items: flex-end;
+  gap: calc(var(--u) * 3);
+}

@@ -1,0 +1,26 @@
+{
+  "name": "@escapement/compiler",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p . && tsc -p test",
+    "test": "vitest run",
+    "test:property": "PROPERTY_RUNS=1000 vitest run test/steps.test.ts"
+  },
+  "devDependencies": {
+    "@effect/vitest": "4.1.1",
+    "@types/node": "^26.6.5",
+    "vitest": "^5.0.2",
+    "yjs": "13.6.33"
+  },
+  "dependencies": {
+    "@escapement/engine": "workspace:*",
+    "@escapement/engine-description": "workspace:*",
+    "@escapement/model": "workspace:*",
+    "effect": "4.1.1"
+  }
+}

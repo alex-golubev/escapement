@@ -1,0 +1,85 @@
+/* A knob with its name, as on the master strip: the dial, its number under it, then its name. */
+.param {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--u);
+}
+
+/* At least as wide as the widest number the knob reads (`--chars`), so nothing moves as it turns. */
+.param .field {
+  min-width: calc(var(--chars) * 1ch + 8px);
+}
+
+.param .cap {
+  line-height: 1;
+}
+
+/* A 270° sweep, from seven o'clock to five; `--v` is the position, from 0 to 1, and `--zero` where the parameter's zero
+   stands: the arc runs between them, from the start for most, from the middle for a pan. */
+.knob {
+  --v: 0;
+  --zero: 0;
+  --sweep: 270deg;
+  --from: 225deg;
+  --angle: calc(var(--v) * var(--sweep));
+  --origin: calc(var(--zero) * var(--sweep));
+  --lo: min(var(--angle), var(--origin));
+  --hi: max(var(--angle), var(--origin));
+
+  position: relative;
+  width: var(--knob-d);
+  height: var(--knob-d);
+  flex: none;
+  cursor: ns-resize;
+  touch-action: none;
+  user-select: none;
+}
+
+.knob:focus-visible {
+  border-radius: 50%;
+}
+
+.knob__arc {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: conic-gradient(
+    from var(--from),
+    var(--line) 0 var(--lo),
+    var(--value) var(--lo) var(--hi),
+    var(--line) var(--hi) var(--sweep),
+    transparent var(--sweep)
+  );
+  mask: radial-gradient(closest-side, transparent 71%, #000 72%);
+}
+
+.knob__body {
+  position: absolute;
+  inset: 5px;
+  border-radius: 50%;
+  background: linear-gradient(180deg, var(--s-raise), #191d24);
+  border: 1px solid var(--line-soft);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.5);
+}
+
+.knob__hand {
+  position: absolute;
+  inset: 0;
+  transform: rotate(calc(-135deg + var(--angle)));
+}
+
+.knob__hand::before {
+  content: "";
+  position: absolute;
+  left: calc(50% - 1px);
+  top: 15%;
+  width: 2px;
+  height: 21%;
+  border-radius: 1px;
+  background: var(--t-hi);
+}
+
+.knob:hover .knob__body {
+  border-color: var(--line);
+}

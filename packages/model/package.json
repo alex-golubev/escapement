@@ -1,0 +1,23 @@
+{
+  "name": "@escapement/model",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p . && tsc -p tsconfig.browser.json && tsc -p test",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "vitest": "^5.0.2"
+  },
+  "dependencies": {
+    "@escapement/engine-description": "workspace:*",
+    "effect": "4.1.1",
+    "fractional-indexing": "4.0.0",
+    "yjs": "13.6.33"
+  }
+}

@@ -1,0 +1,9 @@
+.idea/
+node_modules/
+target/
+dist/
+test-results/
+playwright-report/
+blob-report/
+packages/engine/wasm/
+.DS_Store

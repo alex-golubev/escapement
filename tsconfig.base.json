@@ -1,0 +1,101 @@
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noEmit": true,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
+    "skipLibCheck": true,
+    "plugins": [
+      {
+        "name": "@effect/language-service",
+        // Suggestions fail the check too: one we disagree with gets turned off, with the reason.
+        "ignoreEffectSuggestionsInTscExitCode": false,
+        // Each turned on by the task that removed its last breach.
+        "diagnosticSeverity": {
+          "globalConsole": "error",
+          "globalConsoleInEffect": "error",
+          "cryptoRandomUUID": "error",
+          "cryptoRandomUUIDInEffect": "error",
+          "newPromise": "error",
+          "globalTimers": "error",
+          "globalTimersInEffect": "error",
+          "asyncFunction": "error",
+          "nodeBuiltinImport": "error",
+          "globalFetch": "error",
+          "globalFetchInEffect": "error",
+          "globalDate": "error",
+          "globalDateInEffect": "error",
+          "globalRandom": "error",
+          "globalRandomInEffect": "error",
+          "processEnv": "error",
+          "processEnvInEffect": "error",
+          "schemaSync": "error",
+          "schemaSyncInEffect": "error"
+        },
+        // Unstable on purpose: what Effect has for the task, we take.
+        "allowedUnstableApis": [
+          "effect/reactivity",
+          "@effect/atom-react",
+          "effect/http",
+          "effect/crypto",
+          "effect/persistence",
+          "@effect/platform-browser"
+        ],
+        // Paths count from this file's folder, the repository's root; a pattern ends in a file name, as `**` alone matches none.
+        "overrides": [
+          {
+            // Playwright runs a test as an async function: a short script of what a person does on the page.
+            "include": ["apps/web/e2e/**/*.ts"],
+            "options": {
+              "diagnosticSeverity": {
+                "asyncFunction": "off"
+              }
+            }
+          },
+          {
+            // The build thread is plain JS, timers included.
+            "include": ["packages/engine/src/build-thread/**/*.ts"],
+            "options": {
+              "diagnosticSeverity": {
+                "globalTimers": "off"
+              }
+            }
+          },
+          {
+            "include": ["**/*.test.ts"],
+            "options": {
+              "allowedUnstableApis": [
+                "effect/reactivity",
+                "@effect/atom-react",
+                "effect/http",
+                "effect/crypto",
+                "effect/persistence",
+                "@effect/platform-browser",
+                "effect/Arbitrary",
+                "@effect/vitest"
+              ]
+            }
+          },
+          {
+            // Files and programs: only the scripts and their tests get them.
+            "include": ["tools/**/*.ts"],
+            "options": {
+              "allowedUnstableApis": [
+                "effect/http",
+                "effect/crypto",
+                "effect/FileSystem",
+                "effect/PlatformError",
+                "effect/process",
+                "@effect/platform-node",
+                "@effect/vitest"
+              ]
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

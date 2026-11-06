@@ -1,0 +1,10 @@
+/* As wide as the last insert's number; a row of channels makes room for it by `--insert-w`. */
+.insert-field {
+  width: var(--insert-w, 28px);
+  flex: none;
+}
+
+/* A number being typed, not yet kept. */
+.insert-field[data-typing="true"] {
+  box-shadow: inset 0 0 0 1px var(--focus);
+}

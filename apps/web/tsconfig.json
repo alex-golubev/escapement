@@ -1,0 +1,16 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2024", "DOM", "DOM.Iterable"],
+    "types": ["vite/client"],
+    "jsx": "react-jsx",
+    "jsxImportSource": "preact",
+    // The page's react is Preact: the Effect hooks it runs are typed against it.
+    "paths": { "react": ["./node_modules/preact/compat"], "react-dom": ["./node_modules/preact/compat"] },
+    // The sample manifest is built into the page.
+    "resolveJsonModule": true,
+    // Vite's config names the file it imports, as its own loader will want.
+    "allowImportingTsExtensions": true
+  },
+  "include": ["src", "vite.config.ts", "vitest.config.ts"]
+}

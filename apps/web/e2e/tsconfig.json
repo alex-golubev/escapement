@@ -1,0 +1,9 @@
+{
+  "extends": "../../../tsconfig.base.json",
+  "compilerOptions": {
+    // The functions the tests hand to the page run there.
+    "lib": ["ES2024", "DOM"],
+    "types": ["node"]
+  },
+  "include": [".", "../playwright.config.ts"]
+}

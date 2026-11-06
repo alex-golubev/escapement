@@ -1,0 +1,76 @@
+/* As the system's menus are, so it reads as one and not as another window: see-through over what it opens on,
+   as large as the windows' text, under the name of what it acts on. No line of it wraps: it stretches to its longest,
+   a long name too, wherever it stands, where one that wrapped would shrink to the room the page's edge leaves it. */
+.menu {
+  position: fixed;
+  inset: auto;
+  min-width: 112px;
+  /* Only a name longer than the page is cut short. */
+  max-width: calc(100vw - 8px);
+  margin: 0;
+  padding: 4px 0;
+  border: 1px solid color-mix(in srgb, var(--t-hi) 14%, transparent);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--s-raise) 82%, transparent);
+  backdrop-filter: blur(14px) saturate(1.3);
+  box-shadow:
+    0 10px 28px rgb(0 0 0 / 0.6),
+    inset 0 1px 0 rgb(255 255 255 / 0.04);
+  color: var(--t-mid);
+  font: 11px / 1.3 var(--font);
+}
+
+.menu:popover-open {
+  display: flex;
+  flex-direction: column;
+}
+
+.menu:focus {
+  outline: none;
+}
+
+.menu__title {
+  padding: 3px 10px 4px;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--t-lo);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.menu__item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 4px;
+  padding: 4px 10px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  white-space: nowrap;
+  cursor: default;
+}
+
+.menu__item:is(:hover, :focus-visible) {
+  outline: none;
+  background: color-mix(in srgb, var(--t-hi) 11%, transparent);
+  color: var(--t-hi);
+}
+
+.menu__item svg {
+  width: 11px;
+  height: 11px;
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: 0.8;
+}

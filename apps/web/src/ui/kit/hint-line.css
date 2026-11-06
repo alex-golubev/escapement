@@ -1,0 +1,13 @@
+/* What is under the hand and whose it is: read at once, without waiting for a tooltip. */
+.hint {
+  min-height: 26px;
+  padding: 5px 10px;
+  border-radius: var(--r-md);
+  background: var(--s-sunk);
+  box-shadow: inset 0 0 0 1px var(--line-soft);
+  color: var(--t-mid);
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

@@ -1,0 +1,11 @@
+# CommandRejected {"epoch":7,"reason":"UnknownTarget"}
+09000000 01070000 00020000 00
+# CommandRejected {"epoch":7,"reason":"InvalidValue"}
+09000000 01070000 00030000 00
+# CommandRejected {"epoch":7,"reason":"Malformed"}
+09000000 01070000 00000000 00
+# EditRejected {"epoch":7,"batch":3,"reason":"UnknownPlugin"}
+0d000000 03070000 00030000 00040000
+00
+# CommandStreamLost {"epoch":7}
+05000000 02070000 00

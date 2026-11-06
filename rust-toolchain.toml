@@ -1,0 +1,4 @@
+[toolchain]
+# Nightly for `-Z build-std`: shared WebAssembly memory needs std built with atomics.
+channel = "nightly-2026-09-29"
+components = ["rust-src", "rustfmt", "clippy"]

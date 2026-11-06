@@ -1,0 +1,48 @@
+{
+  "samples": [
+    {
+      "name": "Kick",
+      "file": "kick.wav",
+      "sha256": "89493e6230a8651242c59a0398d2eef54a071d9bcd527762b2cb83a8915435f7",
+      "seconds": 0.7,
+      "author": "Escapement",
+      "source": "tools/src/sounds.ts",
+      "recipe": "kick",
+      "license": "CC0-1.0",
+      "created": "2026-10-05"
+    },
+    {
+      "name": "Snare",
+      "file": "snare.wav",
+      "sha256": "c8c6f58ec32fb4fe909eb24f6f8209e54f05393641c41b68a14212bd07927cb9",
+      "seconds": 0.3,
+      "author": "Escapement",
+      "source": "tools/src/sounds.ts",
+      "recipe": "snare",
+      "license": "CC0-1.0",
+      "created": "2026-10-05"
+    },
+    {
+      "name": "Closed hat",
+      "file": "hat.wav",
+      "sha256": "ad353afcef54b0ad6601307223d29080525e82d525286bf9bf7d0ef3c13781ec",
+      "seconds": 0.12,
+      "author": "Escapement",
+      "source": "tools/src/sounds.ts",
+      "recipe": "hat",
+      "license": "CC0-1.0",
+      "created": "2026-10-05"
+    },
+    {
+      "name": "Clap",
+      "file": "clap.wav",
+      "sha256": "e3251b2d96f067b471734c51d7f3302641f6f0011b9b245c249a1c1fa0bfc2d2",
+      "seconds": 0.35,
+      "author": "Escapement",
+      "source": "tools/src/sounds.ts",
+      "recipe": "clap",
+      "license": "CC0-1.0",
+      "created": "2026-10-05"
+    }
+  ]
+}

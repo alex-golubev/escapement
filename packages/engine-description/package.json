@@ -1,0 +1,20 @@
+{
+  "name": "@escapement/engine-description",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./contract": "./src/contract.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p . && tsc -p test",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "vitest": "^5.0.2"
+  },
+  "dependencies": {
+    "effect": "4.1.1"
+  }
+}

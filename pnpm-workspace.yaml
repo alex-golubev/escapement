@@ -1,0 +1,9 @@
+packages:
+  - apps/*
+  - packages/*
+  - tools
+
+peerDependencyRules:
+  allowedVersions:
+    # The page's react is Preact: @preact/compat goes by React 18, and the hooks it runs work on it.
+    '@effect/atom-react>react': '18.3.2'

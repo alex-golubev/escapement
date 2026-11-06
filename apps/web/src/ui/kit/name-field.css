@@ -1,0 +1,15 @@
+/* Sunk, as text being typed; the edge stays quiet, the ground and the caret show where the typing goes. Below any
+   rule of the place it stands in, whatever order the sheets load in. */
+:where(.name-field) {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--s-sunk);
+  color: var(--t-hi);
+  font: inherit;
+}
+
+.name-field:focus {
+  outline: none;
+  border-color: color-mix(in srgb, var(--t-hi) 20%, transparent);
+}

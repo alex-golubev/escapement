@@ -1,0 +1,274 @@
+// Contract between the page and the engine. Both rings carry messages of a size prefix, a kind and that kind's
+// record. Records are structs: fixed size, no offsets inside, so any bytes of the right size read as valid values.
+// Device edits go to the build thread as batches: tables, checked there. Sounds to store go to it on their own, as
+// plain arrays of numbers; only the reasons for refusing one are here.
+
+// Kinds start at 1, so zeroed bytes are no known command.
+enum CommandKind : ubyte { SetParam = 1, AfterBatch, NoteOn, SetTempo, SetTransport, PanicAudio, HangAudio, NoteOff, SetStripParam }
+
+struct SetParam {
+  /// A node's handle: its cell from 1 in the low 16 bits, the cell's generation above.
+  node: uint32;
+  /// The parameter's place in its plugin's description, from 1; 0 is none.
+  param: uint32;
+  value: float32;
+}
+
+/// A note from the start of the next block.
+struct NoteOn {
+  /// As in `SetParam`.
+  node: uint32;
+  /// A MIDI key, 0 to 127; 60 is middle C.
+  key: ubyte;
+  /// From 0 to 1; past them it is clamped.
+  velocity: float32;
+  /// Names the note until it is let go of: the page's own, below 2^31, which the pattern's notes don't take.
+  note: uint32;
+}
+
+/// Lets go of the note pressed with `note` from the start of the next block.
+struct NoteOff {
+  /// As in `SetParam`.
+  node: uint32;
+  /// As in `NoteOn`.
+  note: uint32;
+}
+
+/// A parameter of the node's strip, its volume and pan after whatever the node does.
+struct SetStripParam {
+  /// As in `SetParam`.
+  node: uint32;
+  /// The parameter's place in the engine's strip, from 1; 0 is none.
+  param: uint32;
+  value: float32;
+}
+
+/// From the start of the next block; a new engine plays at 120 until told.
+struct SetTempo {
+  /// Quarter notes a minute; past 10 to 522 it is clamped.
+  bpm: float32;
+}
+
+/// The whole state of the transport, not a press of a button: sent again, it changes nothing.
+struct SetTransport {
+  /// Stopped to playing starts at the beginning; playing to stopped goes back to it.
+  playing: bool;
+  /// Ticks, 960 to a quarter note, from 1; a position past a new end wraps around.
+  loop_ticks: uint32;
+  /// What the loop plays, the arrangement or a pattern alone, so the page knows what it hears: the engine plays either
+  /// the same, and only says it back in its telemetry.
+  arrangement: bool;
+}
+
+/// The audio thread panics, so the page's recovery can be checked; the code goes into the panic's message.
+struct PanicAudio {
+  code: uint32;
+}
+
+/// The audio thread loops for ever, so the page's recovery can be checked; the code only marks the press.
+struct HangAudio {
+  code: uint32;
+}
+
+/// The batch's parcel is applied right here, so it keeps its place among live edits; until it arrives, the ring
+/// waits. Another batch next in line is a rejection.
+struct AfterBatch {
+  batch: uint32;
+}
+
+/// Starts a new session: every node, pattern and clip is removed.
+table Reset {
+  epoch: uint32;
+}
+
+struct ParamValue {
+  /// As in `SetParam`.
+  param: uint32;
+  value: float32;
+}
+
+/// A sample's sound, named by the SHA-256 of its file.
+struct SampleSound {
+  /// The sample's place in its plugin's description, from 1; 0 is none.
+  sample: uint32;
+  hash: [ubyte:32];
+}
+
+table CreateNode {
+  /// As in `SetParam`; the page hands handles out.
+  node: uint32;
+  plugin: uint32;
+  version: uint32;
+  /// Set before the node's first block; the rest start at their defaults.
+  params: [ParamValue];
+  /// A sound the engine doesn't have yet is silent until it is stored; samples left out have none.
+  samples: [SampleSound];
+  /// As `params`, numbered as in `SetStripParam`.
+  strip: [ParamValue];
+}
+
+/// The node heard at the engine's output.
+table SetOutput {
+  node: uint32;
+}
+
+/// `to` hears `from`: a node's input is the sum of its connections' outputs.
+table Connect {
+  from: uint32;
+  to: uint32;
+}
+
+/// The node and its connections fade out; its cell is free at once.
+table DestroyNode {
+  node: uint32;
+}
+
+/// A mixer insert: a node of the engine's core, not a plugin in a slot. It passes on the sum of what it hears.
+table CreateInsert {
+  node: uint32;
+  /// As in `CreateNode`.
+  strip: [ParamValue];
+  /// The meter of what it passes on, for the page, by its number from 1 to `engine_meters`: the board's record says
+  /// whose it is. None without.
+  meter: uint32 = null;
+}
+
+/// `to` stops hearing `from`: the connection fades out.
+table Disconnect {
+  from: uint32;
+  to: uint32;
+}
+
+/// Lets go of every note of the pattern the node holds, at the start of the block its batch comes in: once the node is
+/// no longer heard, a note held on would come back if it were heard again before its end.
+table LetGoOfNotes {
+  node: uint32;
+}
+
+/// The build thread panics, as `PanicAudio` does the audio thread.
+table PanicBuild {
+  code: uint32;
+}
+
+/// The build thread loops for ever, as `HangAudio` does the audio thread.
+table HangBuild {
+  code: uint32;
+}
+
+/// A note of a pattern: a `NoteOn` from the frame the transport passes its tick in a clip, and a `NoteOff` from the
+/// frame it passes `length` ticks later, or the clip's end or the loop's if one comes first, whatever the pattern by
+/// then. Stopping lets go of every note at once.
+struct PatternNote {
+  /// Ticks from the pattern's start, 960 to a quarter note; past its clip's length, never heard.
+  tick: uint32;
+  /// As in `SetParam`.
+  node: uint32;
+  /// As in `NoteOn`.
+  key: ubyte;
+  velocity: float32;
+  /// Ticks, from 1; a note of none is refused.
+  length: uint32;
+}
+
+/// The pattern under the handle, made or in place of the one before; only clips play it. A reset leaves none.
+table SetPattern {
+  /// A pattern's handle: its cell from 1 in the low 16 bits, the cell's generation above, apart from the nodes'.
+  pattern: uint32;
+  /// In any order. After every batch they name only live nodes; a note of another plays nothing.
+  notes: [PatternNote];
+}
+
+/// The pattern is gone, and its cell free at once; a note it pressed plays to its end.
+table DestroyPattern {
+  /// As in `SetPattern`.
+  pattern: uint32;
+}
+
+/// A pattern played from a tick of the transport's loop, for `length` ticks, round and round its `period` from its
+/// `offset`.
+struct Clip {
+  tick: uint32;
+  /// Ticks, from 1; a clip of none is refused.
+  length: uint32;
+  /// Ticks, from 1: the pattern starts again every so many ticks of the clip, its notes from then on unheard; a clip
+  /// of none is refused.
+  period: uint32;
+  /// Ticks into a round of its pattern the clip starts at, taken round its period.
+  offset: uint32;
+  /// As in `SetPattern`.
+  pattern: uint32;
+}
+
+/// What the transport plays, in place of the clips before; a reset leaves none.
+table SetClips {
+  /// In any order; they may overlap. After every batch they name only live patterns; a clip of another plays nothing.
+  clips: [Clip];
+}
+
+union DeviceEdit { Reset, CreateNode, SetOutput, Connect, DestroyNode, SetPattern, CreateInsert, Disconnect, PanicBuild, HangBuild, LetGoOfNotes, DestroyPattern, SetClips }
+
+/// A table per edit: flatc has no vectors of unions for Rust.
+table Edit {
+  edit: DeviceEdit;
+}
+
+/// What the page sends the build thread; the batch's number travels beside it.
+table DeviceBatch {
+  edits: [Edit];
+}
+
+root_type DeviceBatch;
+
+enum Rejection : ubyte {
+  /// No kind byte, a record of another size than its kind's, an edit without one, or bytes that aren't a batch.
+  Malformed,
+  /// A kind or edit the engine doesn't know, 0 included.
+  UnknownCommand,
+  /// No such node, pattern, parameter or sample, a handle of an older generation, or not the batch next in line.
+  UnknownTarget,
+  /// Not a finite number, in a command or in a sound.
+  InvalidValue,
+  /// No such plugin, or not in this version.
+  UnknownPlugin,
+  /// The handle's cell holds a node, or a pattern of another generation.
+  CellTaken,
+  /// No node or pattern can have this handle: its cell is 0.
+  InvalidHandle,
+  /// The connection would close a loop, a node to itself included.
+  Loop,
+  /// The two nodes are connected already.
+  AlreadyConnected,
+  /// No room in the engine's memory for the sound.
+  OutOfMemory,
+  /// A sound of more than two channels: the engine is stereo.
+  TooManyChannels,
+  /// A sound decoded at another rate than the engine plays at.
+  WrongSampleRate,
+  /// The node has no room for more notes in this block.
+  TooManyNotes,
+  /// The node doesn't hear the other.
+  NotConnected,
+  /// A live node has the meter's number.
+  MeterTaken,
+}
+
+enum EventKind : ubyte { CommandRejected = 1, CommandStreamLost, EditRejected }
+
+// Every event carries the session it happened in, so the page can drop those of an old one.
+
+struct CommandRejected {
+  epoch: uint32;
+  reason: Rejection;
+}
+
+/// A size prefix over the limit: message boundaries are lost, and the engine takes no more commands.
+struct CommandStreamLost {
+  epoch: uint32;
+}
+
+/// The build thread refused an edit of the batch; reported when its parcel is applied.
+struct EditRejected {
+  epoch: uint32;
+  batch: uint32;
+  reason: Rejection;
+}

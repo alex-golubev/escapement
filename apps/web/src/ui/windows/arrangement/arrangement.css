@@ -1,0 +1,35 @@
+/* The arrangement fills its window, as the piano roll does. Its colours are read by the canvases it draws on: rows as
+   the roll's white keys' rows, lines brighter from a bar's to a fourth bar's, clips in the project's colour. */
+.arrangement {
+  --arrangement-row: #12161b;
+  --arrangement-row-line: #0b0d10;
+  --arrangement-bar-line: #1f242b;
+  --arrangement-phrase-line: #3a414c;
+  --arrangement-clip-edge: #b97a22;
+
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  border-radius: var(--r-md);
+  background: var(--s-well);
+  box-shadow: inset 0 0 0 1px var(--line-soft);
+  touch-action: none;
+}
+
+.arrangement canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  /* The arrangement takes the pointer: a canvas holding it would let go of it under the arrangement's capture. */
+  pointer-events: none;
+}
+
+.arrangement[data-grab="move"] {
+  cursor: move;
+}
+
+.arrangement[data-grab="resize"] {
+  cursor: ew-resize;
+}

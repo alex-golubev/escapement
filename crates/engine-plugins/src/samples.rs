@@ -1,0 +1,69 @@
+//! How a plugin reads the sounds its samples name. The engine holds them, never the plugin: a built-in gets a view
+//! straight into the engine's pool, a plugin of its own module a copy in its memory, through the same call.
+
+use std::ops::Range;
+
+use crate::CHANNELS;
+
+/// What a plugin gets lasts until it asks again, so a built-in can't lean on what a plugin of its own module won't
+/// have. Two stretches at once don't compile:
+///
+/// ```compile_fail,E0499
+/// # use engine_plugins::samples::SampleReader;
+/// fn both(reader: &mut dyn SampleReader) {
+///     let first = reader.frames(1, 0..64);
+///     let second = reader.frames(1, 64..128);
+///     drop((first, second));
+/// }
+/// ```
+///
+/// One after the other do:
+///
+/// ```
+/// # use engine_plugins::samples::SampleReader;
+/// fn in_turn(reader: &mut dyn SampleReader) -> usize {
+///     let first = reader.frames(1, 0..64).map_or(0, |frames| frames.len());
+///     let second = reader.frames(1, 64..128).map_or(0, |frames| frames.len());
+///     first + second
+/// }
+/// ```
+pub trait SampleReader {
+    /// `sample` is a number from the plugin's description. `None` while it has no sound yet: the plugin stays
+    /// silent.
+    fn frames(&mut self, sample: u32, frames: Range<usize>) -> Option<Frames<'_>>;
+}
+
+/// A stretch of a sound: each of its channels over the frames asked for, cut where the sound ends.
+#[derive(Clone, Copy, Debug)]
+pub struct Frames<'a> {
+    channels: [&'a [f32]; CHANNELS],
+    count: usize,
+}
+
+impl<'a> Frames<'a> {
+    /// The first `count` channels, of one length, are the sound's; the rest are ignored.
+    pub fn new(channels: [&'a [f32]; CHANNELS], count: usize) -> Self {
+        debug_assert!((1..=CHANNELS).contains(&count), "{count} channels");
+        debug_assert!(
+            channels[..count]
+                .iter()
+                .all(|channel| channel.len() == channels[0].len()),
+            "channels of one length"
+        );
+        Self { channels, count }
+    }
+
+    /// One for a mono sound, two for stereo.
+    pub fn channels(&self) -> &[&'a [f32]] {
+        &self.channels[..self.count]
+    }
+
+    /// Fewer than asked for where the sound ends.
+    pub fn len(&self) -> usize {
+        self.channels[0].len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}

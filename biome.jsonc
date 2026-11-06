@@ -1,0 +1,373 @@
+{
+  "$schema": "./node_modules/@biomejs/biome/configuration_schema.json",
+  "vcs": {
+    "enabled": true,
+    "clientKind": "git",
+    "useIgnoreFile": true
+  },
+  "formatter": {
+    "indentStyle": "space",
+    "indentWidth": 2,
+    "lineWidth": 120
+  },
+  "javascript": {
+    "formatter": {
+      "quoteStyle": "single",
+      "jsxQuoteStyle": "single",
+      "semicolons": "asNeeded",
+      "trailingCommas": "none"
+    }
+  },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "preset": "none",
+      "correctness": {
+        "noUnusedImports": "error",
+        "noUnusedVariables": "error"
+      },
+      "suspicious": {
+        "noImportCycles": "error"
+      },
+      "style": {
+        "useFilenamingConvention": {
+          "level": "error",
+          "options": {
+            "filenameCases": ["kebab-case"]
+          }
+        }
+      }
+    }
+  },
+  "overrides": [
+    {
+      "includes": ["packages/engine/src/schema/**", "packages/engine-description/src/catalog/**"],
+      "linter": {
+        "rules": {
+          "correctness": {
+            "noUnusedImports": "off",
+            "noUnusedVariables": "off"
+          }
+        }
+      }
+    },
+    // services/: the page's logic, knowing neither the interface nor the browser: it has them through its ports.
+    {
+      "includes": ["apps/web/src/services/**"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": ["**/ui/**", "**/browser/**", "**/app/**"],
+                    "message": "Imports go one way: app → ui → services, browser → services. A service has the interface and the browser only through its ports."
+                  },
+                  {
+                    "group": [
+                      "preact",
+                      "preact/**",
+                      "react",
+                      "react/**",
+                      "react-dom",
+                      "react-dom/**",
+                      "@effect/atom-react",
+                      "@effect/atom-react/**",
+                      "dockview-react",
+                      "dockview-react/**",
+                      "dockview-core",
+                      "dockview-core/**",
+                      "@effect/platform-browser",
+                      "@effect/platform-browser/**",
+                      "y-indexeddb",
+                      "y-indexeddb/**"
+                    ],
+                    "message": "A service knows neither the interface nor the browser: it has them through its ports."
+                  }
+                ]
+              }
+            },
+            "noRestrictedGlobals": {
+              "level": "error",
+              "options": {
+                "deniedGlobals": {
+                  "window": "The page's window comes to services as the Page port.",
+                  "self": "The page's window comes to services as the Page port.",
+                  "globalThis": "The page's window comes to services as the Page port.",
+                  "top": "The page's window comes to services as the Page port.",
+                  "parent": "The page's window comes to services as the Page port.",
+                  "document": "A service draws nothing: the interface does.",
+                  "location": "A service doesn't leave the page: app/ or a browser/ layer does.",
+                  "history": "A service doesn't move the page: app/ or a browser/ layer does.",
+                  "open": "A service doesn't open pages: app/ or a browser/ layer does.",
+                  "navigator": "What the browser has comes through a port, from browser/.",
+                  "indexedDB": "Storage comes through a port, from browser/.",
+                  "localStorage": "Storage comes through a port, from browser/.",
+                  "sessionStorage": "Storage comes through a port, from browser/.",
+                  "caches": "Storage comes through a port, from browser/.",
+                  "BroadcastChannel": "Channels between tabs come through the TabChannels port, from browser/.",
+                  "AudioContext": "Sound goes through the AudioOutput port, from browser/.",
+                  "fetch": "The network comes through HttpClient.",
+                  "requestAnimationFrame": "Frames are the interface's.",
+                  "addEventListener": "The page's events come through the Page port.",
+                  "removeEventListener": "The page's events come through the Page port.",
+                  "dispatchEvent": "The page's events come through the Page port.",
+                  "onbeforeunload": "The page's events come through the Page port.",
+                  "onpagehide": "The page's events come through the Page port.",
+                  "onpageshow": "The page's events come through the Page port."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    // browser/: the ports made with the browser, serving the services, not the interface.
+    {
+      "includes": ["apps/web/src/browser/**"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": [
+                      "**/ui/**",
+                      "**/app/**",
+                      "preact",
+                      "preact/**",
+                      "react",
+                      "react/**",
+                      "react-dom",
+                      "react-dom/**",
+                      "@effect/atom-react",
+                      "@effect/atom-react/**",
+                      "dockview-react",
+                      "dockview-react/**",
+                      "dockview-core",
+                      "dockview-core/**"
+                    ],
+                    "message": "Imports go one way: app → ui → services, browser → services. The browser's layers serve the services, not the interface."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    // ui/: Preact in layers, screens → windows → parts → kit. Biome takes a rule's options whole from the last override
+    // that sets them, so each layer below repeats this ban of all of ui.
+    {
+      "includes": ["apps/web/src/ui/**"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": [
+                      "**/browser/**",
+                      "**/app/**",
+                      "@effect/platform-browser",
+                      "@effect/platform-browser/**",
+                      "y-indexeddb",
+                      "y-indexeddb/**"
+                    ],
+                    "message": "Imports go one way: app → ui → services, browser → services. The interface reaches storage and the browser's channels only through services."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    // kit/: knows nothing of the project.
+    {
+      "includes": ["apps/web/src/ui/kit/**"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": [
+                      "**/browser/**",
+                      "**/app/**",
+                      "@effect/platform-browser",
+                      "@effect/platform-browser/**",
+                      "y-indexeddb",
+                      "y-indexeddb/**"
+                    ],
+                    "message": "Imports go one way: app → ui → services, browser → services. The interface reaches storage and the browser's channels only through services."
+                  },
+                  {
+                    "group": [
+                      "**/parts/**",
+                      "**/windows/**",
+                      "**/screens/**",
+                      "**/services/**",
+                      "**/core-context",
+                      "@escapement/*",
+                      "@escapement/*/**"
+                    ],
+                    "message": "The kit knows nothing of the project: what knows it is a part, a window or a screen."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    // parts/: know the project, and serve more than one window or screen.
+    {
+      "includes": ["apps/web/src/ui/parts/**"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": [
+                      "**/browser/**",
+                      "**/app/**",
+                      "@effect/platform-browser",
+                      "@effect/platform-browser/**",
+                      "y-indexeddb",
+                      "y-indexeddb/**"
+                    ],
+                    "message": "Imports go one way: app → ui → services, browser → services. The interface reaches storage and the browser's channels only through services."
+                  },
+                  {
+                    "group": ["**/windows/**", "**/screens/**"],
+                    "message": "Imports go down: screens → windows → parts → kit."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    // windows/: a folder each, taking nothing from another, by a short path or a long one through windows/; a negation ends
+    // only its own group, as in .gitignore.
+    {
+      "includes": ["apps/web/src/ui/windows/**"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": [
+                      "**/browser/**",
+                      "**/app/**",
+                      "@effect/platform-browser",
+                      "@effect/platform-browser/**",
+                      "y-indexeddb",
+                      "y-indexeddb/**"
+                    ],
+                    "message": "Imports go one way: app → ui → services, browser → services. The interface reaches storage and the browser's channels only through services."
+                  },
+                  {
+                    "group": ["**/screens/**"],
+                    "message": "Imports go down: screens → windows → parts → kit."
+                  },
+                  {
+                    "group": ["**/windows/**"],
+                    "message": "A window takes nothing from another: what two windows need goes down to parts or kit."
+                  },
+                  {
+                    "group": ["../*/**", "!../../**"],
+                    "message": "A window takes nothing from another: what two windows need goes down to parts or kit."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    // screens/: a folder each, taking nothing from another.
+    {
+      "includes": ["apps/web/src/ui/screens/**"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": [
+                      "**/browser/**",
+                      "**/app/**",
+                      "@effect/platform-browser",
+                      "@effect/platform-browser/**",
+                      "y-indexeddb",
+                      "y-indexeddb/**"
+                    ],
+                    "message": "Imports go one way: app → ui → services, browser → services. The interface reaches storage and the browser's channels only through services."
+                  },
+                  {
+                    "group": ["**/screens/**"],
+                    "message": "A screen takes nothing from another: what two screens need goes down to parts or kit."
+                  },
+                  {
+                    "group": ["../*/**", "!../../**"],
+                    "message": "A screen takes nothing from another: what two screens need goes down to parts or kit."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "plugins": [
+    {
+      "path": "./biome-plugins/control-flow.grit",
+      "includes": [
+        "**/*.ts",
+        "**/*.mts",
+        "**/*.cts",
+        "**/*.js",
+        "**/*.mjs",
+        "**/*.cjs",
+        "**/apps/web/src/app/main.tsx",
+        "**/test/**/*.tsx",
+        "!**/packages/engine/src/schema/**",
+        "!**/packages/engine/src/worklet/**",
+        "!**/packages/engine/src/build-thread/**",
+        "!**/packages/engine/src/command-ring.ts",
+        "!**/packages/engine/src/framing.ts",
+        "!**/packages/engine/src/panic-text.ts",
+        "!**/packages/engine/src/plugins.ts",
+        "!**/packages/engine/src/rejections.ts",
+        "!**/packages/engine/src/telemetry.ts",
+        "!**/packages/engine/src/threads.ts",
+        "!**/packages/engine/src/transactions.ts",
+        "!**/apps/web/src/ui/parts/frames.ts",
+        "!**/tools/src/sounds.ts"
+      ]
+    }
+  ],
+  "assist": {
+    "enabled": false
+  }
+}

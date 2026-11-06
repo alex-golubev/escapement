@@ -1,0 +1,387 @@
+/* The well and the edge that stays over it, one on the other. */
+.seq-frame {
+  --seq-pad: calc(var(--u) * 2);
+  --small-knob: 22px;
+  --strip-w: calc(var(--small-knob) * 2 + var(--u));
+  --insert-w: 28px;
+
+  display: grid;
+  width: max-content;
+}
+
+.seq-frame > * {
+  grid-area: 1 / 1;
+}
+
+/* The well the channel rows lie in, as a mixer's strips stand in theirs. */
+.seq {
+  display: grid;
+  gap: var(--u);
+  width: max-content;
+  padding: var(--seq-pad);
+  border-radius: var(--r-md);
+  background: var(--s-well);
+  box-shadow: inset 0 0 0 1px var(--line-soft);
+}
+
+.seq-row {
+  --step-h: 24px;
+  --row-h: 38px;
+
+  display: flex;
+  align-items: center;
+  height: var(--row-h);
+  padding-right: calc(var(--u) * 2);
+  border-radius: var(--r-md);
+  background: var(--s-strip);
+  box-shadow: 0 0 0 1px var(--line-soft);
+}
+
+/* The window's edge and the well's left side, as they stand unscrolled: they stay over the steps scrolled past the
+   names, which would show there. */
+.seq-edge {
+  position: sticky;
+  left: calc(-1 * var(--dock-pad, 0px));
+  z-index: 2;
+  justify-self: start;
+  width: calc(var(--dock-pad, 0px) + var(--seq-pad));
+  margin-left: calc(-1 * var(--dock-pad, 0px));
+  background: var(--s-strip);
+  pointer-events: none;
+}
+
+.seq-edge::after {
+  content: "";
+  position: absolute;
+  inset: 0 0 0 var(--dock-pad, 0px);
+  border-radius: var(--r-md) 0 0 var(--r-md);
+  background: var(--s-well);
+  box-shadow:
+    inset 1px 0 var(--line-soft),
+    inset 0 1px var(--line-soft),
+    inset 0 -1px var(--line-soft);
+}
+
+/* Number, knobs, name and buttons, with the gap after them: they stay as the steps scroll under them, at a clean edge.
+   The row's left end is theirs, so it stays too: its own, on the well's ground, as the row's own goes under. */
+.seq-row__lead {
+  position: sticky;
+  left: var(--seq-pad);
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  align-self: stretch;
+  gap: calc(var(--u) * 2);
+  padding: 0 calc(var(--u) * 2);
+  flex: none;
+  clip-path: inset(-1px 0 -1px -1px);
+}
+
+.seq-row__lead::before,
+.seq-row__lead::after {
+  content: "";
+  position: absolute;
+  z-index: -1;
+}
+
+.seq-row__lead::before {
+  inset: -1px 0 -1px -1px;
+  background: var(--s-well);
+}
+
+.seq-row__lead::after {
+  inset: 0;
+  border-radius: var(--r-md) 0 0 var(--r-md);
+  background: var(--s-strip);
+  box-shadow: 0 0 0 1px var(--line-soft);
+}
+
+/* Pinned as the rows scroll under it, so + and the bars stay in sight; at the window's edge, past its padding, which
+   would show the rows above it. It reaches over the well's padding above it and the gap below, so pinned it keeps
+   them around + and the rows pass under them; the well's 1px edge stays in sight. Over the rows' names, which pass under it too. */
+.seq-row--head {
+  position: sticky;
+  top: calc(-1 * var(--dock-pad, 0px));
+  z-index: 3;
+  height: auto;
+  margin: calc(1px - var(--seq-pad)) 0 calc(-1 * var(--u));
+  padding: calc(var(--seq-pad) - 1px) calc(var(--u) * 2) var(--u) 0;
+  background: var(--s-well);
+  box-shadow: none;
+}
+
+.seq-row--head .seq-row__lead::after {
+  background: var(--s-well);
+  box-shadow: none;
+}
+
+/* As wide as a row's number, pan and volume, mixer strip and name, so the bars stand over their steps. */
+.seq-row__add {
+  display: flex;
+  width: calc(var(--u) * 6 + 14px + var(--strip-w) + var(--insert-w) + 84px);
+  flex: none;
+}
+
+.seq-add {
+  min-width: 22px;
+  height: 22px;
+  padding: 0;
+  font-size: 14px;
+}
+
+.seq-row__index {
+  width: 14px;
+  flex: none;
+  font-size: 9px;
+  color: var(--t-lo);
+  text-align: center;
+}
+
+.seq-row__strip {
+  display: flex;
+  gap: var(--u);
+  width: var(--strip-w);
+  flex: none;
+}
+
+.seq-row__strip .knob {
+  --knob-d: var(--small-knob);
+}
+
+/* A button that reads as the channel's name: it opens the channel's window. */
+.seq-row__name {
+  width: 84px;
+  flex: none;
+  padding: 3px 4px;
+  overflow: hidden;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  text-align: left;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.seq-row__name:hover {
+  background: var(--s-raise);
+}
+
+/* The name's box, its letters where the name's were. */
+.seq-row__field {
+  width: 84px;
+  flex: none;
+  padding: 2px 3px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.seq-row__buttons {
+  display: flex;
+  gap: var(--u);
+  width: 40px;
+  flex: none;
+}
+
+/* A channel not heard dims what sounds; its name and buttons stay, to be pressed again. */
+.seq-row[data-unheard="true"] .seq-row__strip,
+.seq-row[data-unheard="true"] .steps {
+  opacity: 0.4;
+}
+
+/* ─── Steps ──────────────────────────────────────────────────────────────── */
+
+.steps {
+  display: flex;
+  gap: var(--bar-gap);
+  flex: none;
+}
+
+.bar {
+  display: flex;
+  gap: var(--beat-gap);
+}
+
+.beat {
+  display: flex;
+  gap: var(--step-gap);
+}
+
+/* Past the pattern's end, as the piano roll is there: a step switched on grows the pattern to its bar. */
+.bar[data-past="true"] .step,
+.bar[data-past="true"] .tick {
+  opacity: 0.45;
+}
+
+/* A pad with a lamp, as on a drum machine: the colour takes only the lamp, so a full row of steps doesn't flood the
+ * screen. Every other beat is darker: four steps read as a group without lines between. */
+.step {
+  position: relative;
+  width: var(--step-w);
+  height: var(--step-h);
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: linear-gradient(180deg, #262c35, #1f242b);
+  box-shadow:
+    inset 0 0 0 1px var(--line-soft),
+    0 1px 1px rgb(0 0 0 / 0.4);
+  cursor: pointer;
+}
+
+.beat:nth-child(even) .step {
+  background: linear-gradient(180deg, #1f242b, #191d23);
+}
+
+.step:hover:not(:disabled) {
+  box-shadow:
+    inset 0 0 0 1px var(--line),
+    0 1px 1px rgb(0 0 0 / 0.4);
+}
+
+.step:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.step::before {
+  content: "";
+  position: absolute;
+  left: 4px;
+  right: 4px;
+  top: 4px;
+  height: 3px;
+  border-radius: 1.5px;
+  background-color: #111418;
+  box-shadow: inset 0 0 0 1px rgb(0 0 0 / 0.35);
+}
+
+/* The step is in the project: on, it glows in the main colour. */
+.step[aria-pressed="true"]::before {
+  background-color: var(--shared);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--shared) 55%, transparent);
+}
+
+/* One that sounds now flashes whole: the light comes at once and goes in a fifth of a second. */
+.step,
+.step::before {
+  transition:
+    box-shadow 220ms ease-out,
+    background-color 220ms ease-out;
+}
+
+.seq-row:not([data-unheard="true"]) .step[aria-pressed="true"][data-now="true"],
+.seq-row:not([data-unheard="true"]) .step[aria-pressed="true"][data-now="true"]::before {
+  transition: none;
+}
+
+.seq-row:not([data-unheard="true"]) .step[aria-pressed="true"][data-now="true"] {
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--shared) 60%, transparent),
+    inset 0 0 14px 3px color-mix(in srgb, var(--shared) 50%, transparent),
+    0 0 10px color-mix(in srgb, var(--shared) 35%, transparent);
+}
+
+.seq-row:not([data-unheard="true"]) .step[aria-pressed="true"][data-now="true"]::before {
+  background-color: color-mix(in srgb, var(--shared) 20%, #fff);
+  box-shadow: 0 0 10px 2px color-mix(in srgb, var(--shared) 95%, transparent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .step,
+  .step::before {
+    transition: none;
+  }
+}
+
+/* The playhead: a band a shade lighter over the column heard now, so no colour argues with the lamps. Each step draws
+ * its piece, reaching halfway across the gap to the next row's. */
+.step::after {
+  content: "";
+  position: absolute;
+  inset: calc((var(--step-h) - var(--row-h)) / 2 - var(--u) / 2) -2px;
+  border-radius: var(--r-sm);
+  pointer-events: none;
+}
+
+.step[data-now="true"]::after {
+  background: rgb(232 235 240 / 0.08);
+}
+
+.tick {
+  position: relative;
+  width: var(--step-w);
+  height: 14px;
+  font-size: 9px;
+  color: var(--t-lo);
+  text-align: center;
+}
+
+.tick[data-now="true"]::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--t-mid);
+}
+
+/* ─── Preview of notes ───────────────────────────────────────────────────── */
+
+/* In place of the steps and as wide, once they can't show a channel's notes: the notes small. */
+.notes-preview {
+  --preview-bar: rgb(255 255 255 / 0.03);
+  --preview-past: rgb(0 0 0 / 0.45);
+
+  position: relative;
+  height: var(--step-h);
+  overflow: hidden;
+  flex: none;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: #14181d;
+  box-shadow: inset 0 0 0 1px var(--line-soft);
+  cursor: pointer;
+}
+
+.notes-preview:hover {
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+
+.notes-preview:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.notes-preview canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+/* The playhead across the notes, where the frame puts it. */
+.notes-preview__now {
+  display: none;
+  position: absolute;
+  top: 1px;
+  bottom: 1px;
+  left: var(--now-x, 0);
+  width: 1px;
+  background: rgb(232 235 240 / 0.45);
+}
+
+.notes-preview[data-now="true"] .notes-preview__now {
+  display: block;
+}
+
+.seq-row[data-unheard="true"] .notes-preview {
+  opacity: 0.4;
+}
