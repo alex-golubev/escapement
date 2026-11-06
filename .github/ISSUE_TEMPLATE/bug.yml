@@ -1,0 +1,34 @@
+name: Bug
+description: Something doesn't work as it should.
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: And what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps
+      description: From opening the app, the shortest way to see it.
+      placeholder: |
+        1. Create a project
+        2. …
+    validations:
+      required: true
+  - type: input
+    id: browser
+    attributes:
+      label: Browser and system
+      placeholder: Chrome 141, macOS 26
+    validations:
+      required: true
+  - type: textarea
+    id: console
+    attributes:
+      label: Console
+      description: Errors from the browser's console, if any.
+      render: text
