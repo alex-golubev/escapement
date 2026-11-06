@@ -6,6 +6,8 @@ members = ["crates/*"]
 version = "0.0.0"
 edition = "2024"
 publish = false
+license = "AGPL-3.0-only"
+repository = "https://github.com/alex-golubev/escapement"
 
 [profile.release]
 panic = "abort"

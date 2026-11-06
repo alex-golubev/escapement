@@ -1,5 +1,11 @@
 {
   "name": "escapement",
+  "description": "A collaborative DAW in the browser.",
+  "license": "AGPL-3.0-only",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alex-golubev/escapement.git"
+  },
   "private": true,
   "type": "module",
   "packageManager": "pnpm@12.16.1",

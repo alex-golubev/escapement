@@ -1,8 +1,11 @@
 [package]
 name = "describe-plugins"
+description = "Prints the plugin catalog and the strip's parameters as JSON for code generation."
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
+license.workspace = true
+repository.workspace = true
 
 [dependencies]
 engine-core = { path = "../engine-core" }
