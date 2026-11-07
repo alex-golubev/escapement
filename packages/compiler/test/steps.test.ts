@@ -2,7 +2,8 @@ import { blocks, pageSounds, sampleRate, startEngine, type TestEngine } from '@e
 import { paramValue, plugins, Sha256, strip, Tick, ticksPerQuarter } from '@escapement/engine-description'
 import {
   batchedState,
-  deleteChannel,
+  defaultNote,
+  deleteTrack,
   followProject,
   HoldTarget,
   type Holds,
@@ -19,21 +20,18 @@ import {
   insertOfNumber,
   readProject,
   resizeClip,
-  setChannelInsert,
-  setChannelParam,
-  setChannelStrip,
   setInsertMute,
   setInsertStrip,
   setMasterParam,
   setMute,
   setTempo,
+  setTrackInsert,
+  setTrackParam,
+  setTrackStrip,
   barTicks,
   barSteps,
-  stepNote,
   stepTicks,
-  toggledMode,
   toggledSolo,
-  toggleStep,
   trimClip
 } from '@escapement/model'
 import { Arbitrary, Array, Boolean, Config, Effect, Match, Option, Order, Schema } from 'effect'
@@ -57,7 +55,7 @@ const step = between(0, barSteps - 1)
 const asleepFor = between(1, 3)
 /** Edits it sleeps through first, if any. */
 const asleepFirst = between(0, 3)
-/** A parameter of a channel's strip, by its place. */
+/** A parameter of a track's strip, by its place. */
 const stripParam = between(0, strip.length - 1)
 const [synthShape] = plugins.synth.params
 /** A synth's shape by its place, any but noise: each note's noise is its own, so a pattern played again differs. */
@@ -69,7 +67,7 @@ const synthShapes = plugins.synth.params.filter(({ choices }) => choices !== nul
 const synthKnobs = plugins.synth.params.filter(({ choices }) => choices === null)
 const oscillator = between(0, synthShapes.length - 1)
 const synthKnob = between(0, synthKnobs.length - 1)
-/** An insert by its number, 0 the master: a few, so channels share some. */
+/** An insert by its number, 0 the master: a few, so tracks share some. */
 const insert = between(0, 3)
 
 /**
@@ -77,24 +75,22 @@ const insert = between(0, 3)
  * one listens to it, the controls it holds, whether its engine runs, and a rebuild.
  */
 const DocumentEdit = Schema.Union([
-  Schema.TaggedStruct('ToggleStep', { pattern: which, channel: which, step }),
-  Schema.TaggedStruct('SetShape', { channel: which, oscillator, shape }),
-  Schema.TaggedStruct('SetSynthKnob', { channel: which, knob: synthKnob, position: tenths }),
-  Schema.TaggedStruct('SetStrip', { channel: which, param: stripParam, position: tenths }),
+  Schema.TaggedStruct('ToggleNote', { pattern: which, step }),
+  Schema.TaggedStruct('SetShape', { track: which, oscillator, shape }),
+  Schema.TaggedStruct('SetSynthKnob', { track: which, knob: synthKnob, position: tenths }),
+  Schema.TaggedStruct('SetStrip', { track: which, param: stripParam, position: tenths }),
   Schema.TaggedStruct('SetCutoff', { slot: which, position: opening }),
   Schema.TaggedStruct('SetTempo', { tempo: tenths }),
-  Schema.TaggedStruct('AddChannel', { sound, order, step, synth: Schema.Boolean }),
-  Schema.TaggedStruct('DeleteChannel', { channel: which, remove: Schema.Boolean }),
-  Schema.TaggedStruct('RestoreChannel', { channel: which }),
-  Schema.TaggedStruct('SetSound', { channel: which, sound }),
+  Schema.TaggedStruct('AddTrack', { sound, order, step, synth: Schema.Boolean }),
+  Schema.TaggedStruct('DeleteTrack', { track: which, remove: Schema.Boolean }),
+  Schema.TaggedStruct('RestoreTrack', { track: which }),
+  Schema.TaggedStruct('SetSound', { track: which, sound }),
   Schema.TaggedStruct('AddSlot', { order, position: opening }),
   Schema.TaggedStruct('DeleteSlot', { slot: which, remove: Schema.Boolean }),
   Schema.TaggedStruct('MoveSlot', { slot: which, order }),
-  Schema.TaggedStruct('AddPattern', { order, step }),
-  Schema.TaggedStruct('DeletePattern', { pattern: which, remove: Schema.Boolean }),
-  Schema.TaggedStruct('ChoosePattern', { pattern: which }),
-  Schema.TaggedStruct('PutClip', { pattern: which, step }),
-  Schema.TaggedStruct('MoveClip', { clip: which, step }),
+  // Of a pattern a clip plays already, as a client of a later build may put a copy that plays it too.
+  Schema.TaggedStruct('PutClip', { pattern: which, track: which, step }),
+  Schema.TaggedStruct('MoveClip', { clip: which, track: which, step }),
   Schema.TaggedStruct('ResizeClip', { clip: which, steps: between(1, 3 * barSteps) }),
   Schema.TaggedStruct('TrimClip', {
     clip: which,
@@ -103,17 +99,16 @@ const DocumentEdit = Schema.Union([
     offset: between(-2 * barSteps, 2 * barSteps)
   }),
   Schema.TaggedStruct('DeleteClip', { clip: which, remove: Schema.Boolean }),
-  Schema.TaggedStruct('ToggleMode', {}),
-  Schema.TaggedStruct('SetMute', { channel: which, mute: Schema.Boolean }),
-  Schema.TaggedStruct('SetInsert', { channel: which, insert }),
+  Schema.TaggedStruct('SetMute', { track: which, mute: Schema.Boolean }),
+  Schema.TaggedStruct('SetInsert', { track: which, insert }),
   Schema.TaggedStruct('SetInsertStrip', { insert, param: stripParam, position: tenths }),
   Schema.TaggedStruct('SetInsertMute', { insert, mute: Schema.Boolean }),
-  Schema.TaggedStruct('HoldInsert', { channel: which, insert }),
+  Schema.TaggedStruct('HoldInsert', { track: which, insert }),
   Schema.TaggedStruct('HoldInsertStrip', { insert, param: stripParam, position: tenths }),
-  Schema.TaggedStruct('ToggleSolo', { channel: which }),
-  Schema.TaggedStruct('HoldShape', { channel: which, oscillator, shape }),
-  Schema.TaggedStruct('HoldSynthKnob', { channel: which, knob: synthKnob, position: tenths }),
-  Schema.TaggedStruct('HoldStrip', { channel: which, param: stripParam, position: tenths }),
+  Schema.TaggedStruct('ToggleSolo', { track: which }),
+  Schema.TaggedStruct('HoldShape', { track: which, oscillator, shape }),
+  Schema.TaggedStruct('HoldSynthKnob', { track: which, knob: synthKnob, position: tenths }),
+  Schema.TaggedStruct('HoldStrip', { track: which, param: stripParam, position: tenths }),
   Schema.TaggedStruct('HoldCutoff', { slot: which, position: opening }),
   Schema.TaggedStruct('HoldTempo', { tempo: tenths }),
   Schema.TaggedStruct('LetGo', { hold: between(0, 3) }),
@@ -154,7 +149,7 @@ const instrumentOf = (hash: Sha256, synth: boolean) =>
     onFalse: () => mapOf({ plugin: plugin(plugins.sampler), params: mapOf({}), samples: mapOf({ sample: hash }) })
   })
 
-const channelOf = (hash: Sha256, at: number, synth: boolean) =>
+const trackOf = (hash: Sha256, at: number, synth: boolean) =>
   mapOf({ name: 'Drum', order: ordered(at), deleted: false, mute: false, instrument: instrumentOf(hash, synth) })
 
 const slotOf = (at: number, position: number) =>
@@ -166,40 +161,34 @@ const slotOf = (at: number, position: number) =>
     deleted: false
   })
 
-/** A note on the step, as the page puts it there. */
-const noteOf = (channel: string, step: number) => ({
-  channel,
+/** A note on the step, as the page puts one there. */
+const noteOf = (step: number) => ({
   tick: step * stepTicks,
-  len: stepNote.length,
-  key: stepNote.key,
-  vel: stepNote.velocity
+  len: defaultNote.length,
+  key: defaultNote.key,
+  vel: defaultNote.velocity
 })
 
 /** The pattern's notes, a map of the document's top. */
 const notesOf = (doc: Y.Doc, pattern: string) => doc.getMap(`notes/${pattern}`)
 
-/** A pattern in its place with each channel on the step, the first also two steps later. */
-const putPattern = (doc: Y.Doc, id: string, at: number, channels: ReadonlyArray<string>, step: number) => {
-  doc.getMap('patterns').set(id, mapOf({ name: 'Pattern', order: ordered(at), deleted: false }))
-  ;[...channels.map((channel) => noteOf(channel, step)), noteOf(channels[0] ?? '', (step + 2) % barSteps)].forEach(
-    (note, i) => notesOf(doc, id).set(`n${step}-${i}`, note)
-  )
-}
-
-/** A clip of the pattern on the first track, from the step: within the bar a run plays. */
-const clipOf = (pattern: string, step: number) =>
-  mapOf({ track: '1', bounds: { tick: step * stepTicks }, pattern, deleted: false })
+/** A clip of the pattern on the track, from the step: within the bar a run plays. */
+const clipOf = (track: string, pattern: string, step: number) =>
+  mapOf({ track, bounds: { tick: step * stepTicks }, pattern, deleted: false })
 
 /** A project as another client writes it: IDs from a count, so a run is the same each time. */
 const newDocument = () => {
   const doc = new Y.Doc()
   doc.transact(() => {
     doc.getMap('meta').set('bpm', 120)
-    // A drum and a synth.
-    doc.getMap('channels').set('c1', channelOf(hashes[0], 10, false))
-    doc.getMap('channels').set('c2', channelOf(hashes[1], 20, true))
-    putPattern(doc, 'p1', 50, ['c1', 'c2'], 0)
-    notesOf(doc, 'p1').set('n-c2', noteOf('c2', 5))
+    // A drum and a synth, each with a clip of a pattern of its own.
+    doc.getMap('tracks').set('t1', trackOf(hashes[0], 10, false))
+    doc.getMap('tracks').set('t2', trackOf(hashes[1], 20, true))
+    doc.getMap('clips').set('k1', clipOf('t1', 'p1', 0))
+    doc.getMap('clips').set('k2', clipOf('t2', 'p2', 0))
+    notesOf(doc, 'p1').set('n1', noteOf(0))
+    notesOf(doc, 'p1').set('n2', noteOf(2))
+    notesOf(doc, 'p2').set('n3', noteOf(5))
     doc.getMap('mixer/master').set('slots', mapOf({ s1: slotOf(50, 10) }))
   })
   const made = { count: 2 }
@@ -216,10 +205,10 @@ const mapIn = (map: Y.Map<unknown>, ...keys: ReadonlyArray<string>) =>
 
 const slots = (doc: Y.Doc) => mapIn(doc.getMap('mixer/master'), 'slots')
 
-/** Each channel marked deleted, by ID. */
-const deletedChannels = (doc: Y.Doc) =>
+/** Each track marked deleted, by ID. */
+const deletedTracks = (doc: Y.Doc) =>
   Array.sort(
-    Array.fromIterable(doc.getMap('channels').entries()).flatMap(([id, map]) =>
+    Array.fromIterable(doc.getMap('tracks').entries()).flatMap(([id, map]) =>
       Option.toArray(Option.liftPredicate(id, () => map instanceof Y.Map && map.get('deleted') === true))
     ),
     Order.String
@@ -233,10 +222,7 @@ const picked = <A>(live: ReadonlyArray<A>, n: number) => Option.fromUndefinedOr(
  * and a rebuild.
  */
 interface Local {
-  readonly solo: (channel: Id) => void
-  readonly choose: (pattern: Id) => void
-  /** From Pattern to Arrangement, or back. */
-  readonly toggleMode: () => void
+  readonly solo: (track: Id) => void
   readonly hold: (target: HoldTarget, value: number) => void
   /** The held one the edit means, if any. */
   readonly letGo: (n: number) => void
@@ -253,8 +239,8 @@ const applied = (
   local: Local,
   edit: Exclude<DocumentEdit, { readonly _tag: 'Rebuild' }>
 ) => {
-  const { channels, patterns, master, clips } = readProject(doc).value
-  const channel = (n: number) => Option.map(picked(channels, n), ({ id }) => id)
+  const { tracks, patterns, master, clips } = readProject(doc).value
+  const track = (n: number) => Option.map(picked(tracks, n), ({ id }) => id)
   const clip = (n: number) => Option.map(picked(clips, n), ({ id }) => id)
   const pattern = (n: number) => Option.map(picked(patterns, n), ({ id }) => id)
   const slot = (n: number) => Option.map(picked(master.slots, n), ({ id }) => id)
@@ -263,74 +249,75 @@ const applied = (
       Boolean.match(remove, { onTrue: () => map.delete(id), onFalse: () => void mapIn(map, id).set('deleted', true) })
     )
   return Match.valueTags(edit, {
-    ToggleStep: (edit) =>
-      Option.map(Option.all([pattern(edit.pattern), channel(edit.channel)]), ([id, ch]) =>
-        toggleStep(doc, by, id, ch, edit.step)
+    // Off if a note starts on the step, whatever its key; on otherwise.
+    ToggleNote: (edit) =>
+      Option.map(pattern(edit.pattern), (id) =>
+        doc.transact(() => {
+          const notes = notesOf(doc, id)
+          const on = Array.fromIterable(notes.entries()).flatMap(([key, note]) =>
+            Option.toArray(
+              Option.liftPredicate(key, () => (note as { readonly tick?: unknown }).tick === edit.step * stepTicks)
+            )
+          )
+          Array.match(on, {
+            onEmpty: () => notes.set(nextId('n'), noteOf(edit.step)),
+            onNonEmpty: (on) => on.forEach((key) => notes.delete(key))
+          })
+        })
       ),
     SetShape: (edit) =>
-      Option.map(channel(edit.channel), (id) =>
-        setChannelParam(doc, by, id, synthShapes[edit.oscillator].id, edit.shape)
-      ),
+      Option.map(track(edit.track), (id) => setTrackParam(doc, by, id, synthShapes[edit.oscillator].id, edit.shape)),
     SetSynthKnob: (edit) =>
-      Option.map(channel(edit.channel), (id) =>
-        setChannelParam(doc, by, id, synthKnobs[edit.knob].id, paramValue(synthKnobs[edit.knob], edit.position / 10))
+      Option.map(track(edit.track), (id) =>
+        setTrackParam(doc, by, id, synthKnobs[edit.knob].id, paramValue(synthKnobs[edit.knob], edit.position / 10))
       ),
     SetStrip: (edit) =>
-      Option.map(channel(edit.channel), (id) =>
-        setChannelStrip(doc, by, id, strip[edit.param].id, paramValue(strip[edit.param], edit.position / 10))
+      Option.map(track(edit.track), (id) =>
+        setTrackStrip(doc, by, id, strip[edit.param].id, paramValue(strip[edit.param], edit.position / 10))
       ),
     SetCutoff: (edit) =>
       Option.map(slot(edit.slot), (id) =>
         setMasterParam(doc, by, id, 'cutoff', paramValue(cutoff, edit.position / 10))
       ),
     SetTempo: (edit) => setTempo(doc, by, 120 + edit.tempo * 12),
-    AddChannel: (edit) =>
+    // With a clip from the start, of a pattern of its own with a note on the step.
+    AddTrack: (edit) =>
       doc.transact(() => {
-        const id = nextId('c')
-        doc.getMap('channels').set(id, channelOf(hashes[edit.sound], edit.order, edit.synth))
-        Option.map(Option.fromUndefinedOr(patterns[0]), (pattern) =>
-          notesOf(doc, pattern.id).set(nextId('n'), noteOf(id, edit.step))
-        )
+        const [id, pattern] = [nextId('t'), nextId('p')]
+        doc.getMap('tracks').set(id, trackOf(hashes[edit.sound], edit.order, edit.synth))
+        doc.getMap('clips').set(nextId('k'), clipOf(id, pattern, 0))
+        notesOf(doc, pattern).set(nextId('n'), noteOf(edit.step))
       }),
-    DeleteChannel: (edit) =>
-      Option.map(channel(edit.channel), (id) =>
+    DeleteTrack: (edit) =>
+      Option.map(track(edit.track), (id) =>
         Boolean.match(edit.remove, {
-          onTrue: () => gone(doc.getMap('channels'), id, true),
-          onFalse: () => deleteChannel(doc, by, id)
+          onTrue: () => gone(doc.getMap('tracks'), id, true),
+          onFalse: () => deleteTrack(doc, by, id)
         })
       ),
     // As an undo of the deletion writes it.
-    RestoreChannel: (edit) =>
-      Option.map(picked(deletedChannels(doc), edit.channel), (id) =>
-        doc.transact(() => mapIn(doc.getMap('channels'), id).set('deleted', false))
+    RestoreTrack: (edit) =>
+      Option.map(picked(deletedTracks(doc), edit.track), (id) =>
+        doc.transact(() => mapIn(doc.getMap('tracks'), id).set('deleted', false))
       ),
     SetSound: (edit) =>
-      Option.map(channel(edit.channel), (id) =>
-        doc.transact(() => mapIn(doc.getMap('channels'), id, 'instrument', 'samples').set('sample', hashes[edit.sound]))
+      Option.map(track(edit.track), (id) =>
+        doc.transact(() => mapIn(doc.getMap('tracks'), id, 'instrument', 'samples').set('sample', hashes[edit.sound]))
       ),
     AddSlot: (edit) => doc.transact(() => slots(doc).set(nextId('s'), slotOf(edit.order, edit.position))),
     DeleteSlot: (edit) => Option.map(slot(edit.slot), (id) => gone(slots(doc), id, edit.remove)),
     MoveSlot: (edit) =>
       Option.map(slot(edit.slot), (id) => doc.transact(() => mapIn(slots(doc), id).set('order', ordered(edit.order)))),
-    AddPattern: (edit) =>
-      doc.transact(() =>
-        putPattern(
-          doc,
-          nextId('p'),
-          edit.order,
-          channels.map(({ id }) => id),
-          edit.step
-        )
-      ),
-    DeletePattern: (edit) => Option.map(pattern(edit.pattern), (id) => gone(doc.getMap('patterns'), id, edit.remove)),
-    ChoosePattern: (edit) => Option.map(pattern(edit.pattern), local.choose),
     PutClip: (edit) =>
-      Option.map(pattern(edit.pattern), (id) =>
-        doc.transact(() => doc.getMap('clips').set(nextId('k'), clipOf(id, edit.step)))
+      Option.map(Option.all([pattern(edit.pattern), track(edit.track)]), ([id, on]) =>
+        doc.transact(() => doc.getMap('clips').set(nextId('k'), clipOf(on, id, edit.step)))
       ),
     MoveClip: (edit) =>
-      Option.map(clip(edit.clip), (id) =>
-        doc.transact(() => mapIn(doc.getMap('clips'), id).set('bounds', { tick: edit.step * stepTicks }))
+      Option.map(Option.all([clip(edit.clip), track(edit.track)]), ([id, to]) =>
+        doc.transact(() => {
+          mapIn(doc.getMap('clips'), id).set('track', to)
+          mapIn(doc.getMap('clips'), id).set('bounds', { tick: edit.step * stepTicks })
+        })
       ),
     ResizeClip: (edit) => Option.map(clip(edit.clip), (id) => resizeClip(doc, by, id, edit.steps * stepTicks)),
     TrimClip: (edit) =>
@@ -342,12 +329,11 @@ const applied = (
         })
       ),
     DeleteClip: (edit) => Option.map(clip(edit.clip), (id) => gone(doc.getMap('clips'), id, edit.remove)),
-    ToggleMode: () => local.toggleMode(),
-    SetMute: (edit) => Option.map(channel(edit.channel), (id) => setMute(doc, by, id, edit.mute)),
-    ToggleSolo: (edit) => Option.map(channel(edit.channel), local.solo),
+    SetMute: (edit) => Option.map(track(edit.track), (id) => setMute(doc, by, id, edit.mute)),
+    ToggleSolo: (edit) => Option.map(track(edit.track), local.solo),
     SetInsert: (edit) =>
-      Option.map(Option.all([channel(edit.channel), insertOfNumber(edit.insert)]), ([id, into]) =>
-        setChannelInsert(doc, by, id, into)
+      Option.map(Option.all([track(edit.track), insertOfNumber(edit.insert)]), ([id, into]) =>
+        setTrackInsert(doc, by, id, into)
       ),
     SetInsertStrip: (edit) =>
       Option.map(insertOfNumber(edit.insert), (id) =>
@@ -355,7 +341,7 @@ const applied = (
       ),
     SetInsertMute: (edit) => Option.map(insertOfNumber(edit.insert), (id) => setInsertMute(doc, by, id, edit.mute)),
     HoldInsert: (edit) =>
-      Option.map(channel(edit.channel), (id) => local.hold(HoldTarget.ChannelInsert({ channel: id }), edit.insert)),
+      Option.map(track(edit.track), (id) => local.hold(HoldTarget.TrackInsert({ track: id }), edit.insert)),
     HoldInsertStrip: (edit) =>
       Option.map(insertOfNumber(edit.insert), (id) =>
         local.hold(
@@ -364,20 +350,20 @@ const applied = (
         )
       ),
     HoldShape: (edit) =>
-      Option.map(channel(edit.channel), (id) =>
-        local.hold(HoldTarget.ChannelParam({ channel: id, param: synthShapes[edit.oscillator].id }), edit.shape)
+      Option.map(track(edit.track), (id) =>
+        local.hold(HoldTarget.TrackParam({ track: id, param: synthShapes[edit.oscillator].id }), edit.shape)
       ),
     HoldSynthKnob: (edit) =>
-      Option.map(channel(edit.channel), (id) =>
+      Option.map(track(edit.track), (id) =>
         local.hold(
-          HoldTarget.ChannelParam({ channel: id, param: synthKnobs[edit.knob].id }),
+          HoldTarget.TrackParam({ track: id, param: synthKnobs[edit.knob].id }),
           paramValue(synthKnobs[edit.knob], edit.position / 10)
         )
       ),
     HoldStrip: (edit) =>
-      Option.map(channel(edit.channel), (id) =>
+      Option.map(track(edit.track), (id) =>
         local.hold(
-          HoldTarget.ChannelStrip({ channel: id, param: strip[edit.param].id }),
+          HoldTarget.TrackStrip({ track: id, param: strip[edit.param].id }),
           paramValue(strip[edit.param], edit.position / 10)
         )
       ),
@@ -394,7 +380,7 @@ const applied = (
 // Longer than the engine's fades, a sound's length and the filter's tail.
 const quietBlocks = 40
 
-/** One loop of the pattern from its start, at the project's tempo, between two quiet stretches; `play` plays it. */
+/** A bar of the arrangement from its start, at the project's tempo, between two quiet stretches; `play` plays it. */
 const played = (engine: TestEngine, bpm: number, play: (playing: boolean) => void) => {
   blocks(engine, quietBlocks)
   const loopFrames = (barTicks * sampleRate * 60) / (bpm * ticksPerQuarter)
@@ -405,7 +391,7 @@ const played = (engine: TestEngine, bpm: number, play: (playing: boolean) => voi
   return heard
 }
 
-/** The order the insert sums channels in differs, and so do the last bits of the sum. */
+/** The order the insert sums tracks in differs, and so do the last bits of the sum. */
 const tolerance = 1e-6
 
 const sameSound = (a: Float32Array, b: Float32Array) =>
@@ -459,9 +445,7 @@ const stepsAsFromNothing = ({ asleep, edits }: Run) =>
       library
     )
     const local: Local = {
-      solo: (channel) => registry.update(listening, (state) => toggledSolo(state, channel)),
-      choose: (pattern) => registry.update(listening, (state) => ({ ...state, pattern: Option.some(pattern) })),
-      toggleMode: () => registry.update(listening, toggledMode),
+      solo: (track) => registry.update(listening, (state) => toggledSolo(state, track)),
       hold: (target, value) => registry.update(holds, (held) => holding(held, target, value)),
       letGo: (n) =>
         registry.update(holds, (held) =>

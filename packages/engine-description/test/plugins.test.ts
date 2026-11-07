@@ -3,7 +3,7 @@ import { describe, expect, test } from 'vitest'
 import {
   defaultStrip,
   formatValue,
-  newChannelPosition,
+  newTrackPosition,
   nearestIn,
   paramPosition,
   paramValue,
@@ -46,10 +46,10 @@ describe('a knob', () => {
     expect(paramValue(cutoff, 0.1) / cutoff.min).toBeCloseTo((cutoff.max / cutoff.min) ** 0.1, 9)
   })
 
-  test("turns a volume finer near the top: 5.2 dB down where a new channel's stands, silent at the bottom", () => {
+  test("turns a volume finer near the top: 5.2 dB down where a new track's stands, silent at the bottom", () => {
     const decibelsAt = (position: number) => 20 * Math.log10(paramValue(volume, position))
-    expect(newChannelPosition).toBe(0.78)
-    expect(decibelsAt(newChannelPosition)).toBeCloseTo(-5.2, 9)
+    expect(newTrackPosition).toBe(0.78)
+    expect(decibelsAt(newTrackPosition)).toBeCloseTo(-5.2, 9)
     expect(decibelsAt(1)).toBe(0)
     expect(decibelsAt(0.5)).toBeCloseTo(-14.5, 1)
     expect(decibelsAt(0.25)).toBeCloseTo(-29, 1)
@@ -111,7 +111,7 @@ test('a value reads in its unit', () => {
   expect(formatValue(cutoff, 20_000)).toBe('20 kHz')
   expect(formatValue({ unit: null, scale: 'linear', min: 0, max: 1, whole: false }, 0.5)).toBe('0.50')
   expect(formatValue(volume, 1)).toBe('0.0 dB')
-  expect(formatValue(volume, paramValue(volume, newChannelPosition))).toBe('−5.2 dB')
+  expect(formatValue(volume, paramValue(volume, newTrackPosition))).toBe('−5.2 dB')
   expect(formatValue(volume, 0.5)).toBe('−6.0 dB')
   expect(formatValue(volume, 0.9995)).toBe('0.0 dB')
   expect(formatValue({ ...volume, max: 2 }, 1.25)).toBe('+1.9 dB')

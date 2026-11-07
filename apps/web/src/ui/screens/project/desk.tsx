@@ -20,23 +20,21 @@ import { type ComponentChildren, createContext, type FunctionComponent } from 'p
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks'
 import { useCore } from '../../core-context'
 import { type Axes, bothAxes, fittedSize, outgrown, type Size } from '../../kit/fit'
-import { type ChannelWindows, ChannelWindowsContext } from '../../parts/channel-windows'
-import { PianoRollContext, type PianoRollWindow, shownChannel } from '../../parts/piano-roll-window'
+import { PianoRollContext, type PianoRollWindow } from '../../parts/piano-roll-window'
+import { type TrackWindows, TrackWindowsContext } from '../../parts/track-windows'
 import { WindowBodyContext } from '../../parts/window-body'
-import { ChannelSettings, useChannelName, useInstrumentName } from '../../windows/channel/channel'
-import { PatternName, StepGrid } from '../../windows/channels/channels'
-import { stepsWidth } from '../../windows/channels/geometry'
+import { Arrangement } from '../../windows/arrangement/arrangement'
+import { headsWidth } from '../../windows/arrangement/layout'
 import { DebugPanel } from '../../windows/debug-panel/debug-panel'
 import { Mixer } from '../../windows/mixer/mixer'
 import { keysWidth, stepWidth } from '../../windows/piano-roll/layout'
 import { PianoRoll, PianoRollName } from '../../windows/piano-roll/piano-roll'
-import { Arrangement } from '../../windows/arrangement/arrangement'
+import { TrackSettings, useInstrumentName, useTrackName } from '../../windows/track/track'
 import './desk.css'
 
 /**
- * A window the desk can hold: its title, what stands beside the title, its body, where it first opens and the window it
- * opens under where that one floats, whether only a build for development has its button, and whether it is fitted to
- * what is in it or what is in it fills it.
+ * A window the desk can hold: its title, what stands beside the title, its body, where it first opens, whether only a
+ * build for development has its button, and whether it is fitted to what is in it or what is in it fills it.
  */
 interface WindowKind {
   readonly title: string
@@ -45,7 +43,6 @@ interface WindowKind {
   readonly Sub: FunctionComponent
   readonly Body: FunctionComponent
   readonly first: { readonly left: number; readonly top: number; readonly width: number; readonly height: number }
-  readonly under: Option.Option<string>
 }
 
 const nothing = () => null
@@ -53,26 +50,26 @@ const nothing = () => null
 /** Room kept between a window and the desk's edges, and between the windows a new project opens with. */
 const margin = 16
 
-/** Across a row of the Channels window, its window's padding and its well's, all but the steps. */
-const channelsAround = 302
-
-/** As wide as two bars of steps, a new pattern's and the one past it, so the rest open beside it and under it. */
-const channelsFirst = { left: margin, top: margin, width: channelsAround + stepsWidth(2), height: 252 }
-
 /** A window's body pads what is in it by this on each side. */
 const bodyPadding = 8
 
+/** How far down the desk a window opens over the lower part of the Arrangement, its first tracks left in sight. */
+const lowerTop = 284
+
+/** Right of the tracks' heads, so a window opened from one leaves them in sight. */
+const pastHeads = margin + headsWidth + 2 * bodyPadding + margin
+
 const windows = {
-  channels: {
-    title: 'Channels',
+  // The main window: all of the desk.
+  arrangement: {
+    title: 'Arrangement',
     devOnly: false,
-    fits: true,
-    Sub: PatternName,
-    Body: StepGrid,
-    first: channelsFirst,
-    under: Option.none()
+    fits: false,
+    Sub: nothing,
+    Body: Arrangement,
+    first: { left: margin, top: margin, width: Number.POSITIVE_INFINITY, height: Number.POSITIVE_INFINITY }
   },
-  // Under the Channels window as it opens: a bar of steps beside the keyboard, as high as the desk leaves room for.
+  // Over the Arrangement's lower part, right of its heads: a bar of steps beside the keyboard.
   'piano-roll': {
     title: 'Piano roll',
     devOnly: false,
@@ -80,42 +77,21 @@ const windows = {
     Sub: PianoRollName,
     Body: PianoRoll,
     first: {
-      left: channelsFirst.left,
-      top: channelsFirst.top + channelsFirst.height + margin,
+      left: pastHeads,
+      top: lowerTop,
       width: keysWidth + barSteps * stepWidth + 2 * bodyPadding,
       height: 360
-    },
-    under: Option.some('channels')
+    }
   },
-  // Under the Channels window too, as wide and high as the desk leaves room for; the piano roll opens over it.
-  arrangement: {
-    title: 'Arrangement',
-    devOnly: false,
-    fits: false,
-    Sub: nothing,
-    Body: Arrangement,
-    first: {
-      left: channelsFirst.left,
-      top: channelsFirst.top + channelsFirst.height + margin,
-      width: Number.POSITIVE_INFINITY,
-      height: Number.POSITIVE_INFINITY
-    },
-    under: Option.some('channels')
-  },
-  // Beside the Channels window, as wide as the desk leaves room for and as high as a strip; its inserts scroll across.
+  // Along the top right of the heads, so they stay in sight, as wide as the desk leaves room for and as high as a strip;
+  // its inserts scroll across.
   mixer: {
     title: 'Mixer',
     devOnly: false,
     fits: false,
     Sub: nothing,
     Body: Mixer,
-    first: {
-      left: channelsFirst.left + channelsFirst.width + margin,
-      top: margin,
-      width: Number.POSITIVE_INFINITY,
-      height: 470
-    },
-    under: Option.none()
+    first: { left: pastHeads, top: margin, width: Number.POSITIVE_INFINITY, height: 470 }
   },
   // A tool for development: the sound's numbers, and buttons that break things on purpose.
   debug: {
@@ -124,8 +100,7 @@ const windows = {
     fits: true,
     Sub: nothing,
     Body: DebugPanel,
-    first: { left: margin, top: channelsFirst.top + channelsFirst.height + margin, width: 520, height: 300 },
-    under: Option.none()
+    first: { left: margin, top: lowerTop, width: 520, height: 300 }
   }
 } satisfies Record<string, WindowKind>
 
@@ -134,43 +109,41 @@ export type WindowName = keyof typeof windows
 export const windowNames = Record.keys(windows)
 
 /**
- * The windows the desk holds, each with a button on the transport bar: the project's main ones, few of them. An
- * instrument's or an effect's window opens from its channel or slot. A tool for development only in a build for it:
- * elsewhere a saved layout that holds it isn't taken.
+ * The windows the desk holds, each with a button on the transport bar: the project's main ones, few of them. A track's
+ * window opens from its head, an effect's from its slot. A tool for development only in a build for it: elsewhere a
+ * saved layout that holds it isn't taken.
  */
 export const deskWindows = (development: boolean) => windowNames.filter((name) => development || !windows[name].devOnly)
 
-/** What a new project opens with, the Mixer over the Arrangement; Debug waits for its button. */
-const firstOpen: ReadonlyArray<WindowName> = ['channels', 'arrangement', 'mixer']
+/** What a new project opens with: the Arrangement; the others wait for their buttons, the piano roll for a clip. */
+const firstOpen: ReadonlyArray<WindowName> = ['arrangement']
 
 const kindOf = (name: string) => Record.get<string, WindowKind>(windows, name)
 
 /** The piano roll's window, of which there is one. */
 const pianoRoll: WindowName = 'piano-roll'
 
-/** What the piano roll's layout keeps of the channel last chosen for it. */
+/** What the piano roll's layout keeps of the clip last opened in it. */
 const rollParams = (chosen: Option.Option<Id>) =>
-  Option.match(chosen, { onNone: () => ({}), onSome: (channel) => ({ channel }) })
+  Option.match(chosen, { onNone: () => ({}), onSome: (clip) => ({ clip }) })
 
-/** A channel's window keeps the channel it is of in its layout, read as any saved layout may hold it. */
-const channelOf = Schema.decodeUnknownOption(Schema.Struct({ channel: storedId }))
+/** The clip the piano roll's layout keeps, read as any saved layout may hold it. */
+const clipOf = Schema.decodeUnknownOption(Schema.Struct({ clip: storedId }))
 
-/** Of its own for each channel, and never a main window's name. */
-const channelWindowId = (channel: Id) => `channel:${channel}`
+/** A track's window keeps the track it is of in its layout, read as any saved layout may hold it. */
+const trackOf = Schema.decodeUnknownOption(Schema.Struct({ track: storedId }))
 
-/** What the dock draws a channel's window with. */
-const channelComponent = 'channel'
+/** Of its own for each track, and never a main window's name. */
+const trackWindowId = (track: Id) => `track:${track}`
+
+/** What the dock draws a track's window with. */
+const trackComponent = 'track'
 
 /**
- * Over the Mixer, at its left, along the top, before it is fitted to what is in it: from the top, an instrument's
+ * Right of the tracks' heads, along the top, before it is fitted to what is in it: from the top, an instrument's
  * controls have the desk's height.
  */
-const channelFirst = {
-  left: windows.mixer.first.left,
-  top: margin,
-  width: 240,
-  height: 200
-}
+const trackFirst = { left: pastHeads, top: margin, width: 240, height: 200 }
 
 /** How far down and right of the window in front one opened beside it stands. */
 const besideStep = 24
@@ -200,23 +173,12 @@ const floatingAt = (box: WindowKind['first']) =>
 const leastHeight = 160
 const leastWidth = 240
 
-/**
- * Where the window first opens: under the window it goes under, if that floats, no wider and no lower than the desk's
- * margin.
- */
-const placeOf = (dock: DockviewApi, { first, under }: WindowKind) => {
-  const box = Option.match(
-    Option.flatMap(under, (other) =>
-      Option.flatMap(Option.fromNullishOr(dock.getPanel(other)), ({ group }) => floatingBox(group))
-    ),
-    { onNone: () => first, onSome: (above) => ({ ...first, left: above.left, top: above.top + above.height + margin }) }
-  )
-  return {
-    ...box,
-    width: Math.max(Math.min(box.width, dock.width - box.left - margin), leastWidth),
-    height: Math.max(Math.min(box.height, dock.height - box.top - margin), leastHeight)
-  }
-}
+/** Where the window first opens: no wider and no lower than the desk's margin. */
+const placeOf = (dock: DockviewApi, { first }: WindowKind) => ({
+  ...first,
+  width: Math.max(Math.min(first.width, dock.width - first.left - margin), leastWidth),
+  height: Math.max(Math.min(first.height, dock.height - first.top - margin), leastHeight)
+})
 
 /**
  * The floating window `panel` is in, sized along `along` to what is in its body, its padding even on every side, as far
@@ -302,7 +264,7 @@ const WindowFrame = ({
             Boolean.match(takeFit(api.id), { onTrue: () => fit(bothAxes), onFalse: () => {} })
             was.current = laidOut(drawn.content)
             // Grown along a side it showed all of what is in it along, it goes on showing it all, such as with a
-            // channel added. A frame later: resizing the window inside the observer's turn would resize the dock's
+            // track added. A frame later: resizing the window inside the observer's turn would resize the dock's
             // parts it watches too, past what the turn can tell.
             const frames = new Set<number>()
             const observer = new ResizeObserver(() => {
@@ -370,26 +332,26 @@ const bodies = Record.map(windows, ({ title, Body, fits }: WindowKind) =>
   })
 )
 
-const ChannelFrame = ({
+const TrackFrame = ({
   api,
   containerApi,
-  channel
-}: Pick<IDockviewPanelProps, 'api' | 'containerApi'> & { readonly channel: Id }) => {
-  const name = useChannelName(channel)
+  track
+}: Pick<IDockviewPanelProps, 'api' | 'containerApi'> & { readonly track: Id }) => {
+  const name = useTrackName(track)
   // The dock names the window by it to screen readers, as it renames.
   useEffect(() => api.setTitle(name), [api, name])
   return (
     <WindowFrame api={api} containerApi={containerApi} label={name}>
-      <ChannelSettings channel={channel} />
+      <TrackSettings track={track} />
     </WindowFrame>
   )
 }
 
-/** A channel's window; one whose layout names no channel draws nothing. */
-const ChannelWindow = ({ api, containerApi, params }: IDockviewPanelProps) =>
-  Option.match(channelOf(params), {
+/** A track's window; one whose layout names no track draws nothing. */
+const TrackWindow = ({ api, containerApi, params }: IDockviewPanelProps) =>
+  Option.match(trackOf(params), {
     onNone: nothing,
-    onSome: ({ channel }) => <ChannelFrame api={api} containerApi={containerApi} channel={channel} />
+    onSome: ({ track }) => <TrackFrame api={api} containerApi={containerApi} track={track} />
   })
 
 const hintOf = (title: string) =>
@@ -429,13 +391,13 @@ const WindowTab = ({
   </div>
 )
 
-/** A channel's window's tab: the channel's name, and what plays it. */
-const ChannelTab = ({ api, channel }: { readonly api: DockviewPanelApi; readonly channel: Id }) => (
+/** A track's window's tab: the track's name, and what plays it. */
+const TrackTab = ({ api, track }: { readonly api: DockviewPanelApi; readonly track: Id }) => (
   <WindowTab
     api={api}
-    title={useChannelName(channel)}
-    sub={useInstrumentName(channel)}
-    reopen='a click on its name in the Channels window opens it again'
+    title={useTrackName(track)}
+    sub={useInstrumentName(track)}
+    reopen='a click on its name in its head in the Arrangement opens it again'
   />
 )
 
@@ -445,20 +407,20 @@ const Tab = ({ api, params }: IDockviewPanelHeaderProps) =>
       <WindowTab api={api} title={title} sub={<Sub />} reopen='its button on the transport bar opens it again' />
     ),
     onNone: () =>
-      Option.match(channelOf(params), {
+      Option.match(trackOf(params), {
         onNone: nothing,
-        onSome: ({ channel }) => <ChannelTab api={api} channel={channel} />
+        onSome: ({ track }) => <TrackTab api={api} track={track} />
       })
   })
 
-/** The windows in sight now, the one in front, and the channels whose windows are in sight. */
+/** The windows in sight now, the one in front, and the tracks whose windows are in sight. */
 interface Sight {
   readonly shown: ReadonlyArray<WindowName>
   readonly front: Option.Option<WindowName>
-  readonly channels: ReadonlyArray<Id>
+  readonly tracks: ReadonlyArray<Id>
 }
 
-const noSight: Sight = { shown: [], front: Option.none(), channels: [] }
+const noSight: Sight = { shown: [], front: Option.none(), tracks: [] }
 
 /** How the windows stand, read only by what shows it, and the press of a window's button. */
 interface Dock {
@@ -488,38 +450,38 @@ const frontOf = (api: DockviewApi) =>
 
 const sameNames = Array.makeEquivalence<WindowName>((a, b) => a === b)
 
-/** The channels' windows on the desk, of a channel or not, as a saved layout may hold them. */
-const channelWindowsOf = (api: DockviewApi) => api.panels.filter((panel) => panel.api.component === channelComponent)
+/** The tracks' windows on the desk, of a track or not, as a saved layout may hold them. */
+const trackWindowsOf = (api: DockviewApi) => api.panels.filter((panel) => panel.api.component === trackComponent)
 
-/** The channel of each of its windows in sight: not behind another tab of its group. */
-const channelsShownOf = (api: DockviewApi) =>
-  channelWindowsOf(api).flatMap((panel) =>
+/** The track of each of its windows in sight: not behind another tab of its group. */
+const tracksShownOf = (api: DockviewApi) =>
+  trackWindowsOf(api).flatMap((panel) =>
     Option.toArray(
       Option.map(
-        Option.filter(channelOf(panel.params), () => panel.api.isVisible),
-        ({ channel }) => channel
+        Option.filter(trackOf(panel.params), () => panel.api.isVisible),
+        ({ track }) => track
       )
     )
   )
 
-/** A step down and right of the floating channel window last turned to, or where a channel's window first opens. */
+/** A step down and right of the floating track window last turned to, or where a track's window first opens. */
 const besideOf = (open: ReadonlyArray<IDockviewPanel>) =>
   Option.match(Array.last(Array.getSomes(open.map(({ group }) => floatingBox(group)))), {
-    onNone: () => channelFirst,
-    onSome: (box) => ({ ...channelFirst, left: box.left + besideStep, top: box.top + besideStep })
+    onNone: () => trackFirst,
+    onSome: (box) => ({ ...trackFirst, left: box.left + besideStep, top: box.top + besideStep })
   })
 
 const sightOf = (api: DockviewApi): Sight => ({
   shown: shownOf(api),
   front: frontOf(api),
-  channels: channelsShownOf(api)
+  tracks: tracksShownOf(api)
 })
 
-const sameChannels = Array.makeEquivalence<Id>((a, b) => a === b)
+const sameTracks = Array.makeEquivalence<Id>((a, b) => a === b)
 
 /** The same windows in sight and in front, as through most of a drag. */
 const sameSight = (was: Sight, now: Sight) =>
-  sameNames(was.shown, now.shown) && Equal.equals(was.front, now.front) && sameChannels(was.channels, now.channels)
+  sameNames(was.shown, now.shown) && Equal.equals(was.front, now.front) && sameTracks(was.tracks, now.tracks)
 
 /**
  * The windows' state for whatever draws inside: the desk hands over its dock, the transport bar's buttons open,
@@ -532,7 +494,7 @@ export const DockProvider = ({ children }: { readonly children: ComponentChildre
   const sight = useMemo(() => Atom.make(noSight).pipe(Atom.keepAlive), [])
   /** Windows opened and not yet drawn, by ID, to be fitted once they are. */
   const toFit = useRef(new Set<string>())
-  /** Channel windows by ID, the one last turned to last: a click on a name takes the focus to the Channels window. */
+  /** Track windows by ID, the one last turned to last: a click on a name takes the focus to the Arrangement. */
   const turnedTo = useRef<ReadonlyArray<string>>([])
   useEffect(
     () =>
@@ -552,7 +514,7 @@ export const DockProvider = ({ children }: { readonly children: ComponentChildre
           })
           const activating = api.onDidActivePanelChange(({ panel }) =>
             Option.map(
-              Option.filter(Option.fromNullishOr(panel), (active) => active.api.component === channelComponent),
+              Option.filter(Option.fromNullishOr(panel), (active) => active.api.component === trackComponent),
               ({ id }) => {
                 turnedTo.current = [...turnedTo.current.filter((was) => was !== id), id]
               }
@@ -567,17 +529,17 @@ export const DockProvider = ({ children }: { readonly children: ComponentChildre
       }),
     [dock, view, run, registry, sight]
   )
-  // A channel no longer there takes its window with it, a window a saved layout holds too.
+  // A track no longer there takes its window with it, a window a saved layout holds too.
   useEffect(
     () =>
       Option.match(dock, {
         onNone: () => undefined,
         onSome: (api) =>
           registry.subscribe(
-            session.project.channelIds,
+            session.project.trackIds,
             (ids) =>
-              channelWindowsOf(api)
-                .filter((panel) => !Option.exists(channelOf(panel.params), ({ channel }) => ids.includes(channel)))
+              trackWindowsOf(api)
+                .filter((panel) => !Option.exists(trackOf(panel.params), ({ track }) => ids.includes(track)))
                 .forEach((panel) => panel.api.close()),
             { immediate: true }
           )
@@ -598,17 +560,17 @@ export const DockProvider = ({ children }: { readonly children: ComponentChildre
     }),
     [open, view, run]
   )
-  // A click on a channel's name: its window in sight closes, one behind a tab comes forward, and a closed one opens in
-  // place of the channel window last turned to, if it is in sight, the others closing, or beside it.
-  const toggleChannel = useCallback<ChannelWindows['toggle']>(
-    (channel, alongside) =>
+  // A click on a track's name: its window in sight closes, one behind a tab comes forward, and a closed one opens in
+  // place of the track window last turned to, if it is in sight, the others closing, or beside it.
+  const toggleTrack = useCallback<TrackWindows['toggle']>(
+    (track, alongside) =>
       Option.match(dock, {
         onNone: () => {},
         onSome: (api) => {
-          const id = channelWindowId(channel)
+          const id = trackWindowId(track)
           const openAt = (place: ReturnType<typeof floatingAt> | { readonly position: AddPanelPositionOptions }) => {
             toFit.current.add(id)
-            api.addPanel({ id, component: channelComponent, params: { channel }, ...place })
+            api.addPanel({ id, component: trackComponent, params: { track }, ...place })
           }
           Option.match(Option.fromNullishOr(api.getPanel(id)), {
             onSome: (panel) =>
@@ -619,7 +581,7 @@ export const DockProvider = ({ children }: { readonly children: ComponentChildre
             onNone: () => {
               const rank = (panel: IDockviewPanel) => turnedTo.current.indexOf(panel.id)
               // The ones never turned to first, as the dock holds them.
-              const open = channelWindowsOf(api).toSorted((a, b) => rank(a) - rank(b))
+              const open = trackWindowsOf(api).toSorted((a, b) => rank(a) - rank(b))
               Boolean.match(alongside, {
                 onTrue: () => openAt(floatingAt(besideOf(open))),
                 onFalse: () => {
@@ -627,7 +589,7 @@ export const DockProvider = ({ children }: { readonly children: ComponentChildre
                     Option.match(
                       Array.findLast(open, (panel) => panel.api.isVisible),
                       {
-                        onNone: () => floatingAt(channelFirst),
+                        onNone: () => floatingAt(trackFirst),
                         onSome: (shown) => ({ position: { referenceGroup: shown.group } })
                       }
                     )
@@ -642,22 +604,21 @@ export const DockProvider = ({ children }: { readonly children: ComponentChildre
     [dock]
   )
   const isShown = useMemo(
-    () => Atom.family((channel: Id) => Atom.map(sight, ({ channels }) => channels.includes(channel))),
+    () => Atom.family((track: Id) => Atom.map(sight, ({ tracks }) => tracks.includes(track))),
     [sight]
   )
-  const channelWindows = useMemo(() => ({ toggle: toggleChannel, isShown }), [toggleChannel, isShown])
-  /** The channel last chosen for the piano roll, as its layout keeps it. */
+  const trackWindows = useMemo(() => ({ toggle: toggleTrack, isShown }), [toggleTrack, isShown])
+  /** The clip last opened in the piano roll, as its layout keeps it. */
   const chosen = useMemo(() => Atom.make(Option.none<Id>()).pipe(Atom.keepAlive), [])
+  // The one chosen while it is live: gone, nothing, and back with an undo, it again.
   const shownInRoll = useMemo(
     () =>
-      byContent((get) => shownChannel(get(chosen), get(session.project.channelIds), get(session.currentPattern))).pipe(
+      byContent((get) => Option.filter(get(chosen), (clip) => Option.isSome(get(session.project.clip(clip))))).pipe(
         Atom.keepAlive
       ),
     [chosen, session]
   )
-  // While the piano roll is open it holds a channel there: the one shown is chosen when none is, as it opens by its
-  // button, or when the one chosen is gone. It stays when another channel gets notes, and when the one gone comes back.
-  // The layout keeps it: read from it once restored, written into it as it changes.
+  // The layout keeps the clip the piano roll shows: read from it once restored, written into it as it changes.
   useEffect(
     () =>
       Option.match(dock, {
@@ -665,17 +626,8 @@ export const DockProvider = ({ children }: { readonly children: ComponentChildre
         onSome: (api) => {
           registry.set(
             chosen,
-            Option.flatMap(panelOf(api, pianoRoll), (panel) =>
-              Option.map(channelOf(panel.params), ({ channel }) => channel)
-            )
+            Option.flatMap(panelOf(api, pianoRoll), (panel) => Option.map(clipOf(panel.params), ({ clip }) => clip))
           )
-          const settle = () =>
-            Option.map(panelOf(api, pianoRoll), () =>
-              Option.map(
-                Option.filter(registry.get(shownInRoll), (shown) => !Option.contains(registry.get(chosen), shown)),
-                (shown) => registry.set(chosen, Option.some(shown))
-              )
-            )
           const keep = (panel: IDockviewPanel) => {
             panel.api.updateParameters(rollParams(registry.get(chosen)))
             run(view.saveLayout(() => api.toJSON(), { now: true }))
@@ -683,27 +635,22 @@ export const DockProvider = ({ children }: { readonly children: ComponentChildre
           const adding = api.onDidAddPanel((panel) =>
             Option.map(
               Option.liftPredicate(panel, ({ id }) => id === pianoRoll),
-              (roll) => {
-                settle()
-                keep(roll)
-              }
+              keep
             )
           )
           const changing = registry.subscribe(chosen, () => Option.map(panelOf(api, pianoRoll), keep))
-          const shifting = registry.subscribe(shownInRoll, settle, { immediate: true })
           return () => {
             adding.dispose()
             changing()
-            shifting()
           }
         }
       }),
-    [dock, registry, chosen, shownInRoll, run, view]
+    [dock, registry, chosen, run, view]
   )
-  // From a channel's menu: the piano roll opens on it, or turns to it and comes forward.
+  // From a double click on a clip: the piano roll opens on it, or turns to it and comes forward.
   const showInRoll = useCallback(
-    (channel: Id) => {
-      registry.set(chosen, Option.some(channel))
+    (clip: Id) => {
+      registry.set(chosen, Option.some(clip))
       Option.map(dock, (api) =>
         Option.match(panelOf(api, pianoRoll), {
           onNone: () => open(api, pianoRoll),
@@ -713,7 +660,7 @@ export const DockProvider = ({ children }: { readonly children: ComponentChildre
     },
     [registry, chosen, dock, open]
   )
-  const roll = useMemo<PianoRollWindow>(() => ({ show: showInRoll, channel: shownInRoll }), [showInRoll, shownInRoll])
+  const roll = useMemo<PianoRollWindow>(() => ({ show: showInRoll, clip: shownInRoll }), [showInRoll, shownInRoll])
   // A window's button brings it forward first, and closes it once it is in front.
   const toggle = useCallback(
     (name: WindowName) =>
@@ -734,22 +681,33 @@ export const DockProvider = ({ children }: { readonly children: ComponentChildre
   const value = useMemo(() => ({ sight, toggle }), [sight, toggle])
   return (
     <DockContext.Provider value={value}>
-      <ChannelWindowsContext.Provider value={channelWindows}>
+      <TrackWindowsContext.Provider value={trackWindows}>
         <PianoRollContext.Provider value={roll}>
           <DeskingContext.Provider value={desking}>{children}</DeskingContext.Provider>
         </PianoRollContext.Provider>
-      </ChannelWindowsContext.Provider>
+      </TrackWindowsContext.Provider>
     </DockContext.Provider>
   )
 }
+
+/**
+ * The window pressed made the active one: the dock raises a floating window at any press in it, but makes it active
+ * only as the focus goes into it, which a gesture's press keeps out. So the window on top is the one called in front.
+ */
+const activateUnder = (api: DockviewApi, target: EventTarget | null) =>
+  Option.map(
+    Array.findFirst(api.groups, (group) => target instanceof Node && group.element.contains(target)),
+    (group) => group.api.setActive()
+  )
 
 /** The desk with the windows on it: as saved for the project, if the dock takes it, or as a new project opens. */
 export const Desk = () => {
   const { view, run } = useCore()
   const { ready, open } = useContext(DeskingContext)
+  const docked = useRef(Option.none<DockviewApi>())
   const components = useMemo(() => {
     const held = deskWindows(import.meta.env.DEV)
-    return { ...Record.filter(bodies, (_, name) => Array.contains(held, name)), [channelComponent]: ChannelWindow }
+    return { ...Record.filter(bodies, (_, name) => Array.contains(held, name)), [trackComponent]: TrackWindow }
   }, [])
   const onReady = ({ api }: DockviewReadyEvent) => {
     // The dock checks what it reads, and throws on what it can't take.
@@ -765,10 +723,15 @@ export const Desk = () => {
         firstOpen.forEach((name) => open(api, name))
       }
     })
+    docked.current = Option.some(api)
     ready(api)
   }
   return (
-    <main class='desk' aria-label='Windows'>
+    <main
+      class='desk'
+      aria-label='Windows'
+      onPointerDownCapture={(event) => Option.map(docked.current, (api) => activateUnder(api, event.target))}
+    >
       <DockviewReact
         components={components}
         defaultTabComponent={Tab}

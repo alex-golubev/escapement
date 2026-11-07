@@ -1,8 +1,8 @@
 import { useAtomValue } from '@effect/atom-react'
 import { Tick } from '@escapement/engine-description'
-import { byContent, arrangementTracks, trackPlace } from '@escapement/model'
+import { byContent } from '@escapement/model'
 import { Array, Boolean, Data, Equal, Option } from 'effect'
-import type { TargetedPointerEvent, TargetedWheelEvent } from 'preact'
+import type { TargetedMouseEvent, TargetedPointerEvent, TargetedWheelEvent } from 'preact'
 import { useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks'
 import { useCore } from '../../core-context'
 import { useLayer } from '../../kit/canvas'
@@ -10,10 +10,12 @@ import { useLatest, usePointerGesture } from '../../kit/gesture'
 import { useLaidOutSize } from '../../kit/laid-out'
 import { type Point, pointOf, turnOf, withCtrl } from '../../kit/pointer'
 import { useScreenScale } from '../../kit/screen-scale'
+import { usePianoRollWindow } from '../../parts/piano-roll-window'
 import { useCanvasPlayhead } from '../../parts/playhead'
-import { type Cursor, cursorAt, cursorOf, draggedClips, draggedTo, type Edge, Grab, grabAt, type Source } from './drag'
+import { type Cursor, cursorAt, cursorOf, draggedClips, draggedTo, type Edge, Grab, grabAt } from './drag'
 import { drawClips, drawFrame, drawGrid, type Palette, paletteOf } from './draw'
 import {
+  clipAt,
   clipsAlong,
   endOf,
   inDrawingOrder,
@@ -22,11 +24,20 @@ import {
   type Span,
   scrolledAcross,
   scrolledTo,
+  startAt,
   type View,
   xOf
 } from './geometry'
-import { barWidth, namesWidth, rulerHeight, trackHeight } from './layout'
+import { TrackHeads } from './heads'
+import { barWidth, headsWidth, rulerHeight, trackHeight } from './layout'
 import './arrangement.css'
+
+/** The sizes the style sheet lays the heads out by, as the canvases have them. */
+const sizes = {
+  '--heads-w': `${headsWidth}px`,
+  '--track-h': `${trackHeight}px`,
+  '--ruler-h': `${rulerHeight}px`
+}
 
 /**
  * What a pointer does from press to release, in an action of the undo history: erases all it passes over, as one step,
@@ -49,38 +60,36 @@ const Gesture = Data.taggedEnum<Gesture>()
 type Dragging = Data.TaggedEnum.Value<Gesture, 'Dragging'>
 
 /**
- * The arrangement's body: the clips of the live patterns on their tracks, drawn on canvases, the grid, the clips, the
- * names and numbers over them and the arrangement's playhead, each drawn again only when what it shows changes. It
- * fills its window, which follows the playhead.
+ * The arrangement's body: the project's tracks, their heads down the left, and their clips, drawn on canvases, the grid,
+ * the clips, the bars' numbers over them and the playhead, each drawn again only when what it shows changes. It fills
+ * its window, which follows the playhead.
  */
 export const Arrangement = () => {
   const { registry, session, ops } = useCore()
+  const roll = usePianoRollWindow()
+  const tracksAtom = session.project.trackIds
   const shownAtom = useMemo(
     () =>
-      byContent((get) =>
-        inDrawingOrder(
-          get(session.project.arrangementClips).flatMap(({ id, pattern, track, tick, length, period, offset }) =>
-            Option.toArray(
-              Option.map(
-                trackPlace(track),
-                (place): Shown => ({
-                  id,
-                  pattern,
-                  place,
-                  tick,
-                  length,
-                  period,
-                  offset,
-                  name: Option.getOrElse(get(session.project.patternName(pattern)), () => '')
-                })
-              )
-            )
+      byContent((get) => {
+        const places = new Map(get(tracksAtom).map((track, place) => [track, place]))
+        return inDrawingOrder(
+          get(session.project.arrangementClips).map(
+            ({ id, track, tick, length, period, offset }): Shown => ({
+              id,
+              // Each clip is on a live track, at its place.
+              place: places.get(track) ?? -1,
+              tick,
+              length,
+              period,
+              offset
+            })
           )
         )
-      ),
-    [session]
+      }),
+    [session, tracksAtom]
   )
   const shown = useAtomValue(shownAtom)
+  const tracks = useAtomValue(tracksAtom).length
   const box = useRef<HTMLDivElement>(null)
   const grid = useRef<HTMLCanvasElement>(null)
   const clipsLayer = useRef<HTMLCanvasElement>(null)
@@ -104,18 +113,17 @@ export const Arrangement = () => {
    * nothing, so a clip as long as its pattern stays so.
    */
   const write = ({ grab, span }: Dragging) =>
-    Option.map(Array.get(arrangementTracks, span.place), (track) => {
-      const to = { track, tick: Tick(span.tick) }
-      return Grab.$match(grab, {
-        Put: ({ source }) => Option.isSome(ops.addClip(source.pattern, to)),
-        Move: ({ clip }) => ops.moveClip(clip.id, to),
-        // Either edge moved makes the clip longer or shorter.
-        Resize: ({ clip, edge }) =>
-          Boolean.match(span.length === clip.length, {
-            onTrue: () => true,
-            onFalse: () => edgeWrites[edge](clip, span)
-          })
-      })
+    Grab.$match(grab, {
+      // To the track at the row as it is now: none there, as tracks went meanwhile, nothing.
+      Move: ({ clip }) =>
+        Option.map(Array.get(registry.get(tracksAtom), span.place), (track) =>
+          ops.moveClip(clip.id, { track, tick: Tick(span.tick) })
+        ),
+      Resize: ({ clip, edge }) =>
+        Boolean.match(span.length === clip.length, {
+          onTrue: () => true,
+          onFalse: () => edgeWrites[edge](clip, span)
+        })
     })
   // A drag kept writes where it left the clip, one the browser cancelled nothing.
   const gestures = usePointerGesture<Gesture>((now, kept) =>
@@ -134,11 +142,17 @@ export const Arrangement = () => {
   const left = scrolledAcross(reach, across)
   // Kept where it stands, as clips taken away take it back: clips put later move no bars.
   useLayoutEffect(() => setAcross(left), [left, across])
-  const view = Option.map(size, (laid): View => ({ ...laid, top: scrolledTo(laid.height, down), left }))
+  const top = Option.getOrElse(
+    Option.map(size, ({ height }) => scrolledTo(height, tracks, down)),
+    () => down
+  )
+  // Kept where it stands, as tracks taken away take it back: tracks put later move no rows.
+  useLayoutEffect(() => setDown(top), [top, down])
+  const view = Option.map(size, (laid): View => ({ ...laid, top, left, tracks }))
   const drawn = Option.all({ view, palette: palette.current })
   const viewKey = Option.match(view, {
     onNone: () => '',
-    onSome: ({ width, height, top, left }) => `${width}:${height}:${top}:${left}:${scale}`
+    onSome: ({ width, height, top, left, tracks }) => `${width}:${height}:${top}:${left}:${tracks}:${scale}`
   })
   useLayer(grid, drawn, (g, { view, palette }) => drawGrid(g, view, palette), [viewKey])
   useLayer(frame, drawn, (g, { view, palette }) => drawFrame(g, view, palette), [viewKey])
@@ -148,7 +162,7 @@ export const Arrangement = () => {
     gesture.shown
   ])
   const playhead = useCanvasPlayhead({
-    mode: 'arrangement',
+    place: Option.some,
     canvas: over,
     laid: Option.map(view, (view) => ({
       size: view,
@@ -181,13 +195,6 @@ export const Arrangement = () => {
           })
         })
     })
-  /** The pattern a click puts a clip of: the current one. */
-  const source = (): Option.Option<Source> =>
-    Option.map(registry.get(session.pattern), (pattern) => ({
-      pattern,
-      name: Option.getOrElse(registry.get(session.patternName), () => ''),
-      length: registry.get(session.patternEnd)
-    }))
   const onPointerDown = (event: TargetedPointerEvent<HTMLDivElement>) => {
     const point = pointOf(event)
     const by = event.pointerId
@@ -202,13 +209,7 @@ export const Arrangement = () => {
         Option.map(
           Option.all({ view, left: Option.liftPredicate(event, (event) => event.button === 0 && !withCtrl(event)) }),
           ({ view }) =>
-            Option.map(grabAt(registry.get(shownAtom), view, point, source()), (grab) => {
-              // A press on a clip makes its pattern the one the next click puts.
-              Grab.$match(grab, {
-                Move: ({ clip }) => session.choosePattern(clip.pattern),
-                Resize: ({ clip }) => session.choosePattern(clip.pattern),
-                Put: () => {}
-              })
+            Option.map(grabAt(registry.get(shownAtom), view, point), (grab) => {
               gestures.take(
                 event,
                 Gesture.Dragging({
@@ -238,17 +239,34 @@ export const Arrangement = () => {
       })
     )
   }
+  // On a track's empty row, a new clip from the bar's start.
+  const onDblClick = (event: TargetedMouseEvent<HTMLDivElement>) =>
+    Option.map(view, (now) => {
+      const point = pointOf(event)
+      Option.match(clipAt(registry.get(shownAtom), now, point), {
+        onSome: ({ id }) => roll.show(id),
+        onNone: () =>
+          Option.map(
+            Option.flatMap(startAt(now, point), ({ place, tick }) =>
+              Option.flatMap(Array.get(registry.get(tracksAtom), place), (track) =>
+                ops.addClip({ track, tick: Tick(tick) })
+              )
+            ),
+            roll.show
+          )
+      })
+    })
   const onWheel = (event: TargetedWheelEvent<HTMLDivElement>) =>
     Option.map(view, (now) => {
       event.preventDefault()
       const turn = turnOf(
         event,
         { across: barWidth, down: trackHeight },
-        { across: now.width - namesWidth, down: now.height - rulerHeight }
+        { across: now.width - headsWidth, down: now.height - rulerHeight }
       )
       const next = {
         ...now,
-        top: scrolledTo(now.height, now.top + turn.down),
+        top: scrolledTo(now.height, now.tracks, now.top + turn.down),
         left: scrolledAcross(reach, now.left + turn.across)
       }
       setDown(next.top)
@@ -272,18 +290,26 @@ export const Arrangement = () => {
     <div
       ref={box}
       class='arrangement'
-      data-grab={cursor}
-      data-hint='Clips of patterns, for everyone: a click puts one of the current pattern, a drag moves a clip, a drag of either edge makes it shorter or longer, its pattern going round again; a press on one makes its pattern current; a right click erases one, a drag with it all it passes over. Cmd+Z or Ctrl+Z takes it back. The wheel goes through the tracks; Shift and the wheel, or a swipe sideways, through the bars'
-      onPointerDown={onPointerDown}
-      onPointerMove={onPointerMove}
-      {...gestures.handlers}
-      onContextMenu={gestures.menu((event) => eraseAlong(pointOf(event), pointOf(event)))}
+      style={sizes}
+      data-hint="The project's tracks and their clips, for everyone: a double click on a track's row puts a new clip there and opens it in the piano roll, a double click on a clip opens it; a drag moves a clip, to another track too, which plays it; a drag of either edge makes it shorter or longer, its notes going round again; a right click erases one, a drag with it all it passes over. Cmd+Z or Ctrl+Z takes it back. The wheel goes through the tracks; Shift and the wheel, or a swipe sideways, through the bars"
       onWheel={onWheel}
     >
-      <canvas ref={grid} />
-      <canvas ref={clipsLayer} />
-      <canvas ref={frame} />
-      <canvas ref={over} />
+      {/* Beside the heads, not under them: what is pressed on the heads never reaches the lanes' gestures. */}
+      <div
+        class='arrangement__lanes'
+        data-grab={cursor}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        {...gestures.handlers}
+        onContextMenu={gestures.menu((event) => eraseAlong(pointOf(event), pointOf(event)))}
+        onDblClick={onDblClick}
+      >
+        <canvas ref={grid} />
+        <canvas ref={clipsLayer} />
+        <canvas ref={frame} />
+        <canvas ref={over} />
+      </div>
+      <TrackHeads top={top} />
     </div>
   )
 }

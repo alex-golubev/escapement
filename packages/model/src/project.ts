@@ -23,13 +23,13 @@ type InstanceOf<N extends PluginName> = {
  */
 export type PluginInstance = { readonly [N in PluginName]: InstanceOf<N> }[PluginName]
 
-export interface Channel {
+export interface Track {
   readonly id: Id
   readonly name: string
   readonly mute: boolean
   /** Its volume and pan, after the instrument. */
   readonly strip: StripValues
-  /** None when the document has none this build can play: the channel is silent. */
+  /** None when the document has none this build can play: the track is silent. */
   readonly instrument: Option.Option<PluginInstance>
   /** The mixer's insert it goes into: the master, or one of `mixerInserts`. */
   readonly insert: Id
@@ -37,8 +37,6 @@ export interface Channel {
 
 export interface Note {
   readonly id: Id
-  /** A channel the project may not have: the note is silent then. */
-  readonly channel: Id
   readonly tick: Tick
   /** Whole ticks, from 1. */
   readonly length: number
@@ -47,20 +45,14 @@ export interface Note {
   readonly velocity: number
 }
 
+/** The notes a clip plays, by the instrument of the track it is on. */
 export interface Pattern {
   readonly id: Id
-  readonly name: string
   /** By ID: the same on every client. */
   readonly notes: ReadonlyArray<Note>
 }
 
-/** A pattern in the order of all of them, a deleted one too: where it stood once it is gone. */
-export interface PatternPlace {
-  readonly id: Id
-  readonly live: boolean
-}
-
-/** A pattern placed on a track of the arrangement: it plays the pattern from its tick, round and round. */
+/** Notes on a track of the arrangement: it plays its pattern from its tick, round and round. */
 export interface Clip {
   readonly id: Id
   readonly track: Id
@@ -86,7 +78,7 @@ export interface ArrangementClip extends Clip {
 
 export type Slot = PluginInstance & { readonly id: Id }
 
-/** Where every insert goes, and every channel unless it goes into another. */
+/** Where every insert goes, and every track unless it goes into another. */
 export interface Master {
   /** Its volume and pan, after its slots. */
   readonly strip: StripValues
@@ -107,11 +99,11 @@ export interface Insert {
 export interface Project {
   readonly tempo: number
   /** In their order. */
-  readonly channels: ReadonlyArray<Channel>
-  /** In their order. */
-  readonly patterns: ReadonlyArray<Pattern>
-  /** Of the live patterns, by ID. */
+  readonly tracks: ReadonlyArray<Track>
+  /** On the live tracks, by ID. */
   readonly clips: ReadonlyArray<Clip>
+  /** The clips', each once, by ID. */
+  readonly patterns: ReadonlyArray<Pattern>
   readonly master: Master
   /** Those the document holds anything of, by their number. */
   readonly inserts: ReadonlyArray<Insert>

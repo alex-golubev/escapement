@@ -6,7 +6,7 @@ import type { Id } from './id'
  * of the piano roll held, or a note held there. `press` tells it from every other this client plays.
  */
 export interface Audition {
-  readonly channel: Id
+  readonly track: Id
   readonly key: MidiKey
   readonly velocity: number
   readonly press: number

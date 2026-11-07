@@ -1,5 +1,5 @@
 import { lastTick } from '@escapement/engine-description'
-import { barTicks, Id, trackCount } from '@escapement/model'
+import { barTicks, Id } from '@escapement/model'
 import { Option } from 'effect'
 import { expect, test } from 'vitest'
 import { edgeWidth } from '../../src/ui/kit/edge'
@@ -19,26 +19,28 @@ import {
   xOf,
   yOf
 } from '../../src/ui/windows/arrangement/geometry'
-import { barWidth, namesWidth, rulerHeight, trackHeight } from '../../src/ui/windows/arrangement/layout'
+import { barWidth, headsWidth, rulerHeight, trackHeight } from '../../src/ui/windows/arrangement/layout'
 
-/** Eight bars wide and ten tracks high, scrolled down two tracks and right a bar. */
+/** The tracks of the arrangement the tests draw. */
+const trackCount = 20
+
+/** Eight bars wide and ten tracks high, of twenty tracks, scrolled down two tracks and right a bar. */
 const view: View = {
-  width: namesWidth + 8 * barWidth,
+  width: headsWidth + 8 * barWidth,
   height: rulerHeight + 10 * trackHeight,
   top: 2 * trackHeight,
-  left: barWidth
+  left: barWidth,
+  tracks: trackCount
 }
 
 /** As long as its pattern, unless `bars` says longer or shorter than `periodBars`. */
 const clip = (id: string, place: number, bar: number, bars = 1, periodBars = bars, offsetBars = 0): Shown => ({
   id: Id(id),
-  pattern: Id('pattern'),
   place,
   tick: bar * barTicks,
   length: bars * barTicks,
   period: periodBars * barTicks,
-  offset: offsetBars * barTicks,
-  name: id
+  offset: offsetBars * barTicks
 })
 
 /** In the middle of the track's row, at the tick. */
@@ -52,13 +54,13 @@ test('a point takes the clip drawn last of those under it, on its row and in its
   // Its end is the next one's start.
   expect(at(4, 3 * barTicks)).toEqual(Option.none())
   expect(at(4, 3 * barTicks - 1)).toEqual(Option.some('below'))
-  // Over the ruler, over the names, and past the edges.
+  // Over the ruler, over the heads, and past the edges.
   expect(clipAt(clips, view, { x: xOf(view, 2.5 * barTicks), y: rulerHeight - 1 })).toEqual(Option.none())
-  expect(clipAt([clip('scrolled', 3, 0)], view, { x: namesWidth - 1, y: yOf(view, 3) + 1 })).toEqual(Option.none())
+  expect(clipAt([clip('scrolled', 3, 0)], view, { x: headsWidth - 1, y: yOf(view, 3) + 1 })).toEqual(Option.none())
   expect(clipAt([clip('far', 3, 9)], view, { x: view.width, y: yOf(view, 3) + 1 })).toEqual(Option.none())
 })
 
-test('a click puts a clip from the start of the bar it falls in, on the row; none past the last track', () => {
+test('a double click puts a clip from the start of the bar it falls in, on the row; none past the last track', () => {
   expect(startAt(view, point(5, 2.9 * barTicks))).toEqual(Option.some({ place: 5, tick: 2 * barTicks }))
   const last: View = { ...view, top: trackCount * trackHeight - 5 * trackHeight }
   expect(
@@ -75,9 +77,11 @@ test('a way across the arrangement takes each clip it passes over once', () => {
   ])
 })
 
-test('the arrangement scrolls down to the last track and across to the last clip end', () => {
-  expect(scrolledTo(view.height, -1)).toBe(0)
-  expect(scrolledTo(view.height, 10 ** 9)).toBe(trackCount * trackHeight - 10 * trackHeight)
+test("the arrangement scrolls down to the row under the last track, +'s, and across to the last clip end", () => {
+  expect(scrolledTo(view.height, trackCount, -1)).toBe(0)
+  expect(scrolledTo(view.height, trackCount, 10 ** 9)).toBe((trackCount + 1) * trackHeight - 10 * trackHeight)
+  // Fewer than fill it: none.
+  expect(scrolledTo(view.height, 3, 10 ** 9)).toBe(0)
   expect(endOf([])).toBe(0)
   expect(endOf([clip('a', 0, 2, 3), clip('b', 1, 4)])).toBe(5 * barTicks)
   expect(scrolledAcross(5 * barTicks, 10 ** 9)).toBe(5 * barWidth)
@@ -86,12 +90,14 @@ test('the arrangement scrolls down to the last track and across to the last clip
 
 test('the tracks in sight are those partly under the ruler too, never past the last', () => {
   expect(tracksInSight({ ...view, top: 2.5 * trackHeight })).toEqual([2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12])
-  expect(tracksInSight({ ...view, top: scrolledTo(view.height, 10 ** 9) }).at(-1)).toBe(trackCount - 1)
+  expect(tracksInSight({ ...view, top: scrolledTo(view.height, trackCount, 10 ** 9) }).at(-1)).toBe(trackCount - 1)
+  expect(tracksInSight({ ...view, top: 0, tracks: 3 })).toEqual([0, 1, 2])
+  expect(tracksInSight({ ...view, tracks: 0 })).toEqual([])
 })
 
 test('a clip dragged moves by whole bars and tracks, from the first bar and track to the last track', () => {
   const held = clip('held', 3, 2)
-  const grab = Option.getOrThrow(grabAt([held], view, point(3, 2.5 * barTicks), Option.none()))
+  const grab = Option.getOrThrow(grabAt([held], view, point(3, 2.5 * barTicks)))
   expect(Grab.$is('Move')(grab)).toBe(true)
   const length = barTicks
   expect(draggedTo(grab, view, point(3, 2.5 * barTicks))).toEqual({ place: 3, tick: 2 * barTicks, length, offset: 0 })
@@ -106,7 +112,7 @@ test('a clip dragged moves by whole bars and tracks, from the first bar and trac
   expect(draggedTo(long, view, point(3, 10 ** 12)).tick).toBe((lastBar - 3) * barTicks)
   // One off the bars keeps its place in its bar.
   const between = { ...held, tick: 2 * barTicks + 100 }
-  const off = Option.getOrThrow(grabAt([between], view, point(3, 2.5 * barTicks), Option.none()))
+  const off = Option.getOrThrow(grabAt([between], view, point(3, 2.5 * barTicks)))
   expect(draggedTo(off, view, point(3, 0.5 * barTicks))).toEqual({ place: 3, tick: 100, length, offset: 0 })
 })
 
@@ -114,8 +120,7 @@ test("a press by a clip's right edge, at most a third of the clip, takes hold of
   const clips = [clip('one', 3, 2), clip('narrow', 4, 2, 0.25)]
   const end = xOf(view, 3 * barTicks)
   const at = (place: number, x: number) => ({ x, y: yOf(view, place) + trackHeight / 2 })
-  const grabbed = (place: number, x: number) =>
-    Option.map(grabAt(clips, view, at(place, x), Option.none()), (grab) => grab._tag)
+  const grabbed = (place: number, x: number) => Option.map(grabAt(clips, view, at(place, x)), (grab) => grab._tag)
   expect(grabbed(3, end - edgeWidth)).toEqual(Option.some('Resize'))
   expect(grabbed(3, end - 0.5)).toEqual(Option.some('Resize'))
   expect(grabbed(3, end - edgeWidth - 0.5)).toEqual(Option.some('Move'))
@@ -166,24 +171,18 @@ test("a clip's edge dragged makes it longer or shorter by whole bars, a bar at l
   expect(shown.at(-1)).toEqual({ ...held, length: 4 * barTicks })
 })
 
-test("a press on empty ground puts the source's clip, none without one; a drag shows the clip held on top", () => {
-  const source = { pattern: Id('new'), name: 'New', length: 2 * barTicks }
-  const at = point(6, 4.5 * barTicks)
-  expect(grabAt([], view, at, Option.none())).toEqual(Option.none())
-  const put = Option.getOrThrow(grabAt([], view, at, Option.some(source)))
-  const span = draggedTo(put, view, at)
-  expect(span).toEqual({ place: 6, tick: 4 * barTicks, length: 2 * barTicks, offset: 0 })
-  expect(draggedClips([clip('a', 0, 0)], put, span).at(-1)).toEqual({ ...span, period: 2 * barTicks, name: 'New' })
+test('a press on empty ground takes hold of nothing; a drag shows the clip held on top', () => {
+  expect(grabAt([], view, point(6, 4.5 * barTicks))).toEqual(Option.none())
   const clips = [clip('a', 0, 0), clip('b', 1, 0)]
   const move = Grab.Move({ clip: clips[0], at: { place: 0, tick: 0 } })
   expect(
-    draggedClips(clips, move, { place: 2, tick: barTicks, length: barTicks, offset: 0 }).map(({ name, place }) => [
-      name,
+    draggedClips(clips, move, { place: 2, tick: barTicks, length: barTicks, offset: 0 }).map(({ tick, place }) => [
+      tick,
       place
     ])
   ).toEqual([
-    ['b', 1],
-    ['a', 2]
+    [0, 1],
+    [barTicks, 2]
   ])
   // One gone from the document meanwhile shows nowhere.
   expect(draggedClips(clips.slice(1), move, { place: 2, tick: barTicks, length: barTicks, offset: 0 })).toEqual(
@@ -196,8 +195,8 @@ test("a press by a clip's left edge takes hold of its start; on a clip a bar lon
   const start = xOf(view, 2 * barTicks)
   const at = (x: number) => ({ x, y: yOf(view, 3) + trackHeight / 2 })
   const grabbed = (x: number) =>
-    Option.map(grabAt(clips, view, at(x), Option.none()), (grab) =>
-      Grab.$match(grab, { Move: () => 'move', Resize: ({ edge }) => edge, Put: () => 'put' })
+    Option.map(grabAt(clips, view, at(x)), (grab) =>
+      Grab.$match(grab, { Move: () => 'move', Resize: ({ edge }) => edge })
     )
   expect([start, start + edgeWidth - 0.5, start + edgeWidth].map(grabbed)).toEqual([
     Option.some('start'),
@@ -205,18 +204,14 @@ test("a press by a clip's left edge takes hold of its start; on a clip a bar lon
     Option.some('move')
   ])
   expect(cursorAt(clips, view, at(start + 1))).toBe('resize')
-  // Scrolled under the tracks' names by 3 pixels, its start can't be taken hold of: right of them, it moves.
+  // Scrolled under the tracks' heads by 3 pixels, its start can't be taken hold of: right of them, it moves.
   const hidden = [clip('hidden', 3, (barWidth - 3) / barWidth, 2)]
-  expect(xOf(view, hidden[0].tick)).toBe(namesWidth - 3)
-  expect(Option.map(grabAt(hidden, view, at(namesWidth + 1), Option.none()), ({ _tag }) => _tag)).toEqual(
-    Option.some('Move')
-  )
+  expect(xOf(view, hidden[0].tick)).toBe(headsWidth - 3)
+  expect(Option.map(grabAt(hidden, view, at(headsWidth + 1)), ({ _tag }) => _tag)).toEqual(Option.some('Move'))
   // A bar of 64 pixels: 6 at each end, the rest moves it.
   const short = [clip('short', 3, 2)]
   expect(
-    [start + 5, start + 32, start + barWidth - 1].map((x) =>
-      Option.map(grabAt(short, view, at(x), Option.none()), ({ _tag }) => _tag)
-    )
+    [start + 5, start + 32, start + barWidth - 1].map((x) => Option.map(grabAt(short, view, at(x)), ({ _tag }) => _tag))
   ).toEqual([Option.some('Resize'), Option.some('Move'), Option.some('Resize')])
 })
 
@@ -250,7 +245,7 @@ test('a clip that starts later is drawn over one before it, a shorter one over a
   expect(at(2.5 * barTicks)).toEqual(Option.some('a'))
 })
 
-test('nothing is in sight of an arrangement no higher than its ruler, nor narrower than its names', () => {
+test('nothing is in sight of an arrangement no higher than its ruler, nor narrower than its heads', () => {
   expect(tracksInSight({ ...view, height: rulerHeight - 1 })).toEqual([])
-  expect(barsInSight({ ...view, width: namesWidth - barWidth - 1, left: 0 })).toEqual([])
+  expect(barsInSight({ ...view, width: headsWidth - barWidth - 1, left: 0 })).toEqual([])
 })

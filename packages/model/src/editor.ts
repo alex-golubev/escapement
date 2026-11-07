@@ -4,34 +4,30 @@ import { Atom, AtomRegistry } from 'effect/reactivity'
 import * as Y from 'yjs'
 import type { Id } from './id'
 import {
-  addChannel,
   addClip,
   addNote,
-  addPattern,
+  addTrack,
   type ClipPlace,
   type ClipSpan,
-  clonePattern,
-  deleteChannel,
-  deletePattern,
+  deleteTrack,
   eraseClips,
   eraseNotes,
   moveClip,
-  resizeClip,
-  trimClip,
   moveNote,
+  type NewInstrument,
   type NewNote,
-  renameChannel,
-  renamePattern,
-  setChannelInsert,
-  setChannelParam,
-  setChannelStrip,
+  renameTrack,
+  resizeClip,
   setInsertMute,
   setInsertStrip,
   setMasterParam,
   setMute,
   setTempo,
+  setTrackInsert,
+  setTrackParam,
+  setTrackStrip,
   stretchNote,
-  toggleStep
+  trimClip
 } from './operations'
 import type { Writer } from './writer'
 
@@ -40,33 +36,25 @@ import type { Writer } from './writer'
  * else's. Each edit returns false if what it acts on isn't there.
  */
 export interface Editor {
-  readonly toggleStep: (pattern: Id, channel: Id, step: number) => boolean
-  readonly addNote: (pattern: Id, channel: Id, note: NewNote) => boolean
-  readonly moveNote: (pattern: Id, note: Id, to: Pick<NewNote, 'tick' | 'key'>) => boolean
-  readonly stretchNote: (pattern: Id, note: Id, length: number) => boolean
-  readonly eraseNotes: (pattern: Id, notes: ReadonlyArray<Id>) => boolean
-  readonly setMute: (channel: Id, mute: boolean) => boolean
-  readonly setChannelParam: (channel: Id, param: ParamId<Plugin>, value: number) => boolean
-  readonly setChannelStrip: (channel: Id, param: StripParamId, value: number) => boolean
+  /** Of the clip's pattern, as the clip's notes are. */
+  readonly addNote: (clip: Id, note: NewNote) => boolean
+  readonly moveNote: (clip: Id, note: Id, to: Pick<NewNote, 'tick' | 'key'>) => boolean
+  readonly stretchNote: (clip: Id, note: Id, length: number) => boolean
+  readonly eraseNotes: (clip: Id, notes: ReadonlyArray<Id>) => boolean
+  readonly setMute: (track: Id, mute: boolean) => boolean
+  readonly setTrackParam: (track: Id, param: ParamId<Plugin>, value: number) => boolean
+  readonly setTrackStrip: (track: Id, param: StripParamId, value: number) => boolean
   readonly setMasterParam: (slot: Id, param: ParamId<Plugin>, value: number) => boolean
-  readonly setChannelInsert: (channel: Id, insert: Id) => boolean
+  readonly setTrackInsert: (track: Id, insert: Id) => boolean
   readonly setInsertStrip: (insert: Id, param: StripParamId, value: number) => boolean
   readonly setInsertMute: (insert: Id, mute: boolean) => boolean
   readonly setTempo: (bpm: number) => boolean
-  readonly addChannel: () => boolean
-  readonly renameChannel: (channel: Id, name: string) => boolean
-  readonly deleteChannel: (channel: Id) => boolean
-  /**
-   * The new pattern's ID; none if the document holds no project, or while an action is open: it would be a step of the
-   * gesture, and the page would show it in the gesture's middle.
-   */
-  readonly addPattern: () => Option.Option<Id>
-  /** The copy's ID; none if the pattern isn't live, or while an action is open, as for `addPattern`. */
-  readonly clonePattern: (pattern: Id) => Option.Option<Id>
-  readonly renamePattern: (pattern: Id, name: string) => boolean
-  readonly deletePattern: (pattern: Id) => boolean
-  /** The new clip's ID; none if the pattern isn't live, or the place is on no track. */
-  readonly addClip: (pattern: Id, place: ClipPlace) => Option.Option<Id>
+  /** The new track's ID, a synth's unless another instrument is given; none if the document holds no project. */
+  readonly addTrack: (instrument?: NewInstrument) => Option.Option<Id>
+  readonly renameTrack: (track: Id, name: string) => boolean
+  readonly deleteTrack: (track: Id) => boolean
+  /** The new clip's ID; none if the track isn't live, or the tick isn't a whole one of the engine's. */
+  readonly addClip: (place: ClipPlace) => Option.Option<Id>
   readonly moveClip: (clip: Id, to: ClipPlace) => boolean
   /** False if refused: a length not whole, under a tick or ending too late, or a clip not live. */
   readonly resizeClip: (clip: Id, length: number) => boolean
@@ -126,35 +114,22 @@ export const editorOf = Effect.fnUntraced(function* (doc: Y.Doc, by: Writer) {
       nextStep()
       return op(doc, by, ...args)
     }
-  /** A step that brings in a pattern: none while an action is open. */
-  const alone =
-    <A extends ReadonlyArray<unknown>>(op: (doc: Y.Doc, by: Writer, ...args: A) => Option.Option<Id>) =>
-    (...args: A): Option.Option<Id> =>
-      Option.flatMap(
-        Option.liftPredicate(open, (open) => open.size === 0),
-        () => step(op)(...args)
-      )
   return {
-    toggleStep: step(toggleStep),
     addNote: step(addNote),
     moveNote: step(moveNote),
     stretchNote: step(stretchNote),
     eraseNotes: step(eraseNotes),
     setMute: step(setMute),
-    setChannelParam: step(setChannelParam),
-    setChannelStrip: step(setChannelStrip),
+    setTrackParam: step(setTrackParam),
+    setTrackStrip: step(setTrackStrip),
     setMasterParam: step(setMasterParam),
-    setChannelInsert: step(setChannelInsert),
+    setTrackInsert: step(setTrackInsert),
     setInsertStrip: step(setInsertStrip),
     setInsertMute: step(setInsertMute),
     setTempo: step(setTempo),
-    addChannel: step(addChannel),
-    renameChannel: step(renameChannel),
-    deleteChannel: step(deleteChannel),
-    addPattern: alone(addPattern),
-    clonePattern: alone(clonePattern),
-    renamePattern: step(renamePattern),
-    deletePattern: step(deletePattern),
+    addTrack: step(addTrack),
+    renameTrack: step(renameTrack),
+    deleteTrack: step(deleteTrack),
     addClip: step(addClip),
     moveClip: step(moveClip),
     resizeClip: step(resizeClip),

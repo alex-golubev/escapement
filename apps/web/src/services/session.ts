@@ -1,7 +1,8 @@
 import {
+  type Audition,
+  type Auditions,
   batchedState,
   byContent,
-  currentPatternOf,
   followProject,
   type Holds,
   type HoldTarget,
@@ -9,28 +10,18 @@ import {
   heldOver,
   heldValue,
   type Id,
-  isStepNote,
-  patternEnd,
   type Listening,
-  type Note,
-  newWriter,
-  noHolds,
-  noAuditions,
   newListening,
-  type Pattern,
-  type PlayMode,
-  type Audition,
-  type Auditions,
+  newWriter,
+  noAuditions,
+  noHolds,
   type ProjectAtoms,
-  stepTicks,
-  toggledMode,
   type Writer
 } from '@escapement/model'
-import { Context, Effect, Layer, Option } from 'effect'
+import { Context, Effect, Layer, type Option } from 'effect'
 import { Atom, AtomRegistry } from 'effect/reactivity'
 import type * as Y from 'yjs'
 import { type Loaded, type ProjectStorage, ProjectStore, type Stopped } from './project-store'
-import { manifestChannels } from './samples'
 
 /** The project the page opened: its ID, and its name in the list. */
 export class OpenedProject extends Context.Service<OpenedProject, { readonly id: Id; readonly name: string }>()(
@@ -60,31 +51,8 @@ export interface ProjectSession {
   readonly played: Atom.Atom<Holds>
   /** The value played for the control over the document's; none while no one turns it. */
   readonly held: (target: HoldTarget) => Atom.Atom<Option.Option<number>>
-  /** The channels heard now, by the project and this client's listening. */
+  /** The tracks heard now, by the project and this client's listening. */
   readonly heard: Atom.Atom<ReadonlyArray<Id>>
-  /** The ID of the current pattern, as this page chooses it among the live ones: the one seen and played. */
-  readonly pattern: Atom.Atom<Option.Option<Id>>
-  /** The current pattern, none without one. */
-  readonly currentPattern: Atom.Atom<Option.Option<Pattern>>
-  /** The name of the current pattern, none without one. */
-  readonly patternName: Atom.Atom<Option.Option<string>>
-  /** How long the current pattern plays: `patternEnd`, a bar without one. */
-  readonly patternEnd: Atom.Atom<number>
-  /** Makes the pattern current on this page. */
-  readonly choosePattern: (pattern: Id) => void
-  /** What Play plays on this page: the current pattern or the arrangement. */
-  readonly mode: Atom.Atom<PlayMode>
-  readonly chooseMode: (mode: PlayMode) => void
-  /** Arrangement after Pattern, Pattern after Arrangement, as L switches. */
-  readonly toggleMode: () => void
-  /** Whether the current pattern has a note of the channel on the step. */
-  readonly step: (channel: Id, step: number) => Atom.Atom<boolean>
-  /** The channel's notes in the current pattern, by ID; none without one. */
-  readonly notes: (channel: Id) => Atom.Atom<ReadonlyArray<Note>>
-  /** Whether steps show all the channel's notes: each is one a step switched on would make. */
-  readonly showsSteps: (channel: Id) => Atom.Atom<boolean>
-  /** How long the current pattern would be by the notes of every live channel but this one: `patternEnd`. */
-  readonly endWithout: (channel: Id) => Atom.Atom<number>
   readonly saving: Atom.Atom<Saving>
   /** Makes the browser refuse a write, so the page's recovery can be checked. */
   readonly breakSaving: Effect.Effect<void>
@@ -109,23 +77,6 @@ export const sessionOf = Effect.fnUntraced(function* (
   const played = byContent((get) => heldOver(get(holds), get(heldElsewhere)))
   const saving = Atom.make<Saving>(loaded).pipe(Atom.keepAlive)
   yield* Effect.forkScoped(Effect.flatMap(stopped, (why) => Effect.sync(() => registry.set(saving, why))))
-  const current = currentPatternOf(project, listening)
-  const currentPattern = current.pattern
-  const notes = Atom.family((channel: Id) =>
-    byContent((get) =>
-      Option.match(get(currentPattern), {
-        onNone: () => [],
-        onSome: (pattern) => pattern.notes.filter((note) => note.channel === channel)
-      })
-    )
-  )
-  // Read again only as the channel's notes change, and then each step's only a look up: an edit elsewhere costs none.
-  const ticks = Atom.family((channel: Id) =>
-    Atom.map(notes(channel), (them) => new Set<number>(them.map(({ tick }) => tick)))
-  )
-  const step = Atom.family((channel: Id) =>
-    Atom.family((at: number) => Atom.map(ticks(channel), (them) => them.has(at * stepTicks)))
-  )
   const session: ProjectSession = {
     doc,
     writer,
@@ -143,28 +94,6 @@ export const sessionOf = Effect.fnUntraced(function* (
     played,
     held: Atom.family((target: HoldTarget) => byContent((get) => heldValue(get(played), target))),
     heard: heardOf(project, listening),
-    pattern: current.id,
-    currentPattern,
-    patternName: byContent((get) => Option.map(get(currentPattern), ({ name }) => name)),
-    patternEnd: current.end,
-    choosePattern: (chosen) => registry.update(listening, (now) => ({ ...now, pattern: Option.some(chosen) })),
-    mode: byContent((get) => get(listening).mode),
-    chooseMode: (mode) => registry.update(listening, (now) => ({ ...now, mode })),
-    toggleMode: () => registry.update(listening, toggledMode),
-    step: (channel, at) => step(channel)(at),
-    notes,
-    showsSteps: Atom.family((channel: Id) => byContent((get) => get(notes(channel)).every(isStepNote))),
-    endWithout: Atom.family((channel: Id) =>
-      byContent((get) => {
-        const others = new Set(get(project.channelIds).filter((id) => id !== channel))
-        return patternEnd(
-          Option.match(get(currentPattern), {
-            onNone: () => [],
-            onSome: ({ notes }) => notes.filter((note) => others.has(note.channel))
-          })
-        )
-      })
-    ),
     saving,
     breakSaving
   }
@@ -177,7 +106,7 @@ export const projectSessionLayer = Layer.effect(
   Effect.gen(function* () {
     const { id } = yield* OpenedProject
     const writer = newWriter('page')
-    const storage = yield* (yield* ProjectStore).open(id, writer, manifestChannels)
+    const storage = yield* (yield* ProjectStore).open(id, writer)
     return yield* sessionOf(storage, writer)
   })
 )

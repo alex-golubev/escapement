@@ -68,7 +68,7 @@ export interface Choice {
   readonly label: string
 }
 
-/** What a control sets: a plugin's parameter, a strip's, or one made from them, such as a channel's. */
+/** What a control sets: a plugin's parameter, a strip's, or one made from them, such as a track's. */
 export interface AnyParam extends Knob {
   readonly id: string
   readonly label: string
@@ -83,11 +83,11 @@ export interface AnyParam extends Knob {
 /** As a multiplier of the sound: 0 dB leaves it as it is. */
 const gainOf = (decibels: number) => 10 ** (decibels / 20)
 
-/** Where a new channel's volume knob stands: this far up, 5.2 dB below the top, with room to go louder. */
-export const newChannelPosition = 0.78
+/** Where a new track's volume knob stands: this far up, 5.2 dB below the top, with room to go louder. */
+export const newTrackPosition = 0.78
 
-/** So a volume knob is 5.2 dB down where a new channel's stands, and silent at the bottom. */
-const volumeExponent = Math.log(gainOf(-5.2)) / Math.log(newChannelPosition)
+/** So a volume knob is 5.2 dB down where a new track's stands, and silent at the bottom. */
+const volumeExponent = Math.log(gainOf(-5.2)) / Math.log(newTrackPosition)
 
 /** So half way up a time knob is a sixteenth of its range: from 0 to 10 s, 0.625 s. */
 const timeExponent = 4

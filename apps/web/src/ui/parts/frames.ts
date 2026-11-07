@@ -1,4 +1,3 @@
-import type { PlayMode } from '@escapement/model'
 import { Boolean, Option } from 'effect'
 import { createContext } from 'preact'
 import { useContext, useEffect, useMemo, useRef } from 'preact/hooks'
@@ -47,16 +46,9 @@ export const useFrame = (draw: Draw) => {
   }, [draws])
 }
 
-/**
- * The tick a frame hears, for a window that shows what Play plays in `shown`: none while what is heard was played in
- * the other mode, though the page has switched since. The pattern's windows show none of the arrangement, where the
- * pattern may sound in several clips at once; the Arrangement none of a pattern alone.
- */
-export const heardTickIn = (shown: PlayMode, frame: Frame | undefined): Option.Option<number> =>
-  Option.map(
-    Option.filter(Option.fromUndefinedOr(frame?.heard), ({ arrangement }) => arrangement === (shown === 'arrangement')),
-    ({ tick }) => tick
-  )
+/** The arrangement's tick a frame hears; none while it is stopped. */
+export const heardTick = (frame: Frame | undefined): Option.Option<number> =>
+  Option.map(Option.fromUndefinedOr(frame?.heard), ({ tick }) => tick)
 
 /** Writes only a change: a frame would otherwise touch the DOM 60 times a second for nothing. */
 export const setText = (element: HTMLElement | null, text: string) => {

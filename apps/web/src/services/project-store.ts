@@ -1,4 +1,4 @@
-import type { Id, NewChannel, Writer } from '@escapement/model'
+import type { Id, Writer } from '@escapement/model'
 import { Context, Data, type Effect, type Scope } from 'effect'
 import type * as Y from 'yjs'
 
@@ -36,17 +36,13 @@ export class NotMade extends Data.TaggedError('NotMade')<{ readonly cause: unkno
 export interface ProjectStore {
   /**
    * The project with this ID, saving each change while the scope is open. If the storage doesn't load, or holds no such
-   * project, a new one with these channels, written by `by`, with an ID of its own: it is another project, and must
-   * never meet the saved one's tabs. A page never makes the project it opens: two that found nothing would make two
-   * projects with one ID, and their tabs would merge them.
+   * project, a new one written by `by`, with an ID of its own: it is another project, and must never meet the saved
+   * one's tabs. A page never makes the project it opens: two that found nothing would make two projects with one ID,
+   * and their tabs would merge them.
    */
-  readonly open: (
-    id: Id,
-    by: Writer,
-    channels: ReadonlyArray<NewChannel>
-  ) => Effect.Effect<ProjectStorage, never, Scope.Scope>
-  /** A new project with these channels and this ID, written by `by`, read back before it counts. */
-  readonly make: (id: Id, by: Writer, channels: ReadonlyArray<NewChannel>) => Effect.Effect<void, NotMade>
+  readonly open: (id: Id, by: Writer) => Effect.Effect<ProjectStorage, never, Scope.Scope>
+  /** A new project with this ID, written by `by`, read back before it counts. */
+  readonly make: (id: Id, by: Writer) => Effect.Effect<void, NotMade>
   /** The project's storage gone, as far as the browser lets it. */
   readonly erase: (id: Id) => Effect.Effect<void>
 }

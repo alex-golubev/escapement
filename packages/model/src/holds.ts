@@ -4,16 +4,16 @@ import { type Id, storedId } from './id'
 
 /** What a control this client turns sets. */
 export type HoldTarget = Data.TaggedEnum<{
-  /** A parameter of the channel's instrument. */
-  ChannelParam: { readonly channel: Id; readonly param: ParamId<Plugin> }
-  /** A parameter of the channel's strip: its volume or pan. */
-  ChannelStrip: { readonly channel: Id; readonly param: StripParamId }
+  /** A parameter of the track's instrument. */
+  TrackParam: { readonly track: Id; readonly param: ParamId<Plugin> }
+  /** A parameter of the track's strip: its volume or pan. */
+  TrackStrip: { readonly track: Id; readonly param: StripParamId }
   /** A parameter of a plugin on the master insert. */
   SlotParam: { readonly slot: Id; readonly param: ParamId<Plugin> }
   /** A parameter of an insert's strip, the master's too: its volume or pan. */
   InsertStrip: { readonly insert: Id; readonly param: StripParamId }
-  /** The insert the channel goes into, by its number: 0 the master. */
-  ChannelInsert: { readonly channel: Id }
+  /** The insert the track goes into, by its number: 0 the master. */
+  TrackInsert: { readonly track: Id }
   Tempo: {}
 }>
 
@@ -57,22 +57,22 @@ export const heldOver = (own: Holds, others: Holds): Holds =>
 const param = Schema.Literals(Object.values(plugins).flatMap(({ params }) => params.map(({ id }) => id)))
 const stripParam = Schema.Literals(strip.map(({ id }) => id))
 const heldTarget = Schema.TaggedUnion({
-  ChannelParam: { channel: storedId, param },
-  ChannelStrip: { channel: storedId, param: stripParam },
+  TrackParam: { track: storedId, param },
+  TrackStrip: { track: storedId, param: stripParam },
   SlotParam: { slot: storedId, param },
   InsertStrip: { insert: storedId, param: stripParam },
-  ChannelInsert: { channel: storedId },
+  TrackInsert: { track: storedId },
   Tempo: {}
 })
 const hold = Schema.decodeUnknownOption(Schema.Struct({ target: heldTarget, value: Schema.Finite }))
 
 const targetOf = (target: typeof heldTarget.Type): HoldTarget =>
   heldTarget.match(target, {
-    ChannelParam: ({ channel, param }) => HoldTarget.ChannelParam({ channel, param }),
-    ChannelStrip: ({ channel, param }) => HoldTarget.ChannelStrip({ channel, param }),
+    TrackParam: ({ track, param }) => HoldTarget.TrackParam({ track, param }),
+    TrackStrip: ({ track, param }) => HoldTarget.TrackStrip({ track, param }),
     SlotParam: ({ slot, param }) => HoldTarget.SlotParam({ slot, param }),
     InsertStrip: ({ insert, param }) => HoldTarget.InsertStrip({ insert, param }),
-    ChannelInsert: ({ channel }) => HoldTarget.ChannelInsert({ channel }),
+    TrackInsert: ({ track }) => HoldTarget.TrackInsert({ track }),
     Tempo: () => HoldTarget.Tempo()
   })
 

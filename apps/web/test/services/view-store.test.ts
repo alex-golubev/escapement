@@ -122,51 +122,15 @@ it.effect('the page going away writes the layout still waiting', () =>
   }).pipe(onPage)
 )
 
-it.effect('the pattern chosen is written at once, apart from the layout, and read as the page opens again', () =>
+it.effect('a store that never answers holds the page five seconds, and then the layout is none', () =>
   Effect.gen(function* () {
     const store = yield* memory
-    const view = yield* viewStoreOf(store, project, () => true)
-    expect(view.pattern).toEqual(Option.none())
-    yield* view.saveLayout(() => ({ moved: 1 }), { now: false })
-    yield* view.savePattern(Id('second'))
-    yield* Effect.yieldNow
-    expect(yield* keptAs(store, 'pattern')).toEqual(Option.some({ version: 1, pattern: 'second' }))
-    expect(yield* kept(store)).toEqual(Option.none())
-    yield* TestClock.adjust(Duration.millis(300))
-    expect(yield* kept(store)).toEqual(Option.some({ version: 1, layout: JSON.stringify({ moved: 1 }) }))
-    const again = yield* viewStoreOf(store, project, () => true)
-    expect(again.pattern).toEqual(Option.some('second'))
-    expect(again.layout).toEqual(Option.some({ moved: 1 }))
-    yield* store.set(`pattern:${project}`, JSON.stringify({ version: 1, pattern: '' }))
-    expect((yield* viewStoreOf(store, project, () => true)).pattern).toEqual(Option.none())
+    const hung = KeyValueStore.make({ ...store, get: () => Effect.never })
+    const opening = yield* Effect.forkChild(viewStoreOf(hung, project, () => true))
+    yield* TestClock.adjust(storageTimeout)
+    const view = yield* Fiber.join(opening)
+    expect(view.layout).toEqual(Option.none())
   }).pipe(onPage)
-)
-
-it.effect('the mode chosen is written at once, and read as the page opens again; one of no mode is none', () =>
-  Effect.gen(function* () {
-    const store = yield* memory
-    const view = yield* viewStoreOf(store, project, () => true)
-    expect(view.mode).toEqual(Option.none())
-    yield* view.saveMode('arrangement')
-    yield* Effect.yieldNow
-    expect(yield* keptAs(store, 'mode')).toEqual(Option.some({ version: 1, mode: 'arrangement' }))
-    expect((yield* viewStoreOf(store, project, () => true)).mode).toEqual(Option.some('arrangement'))
-    yield* store.set(`mode:${project}`, JSON.stringify({ version: 1, mode: 'song' }))
-    expect((yield* viewStoreOf(store, project, () => true)).mode).toEqual(Option.none())
-  }).pipe(onPage)
-)
-
-it.effect(
-  'a store that never answers holds the page five seconds, as one part of the view does, not one for each',
-  () =>
-    Effect.gen(function* () {
-      const store = yield* memory
-      const hung = KeyValueStore.make({ ...store, get: () => Effect.never })
-      const opening = yield* Effect.forkChild(viewStoreOf(hung, project, () => true))
-      yield* TestClock.adjust(storageTimeout)
-      const view = yield* Fiber.join(opening)
-      expect([view.layout, view.pattern, view.mode]).toEqual([Option.none(), Option.none(), Option.none()])
-    }).pipe(onPage)
 )
 
 it.effect("an unsaved project's layout isn't kept: its ID is the page's alone", () =>
@@ -174,7 +138,7 @@ it.effect("an unsaved project's layout isn't kept: its ID is the page's alone", 
     const store = yield* memory
     const doc = new Y.Doc()
     const id = newId()
-    createProject(doc, newWriter('test'), [], id)
+    createProject(doc, newWriter('test'), id)
     const unsaved = yield* viewStoreFor(Option.some(store), doc, () => 'missing')
     yield* unsaved.saveLayout(() => ({ closed: 'mixer' }), { now: true })
     yield* Effect.yieldNow
@@ -191,7 +155,7 @@ it.effect("a project whose saving the browser refused keeps its layout; a delete
     const store = yield* memory
     const doc = new Y.Doc()
     const id = newId()
-    createProject(doc, newWriter('test'), [], id)
+    createProject(doc, newWriter('test'), id)
     const saving = { now: 'saved' as Saving }
     const view = yield* viewStoreFor(Option.some(store), doc, () => saving.now)
     saving.now = 'refused'
@@ -210,27 +174,25 @@ it.effect("a project whose saving the browser refused keeps its layout; a delete
   }).pipe(onPage)
 )
 
-it.effect("a deleted project's view is forgotten; the others' stay, and a store that doesn't open costs nothing", () =>
-  Effect.gen(function* () {
-    const store = yield* memory
-    const [deleted, kept] = [newId(), newId()]
-    const keys = (id: Id) => [`layout:${id}`, `pattern:${id}`, `mode:${id}`]
-    yield* Effect.forEach([...keys(deleted), ...keys(kept)], (key) => store.set(key, '{}'))
-    yield* forgetView(deleted).pipe(Effect.provideService(ViewStores, { open: Effect.succeedSome(store) }))
-    expect(yield* Effect.forEach(keys(deleted), (key) => store.has(key))).toEqual([false, false, false])
-    expect(yield* Effect.forEach(keys(kept), (key) => store.has(key))).toEqual([true, true, true])
-    yield* forgetView(kept).pipe(Effect.provideService(ViewStores, { open: Effect.succeedNone }))
-    // A part that can't be removed leaves the other to go all the same.
-    const refusing = KeyValueStore.make({
-      ...store,
-      remove: (key) =>
-        Boolean.match(key.startsWith('layout:'), {
-          onTrue: () =>
-            Effect.fail(new KeyValueStore.KeyValueStoreError({ message: 'Refused', method: 'remove', key })),
-          onFalse: () => store.remove(key)
-        })
+it.effect(
+  "a deleted project's layout is forgotten; the others' stay, and a store that doesn't open costs nothing",
+  () =>
+    Effect.gen(function* () {
+      const store = yield* memory
+      const [deleted, kept] = [newId(), newId()]
+      const key = (id: Id) => `layout:${id}`
+      yield* Effect.forEach([deleted, kept], (id) => store.set(key(id), '{}'))
+      yield* forgetView(deleted).pipe(Effect.provideService(ViewStores, { open: Effect.succeedSome(store) }))
+      expect(yield* store.has(key(deleted))).toBe(false)
+      expect(yield* store.has(key(kept))).toBe(true)
+      yield* forgetView(kept).pipe(Effect.provideService(ViewStores, { open: Effect.succeedNone }))
+      // A store that refuses costs nothing but the layout left.
+      const refusing = KeyValueStore.make({
+        ...store,
+        remove: (key) =>
+          Effect.fail(new KeyValueStore.KeyValueStoreError({ message: 'Refused', method: 'remove', key }))
+      })
+      yield* forgetView(kept).pipe(Effect.provideService(ViewStores, { open: Effect.succeedSome(refusing) }))
+      expect(yield* store.has(key(kept))).toBe(true)
     })
-    yield* forgetView(kept).pipe(Effect.provideService(ViewStores, { open: Effect.succeedSome(refusing) }))
-    expect(yield* Effect.forEach(keys(kept), (key) => store.has(key))).toEqual([true, false, false])
-  })
 )

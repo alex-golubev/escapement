@@ -16,10 +16,9 @@ import {
   Tick
 } from '@escapement/engine-description'
 import { Array, Boolean, Equal, Number, Option, Order, Predicate, Record, Schema, String } from 'effect'
-import { generateKeyBetween, generateNKeysBetween } from 'fractional-indexing'
+import { generateKeyBetween } from 'fractional-indexing'
 import type * as Y from 'yjs'
 import {
-  type ChannelFields,
   type ClipBounds,
   type ClipFields,
   get,
@@ -29,35 +28,22 @@ import {
   mapAt,
   type NoteFields,
   newMap,
-  type PatternFields,
   type PluginFields,
   type ProjectMaps,
   patternNotes,
   projectMaps,
   remove,
-  type SlotFields,
   type Stored,
-  set
+  set,
+  type TrackFields
 } from './document'
-import { channelStrip } from './channel-strip'
 import { type Id, newId } from './id'
-import { trackPlace } from './arrangement'
 import { insertNumber, master } from './mixer'
 import type { Clip, Note } from './project'
 import { samePlace, withMoved, withPut, withStretched } from './notes'
-import {
-  finite,
-  ignore,
-  isDeleted,
-  latestEnd,
-  readChannel,
-  readClip,
-  readNote,
-  readNotes,
-  readPatternEntry,
-  readPluginName
-} from './read'
-import { stepNote, stepTicks } from './steps'
+import { finite, ignore, isDeleted, latestEnd, readClip, readNotes, readPluginName, readTrack } from './read'
+import { defaultNote } from './time'
+import { trackStrip } from './track-strip'
 import { newWriter, type Writer } from './writer'
 
 // An operation writes only values reading takes as they are, in a transaction marked as its writer's. It returns false,
@@ -132,9 +118,19 @@ const holdsProject = (maps: ProjectMaps) => Object.values(maps).some((map) => ma
 const live = <F extends { readonly deleted: boolean }>(map: Option.Option<Stored<F>>) =>
   Option.filter(map, (entry) => !isDeleted(entry))
 
-const liveChannel = ({ channels }: ProjectMaps, id: Id) => live(mapAt(channels, id))
+const liveTrack = ({ tracks }: ProjectMaps, id: Id) => live(mapAt(tracks, id))
 
-const livePattern = ({ patterns }: ProjectMaps, id: Id) => live(mapAt(patterns, id))
+/** A live clip on a live track: its map, and the clip as it reads. */
+const liveClip = (maps: ProjectMaps, id: Id) =>
+  Option.gen(function* () {
+    const map = yield* live(mapAt(maps.clips, id))
+    const read = yield* readClip(ignore, maps.clips, id)
+    yield* liveTrack(maps, read.track)
+    return { map, read }
+  })
+
+/** Where a clip can start: a whole tick of the engine's. */
+const inTime = (tick: number) => isWhole(tick) && tick >= 0 && tick <= lastTick
 
 /** A name as typed, without the spaces around it; none if nothing else is left. */
 const typedName = (name: string) => Option.liftPredicate(String.trim(name), String.isNonEmpty)
@@ -148,42 +144,6 @@ const insertOf = (doc: Y.Doc, insert: Id, pass: (number: number) => boolean = ()
     Option.filter(Option.filter(insertNumber(insert), pass), () => holdsProject(projectMaps(doc))),
     () => insertMap(doc, insert)
   )
-
-/**
- * Switches the step on if the channel has no note on its tick, with `stepNote`; otherwise off, removing every note of
- * the channel on the tick, whatever its key: two clients that switched the same step on made two notes.
- */
-export const toggleStep = (doc: Y.Doc, by: Writer, pattern: Id, channel: Id, step: number): boolean => {
-  const maps = projectMaps(doc)
-  const tick = step * stepTicks
-  return transact(
-    doc,
-    by,
-    Option.gen(function* () {
-      yield* Option.liftPredicate(step, isWhole)
-      yield* Option.liftPredicate(tick, (start) => start >= 0 && start + stepNote.length <= latestEnd)
-      yield* liveChannel(maps, channel)
-      yield* livePattern(maps, pattern)
-      const note: NoteFields = {
-        channel,
-        tick: Tick(tick),
-        len: stepNote.length,
-        key: stepNote.key,
-        vel: stepNote.velocity
-      }
-      const notes = patternNotes(doc, pattern)
-      const on = idsOf(notes).filter((id) =>
-        Option.exists(readNote(id, get(notes, id)), (read) => read.channel === channel && read.tick === tick)
-      )
-      return Option.some(
-        Array.match(on, {
-          onEmpty: () => () => set(notes, newId(), note),
-          onNonEmpty: (on) => () => on.forEach((id) => remove(notes, id))
-        })
-      )
-    })
-  )
-}
 
 /** Where a note starts, how high it is and how long, in whole ticks from 1. */
 export interface NewNote {
@@ -211,83 +171,74 @@ const rewritten = (
     (written) =>
       Option.map(Array.match([...gone, ...written], { onEmpty: Option.none, onNonEmpty: Option.some }), () => () => {
         gone.forEach(({ id }) => remove(notes, id))
-        written.forEach(({ id, channel, tick, length, key, velocity }) =>
-          set(notes, id, { channel, tick, len: length, key, vel: velocity })
+        written.forEach(({ id, tick, length, key, velocity }) =>
+          set(notes, id, { tick, len: length, key, vel: velocity })
         )
       })
   )
 }
 
-/** A note of a live channel in a live pattern, with the pattern's notes. */
-const noteIn = (doc: Y.Doc, pattern: Id, id: Id) =>
-  Option.gen(function* () {
-    const maps = projectMaps(doc)
-    yield* livePattern(maps, pattern)
-    const notes = patternNotes(doc, pattern)
-    const read = readNotes(notes)
-    const note = yield* Array.findFirst(read, (note) => note.id === id)
-    yield* liveChannel(maps, note.channel)
-    return { notes, read, note }
+/** The notes of the pattern of a live clip on a live track, as the document holds them and as they read. */
+const notesOfClip = (doc: Y.Doc, clip: Id) =>
+  Option.map(liveClip(projectMaps(doc), clip), ({ read }) => {
+    const notes = patternNotes(doc, read.pattern)
+    return { notes, read: readNotes(notes) }
   })
 
+/** A note of a live clip's pattern, with the pattern's notes. */
+const noteIn = (doc: Y.Doc, clip: Id, id: Id) =>
+  Option.flatMap(notesOfClip(doc, clip), ({ notes, read }) =>
+    Option.map(
+      Array.findFirst(read, (note) => note.id === id),
+      (note) => ({ notes, read, note })
+    )
+  )
+
 /**
- * Puts a note of the channel into the pattern, at full strength as a step's, if it ends by `latestEnd`, in place of the
- * notes in its place.
+ * Puts a note into the clip's pattern, at full strength, if it ends by `latestEnd`, in place of the notes in its place.
+ * Refused for a clip not live, or on a track not live.
  */
-export const addNote = (doc: Y.Doc, by: Writer, pattern: Id, channel: Id, place: NewNote): boolean => {
-  const maps = projectMaps(doc)
-  return transact(
+export const addNote = (doc: Y.Doc, by: Writer, clip: Id, place: NewNote): boolean =>
+  transact(
     doc,
     by,
     Option.gen(function* () {
       yield* Option.liftPredicate(place, fits)
-      yield* liveChannel(maps, channel)
-      yield* livePattern(maps, pattern)
-      const notes = patternNotes(doc, pattern)
-      const read = readNotes(notes)
-      return yield* rewritten(
-        notes,
-        read,
-        withPut(read, { id: newId(), channel, ...place, velocity: stepNote.velocity })
-      )
+      const { notes, read } = yield* notesOfClip(doc, clip)
+      return yield* rewritten(notes, read, withPut(read, { id: newId(), ...place, velocity: defaultNote.velocity }))
     })
   )
-}
 
 /**
- * Moves the note, with the notes in its place, to start and be as high as asked, each as long as it was, in place of the
- * notes there. One no longer there, or of a channel not there, is refused.
+ * Moves the note of the clip's pattern, with the notes in its place, to start and be as high as asked, each as long as it
+ * was, in place of the notes there. One no longer there, or of a clip refused as `addNote` refuses it, is refused.
  */
-export const moveNote = (doc: Y.Doc, by: Writer, pattern: Id, id: Id, to: Pick<NewNote, 'tick' | 'key'>): boolean =>
+export const moveNote = (doc: Y.Doc, by: Writer, clip: Id, id: Id, to: Pick<NewNote, 'tick' | 'key'>): boolean =>
   transact(
     doc,
     by,
-    Option.flatMap(noteIn(doc, pattern, id), ({ notes, read, note }) =>
-      rewritten(notes, read, withMoved(read, note, to))
-    )
+    Option.flatMap(noteIn(doc, clip, id), ({ notes, read, note }) => rewritten(notes, read, withMoved(read, note, to)))
   )
 
 /** Makes the note, with the notes in its place, as long as asked; refused as a moved one is. */
-export const stretchNote = (doc: Y.Doc, by: Writer, pattern: Id, id: Id, length: number): boolean =>
+export const stretchNote = (doc: Y.Doc, by: Writer, clip: Id, id: Id, length: number): boolean =>
   transact(
     doc,
     by,
-    Option.flatMap(noteIn(doc, pattern, id), ({ notes, read, note }) =>
+    Option.flatMap(noteIn(doc, clip, id), ({ notes, read, note }) =>
       rewritten(notes, read, withStretched(read, note, length))
     )
   )
 
 /**
- * Takes the notes out of the pattern, each with the notes in its place, as two clients that put the same note at once
- * made two. One no longer there is passed over.
+ * Takes the notes out of the clip's pattern, each with the notes in its place, as two clients that put the same note at
+ * once made two. One no longer there is passed over; a clip refused as `addNote` refuses it, refused.
  */
-export const eraseNotes = (doc: Y.Doc, by: Writer, pattern: Id, ids: ReadonlyArray<Id>): boolean =>
+export const eraseNotes = (doc: Y.Doc, by: Writer, clip: Id, ids: ReadonlyArray<Id>): boolean =>
   transact(
     doc,
     by,
-    Option.map(livePattern(projectMaps(doc), pattern), () => {
-      const notes = patternNotes(doc, pattern)
-      const read = readNotes(notes)
+    Option.map(notesOfClip(doc, clip), ({ notes, read }) => {
       const erased = read.filter((note) => ids.includes(note.id))
       const alike = read.filter((note) => erased.some((one) => samePlace(one, note)))
       return Option.map(
@@ -312,14 +263,14 @@ const setParam = (doc: Y.Doc, instance: Option.Option<Stored<PluginFields>>, par
     )
   })
 
-/** A parameter of the channel's instrument, such as its volume. */
-export const setChannelParam = (doc: Y.Doc, by: Writer, channel: Id, param: ParamId<Plugin>, value: number): boolean =>
+/** A parameter of the track's instrument, such as a synth's oscillator's shape. */
+export const setTrackParam = (doc: Y.Doc, by: Writer, track: Id, param: ParamId<Plugin>, value: number): boolean =>
   transact(
     doc,
     by,
     setParam(
       doc,
-      Option.flatMap(liveChannel(projectMaps(doc), channel), (map) => mapAt(map, 'instrument')),
+      Option.flatMap(liveTrack(projectMaps(doc), track), (map) => mapAt(map, 'instrument')),
       param,
       value
     )
@@ -329,34 +280,34 @@ export const setChannelParam = (doc: Y.Doc, by: Writer, channel: Id, param: Para
 export const setMasterParam = (doc: Y.Doc, by: Writer, slot: Id, param: ParamId<Plugin>, value: number): boolean =>
   transact(doc, by, setParam(doc, masterSlot(doc, slot), param, value))
 
-/** A parameter of the channel's strip, such as its pan, into the strip's range. */
-export const setChannelStrip = (doc: Y.Doc, by: Writer, channel: Id, param: StripParamId, value: number): boolean =>
+/** A parameter of the track's strip, such as its pan, into the strip's range. */
+export const setTrackStrip = (doc: Y.Doc, by: Writer, track: Id, param: StripParamId, value: number): boolean =>
   transact(
     doc,
     by,
     Option.gen(function* () {
-      const map = yield* liveChannel(projectMaps(doc), channel)
-      const description = yield* Option.fromUndefinedOr(channelStrip.find(({ id }) => id === param))
+      const map = yield* liveTrack(projectMaps(doc), track)
+      const description = yield* Option.fromUndefinedOr(trackStrip.find(({ id }) => id === param))
       const valid = nearestIn(description, yield* finite(value))
       return write(map, param, valid, description.default)
     })
   )
 
-export const setMute = (doc: Y.Doc, by: Writer, channel: Id, mute: boolean): boolean =>
+export const setMute = (doc: Y.Doc, by: Writer, track: Id, mute: boolean): boolean =>
   transact(
     doc,
     by,
-    Option.map(liveChannel(projectMaps(doc), channel), (map) => write(map, 'mute', mute, false))
+    Option.map(liveTrack(projectMaps(doc), track), (map) => write(map, 'mute', mute, false))
   )
 
-/** The mixer's insert the channel goes into: the master, or one of `mixerInserts`. */
-export const setChannelInsert = (doc: Y.Doc, by: Writer, channel: Id, insert: Id): boolean =>
+/** The mixer's insert the track goes into: the master, or one of `mixerInserts`. */
+export const setTrackInsert = (doc: Y.Doc, by: Writer, track: Id, insert: Id): boolean =>
   transact(
     doc,
     by,
     Option.gen(function* () {
       yield* insertNumber(insert)
-      const map = yield* liveChannel(projectMaps(doc), channel)
+      const map = yield* liveTrack(projectMaps(doc), track)
       return write(map, 'insert', insert, master)
     })
   )
@@ -385,23 +336,26 @@ export const setInsertMute = (doc: Y.Doc, by: Writer, insert: Id, mute: boolean)
     )
   )
 
-/** Without the spaces around it; refused if nothing else is left. Another channel may have it too. */
-export const renameChannel = (doc: Y.Doc, by: Writer, channel: Id, name: string): boolean =>
+/** Without the spaces around it; refused if nothing else is left. Another track may have it too. */
+export const renameTrack = (doc: Y.Doc, by: Writer, track: Id, name: string): boolean =>
   transact(
     doc,
     by,
     Option.gen(function* () {
-      const map = yield* liveChannel(projectMaps(doc), channel)
+      const map = yield* liveTrack(projectMaps(doc), track)
       return write(map, 'name', yield* typedName(name), '')
     })
   )
 
-/** Marked so, all it holds left in the document: an undo brings it back whole, and an edit made in it offline stays. */
-export const deleteChannel = (doc: Y.Doc, by: Writer, channel: Id): boolean =>
+/**
+ * Marked so, all it holds left in the document, and its clips hidden with it: an undo brings it back whole, its clips
+ * with it, and an edit made in it offline stays.
+ */
+export const deleteTrack = (doc: Y.Doc, by: Writer, track: Id): boolean =>
   transact(
     doc,
     by,
-    Option.map(liveChannel(projectMaps(doc), channel), (map) => write(map, 'deleted', true, false))
+    Option.map(liveTrack(projectMaps(doc), track), (map) => write(map, 'deleted', true, false))
   )
 
 /** Into the engine's range. */
@@ -427,7 +381,7 @@ const newInstance = <P extends Plugin>(plugin: P, sounds: SampleSounds<P> = {}):
   }
 }
 
-/** The label, or else the label with the first number from 2 that names no channel: one of these is always free. */
+/** The label, or else the label with the first number from 2 that names no track: one of these is always free. */
 const freeName = (label: string, taken: ReadonlyArray<string>): string => {
   const names = new Set(taken)
   const candidates = [label, ...Array.makeBy(taken.length, (i) => `${label} ${i + 2}`)]
@@ -454,21 +408,6 @@ const placesTaken = (entries: Stored<Record<string, Stored<{ readonly order: str
     )
   )
 
-/** The first name `numbered` gives, by a number from `from` on, that no name taken has: one of these is always free. */
-const numberedName = (numbered: (number: number) => string, from: number, taken: ReadonlyArray<string>): string => {
-  const names = new Set(taken)
-  return Option.getOrElse(
-    Array.findFirst(
-      Array.makeBy(taken.length + 1, (i) => numbered(from + i)),
-      (name) => !names.has(name)
-    ),
-    () => numbered(from)
-  )
-}
-
-const livePatterns = (patterns: ProjectMaps['patterns']) =>
-  idsOf(patterns).flatMap((id) => Option.toArray(readPatternEntry(ignore, patterns, id)))
-
 /**
  * An entry made deleted, set up with what `fill` writes for it, then brought in by the writer: an undo puts it back in
  * the trash, and what another client wrote into it since with it. Its ID.
@@ -490,121 +429,19 @@ const broughtIn = <F extends { readonly deleted: boolean }>(
   return id
 }
 
-/**
- * A pattern after every other, a deleted one too, named "Pattern" and the first number from 1 that no live pattern's
- * name has. Its ID; none if the document holds no project.
- */
-export const addPattern = (doc: Y.Doc, by: Writer): Option.Option<Id> =>
-  Option.map(Option.liftPredicate(projectMaps(doc), holdsProject), (maps) =>
-    broughtIn(
-      doc,
-      by,
-      maps.patterns,
-      newMap<PatternFields>({
-        name: numberedName(
-          (number) => `Pattern ${number}`,
-          1,
-          livePatterns(maps.patterns).map(({ value }) => value.name)
-        ),
-        order: orderAfter(placesTaken(maps.patterns)),
-        deleted: true
-      })
-    )
-  )
-
-/** A fractional index between `order` and the next of `orders` after it; after them all if there is none. */
-const orderNext = (order: string, orders: ReadonlyArray<string>): string =>
-  Option.getOrElse(
-    Option.liftThrowable(() =>
-      generateKeyBetween(
-        order,
-        Option.getOrNull(Array.findFirst(Array.sort(orders, Order.String), (taken) => taken > order))
-      )
-    )(),
-    () => orderAfter(orders)
-  )
-
-/**
- * A copy of the pattern right after it, before any other, a deleted one too, with its notes as they read: named as a
- * clone, "Piano #2", by the first number from 2 that no live pattern's name has, and a copy of a copy by the same name;
- * after them all where its place or the next one can't be read. Its ID; none if the pattern isn't live.
- */
-export const clonePattern = (doc: Y.Doc, by: Writer, pattern: Id): Option.Option<Id> => {
-  const maps = projectMaps(doc)
-  return Option.map(readPatternEntry(ignore, maps.patterns, pattern), ({ value, order }) => {
-    const base = value.name.replace(/ #\d+$/, '')
-    const notes = readNotes(patternNotes(doc, pattern))
-    return broughtIn(
-      doc,
-      by,
-      maps.patterns,
-      newMap<PatternFields>({
-        name: numberedName(
-          (number) => `${base} #${number}`,
-          2,
-          livePatterns(maps.patterns).map(({ value }) => value.name)
-        ),
-        order: orderNext(order, placesTaken(maps.patterns)),
-        deleted: true
-      }),
-      (id) => {
-        const copied = patternNotes(doc, id)
-        notes.forEach(({ channel, tick, length, key, velocity }) =>
-          set(copied, newId(), { channel, tick, len: length, key, vel: velocity })
-        )
-      }
-    )
-  })
-}
-
-/** Without the spaces around it; refused if nothing else is left. Another pattern may have it too. */
-export const renamePattern = (doc: Y.Doc, by: Writer, pattern: Id, name: string): boolean =>
-  transact(
-    doc,
-    by,
-    Option.gen(function* () {
-      const map = yield* livePattern(projectMaps(doc), pattern)
-      return write(map, 'name', yield* typedName(name), '')
-    })
-  )
-
-/**
- * A live pattern but the last one: the Channels window would have no pattern to put steps in. Two clients deleting the
- * last two at once still leave none.
- */
-export const canDeletePattern = (live: ReadonlyArray<Id>, pattern: Id): boolean =>
-  live.length > 1 && live.includes(pattern)
-
-/** Marked so, its notes left in the document: an undo brings it back whole. Refused as `canDeletePattern` has it. */
-export const deletePattern = (doc: Y.Doc, by: Writer, pattern: Id): boolean => {
-  const maps = projectMaps(doc)
-  const live = idsOf(maps.patterns).filter((id) => Option.isSome(livePattern(maps, id)))
-  return transact(
-    doc,
-    by,
-    Option.gen(function* () {
-      yield* Option.liftPredicate(pattern, (pattern) => canDeletePattern(live, pattern))
-      const map = yield* livePattern(maps, pattern)
-      return write(map, 'deleted', true, false)
-    })
-  )
-}
-
-/** Where a clip goes: a track of the arrangement, and the tick it starts at. */
+/** Where a clip goes: a track, by ID, and the tick it starts at. */
 export interface ClipPlace {
   readonly track: Id
   readonly tick: Tick
 }
 
-const placeable = ({ track }: ClipPlace) => Option.isSome(trackPlace(track))
-
 /**
- * A clip of the live pattern at the place, brought in as a new pattern is: an undo puts it in the trash. Its ID; none if
- * the pattern isn't live, or the place is on no track.
+ * A new clip at the place, with a pattern of its own, as long as its pattern: a bar while it has no notes. Brought in so
+ * that an undo puts it in the trash. Its ID; none if the track isn't live, or the tick isn't a whole one of the engine's.
  */
-export const addClip = (doc: Y.Doc, by: Writer, pattern: Id, { track, tick }: ClipPlace): Option.Option<Id> => {
+export const addClip = (doc: Y.Doc, by: Writer, { track, tick }: ClipPlace): Option.Option<Id> => {
   const maps = projectMaps(doc)
-  return Option.map(Option.all([livePattern(maps, pattern), Option.liftPredicate({ track, tick }, placeable)]), () =>
+  return Option.map(Option.all([liveTrack(maps, track), Option.liftPredicate(tick, inTime)]), () =>
     broughtIn(
       doc,
       by,
@@ -612,7 +449,7 @@ export const addClip = (doc: Y.Doc, by: Writer, pattern: Id, { track, tick }: Cl
       newMap<ClipFields>({
         track,
         bounds: boundsOf({ tick, ownLength: Option.none(), offset: 0 }),
-        pattern,
+        pattern: newId(),
         deleted: true
       })
     )
@@ -630,8 +467,9 @@ const boundsOf = ({ tick, ownLength, offset }: Pick<Clip, 'tick' | 'ownLength' |
 })
 
 /**
- * Moves the clip to the place, writing its track and its bounds each only if the document holds otherwise. One not
- * live, or of a pattern not live, which no one sees, is refused, and so is a place a length of its own ends too late at.
+ * Moves the clip to the place, writing its track and its bounds each only if the document holds otherwise: on another
+ * track it plays that track's instrument. One not live, or on a track not live, which no one sees, is refused, and so
+ * is a place on a track not live, or not in time, or one a length of its own ends too late at.
  */
 export const moveClip = (doc: Y.Doc, by: Writer, clip: Id, to: ClipPlace): boolean => {
   const maps = projectMaps(doc)
@@ -639,10 +477,9 @@ export const moveClip = (doc: Y.Doc, by: Writer, clip: Id, to: ClipPlace): boole
     doc,
     by,
     Option.gen(function* () {
-      yield* Option.liftPredicate(to, placeable)
-      const map = yield* mapAt(maps.clips, clip)
-      const read = yield* readClip(ignore, maps.clips, clip)
-      yield* livePattern(maps, read.pattern)
+      yield* liveTrack(maps, to.track)
+      yield* Option.liftPredicate(to.tick, inTime)
+      const { map, read } = yield* liveClip(maps, clip)
       yield* Option.liftPredicate(to, ({ tick }) =>
         Option.match(read.ownLength, { onNone: () => true, onSome: (length) => fits({ tick, length }) })
       )
@@ -665,7 +502,7 @@ export const moveClip = (doc: Y.Doc, by: Writer, clip: Id, to: ClipPlace): boole
 
 /**
  * Makes the clip so long, a length of its own from then on, writing its bounds only if the document holds otherwise. A
- * length not whole, under a tick or ending past `latestEnd` is refused, as is a clip not live, or of a pattern not live.
+ * length not whole, under a tick or ending past `latestEnd` is refused, as is a clip not live, or on a track not live.
  */
 export const resizeClip = (doc: Y.Doc, by: Writer, clip: Id, length: number): boolean => {
   const maps = projectMaps(doc)
@@ -673,9 +510,7 @@ export const resizeClip = (doc: Y.Doc, by: Writer, clip: Id, length: number): bo
     doc,
     by,
     Option.gen(function* () {
-      const map = yield* mapAt(maps.clips, clip)
-      const read = yield* readClip(ignore, maps.clips, clip)
-      yield* livePattern(maps, read.pattern)
+      const { map, read } = yield* liveClip(maps, clip)
       const ownLength = yield* Option.liftPredicate(length, (length) => fits({ tick: read.tick, length }))
       return Option.map(
         Option.liftPredicate(
@@ -699,7 +534,7 @@ export interface ClipSpan {
 
 /**
  * Starts the clip so, as long and from so far into a round of its pattern, writing its bounds only if the document holds
- * otherwise. A tick or an offset not whole or out of range, a length that doesn't fit, a clip not live, or of a pattern
+ * otherwise. A tick or an offset not whole or out of range, a length that doesn't fit, a clip not live, or on a track
  * not live, is refused.
  */
 export const trimClip = (doc: Y.Doc, by: Writer, clip: Id, span: ClipSpan): boolean => {
@@ -708,9 +543,7 @@ export const trimClip = (doc: Y.Doc, by: Writer, clip: Id, span: ClipSpan): bool
     doc,
     by,
     Option.gen(function* () {
-      const map = yield* mapAt(maps.clips, clip)
-      const read = yield* readClip(ignore, maps.clips, clip)
-      yield* livePattern(maps, read.pattern)
+      const { map } = yield* liveClip(maps, clip)
       const { tick, length, offset } = yield* Option.liftPredicate(
         span,
         ({ tick, length, offset }) =>
@@ -727,105 +560,64 @@ export const trimClip = (doc: Y.Doc, by: Writer, clip: Id, span: ClipSpan): bool
   )
 }
 
-/** Marked so, as a deleted channel is: an undo brings each back. One not live is passed over. */
+/** Marked so, as a deleted track is: an undo brings each back. One not live, or on a track not live, is passed over. */
 export const eraseClips = (doc: Y.Doc, by: Writer, ids: ReadonlyArray<Id>): boolean => {
   const maps = projectMaps(doc)
   return transact(
     doc,
     by,
     Option.map(Option.liftPredicate(maps, holdsProject), () =>
-      together(
-        ids.map((id) => Option.flatMap(live(mapAt(maps.clips, id)), (map) => write(map, 'deleted', true, false)))
-      )
+      together(ids.map((id) => Option.flatMap(liveClip(maps, id), ({ map }) => write(map, 'deleted', true, false))))
     )
   )
 }
 
-/**
- * A channel with a synth after every other, a deleted one too, its parameters at their defaults, named after the synth
- * so that no live channel has its name: "Synth", then "Synth 2" and on. False if the document holds no project.
- */
-export const addChannel = (doc: Y.Doc, by: Writer): boolean => {
-  const maps = projectMaps(doc)
-  return transact(
-    doc,
-    by,
-    Option.gen(function* () {
-      yield* Option.liftPredicate(maps, holdsProject)
-      const live = idsOf(maps.channels).flatMap((id) => Option.toArray(readChannel(ignore, maps.channels, id)))
-      const name = freeName(
-        plugins.synth.label,
-        live.map(({ value }) => value.name)
-      )
-      const order = orderAfter(placesTaken(maps.channels))
-      return Option.some(() =>
-        set(
-          maps.channels,
-          newId(),
-          newMap<ChannelFields>({
-            name,
-            order,
-            deleted: false,
-            mute: false,
-            instrument: newMap(newInstance(plugins.synth))
-          })
-        )
-      )
-    })
-  )
+/** What a new track plays: a plugin of the catalog, and the sounds of its samples. */
+export interface NewInstrument {
+  readonly plugin: Plugin
+  readonly sounds: SampleSounds<Plugin>
 }
 
-/** A channel that plays one sound with a sampler. */
-export interface NewChannel {
-  readonly name: string
-  readonly sound: Sha256
-}
+/** What "+" puts on a new track. */
+export const synth: NewInstrument = { plugin: plugins.synth, sounds: {} }
 
 /**
- * A new project, with the ID given or one of its own: a sampler on each channel, in their order, one empty pattern, and
- * the filter on the master insert, every parameter at its default and the tempo at the engine's. False if the document
- * already holds one.
+ * A track after every other, a deleted one too, playing the instrument at its defaults, named after it so that no live
+ * track has its name: "Synth", then "Synth 2" and on. Brought in so that an undo puts it in the trash, with the clips put
+ * on it since. Its ID; none if the document holds no project.
  */
-export const createProject = (
-  doc: Y.Doc,
-  by: Writer,
-  channels: ReadonlyArray<NewChannel>,
-  id: Id = newId()
-): boolean => {
+export const addTrack = (doc: Y.Doc, by: Writer, instrument: NewInstrument = synth): Option.Option<Id> => {
   const maps = projectMaps(doc)
-  const create = () => {
-    const orders = generateNKeysBetween(null, null, channels.length)
-    set(maps.meta, 'id', id)
-    set(maps.meta, 'bpm', defaultTempo)
-    channels.forEach(({ name, sound }, i) =>
-      set(
-        maps.channels,
-        newId(),
-        newMap<ChannelFields>({
-          name,
-          order: orders[i],
-          deleted: false,
-          mute: false,
-          instrument: newMap(newInstance(plugins.sampler, { sample: sound }))
-        })
-      )
+  return Option.map(Option.liftPredicate(maps, holdsProject), () => {
+    const live = idsOf(maps.tracks).flatMap((id) => Option.toArray(readTrack(ignore, maps.tracks, id)))
+    const name = freeName(
+      instrument.plugin.label,
+      live.map(({ value }) => value.name)
     )
-    set(
-      maps.patterns,
-      newId(),
-      newMap<PatternFields>({ name: 'Pattern 1', order: generateKeyBetween(null, null), deleted: false })
-    )
-    set(
-      insertMap(doc, master),
-      'slots',
-      newMap({
-        [newId()]: newMap<SlotFields>({
-          ...newInstance(plugins.filter),
-          order: generateKeyBetween(null, null),
-          deleted: false
-        })
+    return broughtIn(
+      doc,
+      by,
+      maps.tracks,
+      newMap<TrackFields>({
+        name,
+        order: orderAfter(placesTaken(maps.tracks)),
+        deleted: true,
+        mute: false,
+        instrument: newMap(newInstance(instrument.plugin, instrument.sounds))
       })
     )
+  })
+}
+
+/**
+ * A new project, with the ID given or one of its own: only the master, with nothing on it, and the tempo at the
+ * engine's. False if the document already holds one.
+ */
+export const createProject = (doc: Y.Doc, by: Writer, id: Id = newId()): boolean => {
+  const maps = projectMaps(doc)
+  const create = () => {
+    set(maps.meta, 'id', id)
+    set(maps.meta, 'bpm', defaultTempo)
   }
   return transact(
     doc,

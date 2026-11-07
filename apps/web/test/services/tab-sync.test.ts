@@ -1,10 +1,15 @@
 import 'fake-indexeddb/auto'
 import { compile } from '@escapement/compiler'
 import { Command, type Transaction } from '@escapement/engine'
-import { defaultTempo, Sha256 } from '@escapement/engine-description'
+import { defaultTempo, plugins, Sha256, Tick } from '@escapement/engine-description'
 import {
+  addClip,
+  addNote,
+  addTrack,
   createProject,
+  defaultNote,
   editorOf,
+  eraseNotes,
   type Holds,
   HoldTarget,
   heldValue,
@@ -13,7 +18,7 @@ import {
   noHolds,
   readProject,
   setTempo,
-  toggleStep
+  stepTicks
 } from '@escapement/model'
 import { Boolean, Cause, Effect, Equal, Layer, Logger, Option, Schedule, type Scope } from 'effect'
 import { SecureRandom } from 'effect/crypto'
@@ -32,7 +37,7 @@ import { savedIn } from '../saved-in'
 
 const by = newWriter('test')
 
-const channels = ['Kick', 'Snare'].map((name, i) => ({ name, sound: Sha256(`${i}e`.repeat(32)) }))
+const sounds = [0, 1].map((i) => Sha256(`${i}e`.repeat(32)))
 
 const projectOf = (doc: Y.Doc) => readProject(doc).value
 
@@ -40,10 +45,22 @@ const tempoOf = (doc: Y.Doc) => projectOf(doc).tempo
 
 const notesOf = (doc: Y.Doc) => projectOf(doc).patterns.flatMap(({ notes }) => notes)
 
-/** Switches the step of the first channel in the first pattern. */
+/** A note on the step of the project's clip, or none there again, as a step switched. */
 const toggle = (doc: Y.Doc, step: number) => {
-  const { patterns, channels } = projectOf(doc)
-  toggleStep(doc, by, patterns[0].id, channels[0].id, step)
+  const { clips, patterns } = projectOf(doc)
+  const [clip] = clips
+  const tick = step * stepTicks
+  const on = patterns.flatMap(({ notes }) => notes).filter((note) => note.tick === tick)
+  Boolean.match(on.length === 0, {
+    onTrue: () => addNote(doc, by, clip.id, { tick: Tick(tick), key: defaultNote.key, length: defaultNote.length }),
+    onFalse: () =>
+      eraseNotes(
+        doc,
+        by,
+        clip.id,
+        on.map(({ id }) => id)
+      )
+  })
 }
 
 /** Run with the browser's channels between tabs: Node has `BroadcastChannel` too. */
@@ -75,9 +92,14 @@ const until = (done: () => boolean) =>
 /** Long past when a message posted before would have come. */
 const settled = Effect.sleep('50 millis')
 
+/** A kick's and a snare's tracks, each a sampler, and a clip on the kick's. */
 const newProject = () => {
   const doc = new Y.Doc()
-  createProject(doc, by, channels)
+  createProject(doc, by)
+  const [kick] = sounds.map((sound) =>
+    Option.getOrThrow(addTrack(doc, by, { plugin: plugins.sampler, sounds: { sample: sound } }))
+  )
+  addClip(doc, by, { track: kick, tick: Tick(0) })
   return doc
 }
 
@@ -109,7 +131,7 @@ const listening = (name: string, doc: Y.Doc) =>
     ({ channel }) => Effect.sync(() => channel.close())
   )
 
-const kickVolume = (doc: Y.Doc) => HoldTarget.ChannelStrip({ channel: projectOf(doc).channels[0].id, param: 'volume' })
+const kickVolume = (doc: Y.Doc) => HoldTarget.TrackStrip({ track: projectOf(doc).tracks[0].id, param: 'volume' })
 
 afterEach(() => {
   vi.restoreAllMocks()
@@ -260,10 +282,10 @@ test('tabs of different projects never meet, such as a new one made since the sa
       toggle(other, 3)
       yield* until(() => tempoOf(there) === 150)
       yield* settled
-      expect(projectOf(other).channels).toHaveLength(2)
+      expect(projectOf(other).tracks).toHaveLength(2)
       expect(tempoOf(other)).toBe(defaultTempo)
       expect(notesOf(here)).toHaveLength(0)
-      expect(projectOf(here).channels).toHaveLength(2)
+      expect(projectOf(here).tracks).toHaveLength(2)
     })
   ))
 
@@ -335,7 +357,7 @@ test("a knob turned in one tab plays in another's engine as it turns, never goin
       expect(played.every((value) => moves.includes(value))).toBe(true)
       expect(played).toEqual([...played].sort((x, y) => y - x))
       expect(played.at(-1)).toBe(0.3)
-      expect(projectOf(there).channels[0].strip.volume).toBe(0.3)
+      expect(projectOf(there).tracks[0].strip.volume).toBe(0.3)
     })
   ))
 

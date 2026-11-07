@@ -1,6 +1,14 @@
 import { useAtomValue } from '@effect/atom-react'
 import type { MidiKey } from '@escapement/engine-description'
-import { byContent, type Id, type NewNote, patternEnd, stepNote } from '@escapement/model'
+import {
+  type ArrangementClip,
+  byContent,
+  defaultNote,
+  type Id,
+  type NewNote,
+  patternEnd,
+  startInRound
+} from '@escapement/model'
 import { Array, Boolean, Data, Equal, Option } from 'effect'
 import type { TargetedPointerEvent, TargetedWheelEvent } from 'preact'
 import { useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks'
@@ -28,25 +36,38 @@ import {
 import { keysWidth, rowHeight, rulerHeight, stepWidth } from './layout'
 import './piano-roll.css'
 
-/** The name of the channel the piano roll shows, beside its title. */
+/** The name of the track whose clip the piano roll shows, beside its title. */
 export const PianoRollName = () => {
   const { session } = useCore()
-  const { channel } = usePianoRollWindow()
+  const { clip } = usePianoRollWindow()
   const name = useMemo(
     () =>
       byContent((get) =>
-        Option.flatMap(get(channel), (id) => Option.map(get(session.project.channel(id)), ({ name }) => name))
+        Option.flatMap(get(clip), (id) =>
+          Option.flatMap(get(session.project.clip(id)), ({ track }) =>
+            Option.map(get(session.project.track(track)), ({ name }) => name)
+          )
+        )
       ),
-    [channel, session]
+    [clip, session]
   )
-  return Option.getOrElse(useAtomValue(name), () => 'No channel')
+  return Option.getOrElse(useAtomValue(name), () => 'No clip')
 }
+
+/** Where in its pattern the clip plays at the arrangement's tick; none outside the clip. */
+const inClip =
+  ({ tick, length, period, offset }: ArrangementClip) =>
+  (heard: number) =>
+    Option.map(
+      Option.liftPredicate(heard, (at) => at >= tick && at < tick + length),
+      (at) => (startInRound(offset, period) + at - tick) % period
+    )
 
 /**
  * What a pointer does from press to release: in an action of the undo history, erases all it passes over, as one step,
- * or drags a note, written once, on release, into the pattern it was pressed in; or plays a key of the keyboard, the one
- * it is over, writing nothing. The roll scrolls as far as the pattern reached at the press until it is let go: a shorter
- * one would take the bars from under the pointer. `id` tells a press from the next, on the same key too.
+ * or drags a note, written once, on release; or plays a key of the keyboard, the one it is over, writing nothing. The
+ * roll scrolls as far as the pattern reached at the press until it is let go: a shorter one would take the bars from
+ * under the pointer. `id` tells a press from the next, on the same key too.
  */
 type Gesture = Data.TaggedEnum<{
   Erasing: { readonly id: number; readonly pointer: number; readonly end: () => void; readonly reached: number }
@@ -62,7 +83,6 @@ type Gesture = Data.TaggedEnum<{
     readonly pointer: number
     readonly end: () => void
     readonly reached: number
-    readonly pattern: Id
     readonly grab: Grab
     readonly place: NewNote
   }
@@ -75,12 +95,12 @@ type Dragging = Data.TaggedEnum.Value<Gesture, 'Dragging'>
 /** The note a gesture plays to be heard: a key held, or a note held where it is, as loud as it is; none erasing. */
 const soundOf = Gesture.$match({
   Erasing: () => Option.none<{ readonly key: MidiKey; readonly velocity: number }>(),
-  Playing: ({ key }) => Option.some({ key, velocity: stepNote.velocity }),
+  Playing: ({ key }) => Option.some({ key, velocity: defaultNote.velocity }),
   Dragging: ({ grab, place }) =>
     Option.some({
       key: place.key,
       velocity: Grab.$match(grab, {
-        Put: () => stepNote.velocity,
+        Put: () => defaultNote.velocity,
         Move: ({ note }) => note.velocity,
         Stretch: ({ note }) => note.velocity
       })
@@ -88,15 +108,16 @@ const soundOf = Gesture.$match({
 })
 
 /**
- * The channel's notes on a grid of keys and steps, drawn on canvases: the grid, the notes, and the playhead over them,
- * each drawn again only when what it shows changes. It fills its window.
+ * The clip's notes on a grid of keys and steps, drawn on canvases: the grid, the notes, and the playhead over them where
+ * the arrangement plays the clip, each drawn again only when what it shows changes. It fills its window. Its keys and
+ * its notes held play the clip's track's instrument.
  */
-const Roll = ({ channel, length }: { readonly channel: Id; readonly length: { current: number } }) => {
+const Roll = ({ clip, length }: { readonly clip: ArrangementClip; readonly length: { current: number } }) => {
   const { registry, session, ops, host, run } = useCore()
-  const notes = useAtomValue(session.notes(channel))
-  const pattern = useAtomValue(session.pattern)
+  const notesAtom = session.project.notes(clip.pattern)
+  const notes = useAtomValue(notesAtom)
   const name = Option.getOrElse(
-    Option.map(useAtomValue(session.project.channel(channel)), (found) => found.name),
+    Option.map(useAtomValue(session.project.track(clip.track)), (found) => found.name),
     () => ''
   )
   const box = useRef<HTMLDivElement>(null)
@@ -111,7 +132,7 @@ const Roll = ({ channel, length }: { readonly channel: Id; readonly length: { cu
   })
   // Until scrolled, centred on the notes it opened with for the height it has: one behind a tab has none until it
   // comes forward.
-  const [opening] = useState(() => registry.get(session.notes(channel)))
+  const [opening] = useState(() => registry.get(notesAtom))
   const [scrolled, setScrolled] = useState(Option.none<number>())
   // Across from the first bar; the playhead takes it along.
   const [across, setAcross] = useState(0)
@@ -126,13 +147,12 @@ const Roll = ({ channel, length }: { readonly channel: Id; readonly length: { cu
     })
   )
   const { gesture } = gestures
-  const endWithout = useAtomValue(session.endWithout(channel))
   const drawing = Option.match(Option.filter(gesture.shown, Gesture.$is('Dragging')), {
     onNone: () => notes,
-    onSome: ({ grab, place }) => draggedNotes(notes, channel, grab, place)
+    onSome: ({ grab, place }) => draggedNotes(notes, grab, place)
   })
   // As the notes drawn would make it: a drag into the next bar shows it in the pattern before it is let go.
-  const end = Math.max(endWithout, patternEnd(drawing))
+  const end = patternEnd(drawing)
   const reach = Option.match(gesture.shown, { onNone: () => end, onSome: ({ reached }) => Math.max(reached, end) })
   const left = Option.match(size, { onNone: () => across, onSome: ({ width }) => scrolledAcross(width, reach, across) })
   // Kept where it stands, as a shorter pattern or a wider window takes it back: a longer pattern later moves no bars.
@@ -159,10 +179,13 @@ const Roll = ({ channel, length }: { readonly channel: Id; readonly length: { cu
     onNone: () => '',
     onSome: ({ id, key, velocity }) => `${id}:${key}:${velocity}`
   })
-  // Heard from the press to the release, anew as the note held goes to another key; let go of as the roll goes too.
+  // Heard from the press to the release, anew on another key or track; let go of as the roll goes too.
   useLayoutEffect(
-    () => Option.getOrUndefined(Option.map(sound, ({ key, velocity }) => session.audition({ channel, key, velocity }))),
-    [soundKey]
+    () =>
+      Option.getOrUndefined(
+        Option.map(sound, ({ key, velocity }) => session.audition({ track: clip.track, key, velocity }))
+      ),
+    [soundKey, clip.track]
   )
   useLayer(grid, drawn, (g, { view, palette }) => drawGrid(g, view, palette, end), [viewKey, end])
   useLayer(keyboard, drawn, (g, { view, palette }) => drawKeyboard(g, view, palette, pressed), [
@@ -175,7 +198,7 @@ const Roll = ({ channel, length }: { readonly channel: Id; readonly length: { cu
     gesture.shown
   ])
   const playhead = useCanvasPlayhead({
-    mode: 'pattern',
+    place: inClip(clip),
     canvas: over,
     laid: Option.map(view, (view) => ({
       size: view,
@@ -188,27 +211,27 @@ const Roll = ({ channel, length }: { readonly channel: Id; readonly length: { cu
     scrollTo: setAcross
   })
   /** What a drag writes once let go: a note put, or one moved or stretched, if it was; a press alone writes nothing. */
-  const write = ({ pattern, grab, place }: Dragging) =>
+  const write = ({ grab, place }: Dragging) =>
     Grab.$match(grab, {
-      Put: () => ops.addNote(pattern, channel, place),
-      Move: ({ note }) => ops.moveNote(pattern, note.id, place),
+      Put: () => ops.addNote(clip.id, place),
+      Move: ({ note }) => ops.moveNote(clip.id, note.id, place),
       Stretch: ({ note }) => {
         length.current = place.length
         // A note in two of different lengths would be made one length.
         return Boolean.match(place.length === note.length, {
           onTrue: () => false,
-          onFalse: () => ops.stretchNote(pattern, note.id, place.length)
+          onFalse: () => ops.stretchNote(clip.id, note.id, place.length)
         })
       }
     })
   /** Erases the notes on the way, as the document has them now: a drag can outrun what is drawn. */
   const eraseAlong = (from: Point, to: Point) =>
-    Option.map(Option.all({ pattern, view }), ({ pattern, view }) =>
-      Array.match(notesAlong(registry.get(session.notes(channel)), view, from, to), {
+    Option.map(view, (view) =>
+      Array.match(notesAlong(registry.get(notesAtom), view, from, to), {
         onEmpty: () => {},
         onNonEmpty: (gone) =>
           void ops.eraseNotes(
-            pattern,
+            clip.id,
             gone.map(({ id }) => id)
           )
       })
@@ -261,23 +284,12 @@ const Roll = ({ channel, length }: { readonly channel: Id; readonly length: { cu
               // Nothing to undo: it writes nothing.
               onSome: (key) => take(event, Gesture.Playing({ id, pointer: by, end: () => {}, reached: reach, key })),
               onNone: () =>
-                Option.map(
-                  Option.flatMap(pattern, (pattern) =>
-                    Option.map(grabAt(registry.get(session.notes(channel)), view, point, length.current), (grab) => ({
-                      pattern,
-                      grab
-                    }))
-                  ),
-                  ({ pattern, grab }) => {
-                    // A press on a note takes its length for the next; a new note is as long already.
-                    length.current = grab.note.length
-                    const place = draggedTo(grab, view, point)
-                    take(
-                      event,
-                      Gesture.Dragging({ id, pointer: by, end: ops.begin(), reached: reach, pattern, grab, place })
-                    )
-                  }
-                )
+                Option.map(grabAt(registry.get(notesAtom), view, point, length.current), (grab) => {
+                  // A press on a note takes its length for the next; a new note is as long already.
+                  length.current = grab.note.length
+                  const place = draggedTo(grab, view, point)
+                  take(event, Gesture.Dragging({ id, pointer: by, end: ops.begin(), reached: reach, grab, place }))
+                })
             })
         )
     })
@@ -334,11 +346,7 @@ const Roll = ({ channel, length }: { readonly channel: Id; readonly length: { cu
       ref={box}
       class='roll'
       data-grab={cursor}
-      data-hint={Option.match(pattern, {
-        onNone: () => `${name}'s notes: no pattern plays, so there is nothing to put them in`,
-        onSome: () =>
-          `${name}'s notes, for everyone: a click puts one as long as the last one touched, a drag moves a note and its right edge makes it longer or shorter, a click on a note takes its length; a right click erases one, a drag with it all it passes over. Cmd+Z or Ctrl+Z takes it back. A press on a key, or on a note, plays it while held, when the pattern doesn't play. Shift and the wheel, or a swipe sideways, goes through the bars`
-      })}
+      data-hint={`The notes of ${name}'s clip, for everyone: a click puts one as long as the last one touched, a drag moves a note and its right edge makes it longer or shorter, a click on a note takes its length; a right click erases one, a drag with it all it passes over. Cmd+Z or Ctrl+Z takes it back. A press on a key, or on a note, plays it on ${name} while held, when the arrangement doesn't play. Shift and the wheel, or a swipe sideways, goes through the bars`}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       {...gestures.handlers}
@@ -353,16 +361,25 @@ const Roll = ({ channel, length }: { readonly channel: Id; readonly length: { cu
   )
 }
 
+/** The clip as the arrangement plays it, if it is there. */
+const ShownClip = ({ clip, length }: { readonly clip: Id; readonly length: { current: number } }) => {
+  const { session } = useCore()
+  return Option.match(useAtomValue(session.project.arrangementClip(clip)), {
+    onNone: () => null,
+    onSome: (found) => <Roll clip={found} length={length} />
+  })
+}
+
 /**
- * The piano roll's body: the notes of the channel it shows. The length of the note last touched carries over from one
- * channel to the next.
+ * The piano roll's body: the notes of the clip it shows. The length of the note last touched carries over from one clip
+ * to the next.
  */
 export const PianoRoll = () => {
-  const { channel } = usePianoRollWindow()
-  const shown = useAtomValue(channel)
-  const length = useRef(stepNote.length)
+  const { clip } = usePianoRollWindow()
+  const shown = useAtomValue(clip)
+  const length = useRef(defaultNote.length)
   return Option.match(shown, {
-    onNone: () => <p class='roll-none'>No channels: + in the Channels window adds one</p>,
-    onSome: (id) => <Roll key={id} channel={id} length={length} />
+    onNone: () => <p class='roll-none'>No clip: a double click on a clip in the Arrangement opens it here</p>,
+    onSome: (id) => <ShownClip key={id} clip={id} length={length} />
   })
 }

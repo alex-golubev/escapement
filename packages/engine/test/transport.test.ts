@@ -5,7 +5,7 @@ import { DeviceEdit } from '../src/device-edits'
 import { live, rejected, startEngine, type TestEngine, toneEdits } from './harness'
 
 const bar = LoopTicks(3840)
-const play = Command.SetTransport({ playing: true, loopTicks: bar, arrangement: false })
+const play = Command.SetTransport({ playing: true, loopTicks: bar })
 
 /** The board after each of `blocks` blocks. */
 const playheads = (engine: TestEngine, blocks: number) =>
@@ -32,7 +32,7 @@ test('the board shows the playhead from the block the transport starts in', () =
   engine.send(live(play))
   // A bar is 750 blocks at 120: past the loop's end and round again.
   expect(playheads(engine, 800)).toEqual(ticksAt(120, 0, 800))
-  engine.send(live(Command.SetTransport({ playing: false, loopTicks: bar, arrangement: false })))
+  engine.send(live(Command.SetTransport({ playing: false, loopTicks: bar })))
   expect(playheads(engine, 1)).toEqual([[false, 0]])
 })
 
@@ -57,12 +57,7 @@ test('a tempo that is not a number and a loop of no ticks are refused', () => {
   const engine = startEngine({ initial: {} })
   // Past the brand, as a page without types could send it.
   const noTicks = 0 as LoopTicks
-  engine.send(
-    live(
-      Command.SetTempo({ bpm: Number.NaN }),
-      Command.SetTransport({ playing: true, loopTicks: noTicks, arrangement: false })
-    )
-  )
+  engine.send(live(Command.SetTempo({ bpm: Number.NaN }), Command.SetTransport({ playing: true, loopTicks: noTicks })))
   expect(playheads(engine, 1)).toEqual([[false, 0]])
   expect(engine.readEvents()).toEqual([rejected('InvalidValue'), rejected('InvalidValue')])
 })

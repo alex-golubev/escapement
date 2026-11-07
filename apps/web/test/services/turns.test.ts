@@ -1,7 +1,7 @@
 import { compile } from '@escapement/compiler'
 import { type Command, NodeHandle, setStripParam, type Transaction } from '@escapement/engine'
-import { Sha256 } from '@escapement/engine-description'
-import { createProject, editorOf, HoldTarget, newWriter, readProject, setChannelStrip } from '@escapement/model'
+import { plugins, Sha256 } from '@escapement/engine-description'
+import { addTrack, createProject, editorOf, HoldTarget, newWriter, readProject, setTrackStrip } from '@escapement/model'
 import { Cause, Effect, Logger, Option } from 'effect'
 import { Atom, AtomRegistry } from 'effect/reactivity'
 import { expect, test } from 'vitest'
@@ -14,7 +14,11 @@ import { savedIn } from '../saved-in'
 /** Another client. */
 const elsewhere = newWriter('elsewhere')
 
-const channels = [{ name: 'Kick', sound: Sha256('0d'.repeat(32)) }]
+/** A new project with a kick's track, as another client makes it. */
+const withKick = (doc: Y.Doc) => {
+  createProject(doc, elsewhere)
+  addTrack(doc, elsewhere, { plugin: plugins.sampler, sounds: { sample: Sha256('0d'.repeat(32)) } })
+}
 
 /** About a second of a pointer's moves. */
 const moves = Array.from({ length: 60 }, (_, i) => 0.79 - i / 100)
@@ -23,7 +27,7 @@ test('a turn plays each move at once and writes the document once, its last valu
   Effect.gen(function* () {
     const registry = yield* AtomRegistry.AtomRegistry
     const doc = new Y.Doc()
-    createProject(doc, elsewhere, channels)
+    withKick(doc)
     const session = yield* sessionOf(savedIn(doc), newWriter('page'))
     const turns = yield* turnsOf(yield* editorOf(doc, session.writer), session.holds)
     const sent: Array<Transaction> = []
@@ -42,13 +46,13 @@ test('a turn plays each move at once and writes the document once, its last valu
     doc.on('update', () => {
       writes.count += 1
     })
-    const channel = readProject(doc).value.channels[0].id
-    const volume = () => readProject(doc).value.channels[0].strip.volume
-    // The first node made: the channel's.
+    const track = readProject(doc).value.tracks[0].id
+    const volume = () => readProject(doc).value.tracks[0].strip.volume
+    // The first node made: the track's.
     const node = NodeHandle(1)
     const from = sent.length
 
-    const turn = turns.begin(HoldTarget.ChannelStrip({ channel, param: 'volume' }), 0.8)
+    const turn = turns.begin(HoldTarget.TrackStrip({ track, param: 'volume' }), 0.8)
     moves.forEach(turn.move)
     turn.move(0.1)
     expect(writes.count).toBe(0)
@@ -60,7 +64,7 @@ test('a turn plays each move at once and writes the document once, its last valu
     expect(volume()).toBe(0.1)
     expect(registry.get(session.holds)).toEqual([])
     const released = writes.count
-    setChannelStrip(doc, elsewhere, channel, 'volume', 0.5)
+    setTrackStrip(doc, elsewhere, track, 'volume', 0.5)
     turn.move(0.3)
     turn.release()
     expect(writes.count).toBe(released + 1)
@@ -76,16 +80,16 @@ test('a second turn of a control ends the first, which writes its last value, an
   Effect.gen(function* () {
     const registry = yield* AtomRegistry.AtomRegistry
     const doc = new Y.Doc()
-    createProject(doc, elsewhere, channels)
+    withKick(doc)
     const session = yield* sessionOf(savedIn(doc), newWriter('page'))
     const turns = yield* turnsOf(yield* editorOf(doc, session.writer), session.holds)
-    const channel = readProject(doc).value.channels[0].id
-    const target = HoldTarget.ChannelStrip({ channel, param: 'volume' })
-    const volume = () => Option.some(readProject(doc).value.channels[0].strip.volume)
+    const track = readProject(doc).value.tracks[0].id
+    const target = HoldTarget.TrackStrip({ track, param: 'volume' })
+    const volume = () => Option.some(readProject(doc).value.tracks[0].strip.volume)
 
     const first = turns.begin(target, 0.8)
     first.move(0.6)
-    const second = turns.begin(HoldTarget.ChannelStrip({ channel, param: 'volume' }), 0.6)
+    const second = turns.begin(HoldTarget.TrackStrip({ track, param: 'volume' }), 0.6)
     expect(volume()).toEqual(Option.some(0.6))
     second.move(0.4)
     first.release()
@@ -103,12 +107,12 @@ test('a double click ends a turn of its control, and its value stays', () =>
   Effect.gen(function* () {
     const registry = yield* AtomRegistry.AtomRegistry
     const doc = new Y.Doc()
-    createProject(doc, elsewhere, channels)
+    withKick(doc)
     const session = yield* sessionOf(savedIn(doc), newWriter('page'))
     const turns = yield* turnsOf(yield* editorOf(doc, session.writer), session.holds)
-    const channel = readProject(doc).value.channels[0].id
-    const target = HoldTarget.ChannelStrip({ channel, param: 'volume' })
-    const volume = () => Option.some(readProject(doc).value.channels[0].strip.volume)
+    const track = readProject(doc).value.tracks[0].id
+    const target = HoldTarget.TrackStrip({ track, param: 'volume' })
+    const volume = () => Option.some(readProject(doc).value.tracks[0].strip.volume)
 
     const turn = turns.begin(target, 0.8)
     turn.move(0.6)
@@ -128,19 +132,19 @@ test('a turn whose write throws still lets go and ends its action, and the error
   return Effect.gen(function* () {
     const registry = yield* AtomRegistry.AtomRegistry
     const doc = new Y.Doc()
-    createProject(doc, elsewhere, channels)
+    withKick(doc)
     const session = yield* sessionOf(savedIn(doc), newWriter('page'))
     const editor = yield* editorOf(doc, session.writer)
     registry.mount(editor.canUndo)
     const turns = yield* turnsOf(editor, session.holds)
-    const channel = readProject(doc).value.channels[0].id
-    editor.setMute(channel, true)
+    const track = readProject(doc).value.tracks[0].id
+    editor.setMute(track, true)
     // As storage closed under the page would.
     doc.on('update', () => {
       throw new Error('Storage closed')
     })
 
-    const turn = turns.begin(HoldTarget.ChannelStrip({ channel, param: 'volume' }), 0.8)
+    const turn = turns.begin(HoldTarget.TrackStrip({ track, param: 'volume' }), 0.8)
     turn.move(0.6)
     expect(registry.get(editor.canUndo)).toBe(false)
     turn.release()

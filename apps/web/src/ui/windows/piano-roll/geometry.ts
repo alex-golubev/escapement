@@ -1,5 +1,5 @@
 import { highestKey, lowestKey, MidiKey, Tick } from '@escapement/engine-description'
-import { barTicks, type NewNote, type Note, stepNote, stepTicks } from '@escapement/model'
+import { barTicks, defaultNote, type NewNote, type Note, stepTicks } from '@escapement/model'
 import { Array, Boolean, Number, Option } from 'effect'
 import type { Point } from '../../kit/pointer'
 import type { Lane } from '../../parts/follow'
@@ -132,7 +132,7 @@ export const centredOn = (notes: ReadonlyArray<Note>, height: number) => {
   const middle = Array.match(
     notes.map(({ key }) => key),
     {
-      onEmpty: () => stepNote.key,
+      onEmpty: () => defaultNote.key,
       onNonEmpty: (keys) => (Math.min(...keys) + Math.max(...keys)) / 2
     }
   )

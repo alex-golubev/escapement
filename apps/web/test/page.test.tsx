@@ -1,44 +1,36 @@
 // @vitest-environment happy-dom
 import { RegistryContext } from '@effect/atom-react'
 import { EngineStartError, ProcessorError, type Telemetry } from '@escapement/engine'
-import {
-  MidiKey,
-  type ParamId,
-  paramPosition,
-  paramValue,
-  type plugins,
-  Sha256,
-  Tick
-} from '@escapement/engine-description'
+import { MidiKey, type ParamId, paramPosition, paramValue, plugins, Sha256, Tick } from '@escapement/engine-description'
 import {
   addClip,
   addNote,
+  addTrack,
+  type Auditions,
+  barSteps,
   barTicks,
-  channelStrip,
   createProject,
-  defaultChannelStrip,
-  deleteChannel,
+  defaultTrackStrip,
+  deleteTrack,
   editorOf,
   eraseNotes,
-  Id,
-  moveNote,
   type Holds,
   HoldTarget,
   holding,
+  moveClip,
+  moveNote,
   newWriter,
   noHolds,
-  type Auditions,
+  patternEnd,
   readProject,
   readProjectId,
-  renamePattern,
+  renameTrack,
   resizeClip,
-  trimClip,
-  setChannelStrip,
-  setMute,
-  barSteps,
+  setTrackStrip,
   stepTicks,
   stretchNote,
-  toggleStep
+  trackStrip,
+  trimClip
 } from '@escapement/model'
 import { Boolean, Cause, Duration, Effect, FiberSet, Option } from 'effect'
 import { KeyValueStore } from 'effect/persistence'
@@ -62,12 +54,10 @@ import type { ProjectStorage } from '../src/services/project-store'
 import { sessionOf } from '../src/services/session'
 import type { TabSync } from '../src/services/tab-sync'
 import { turnsOf } from '../src/services/turns'
-import { keepListening, viewStoreFor } from '../src/services/view-store'
+import { viewStoreFor } from '../src/services/view-store'
 import { type Core, CoreContext } from '../src/ui/core-context'
 import { deskWindows } from '../src/ui/screens/project/desk'
 import { App } from '../src/ui/screens/project/project'
-import { xOf as channelsXOf, stepsWidth } from '../src/ui/windows/channels/geometry'
-import { barGap, stepGap, stepWidth as channelsStepWidth } from '../src/ui/windows/channels/layout'
 import { type View, xOf, yOf } from '../src/ui/windows/piano-roll/geometry'
 import { keysWidth, rowHeight, rulerHeight, stepWidth } from '../src/ui/windows/piano-roll/layout'
 import {
@@ -77,7 +67,7 @@ import {
 } from '../src/ui/windows/arrangement/geometry'
 import {
   barWidth,
-  namesWidth,
+  headsWidth,
   rulerHeight as arrangementRulerHeight,
   trackHeight
 } from '../src/ui/windows/arrangement/layout'
@@ -89,7 +79,8 @@ Object.assign(globalThis, { crossOriginIsolated: false })
 /** Another client. */
 const elsewhere = newWriter('elsewhere')
 
-const channels = ['Kick', 'Snare'].map((name, i) => ({ name, sound: Sha256(`${i}c`.repeat(32)) }))
+/** The drums the test projects have a track of each, a sampler playing its sound. */
+const drums = ['Kick', 'Snare'].map((name, i) => ({ name, sound: Sha256(`${i}c`.repeat(32)) }))
 
 /** An engine that is ready and plays nothing; its frame is the test's to set. */
 const quietHost = (frame: { current: Frame | undefined }): EngineHost => ({
@@ -130,9 +121,10 @@ interface Page {
   readonly elsewhere: (holds: Holds) => void
   /** The page's own element. */
   readonly target: HTMLElement
+  /** The tracks' heads, down the Arrangement's left. */
   readonly grid: HTMLElement
   readonly frame: { current: Frame | undefined }
-  /** What the grid changed in the DOM while `act` ran and Preact drew after it, and the components it drew. */
+  /** What the heads changed in the DOM while `act` ran and Preact drew after it, and the components it drew. */
   readonly changed: (
     act: () => void
   ) => Effect.Effect<{ readonly nodes: ReadonlyArray<Node>; readonly components: ReadonlyArray<string> }>
@@ -152,10 +144,34 @@ const drawnWhen = (done: () => boolean) => Effect.repeat(drawn(5), { until: done
 const memoryViews = () =>
   Effect.runSync(Effect.provide(Effect.service(KeyValueStore.KeyValueStore), KeyValueStore.layerMemory))
 
-/** A new project of two channels. */
-const projectDoc = () => {
+/** A new project with a track for each drum, as another client makes it, and no clip. */
+const tracksDoc = () => {
   const doc = new Y.Doc()
-  createProject(doc, elsewhere, channels)
+  createProject(doc, elsewhere)
+  drums.forEach(({ name, sound }) =>
+    Option.map(addTrack(doc, elsewhere, { plugin: plugins.sampler, sounds: { sample: sound } }), (track) =>
+      renameTrack(doc, elsewhere, track, name)
+    )
+  )
+  return doc
+}
+
+/** The drums' tracks and synths after them, `count` in all, and no clip: "Synth", then "Synth 2" and on. */
+const manyTracksDoc = (count: number) => {
+  const doc = tracksDoc()
+  Array.from({ length: count - drums.length }).forEach(() => addTrack(doc, elsewhere))
+  return doc
+}
+
+/** The name of the track at the place, from 0. */
+const trackAt = (doc: Y.Doc, place: number) => readProject(doc).value.tracks[place]?.name
+
+/** A project of the drums' tracks, the Kick's with a clip a bar long from the start. */
+const projectDoc = () => {
+  const doc = tracksDoc()
+  Option.map(Option.fromUndefinedOr(readProject(doc).value.tracks[0]), ({ id }) =>
+    addClip(doc, elsewhere, { track: id, tick: Tick(0) })
+  )
   return doc
 }
 
@@ -183,7 +199,6 @@ const page = (
     const session = yield* sessionOf({ ...savedIn(doc), ...storage }, newWriter('page'))
     const ops = yield* editorOf(doc, session.writer)
     const view = yield* viewStoreFor(Option.some(views), doc, () => 'saved')
-    yield* keepListening(view, session)
     const core: Core = {
       registry,
       session,
@@ -234,12 +249,14 @@ const page = (
     )
     // Open once the desk is drawn and the transport bar's buttons follow it; then a frame for the effects left.
     yield* drawnWhen(
-      () => target.querySelector('.seq') !== null && target.querySelector('.btn--window[aria-pressed="true"]') !== null
+      () =>
+        target.querySelector('.track-heads') !== null &&
+        target.querySelector('.btn--window[aria-pressed="true"]') !== null
     )
     yield* drawn(50)
     const opened = drawnComponents.list
-    const grid = yield* Option.match(Option.fromNullishOr(target.querySelector<HTMLElement>('.seq')), {
-      onNone: () => Effect.die('No grid'),
+    const grid = yield* Option.match(Option.fromNullishOr(target.querySelector<HTMLElement>('.track-heads')), {
+      onNone: () => Effect.die('No heads'),
       onSome: Effect.succeed
     })
     yield* use({
@@ -287,11 +304,10 @@ const pressed = (button: HTMLButtonElement) => button.getAttribute('aria-pressed
 const pressWindowButton = (target: HTMLElement, title: string) =>
   Effect.sync(() => windowButton(target, title).click()).pipe(Effect.andThen(drawn(50)))
 
-test('the page draws each row once as it opens, a bar of steps and one past it', () =>
+test("the page draws each track's head once as it opens", () =>
   page(({ opened }) =>
     Effect.sync(() => {
-      expect(opened.filter((name) => name === 'ChannelRow')).toHaveLength(channels.length)
-      expect(opened.filter((name) => name === 'StepCell')).toHaveLength(channels.length * 2 * barSteps)
+      expect(opened.filter((name) => name === 'TrackHead')).toHaveLength(drums.length)
     })
   ))
 
@@ -436,60 +452,38 @@ test.each<[string, Partial<EngineHost>, Partial<ProjectStorage>]>([
   )
 )
 
-test('a step click redraws its cell and no other, and a step set elsewhere shows', () =>
-  page(({ doc, changed, button }) =>
-    Effect.gen(function* () {
-      expect(yield* changed(() => {})).toEqual({ nodes: [], components: [] })
-      // The first edit makes undo available, drawing its buttons again.
-      button('Kick, bar 1, step 1').click()
-      yield* drawn()
-      const cell = button('Kick, bar 1, step 5')
-      expect(yield* changed(() => cell.click())).toEqual({ nodes: [cell], components: ['StepCell'] })
-      expect(pressed(cell)).toBe(true)
-      const { channels, patterns } = readProject(doc).value
-      expect(patterns[0].notes.map(({ channel }) => channel)).toEqual([channels[0].id, channels[0].id])
-      const other = button('Snare, bar 1, step 9')
-      expect(yield* changed(() => toggleStep(doc, elsewhere, patterns[0].id, channels[1].id, 8))).toEqual({
-        nodes: [other],
-        components: ['StepCell']
-      })
-      expect(pressed(other)).toBe(true)
-    })
-  ))
-
-test('+ adds a channel with a synth under the others, with its steps, and its pan and volume in its row; Cmd+Z takes it back', () =>
+test('+ adds a track with a synth under the others, its pan and volume in its head; Cmd+Z takes it back', () =>
   page(({ doc, target, button }) =>
     Effect.gen(function* () {
-      const rows = () =>
-        Array.from(target.querySelectorAll('.seq-row:not(.seq-row--head) .seq-row__name'), (name) => name.textContent)
-      const before = rows()
-      button('Add a channel').click()
-      button('Add a channel').click()
+      const heads = () => Array.from(target.querySelectorAll('.track-head__name'), (name) => name.textContent)
+      const before = heads()
+      button('Add a track').click()
+      button('Add a track').click()
       yield* drawn()
-      expect(rows()).toEqual([...before, 'Synth', 'Synth 2'])
-      expect(readProject(doc).value.channels.at(-1)?.name).toBe('Synth 2')
-      button('Synth, bar 1, step 1').click()
-      yield* drawn()
-      expect(pressed(button('Synth, bar 1, step 1'))).toBe(true)
+      expect(heads()).toEqual([...before, 'Synth', 'Synth 2'])
+      expect(readProject(doc).value.tracks.at(-1)?.name).toBe('Synth 2')
       expect(
-        button('Synth, bar 1, step 1').closest('.seq-row')?.querySelector('[aria-label="Synth: volume"]')
+        button('Synth 2: mute').closest('.track-head')?.querySelector('[aria-label="Synth 2: volume"]')
       ).not.toBeNull()
       press(document.body, { key: 'z', metaKey: true })
-      press(document.body, { key: 'z', metaKey: true })
       yield* drawn()
-      expect(rows()).toEqual([...before, 'Synth'])
+      expect(heads()).toEqual([...before, 'Synth'])
     })
   ))
 
-/** The items of the menu open now, each with whether it is the current one. */
-const menuItems = (target: HTMLElement) =>
-  Array.from(target.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')).map((item) => ({
-    item,
-    label: item.textContent,
-    current: item.getAttribute('aria-checked') === 'true'
-  }))
+/** The items of the menu open now, by label. */
+const menuItems = () =>
+  new Map(
+    Array.from(document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'), (item) => [item.textContent, item])
+  )
 
-const patternNames = (doc: Y.Doc) => readProject(doc).value.patterns.map(({ name }) => name)
+/** The menu of the track's name, opened by a right click on it. */
+const trackMenu = (target: HTMLElement, name: string) =>
+  Effect.sync(() =>
+    Array.from(target.querySelectorAll('.track-head__name'))
+      .find((button) => button.textContent === name)
+      ?.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }))
+  ).pipe(Effect.andThen(drawn()), Effect.map(menuItems))
 
 /**
  * happy-dom has no popovers: while `use` runs, one opens as the browser's does, and closes, the one way the page toggles
@@ -510,325 +504,54 @@ const withPopovers = <A,>(use: () => Promise<A>): Promise<A> => {
   })
 }
 
-test("+ by the pattern adds one for everyone and makes it this page's current one, steps its own; the list chooses back", () =>
+test("F2 on a track's name renames it in place, and so does its menu: Enter keeps the name and gives the focus back, Esc leaves it be; its menu deletes it, its clips with it, and Cmd+Z brings both back", () =>
   withPopovers(() =>
-    page(({ doc, target, button }) =>
+    page(({ doc, grid, target }) =>
       Effect.gen(function* () {
-        button('Kick, bar 1, step 1').click()
-        yield* drawn()
-        button('Add a pattern').click()
-        yield* drawn()
-        expect(patternNames(doc)).toEqual(['Pattern 1', 'Pattern 2'])
-        expect(pressed(button('Kick, bar 1, step 1'))).toBe(false)
-        button('Kick, bar 1, step 3').click()
-        yield* drawn()
-        expect(Array.from(target.querySelectorAll('.dock-tab__sub'), (sub) => sub.textContent)).toContain('Pattern 2')
-        button('Pattern: Pattern 2').click()
-        yield* drawn()
-        expect(menuItems(target).map(({ label, current }) => ({ label, current }))).toEqual([
-          { label: 'Pattern 1', current: false },
-          { label: 'Pattern 2', current: true }
-        ])
-        // As a list of choices opens: on the one chosen.
-        expect(document.activeElement).toBe(menuItems(target)[1].item)
-        menuItems(target)[0].item.click()
-        yield* drawn()
-        expect(pressed(button('Kick, bar 1, step 1'))).toBe(true)
-        expect(pressed(button('Kick, bar 1, step 3'))).toBe(false)
-        expect(button('Pattern: Pattern 1')).toBeDefined()
-        expect(readProject(doc).value.patterns.map(({ notes }) => notes.map(({ tick }) => tick))).toEqual([
-          [0],
-          [2 * stepTicks]
-        ])
-      })
-    )
-  ))
-
-test('F4 adds a pattern and makes it current, but not while text is typed; Cmd+Z takes it back', () =>
-  page(({ doc, target, button }) =>
-    Effect.gen(function* () {
-      expect(press(document.body, { key: 'F4' })).toBe(false)
-      yield* drawn()
-      expect(patternNames(doc)).toEqual(['Pattern 1', 'Pattern 2'])
-      expect(button('Pattern: Pattern 2')).toBeDefined()
-      const field = target.appendChild(document.createElement('input'))
-      expect(press(field, { key: 'F4' })).toBe(true)
-      field.remove()
-      // Alt+F4 closes a window on Windows; F4 held repeats.
-      ;[{ altKey: true }, { ctrlKey: true }, { metaKey: true }, { shiftKey: true }, { repeat: true }].forEach((also) =>
-        expect(press(document.body, { key: 'F4', ...also })).toBe(true)
-      )
-      yield* drawn()
-      expect(patternNames(doc)).toEqual(['Pattern 1', 'Pattern 2'])
-      press(document.body, { key: 'z', metaKey: true })
-      yield* drawn()
-      expect(patternNames(doc)).toEqual(['Pattern 1'])
-      expect(button('Pattern: Pattern 1')).toBeDefined()
-      // Back, and current again: the page still has it chosen.
-      press(document.body, { key: 'z', metaKey: true, shiftKey: true })
-      yield* drawn()
-      expect(button('Pattern: Pattern 2')).toBeDefined()
-    })
-  ))
-
-test('Pattern and Arrangement choose what Play plays, lit as Play is; L switches by its place, but not in text nor with a modifier', () =>
-  page(({ target, grid, frame }) =>
-    Effect.gen(function* () {
-      const lit = () => ['Pattern', 'Arrangement'].filter((text) => pressed(modeButton(target, text)))
-      expect(['Pattern', 'Arrangement'].map((text) => modeButton(target, text).textContent)).toEqual([
-        'Pattern',
-        'Arrangement'
-      ])
-      expect(lit()).toEqual(['Pattern'])
-      modeButton(target, 'Arrangement').click()
-      yield* drawn()
-      expect(lit()).toEqual(['Arrangement'])
-      expect(press(document.body, { code: 'KeyL', key: 'l' })).toBe(false)
-      yield* drawn()
-      expect(lit()).toEqual(['Pattern'])
-      // Another layout's letter on the key switches too.
-      expect(press(document.body, { code: 'KeyL', key: 'д' })).toBe(false)
-      yield* drawn()
-      expect(lit()).toEqual(['Arrangement'])
-      const field = target.appendChild(document.createElement('input'))
-      expect(press(field, { code: 'KeyL', key: 'l' })).toBe(true)
-      field.remove()
-      ;[{ altKey: true }, { ctrlKey: true }, { metaKey: true }, { shiftKey: true }, { repeat: true }].forEach((also) =>
-        expect(press(document.body, { code: 'KeyL', key: 'l', ...also })).toBe(true)
-      )
-      yield* drawn()
-      expect(lit()).toEqual(['Arrangement'])
-      // The Channels window marks no step while the arrangement is heard: its pattern may sound in several clips at
-      // once.
-      const marked = () => grid.querySelectorAll('[data-now="true"]').length
-      const heard = (arrangement: boolean) => {
-        frame.current = {
-          engine: 1,
-          telemetry: undefined,
-          heard: { tick: 4 * stepTicks, loop: barTicks, arrangement },
-          stats: undefined
-        }
-      }
-      heard(true)
-      yield* drawn(50)
-      expect(marked()).toBe(0)
-      // Switched back to Pattern, the arrangement still heard until the pattern's sound comes.
-      modeButton(target, 'Pattern').click()
-      yield* drawn(50)
-      expect(marked()).toBe(0)
-      heard(false)
-      yield* drawn(50)
-      expect(marked()).toBeGreaterThan(0)
-    })
-  ))
-
-test('in Arrangement mode the piano roll follows no playhead: the pattern may sound in several clips at once', () =>
-  page(({ doc, target, frame }) =>
-    Effect.gen(function* () {
-      noteElsewhere(doc, 'Kick', 16 * barSteps - 1, 40)
-      yield* drawn()
-      const tickOf = (key: number) => notesByName(doc).find((note) => note.key === key)?.tick
-      modeButton(target, 'Arrangement').click()
-      yield* heardAt(frame, Option.some(6.5), true)
-      yield* pressWindowButton(target, 'Piano roll')
-      const { click } = yield* rollIn(target)
-      yield* drawn(50)
-      click(0, 60)
-      yield* drawn()
-      expect(tickOf(60)).toBe(0)
-    })
-  ))
-
-test('opening the page writes nothing it chose into the store of views: only a choice on the page does', () => {
-  const memory = memoryViews()
-  const written: Array<string> = []
-  const views = KeyValueStore.make({
-    ...memory,
-    set: (key, value) => {
-      written.push(key)
-      return memory.set(key, value)
-    }
-  })
-  return page(
-    ({ target }) =>
-      Effect.gen(function* () {
-        expect(written.filter((key) => !key.startsWith('layout:'))).toEqual([])
-        modeButton(target, 'Arrangement').click()
-        yield* drawn()
-        expect(written.filter((key) => key.startsWith('mode:'))).toHaveLength(1)
-      }),
-    {},
-    {},
-    { views }
-  )
-})
-
-test('the mode chosen is the same again as the page opens anew, as this browser keeps it', () => {
-  const browser = { views: memoryViews(), doc: projectDoc() }
-  return page(
-    ({ target }) =>
-      Effect.gen(function* () {
-        modeButton(target, 'Arrangement').click()
-        yield* drawn()
-      }),
-    {},
-    {},
-    browser
-  ).then(() =>
-    page(
-      ({ target }) =>
-        Effect.sync(() => {
-          expect(pressed(modeButton(target, 'Arrangement'))).toBe(true)
-        }),
-      {},
-      {},
-      browser
-    )
-  )
-})
-
-test('the pattern chosen is current again as the page opens anew, as this browser keeps it', () => {
-  const browser = { views: memoryViews(), doc: projectDoc() }
-  return withPopovers(() =>
-    page(
-      ({ button }) =>
-        Effect.gen(function* () {
-          button('Add a pattern').click()
-          yield* drawn()
-          button('Add a pattern').click()
-          yield* drawn()
-          button('Pattern: Pattern 3').click()
-          yield* drawn()
-          menuItems(document.body)[1].item.click()
-          yield* drawn()
-          expect(button('Pattern: Pattern 2')).toBeDefined()
-        }),
-      {},
-      {},
-      browser
-    )
-  ).then(() =>
-    page(
-      ({ button }) =>
-        Effect.sync(() => {
-          expect(button('Pattern: Pattern 2')).toBeDefined()
-        }),
-      {},
-      {},
-      browser
-    )
-  )
-})
-
-/** The current pattern's menu opened by a right click on its name: its items by label. */
-const patternMenu = (target: HTMLElement, name: string) =>
-  Effect.sync(() =>
-    target
-      .querySelector(`[aria-label="Pattern: ${name}"]`)
-      ?.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }))
-  ).pipe(
-    Effect.andThen(drawn()),
-    Effect.map(
-      () =>
-        new Map(
-          Array.from(document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'), (item) => [
-            item.textContent,
-            item
-          ])
-        )
-    )
-  )
-
-test("the current pattern's menu clones it, the copy current with its steps, and deletes it, the next one current", () =>
-  withPopovers(() =>
-    page(({ doc, target, button }) =>
-      Effect.gen(function* () {
-        // The last one live can't be deleted.
-        expect(Array.from((yield* patternMenu(target, 'Pattern 1')).keys())).toEqual(['Rename', 'Clone'])
-        button('Kick, bar 1, step 1').click()
-        yield* drawn()
-        ;(yield* patternMenu(target, 'Pattern 1')).get('Clone')?.click()
-        yield* drawn()
-        expect(patternNames(doc)).toEqual(['Pattern 1', 'Pattern 1 #2'])
-        expect(button('Pattern: Pattern 1 #2')).toBeDefined()
-        expect(pressed(button('Kick, bar 1, step 1'))).toBe(true)
-        button('Pattern: Pattern 1 #2').click()
-        yield* drawn()
-        menuItems(target)[0].item.click()
-        yield* drawn()
-        expect(Array.from((yield* patternMenu(target, 'Pattern 1')).keys())).toEqual(['Rename', 'Clone', 'Delete'])
-        ;(yield* patternMenu(target, 'Pattern 1')).get('Delete')?.click()
-        yield* drawn()
-        expect(patternNames(doc)).toEqual(['Pattern 1 #2'])
-        expect(button('Pattern: Pattern 1 #2')).toBeDefined()
-        // Back, and current again: the page still has it chosen.
-        press(document.body, { key: 'z', metaKey: true })
-        yield* drawn()
-        expect(button('Pattern: Pattern 1')).toBeDefined()
-      })
-    )
-  ))
-
-test('F2 on the pattern renames it in place: Enter keeps the name and gives the focus back, Esc leaves it be', () =>
-  withPopovers(() =>
-    page(({ doc, target, button }) =>
-      Effect.gen(function* () {
-        const field = () => target.querySelector<HTMLInputElement>('[aria-label="Name of the current pattern"]')
-        const renamed = (name: string, key: string) =>
+        const field = () => target.querySelector<HTMLInputElement>('[aria-label="Name of track 1"]')
+        const names = () => readProject(doc).value.tracks.map(({ name }) => name)
+        const typed = (name: string, key: string) =>
           Effect.gen(function* () {
-            const picker = target.querySelector<HTMLButtonElement>('.pattern-pick')
-            expect(press(picker ?? document.body, { key: 'F2' })).toBe(false)
-            yield* drawn()
-            expect(document.activeElement).toBe(field())
             Option.map(Option.fromNullishOr(field()), (input) => {
               input.value = name
               press(input, { key })
             })
             yield* drawn()
-            expect(field()).toBeNull()
-            expect(document.activeElement).toBe(target.querySelector('.pattern-pick'))
           })
-        yield* renamed('  Intro ', 'Enter')
-        expect(patternNames(doc)).toEqual(['Intro'])
-        expect(button('Pattern: Intro')).toBeDefined()
-        yield* renamed('Other', 'Escape')
-        expect(patternNames(doc)).toEqual(['Intro'])
-        ;(yield* patternMenu(target, 'Intro')).get('Rename')?.click()
+        expect(press(nameButton(grid, 'Kick'), { key: 'F2' })).toBe(false)
         yield* drawn()
-        expect(field()?.value).toBe('Intro')
+        expect(document.activeElement).toBe(field())
+        yield* typed('  Big kick ', 'Enter')
+        expect(field()).toBeNull()
+        expect(names()).toEqual(['Big kick', 'Snare'])
+        expect(document.activeElement).toBe(nameButton(grid, 'Big kick'))
+        press(nameButton(grid, 'Big kick'), { key: 'F2' })
+        yield* drawn()
+        yield* typed('Other', 'Escape')
+        expect(names()).toEqual(['Big kick', 'Snare'])
+        const menu = yield* trackMenu(target, 'Big kick')
+        expect(Array.from(menu.keys())).toEqual(['Rename', 'Delete'])
+        menu.get('Rename')?.click()
+        yield* drawn()
+        expect(field()?.value).toBe('Big kick')
         // Another client names it meanwhile: the name the field opened with, kept as it was, isn't written back.
-        const [pattern] = readProject(doc).value.patterns
-        renamePattern(doc, elsewhere, pattern.id, 'Theirs')
+        renameTrack(doc, elsewhere, readProject(doc).value.tracks[0].id, 'Theirs')
         Option.map(Option.fromNullishOr(field()), (input) => press(input, { key: 'Enter' }))
         yield* drawn()
-        expect(patternNames(doc)).toEqual(['Theirs'])
+        expect(names()).toEqual(['Theirs', 'Snare'])
+        ;(yield* trackMenu(target, 'Theirs')).get('Delete')?.click()
+        yield* drawn()
+        expect(names()).toEqual(['Snare'])
+        expect(readProject(doc).value.clips).toEqual([])
+        press(document.body, { key: 'z', metaKey: true })
+        yield* drawn()
+        expect(names()).toEqual(['Theirs', 'Snare'])
+        expect(clipsOf(doc)).toEqual([{ track: 'Theirs', bar: 0 }])
       })
     )
   ))
 
-test('a pattern deleted elsewhere while it is renamed here takes the field with it, and back, has none', () =>
-  page(({ doc, target, button }) =>
-    Effect.gen(function* () {
-      const field = () => target.querySelector('[aria-label="Name of the current pattern"]')
-      button('Add a pattern').click()
-      yield* drawn()
-      press(button('Pattern: Pattern 2'), { key: 'F2' })
-      yield* drawn()
-      expect(field()).not.toBeNull()
-      const [, added] = readProject(doc).value.patterns
-      const entry = () => doc.getMap<Y.Map<unknown>>('patterns').get(added.id)
-      doc.transact(() => entry()?.set('deleted', true), elsewhere)
-      yield* drawn()
-      expect(field()).toBeNull()
-      expect(button('Pattern: Pattern 1')).toBeDefined()
-      doc.transact(() => entry()?.set('deleted', false), elsewhere)
-      yield* drawn()
-      expect(button('Pattern: Pattern 2')).toBeDefined()
-      expect(field()).toBeNull()
-    })
-  ))
-
-test('M writes the mute and fades the row; S solos for this client only, writes nothing and leaves the steps be', () =>
+test('M writes the mute and fades the head; S solos for this client only and writes nothing', () =>
   page(({ doc, button, changed }) =>
     Effect.gen(function* () {
       const updates = { count: 0 }
@@ -836,20 +559,19 @@ test('M writes the mute and fades the row; S solos for this client only, writes 
         updates.count += 1
       })
       const unheard = (name: string) =>
-        button(`${name}: mute`).closest('.seq-row')?.getAttribute('data-unheard') === 'true'
+        button(`${name}: mute`).closest('.track-head')?.getAttribute('data-unheard') === 'true'
       button('Kick: mute').click()
       yield* drawn()
-      expect(readProject(doc).value.channels[0].mute).toBe(true)
+      expect(readProject(doc).value.tracks[0].mute).toBe(true)
       expect(pressed(button('Kick: mute'))).toBe(true)
       expect(unheard('Kick')).toBe(true)
       expect(updates.count).toBe(1)
       const { components } = yield* changed(() => button('Snare: solo').click())
-      expect(components).toContain('ChannelRow')
-      expect(components).not.toContain('StepCell')
+      expect(components).toContain('TrackHead')
       expect(pressed(button('Snare: solo'))).toBe(true)
       expect(unheard('Kick')).toBe(true)
       expect(updates.count).toBe(1)
-      // Solo hears a channel muted in the document too.
+      // Solo hears a track muted in the document too.
       button('Kick: solo').click()
       yield* drawn()
       expect(unheard('Kick')).toBe(false)
@@ -857,210 +579,20 @@ test('M writes the mute and fades the row; S solos for this client only, writes 
     })
   ))
 
-test('the frame marks the column heard now, its steps and its tick, and a row drawn again keeps the mark', () =>
-  page(({ doc, grid, button, frame }) =>
-    Effect.gen(function* () {
-      const marked = () =>
-        Array.from(grid.querySelectorAll('[data-now="true"]')).map(
-          (element) => element.getAttribute('aria-label') ?? element.className
-        )
-      frame.current = {
-        engine: 1,
-        telemetry: undefined,
-        heard: { tick: 4 * stepTicks + 0.5, loop: barTicks, arrangement: false },
-        stats: undefined
-      }
-      yield* drawn(50)
-      expect(marked()).toEqual(['tick num', 'Kick, bar 1, step 5', 'Snare, bar 1, step 5'])
-      setMute(doc, elsewhere, readProject(doc).value.channels[0].id, true)
-      yield* drawn()
-      expect(button('Kick: mute').closest('.seq-row')?.getAttribute('data-unheard')).toBe('true')
-      expect(marked()).toEqual(['tick num', 'Kick, bar 1, step 5', 'Snare, bar 1, step 5'])
-      frame.current = {
-        engine: 1,
-        telemetry: undefined,
-        heard: { tick: 6 * stepTicks - 0.5, loop: barTicks, arrangement: false },
-        stats: undefined
-      }
-      yield* drawn(50)
-      expect(marked()).toEqual(['tick num', 'Kick, bar 1, step 6', 'Snare, bar 1, step 6'])
-      // A cell drawn anew in the middle of a step, without the mark, gets it at the next frame.
-      button('Snare, bar 1, step 6').removeAttribute('data-now')
-      yield* drawn(50)
-      expect(marked()).toEqual(['tick num', 'Kick, bar 1, step 6', 'Snare, bar 1, step 6'])
-      frame.current = { engine: 1, telemetry: undefined, heard: undefined, stats: undefined }
-      yield* drawn(50)
-      expect(marked()).toEqual([])
-    })
-  ))
-
-test('in a pattern grown to two bars, the steps go on into the second and one past it, and the frame marks the step heard in any; the preview of notes has it where it is on their scale', () =>
-  page(({ doc, grid, frame }) =>
-    Effect.gen(function* () {
-      noteElsewhere(doc, 'Kick', 20, 64)
-      yield* drawn()
-      const marked = () =>
-        Array.from(grid.querySelectorAll('[data-now="true"]')).map(
-          (element) => element.getAttribute('aria-label') ?? element.className
-        )
-      const preview = Option.getOrThrow(
-        Option.fromNullishOr(grid.querySelector<HTMLElement>('[aria-label="Kick: notes"]'))
-      )
-      const head = Option.getOrThrow(Option.fromNullishOr(grid.querySelector('.seq-row--head .steps')))
-      expect(
-        Array.from(head.querySelectorAll('.tick'), (tick) => tick.textContent).filter((label) => label !== '')
-      ).toEqual(['1', '2', '3'])
-      expect(Array.from(head.querySelectorAll('.bar'), (bar) => bar.getAttribute('data-past'))).toEqual([
-        'false',
-        'false',
-        'true'
-      ])
-      expect(preview.style.width).toBe(`${stepsWidth(3)}px`)
-      const heard = (step: number) => {
-        frame.current = {
-          engine: 1,
-          telemetry: undefined,
-          heard: { tick: step * stepTicks, loop: 2 * barTicks, arrangement: false },
-          stats: undefined
-        }
-      }
-      heard(4)
-      yield* drawn(50)
-      expect(marked()).toEqual(['tick num', 'Kick: notes', 'Snare, bar 1, step 5'])
-      expect(preview.style.getPropertyValue('--now-x')).toBe(`${channelsXOf(4 * stepTicks)}px`)
-      heard(20)
-      yield* drawn(50)
-      expect(marked()).toEqual(['tick num', 'Kick: notes', 'Snare, bar 2, step 5'])
-      expect(preview.style.getPropertyValue('--now-x')).toBe(`${channelsXOf(20 * stepTicks)}px`)
-      // Past the pattern's end, a moment after it was made shorter.
-      heard(40)
-      yield* drawn(50)
-      expect(marked()).toEqual(['tick num', 'Kick: notes', 'Snare, bar 3, step 9'])
-      expect(preview.style.getPropertyValue('--now-x')).toBe(`${channelsXOf(40 * stepTicks)}px`)
-    })
-  ))
-
-test("a step switched on past the pattern's end grows the pattern to its bar, a bar shown past it; Cmd+Z takes it back", () =>
-  page(({ doc, grid, target, button }) =>
-    Effect.gen(function* () {
-      const hint = () => target.querySelector('.hint')?.textContent
-      const past = button('Kick, bar 2, step 3')
-      past.dispatchEvent(new PointerEvent('pointerover', { bubbles: true }))
-      yield* drawn()
-      expect(hint()).toBe(
-        "Kick, bar 2, step 3: past the pattern's end. A click turns it on for everyone, and the pattern grows to this bar"
-      )
-      expect(past.closest('.bar')?.getAttribute('data-past')).toBe('true')
-      past.click()
-      yield* drawn()
-      expect(notesByName(doc)).toEqual([{ channel: 'Kick', tick: 18 * stepTicks, key: 60, length: stepTicks }])
-      expect(pressed(button('Kick, bar 2, step 3'))).toBe(true)
-      expect(button('Kick, bar 2, step 3').closest('.bar')?.getAttribute('data-past')).toBe('false')
-      expect(stepsOf(grid, 'Snare')).toHaveLength(3 * barSteps)
-      expect(button('Snare, bar 3, step 1').closest('.bar')?.getAttribute('data-past')).toBe('true')
-      button('Undo').click()
-      yield* drawn()
-      expect(notesByName(doc)).toEqual([])
-      expect(stepsOf(grid, 'Snare')).toHaveLength(2 * barSteps)
-    })
-  ))
-
-test("past the step sequencer's 32 bars, 512 steps, a step's note is the piano roll's, and the Channels window shows no more bars however long the pattern", () =>
-  page(({ doc, grid }) =>
-    Effect.gen(function* () {
-      noteElsewhere(doc, 'Kick', 31 * barSteps, 60)
-      yield* drawn()
-      expect(stepsOf(grid, 'Kick')).toHaveLength(32 * barSteps)
-      noteElsewhere(doc, 'Kick', 32 * barSteps, 60)
-      yield* drawn()
-      expect(stepsOf(grid, 'Kick')).toHaveLength(0)
-      expect(stepsOf(grid, 'Snare')).toHaveLength(32 * barSteps)
-      noteElsewhere(doc, 'Kick', 1000 * barSteps, 64)
-      yield* drawn()
-      expect(stepsOf(grid, 'Snare')).toHaveLength(32 * barSteps)
-      expect(grid.querySelectorAll('.seq-row--head .bar')).toHaveLength(32)
-    })
-  ))
-
-test('the Channels window follows the playhead across its steps, not while the left button is held on it, nor in a frame it was scrolled by hand', () => {
-  // A bar and four steps of the next in sight.
-  channelsBody.width = stepsWidth(1) + barGap + 4 * (channelsStepWidth + stepGap)
-  return page(({ grid, frame }) =>
-    Effect.gen(function* () {
-      const body = Option.getOrThrow(Option.fromNullishOr(grid.closest<HTMLElement>('.dock-body')))
-      const heard = (step: Option.Option<number>) =>
-        Effect.gen(function* () {
-          frame.current = {
-            engine: 1,
-            telemetry: undefined,
-            heard: Option.getOrUndefined(
-              Option.map(step, (at) => ({ tick: at * stepTicks, loop: 2 * barTicks, arrangement: false }))
-            ),
-            stats: undefined
-          }
-          yield* drawn(50)
-        })
-      const scrolledTo = (left: number) => {
-        body.scrollLeft = left
-        body.dispatchEvent(new Event('scroll'))
-      }
-      const press = (button: number) => body.dispatchEvent(new PointerEvent('pointerdown', { button, bubbles: true }))
-      // From the start, as Play has it, round the first bar, and out past the steps in sight to the next.
-      const fromStart = Effect.gen(function* () {
-        yield* heard(Option.none())
-        scrolledTo(0)
-        yield* heard(Option.some(15))
-        expect(body.scrollLeft).toBe(0)
-      })
-      yield* fromStart
-      yield* heard(Option.some(21))
-      expect(body.scrollLeft).toBe(channelsXOf(barTicks))
-      // Held with the left button: it stays, and goes on staying with the playhead out of sight once let go of.
-      yield* fromStart
-      press(0)
-      yield* heard(Option.some(21))
-      expect(body.scrollLeft).toBe(0)
-      window.dispatchEvent(new PointerEvent('pointerup'))
-      yield* heard(Option.some(22))
-      expect(body.scrollLeft).toBe(0)
-      // The right button holds nothing, its release taken by the menu; nor does a press the page lost to another app.
-      yield* fromStart
-      press(2)
-      yield* heard(Option.some(21))
-      expect(body.scrollLeft).toBe(channelsXOf(barTicks))
-      yield* fromStart
-      press(0)
-      window.dispatchEvent(new Event('blur'))
-      yield* heard(Option.some(21))
-      expect(body.scrollLeft).toBe(channelsXOf(barTicks))
-      // Scrolled by hand in the frame the playhead leaves: the hand's.
-      yield* fromStart
-      scrolledTo(10)
-      yield* heard(Option.some(21))
-      expect(body.scrollLeft).toBe(10)
-    })
-  ).finally(() => {
-    channelsBody.width = 0
-  })
-})
-
-test('a note dragged past the bar in the piano roll grows the pattern to its bar, and takes back to the bar', () =>
-  page(({ doc, grid, target, button }) =>
+test("a note dragged past the bar in the piano roll grows its clip's pattern to its bar, and takes back to the bar", () =>
+  page(({ doc, target, button }) =>
     Effect.gen(function* () {
       noteElsewhere(doc, 'Kick', 0, 60)
-      yield* drawn()
-      yield* pressWindowButton(target, 'Piano roll')
+      yield* openKickClip(target)
       const { drag } = yield* rollIn(target)
       drag([0, 60], [9, 60], [17, 60])
       yield* drawn()
-      expect(notesByName(doc)).toEqual([{ channel: 'Kick', tick: 17 * stepTicks, key: 60, length: stepTicks }])
-      // A step's note in the second bar: the steps show it, and a bar past it.
-      expect(stepsOf(grid, 'Kick')).toHaveLength(3 * barSteps)
-      expect(pressed(button('Kick, bar 2, step 2'))).toBe(true)
+      expect(notesByName(doc)).toEqual([{ track: 'Kick', tick: 17 * stepTicks, key: 60, length: stepTicks }])
+      expect(kickClipBars(doc)).toBe(2)
       button('Undo').click()
       yield* drawn()
-      expect(stepsOf(grid, 'Kick')).toHaveLength(2 * barSteps)
-      expect(pressed(button('Kick, bar 1, step 1'))).toBe(true)
+      expect(kickClipBars(doc)).toBe(1)
+      expect(notesByName(doc)).toEqual([{ track: 'Kick', tick: 0, key: 60, length: stepTicks }])
     })
   ))
 
@@ -1071,10 +603,6 @@ const textButton = (target: HTMLElement, text: string, selector = 'button') =>
       Array.from(target.querySelectorAll<HTMLButtonElement>(selector)).find((button) => button.textContent === text)
     )
   )
-
-/** The half of the play mode's switch that reads `text`, named its mode. */
-const modeButton = (target: HTMLElement, text: string) =>
-  Option.getOrThrow(Option.fromNullishOr(target.querySelector<HTMLButtonElement>(`[aria-label="${text} mode"]`)))
 
 /** The transport bar's button of the window called `title`. */
 const windowButton = (target: HTMLElement, title: string) => textButton(target, title, '.btn--window')
@@ -1101,47 +629,47 @@ const key = (target: Element, key: string) => {
 
 const keyUp = (target: Element) => target.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, key: 'ArrowUp' }))
 
-/** The Kick's own volume, which its row and its window turn. */
-const kickVolume = (doc: Y.Doc) => readProject(doc).value.channels[0].strip.volume
+/** The Kick's own volume, which its head and its window turn. */
+const kickVolume = (doc: Y.Doc) => readProject(doc).value.tracks[0].strip.volume
 
-/** The button of the channel's name in its row. */
+/** The button of the track's name in its head. */
 const nameButton = (grid: HTMLElement, name: string) =>
   Option.getOrThrow(
     Option.fromNullishOr(
-      Array.from(grid.querySelectorAll<HTMLButtonElement>('.seq-row__name')).find(
+      Array.from(grid.querySelectorAll<HTMLButtonElement>('.track-head__name')).find(
         (button) => button.textContent === name
       )
     )
   )
 
-/** The window of the channel with this name. */
-const channelWindow = (target: HTMLElement, name: string) =>
+/** The window of the track with this name. */
+const trackWindow = (target: HTMLElement, name: string) =>
   Option.fromNullishOr(target.querySelector<HTMLElement>(`section[aria-label="${name}"]`))
 
 /** The Kick's volume in its window: a knob with its name and number, which a drag on the number turns too. */
 const kickKnob = (target: HTMLElement) =>
   Option.getOrThrow(
-    Option.flatMapNullishOr(channelWindow(target, 'Kick'), (window) =>
+    Option.flatMapNullishOr(trackWindow(target, 'Kick'), (window) =>
       window.querySelector('[role="slider"][aria-label="Volume"]')
     )
   )
 
-const channelVolume = Option.getOrThrow(Option.fromNullishOr(channelStrip.find(({ id }) => id === 'volume')))
+const trackVolume = Option.getOrThrow(Option.fromNullishOr(trackStrip.find(({ id }) => id === 'volume')))
 
-/** A channel's volume with its knob this far up. */
-const at = (position: number) => paramValue(channelVolume, position)
+/** A track's volume with its knob this far up. */
+const at = (position: number) => paramValue(trackVolume, position)
 
 /** How far up the Kick's volume knob stands: in the document, and as the knob shows it. */
-const kickAt = (doc: Y.Doc) => paramPosition(channelVolume, kickVolume(doc))
-const knobAt = (knob: Element) => paramPosition(channelVolume, Number(knob.getAttribute('aria-valuenow')))
+const kickAt = (doc: Y.Doc) => paramPosition(trackVolume, kickVolume(doc))
+const knobAt = (knob: Element) => paramPosition(trackVolume, Number(knob.getAttribute('aria-valuenow')))
 
 /**
- * The page on a new project with each channel's volume knob at 80%, room to turn it either way, and the Kick's window
- * open from its name.
+ * The page on a new project with each track's volume knob at 80%, room to turn it either way, and the Kick's window open
+ * from its name.
  */
 const knobPage = (use: (page: Page) => Effect.Effect<void>) => {
   const doc = projectDoc()
-  readProject(doc).value.channels.forEach(({ id }) => setChannelStrip(doc, elsewhere, id, 'volume', at(0.8)))
+  readProject(doc).value.tracks.forEach(({ id }) => setTrackStrip(doc, elsewhere, id, 'volume', at(0.8)))
   return page(
     (opened) =>
       Effect.gen(function* () {
@@ -1192,7 +720,7 @@ test("a knob another tab turns shows its value as it turns, redrawing only itsel
   knobPage(({ doc, changed, elsewhere, target }) =>
     Effect.gen(function* () {
       const knob = kickKnob(target)
-      const volume = HoldTarget.ChannelStrip({ channel: readProject(doc).value.channels[0].id, param: 'volume' })
+      const volume = HoldTarget.TrackStrip({ track: readProject(doc).value.tracks[0].id, param: 'volume' })
       const { components } = yield* changed(() => elsewhere(holding(noHolds, volume, at(0.3))))
       // In its window and in its row.
       expect(components).toEqual(['Dial', 'Knob', 'Dial', 'SmallKnob'])
@@ -1219,7 +747,7 @@ test('a knob pressed while another tab turns it goes from where it plays at the 
   knobPage(({ doc, elsewhere, target }) =>
     Effect.gen(function* () {
       const knob = kickKnob(target)
-      const volume = HoldTarget.ChannelStrip({ channel: readProject(doc).value.channels[0].id, param: 'volume' })
+      const volume = HoldTarget.TrackStrip({ track: readProject(doc).value.tracks[0].id, param: 'volume' })
       elsewhere(holding(noHolds, volume, at(0.3)))
       yield* drawn()
       pointer(knob, 'pointerdown', 100)
@@ -1298,7 +826,7 @@ test('a press that never moves writes nothing, and what another client wrote mea
     Effect.gen(function* () {
       const knob = kickKnob(target)
       pointer(knob, 'pointerdown', 100)
-      setChannelStrip(doc, elsewhere, readProject(doc).value.channels[0].id, 'volume', 0.3)
+      setTrackStrip(doc, elsewhere, readProject(doc).value.tracks[0].id, 'volume', 0.3)
       pointer(knob, 'pointerup', 100)
       expect(kickVolume(doc)).toBe(0.3)
       expect(holds()).toEqual([])
@@ -1309,7 +837,7 @@ test('a move sideways is no turn: a value the knob would read back changed is le
   knobPage(({ doc, holds, target }) =>
     Effect.gen(function* () {
       const knob = kickKnob(target)
-      setChannelStrip(doc, elsewhere, readProject(doc).value.channels[0].id, 'volume', 0.85)
+      setTrackStrip(doc, elsewhere, readProject(doc).value.tracks[0].id, 'volume', 0.85)
       yield* drawn()
       const updates = counted(doc)
       pointer(knob, 'pointerdown', 100)
@@ -1321,14 +849,14 @@ test('a move sideways is no turn: a value the knob would read back changed is le
     })
   ))
 
-test('a knob that goes mid-turn, its channel deleted elsewhere, lets go', () =>
+test('a knob that goes mid-turn, its track deleted elsewhere, lets go', () =>
   knobPage(({ doc, holds, target }) =>
     Effect.gen(function* () {
       const knob = kickKnob(target)
       pointer(knob, 'pointerdown', 100)
       pointer(knob, 'pointermove', 80)
       expect(holds()).toHaveLength(1)
-      doc.transact(() => doc.getMap('channels').delete(readProject(doc).value.channels[0].id))
+      doc.transact(() => doc.getMap('tracks').delete(readProject(doc).value.tracks[0].id))
       // Preact cleans up after a frame.
       yield* drawn(50)
       expect(knob.isConnected).toBe(false)
@@ -1360,29 +888,27 @@ test('keys turn a knob, a key held down as one turn written once, and a double c
       keyUp(knob)
       expect(kickVolume(doc)).toBe(0)
       knob.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))
-      expect(kickVolume(doc)).toBe(channelVolume.default)
+      expect(kickVolume(doc)).toBe(trackVolume.default)
     })
   ))
 
-test("pan and volume, then the mixer strip, stand before a channel's name, turn its strip and are put back by Cmd+Z", () =>
+test("pan and volume stand before a track's name in its head, turn its strip and are put back by Cmd+Z", () =>
   page(({ doc, grid }) =>
     Effect.gen(function* () {
       const knob = (label: string) =>
         Option.getOrThrow(Option.fromNullishOr(grid.querySelector(`[role="slider"][aria-label="${label}"]`)))
       const [pan, volume] = [knob('Kick: pan'), knob('Kick: volume')]
-      const kickStrip = () => readProject(doc).value.channels[0].strip
-      const row = pan.closest('.seq-row')
-      expect(Array.from(row?.children ?? [], (child) => child.className)).toEqual(['seq-row__lead', 'steps'])
-      expect(Array.from(row?.firstElementChild?.children ?? [], (child) => child.className)).toEqual([
-        'seq-row__index num',
-        'seq-row__strip',
-        'field num insert-field',
-        'seq-row__name',
-        'seq-row__buttons'
+      const kickStrip = () => readProject(doc).value.tracks[0].strip
+      const head = pan.closest('.track-head')
+      expect(Array.from(head?.children ?? [], (child) => child.className)).toEqual([
+        'track-head__strip',
+        'track-head__name',
+        'track-head__buttons'
       ])
-      // The instrument's knobs are in the channel's window.
-      expect(row?.querySelectorAll('[role="slider"]')).toHaveLength(2)
-      // A new channel's volume, 5.2 dB down.
+      // The instrument's knobs are in the track's window, and its mixer strip too.
+      expect(head?.querySelectorAll('[role="slider"]')).toHaveLength(2)
+      expect(head?.querySelector('[role="spinbutton"]')).toBeNull()
+      // A new track's volume, 5.2 dB down.
       expect(volume.getAttribute('aria-valuetext')).toBe('−5.2 dB')
       // Pan fills from the middle, where its zero stands.
       expect(pan.getAttribute('aria-valuetext')).toBe('center')
@@ -1396,7 +922,7 @@ test("pan and volume, then the mixer strip, stand before a channel's name, turn 
       expect(kickStrip().pan).toBe(0)
       pointer(pan, 'pointerup', 80)
       yield* drawn()
-      expect(kickStrip().volume).toBe(defaultChannelStrip.volume)
+      expect(kickStrip().volume).toBe(defaultTrackStrip.volume)
       expect(kickStrip().pan).toBeCloseTo(0.2)
       key(volume, 'Home')
       keyUp(volume)
@@ -1404,7 +930,7 @@ test("pan and volume, then the mixer strip, stand before a channel's name, turn 
       expect(kickStrip().volume).toBe(0)
       expect(volume.getAttribute('aria-valuetext')).toBe('−∞ dB')
       expect(kickStrip().pan).toBeCloseTo(0.2)
-      // Back to a channel's default, not to the engine's.
+      // Back to a track's default, not to the engine's.
       volume.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))
       yield* drawn()
       expect(volume.getAttribute('aria-valuetext')).toBe('−5.2 dB')
@@ -1413,23 +939,25 @@ test("pan and volume, then the mixer strip, stand before a channel's name, turn 
       expect(kickStrip().volume).toBe(0)
       press(document.body, { key: 'z', metaKey: true })
       yield* drawn()
-      expect(kickStrip().volume).toBe(defaultChannelStrip.volume)
+      expect(kickStrip().volume).toBe(defaultTrackStrip.volume)
       expect(kickStrip().pan).toBeCloseTo(0.2)
       press(document.body, { key: 'z', metaKey: true })
       yield* drawn()
-      expect(kickStrip()).toEqual(defaultChannelStrip)
+      expect(kickStrip()).toEqual(defaultTrackStrip)
       expect(pan.getAttribute('aria-valuetext')).toBe('center')
     })
   ))
 
 /** The mixer strip the Kick goes into. */
-const kickInsert = (doc: Y.Doc) => readProject(doc).value.channels[0].insert
+const kickInsert = (doc: Y.Doc) => readProject(doc).value.tracks[0].insert
 
-test("a channel's mixer strip is dragged, typed and kept with Enter or a click elsewhere, the master on a double click", () =>
-  page(({ doc, grid }) =>
+test("a track's mixer strip, in its window, is dragged, typed and kept with Enter or a click elsewhere, the master on a double click", () =>
+  page(({ doc, grid, target }) =>
     Effect.gen(function* () {
+      nameButton(grid, 'Kick').click()
+      yield* drawn(50)
       const field = Option.getOrThrow(
-        Option.fromNullishOr(grid.querySelector<HTMLElement>('[role="spinbutton"][aria-label="Kick: mixer strip"]'))
+        Option.fromNullishOr(target.querySelector<HTMLElement>('[role="spinbutton"][aria-label="Kick: mixer strip"]'))
       )
       expect(field.textContent).toBe('—')
       expect(field.getAttribute('aria-valuetext')).toBe('the master')
@@ -1504,6 +1032,7 @@ const insertIn = (doc: Y.Doc, id: string) =>
 test("the mixer's strips: a fader turns an insert's volume, M mutes it, and the master's fader turns its own", () =>
   page(({ doc, target }) =>
     Effect.gen(function* () {
+      yield* pressWindowButton(target, 'Mixer')
       const fader = (label: string) =>
         Option.getOrThrow(Option.fromNullishOr(target.querySelector(`[role="slider"][aria-label="${label}"]`)))
       const first = fader('Strip 1: volume')
@@ -1539,6 +1068,7 @@ test("the mixer's strips: a fader turns an insert's volume, M mutes it, and the 
 test("a strip's meters draw its record on the board, found by its number; its lamp latches, out of sight too", () =>
   page(({ target, frame }) =>
     Effect.gen(function* () {
+      yield* pressWindowButton(target, 'Mixer')
       /** The strip's meters, by the lamp over the left one. */
       const stripOf = (output: string) =>
         Option.getOrThrow(
@@ -1603,7 +1133,8 @@ test("a strip's meters draw its record on the board, found by its number; its la
 
 test("the master's fader has its scale's numbers, the strips' the marks alone", () =>
   page(({ target }) =>
-    Effect.sync(() => {
+    Effect.gen(function* () {
+      yield* pressWindowButton(target, 'Mixer')
       const scales = Array.from(target.querySelectorAll('.fader-scale'), (scale) => ({
         master: scale.closest('.strip--master') !== null,
         text: scale.textContent
@@ -1617,6 +1148,7 @@ test("the master's fader has its scale's numbers, the strips' the marks alone", 
 test('the mixer draws the strips in sight as its rack scrolls', () =>
   page(({ target }) =>
     Effect.gen(function* () {
+      yield* pressWindowButton(target, 'Mixer')
       const numbers = () =>
         Array.from(target.querySelectorAll('.rack .strip__index'), (index) => Number(index.textContent))
       const rack = Option.getOrThrow(Option.fromNullishOr(target.querySelector<HTMLElement>('.rack')))
@@ -1661,8 +1193,8 @@ test('Cmd+Z or Ctrl+Z takes back the edit, with Shift or Ctrl+Y makes it again, 
     Effect.gen(function* () {
       const undo = button('Undo')
       const redo = button('Redo')
-      const cell = button('Kick, bar 1, step 5')
-      /** Whether the step is on once the page has drawn what the action did. */
+      const cell = button('Kick: mute')
+      /** Whether the Kick is muted once the page has drawn what the action did. */
       const after = (act: () => void) =>
         Effect.sync(act).pipe(
           Effect.andThen(drawn()),
@@ -1700,7 +1232,7 @@ test('a turn of a knob is one step from press to release, and meanwhile undo doe
     Effect.gen(function* () {
       const knob = kickKnob(target)
       const undo = button('Undo')
-      const cell = button('Kick, bar 1, step 5')
+      const cell = button('Kick: mute')
       cell.click()
       pointer(knob, 'pointerdown', 100)
       yield* drawn()
@@ -1730,14 +1262,14 @@ test('a turn of a knob is one step from press to release, and meanwhile undo doe
 test('two knobs turned at once are one step', () =>
   knobPage(({ doc, grid, target }) =>
     Effect.gen(function* () {
-      // The Kick's in its window, the Snare's in its row.
+      // The Kick's in its window, the Snare's in its head.
       const kick = kickKnob(target)
       const snare = Option.getOrThrow(
         Option.fromNullishOr(grid.querySelector('[role="slider"][aria-label="Snare: volume"]'))
       )
       const volumes = () =>
         readProject(doc)
-          .value.channels.slice(0, 2)
+          .value.tracks.slice(0, 2)
           .map(({ strip }) => strip.volume)
       pointer(kick, 'pointerdown', 100, { pointerId: 1 })
       pointer(snare, 'pointerdown', 100, { pointerId: 2 })
@@ -1748,7 +1280,7 @@ test('two knobs turned at once are one step', () =>
       })
       pointer(kick, 'pointerup', 60, { pointerId: 1 })
       pointer(snare, 'pointerup', 140, { pointerId: 2 })
-      const [kickTurned, snareTurned] = volumes().map((volume) => paramPosition(channelVolume, volume))
+      const [kickTurned, snareTurned] = volumes().map((volume) => paramPosition(trackVolume, volume))
       expect(kickTurned).toBeCloseTo(1, 9)
       expect(snareTurned).toBeCloseTo(0.6, 9)
       press(document.body, { key: 'z', metaKey: true })
@@ -1775,7 +1307,7 @@ test("mute and tempo are taken back, a key's turn and a double click each a step
       }
       expect(undone().tempo).toBe(122)
       expect(undone().tempo).toBe(120)
-      expect(undone().channels[0].mute).toBe(false)
+      expect(undone().tracks[0].mute).toBe(false)
       yield* drawn()
       expect(pressed(button('Snare: solo'))).toBe(true)
       expect(button('Undo').disabled).toBe(true)
@@ -1790,13 +1322,13 @@ test('the hint line says what is under the pointer, anew as it changes, and with
       const hint = () => target.querySelector('.hint')?.textContent
       const over = (element: Element) => element.dispatchEvent(new PointerEvent('pointerover', { bubbles: true }))
       expect(hint()).toBe(idleHint)
-      const cell = button('Kick, bar 1, step 5')
+      const cell = button('Kick: solo')
       over(cell)
       yield* drawn()
-      expect(hint()).toBe('Kick, bar 1, step 5: off. A click turns it on for everyone')
+      expect(hint()).toBe("Solo Kick for you only; the other tabs won't hear the change")
       cell.click()
       yield* drawn()
-      expect(hint()).toBe('Kick, bar 1, step 5: on in the project, everyone hears it')
+      expect(hint()).toBe('Kick is soloed for you only; the other tabs hear the whole arrangement')
       const mute = button('Kick: mute')
       mute.focus()
       over(target)
@@ -1811,9 +1343,9 @@ test('the hint line says what is under the pointer, anew as it changes, and with
       expect(hint()).toBe(idleHint)
       over(cell)
       yield* drawn()
-      expect(hint()).toBe('Kick, bar 1, step 5: on in the project, everyone hears it')
+      expect(hint()).toBe('Kick is soloed for you only; the other tabs hear the whole arrangement')
       // Taken away under the pointer, which hasn't moved.
-      doc.transact(() => doc.getMap('channels').delete(readProject(doc).value.channels[0].id))
+      doc.transact(() => doc.getMap('tracks').delete(readProject(doc).value.tracks[0].id))
       yield* drawn(50)
       expect(cell.isConnected).toBe(false)
       expect(hint()).toBe(idleHint)
@@ -1835,7 +1367,6 @@ const boardWith = (
   playing: false,
   position: 0,
   loopTicks: 0,
-  arrangement: false,
   tempo: 120,
   streamLost: false,
   overs,
@@ -1846,6 +1377,7 @@ const boardWith = (
 test("the meters draw the master's peaks in decibels, and a lamp lights when its side's count of overs moves, until it is clicked", () =>
   page(({ target, frame }) =>
     Effect.gen(function* () {
+      yield* pressWindowButton(target, 'Mixer')
       const levels = () =>
         Array.from(target.querySelectorAll<HTMLElement>('.strip--master .meter__fill')).map((fill) =>
           fill.style.getPropertyValue('--level')
@@ -1890,26 +1422,22 @@ test("the meters draw the master's peaks in decibels, and a lamp lights when its
 
 /** The windows' buttons on the transport bar, by title, and whether each is lit. */
 const windowButtons = (target: HTMLElement) =>
-  ['Channels', 'Piano roll', 'Arrangement', 'Mixer', 'Debug'].map(
-    (title) => [title, pressed(windowButton(target, title))] as const
-  )
+  ['Arrangement', 'Piano roll', 'Mixer', 'Debug'].map((title) => [title, pressed(windowButton(target, title))] as const)
 
 /** The titles of the windows on the desk. */
 const windowsShown = (target: HTMLElement) =>
   Array.from(target.querySelectorAll('.dock-tab__title')).map((title) => title.textContent)
 
-test('a new project opens with the Channels window, the Arrangement and the Mixer, their buttons lit; Debug waits for its button', () =>
+test('a new project opens with the Arrangement alone, its button lit; the others wait for their buttons', () =>
   page(({ target }) =>
     Effect.sync(() => {
-      expect(windowsShown(target)).toEqual(['Channels', 'Arrangement', 'Mixer'])
+      expect(windowsShown(target)).toEqual(['Arrangement'])
       expect(windowButtons(target)).toEqual([
-        ['Channels', true],
-        ['Piano roll', false],
         ['Arrangement', true],
-        ['Mixer', true],
+        ['Piano roll', false],
+        ['Mixer', false],
         ['Debug', false]
       ])
-      expect(target.querySelector('.dock-tab__sub')?.textContent).toBe('Pattern 1')
     })
   ))
 
@@ -1922,20 +1450,21 @@ test('the transport bar leads to the list of projects, first on it', () =>
     })
   ))
 
-test("a window's button closes it and opens it again; its tab's close button closes it too", () =>
+test("a window's button opens it and closes it again; its tab's close button closes it too", () =>
   page(({ target, button }) =>
     Effect.gen(function* () {
       yield* pressWindowButton(target, 'Mixer')
-      expect(windowsShown(target)).toEqual(['Channels', 'Arrangement'])
-      expect(target.querySelector('.strip')).toBeNull()
-      expect(windowButtons(target)[3]).toEqual(['Mixer', false])
-      yield* pressWindowButton(target, 'Mixer')
-      expect(windowsShown(target)).toEqual(['Channels', 'Arrangement', 'Mixer'])
-      expect(target.querySelector('.strip')).not.toBeNull()
-      button('Close Channels').click()
-      yield* drawn(50)
       expect(windowsShown(target)).toEqual(['Arrangement', 'Mixer'])
-      expect(windowButtons(target)[0]).toEqual(['Channels', false])
+      expect(target.querySelector('.strip')).not.toBeNull()
+      expect(windowButtons(target)[2]).toEqual(['Mixer', true])
+      yield* pressWindowButton(target, 'Mixer')
+      expect(windowsShown(target)).toEqual(['Arrangement'])
+      expect(target.querySelector('.strip')).toBeNull()
+      yield* pressWindowButton(target, 'Mixer')
+      button('Close Arrangement').click()
+      yield* drawn(50)
+      expect(windowsShown(target)).toEqual(['Mixer'])
+      expect(windowButtons(target)[0]).toEqual(['Arrangement', false])
     })
   ))
 
@@ -1947,7 +1476,7 @@ const subOf = (target: HTMLElement, title: string) =>
 
 /** The floating window a body stands in. */
 const frameOf = (target: HTMLElement, name: string) =>
-  Option.getOrThrow(channelWindow(target, name)).closest('.dv-resize-container')
+  Option.getOrThrow(trackWindow(target, name)).closest('.dv-resize-container')
 
 /** The labels of the knobs in it, and what they read. */
 const knobsIn = (element: Element) =>
@@ -1956,24 +1485,24 @@ const knobsIn = (element: Element) =>
     knob.getAttribute('aria-valuetext')
   ])
 
-test("a channel's name opens its window: its pan and volume, a sampler nothing more; a second click closes it", () =>
+test("a track's name opens its window: its pan and volume and mixer strip, a sampler nothing more; a second click closes it", () =>
   page(({ grid, target }) =>
     Effect.gen(function* () {
       nameButton(grid, 'Kick').click()
       yield* drawn(50)
-      expect(windowsShown(target)).toEqual(['Channels', 'Arrangement', 'Mixer', 'Kick'])
+      expect(windowsShown(target)).toEqual(['Arrangement', 'Kick'])
       expect(subOf(target, 'Kick')).toBe('Sampler')
-      expect(knobsIn(Option.getOrThrow(channelWindow(target, 'Kick')))).toEqual([
+      expect(knobsIn(Option.getOrThrow(trackWindow(target, 'Kick')))).toEqual([
         ['Pan', 'center'],
         ['Volume', '−5.2 dB']
       ])
       nameButton(grid, 'Kick').click()
       yield* drawn(50)
-      expect(windowsShown(target)).toEqual(['Channels', 'Arrangement', 'Mixer'])
+      expect(windowsShown(target)).toEqual(['Arrangement'])
     })
   ))
 
-test("a second click on a channel's name closes its window, though the click takes the focus into the Channels window", () =>
+test("a second click on a track's name closes its window, though the click takes the focus into the Arrangement", () =>
   page(({ grid, target }) =>
     Effect.gen(function* () {
       const kick = nameButton(grid, 'Kick')
@@ -1989,14 +1518,14 @@ test("a second click on a channel's name closes its window, though the click tak
       kick.focus()
       kick.click()
       yield* drawn(50)
-      expect(windowsShown(target)).toEqual(['Channels', 'Arrangement', 'Mixer'])
+      expect(windowsShown(target)).toEqual(['Arrangement'])
       expect(kick.getAttribute('aria-pressed')).toBe('false')
     })
   ))
 
-/** A parameter of the last channel's synth, as the document has it. */
+/** A parameter of the last track's synth, as the document has it. */
 const lastSynth = (doc: Y.Doc, param: ParamId<typeof plugins.synth>) =>
-  Option.fromUndefinedOr(readProject(doc).value.channels.at(-1)).pipe(
+  Option.fromUndefinedOr(readProject(doc).value.tracks.at(-1)).pipe(
     Option.flatMap(({ instrument }) => instrument),
     Option.filter((instrument) => instrument.name === 'synth'),
     Option.map(({ params }) => params[param]),
@@ -2005,18 +1534,18 @@ const lastSynth = (doc: Y.Doc, param: ParamId<typeof plugins.synth>) =>
 
 const lastShape = (doc: Y.Doc) => lastSynth(doc, 'osc1.shape')
 
-/** The controls of one of a channel's groups, such as an oscillator's, in its window. */
+/** The controls of one of a track's groups, such as an oscillator's, in its window. */
 const groupIn = (window: HTMLElement, name: string) =>
   Option.getOrThrow(Option.fromNullishOr(window.querySelector<HTMLElement>(`[role="group"][aria-label="${name}"]`)))
 
 test("a synth's shape is chosen by a row of its waves, one lit: a click or an arrow writes it, Cmd+Z takes it back", () =>
   page(({ doc, grid, target, button }) =>
     Effect.gen(function* () {
-      button('Add a channel').click()
+      button('Add a track').click()
       yield* drawn()
       nameButton(grid, 'Synth').click()
       yield* drawn(50)
-      const synth = groupIn(Option.getOrThrow(channelWindow(target, 'Synth')), 'Osc 1')
+      const synth = groupIn(Option.getOrThrow(trackWindow(target, 'Synth')), 'Osc 1')
       const choices = () => Array.from(synth.querySelectorAll<HTMLButtonElement>('[role="radio"]'))
       const lit = () =>
         choices()
@@ -2080,13 +1609,13 @@ test("a synth's shape is chosen by a row of its waves, one lit: a click or an ar
 test("a synth's Coarse turns a semitone at a time, by a key or a drag, and its hint names the oscillator", () =>
   page(({ doc, target, button, grid }) =>
     Effect.gen(function* () {
-      button('Add a channel').click()
+      button('Add a track').click()
       yield* drawn()
       nameButton(grid, 'Synth').click()
       yield* drawn(50)
       const knob = Option.getOrThrow(
         Option.fromNullishOr(
-          groupIn(Option.getOrThrow(channelWindow(target, 'Synth')), 'Osc 2').querySelector(
+          groupIn(Option.getOrThrow(trackWindow(target, 'Synth')), 'Osc 2').querySelector(
             '[role="slider"][aria-label="Coarse"]'
           )
         )
@@ -2110,21 +1639,21 @@ test("a synth's Coarse turns a semitone at a time, by a key or a drag, and its h
     })
   ))
 
-test("a channel's name shows its window in place of the one in front, closing the others; with Alt, beside it", () =>
+test("a track's name shows its window in place of the one in front, closing the others; with Alt, beside it", () =>
   page(({ grid, target, button }) =>
     Effect.gen(function* () {
-      button('Add a channel').click()
+      button('Add a track').click()
       yield* drawn()
       nameButton(grid, 'Kick').click()
       yield* drawn(50)
       const place = frameOf(target, 'Kick')
       nameButton(grid, 'Synth').click()
       yield* drawn(50)
-      expect(windowsShown(target)).toEqual(['Channels', 'Arrangement', 'Mixer', 'Synth'])
+      expect(windowsShown(target)).toEqual(['Arrangement', 'Synth'])
       expect(frameOf(target, 'Synth')).toBe(place)
-      // The synth's own controls under its name, after the channel's knobs: an oscillator to a row, Osc 2 an octave
+      // The synth's own controls under its name, after the track's knobs: an oscillator to a row, Osc 2 an octave
       // down and Osc 3 two, unmixed; then the envelope's, a short note at full level.
-      const synth = Option.getOrThrow(channelWindow(target, 'Synth'))
+      const synth = Option.getOrThrow(trackWindow(target, 'Synth'))
       expect(knobsIn(synth)).toEqual([
         ['Pan', 'center'],
         ['Volume', '−5.2 dB'],
@@ -2143,8 +1672,8 @@ test("a channel's name shows its window in place of the one in front, closing th
         ['Sustain', '100%'],
         ['Release', '100 ms']
       ])
-      expect(synth.querySelector('.channel-settings__instrument .cap')?.textContent).toBe('Synth')
-      const rows = Array.from(synth.querySelectorAll('.channel-settings__instrument [role="group"]'), (row) => [
+      expect(synth.querySelector('.track-settings__instrument .cap')?.textContent).toBe('Synth')
+      const rows = Array.from(synth.querySelectorAll('.track-settings__instrument [role="group"]'), (row) => [
         row.getAttribute('aria-label'),
         row.querySelector('[role="radiogroup"]')?.getAttribute('aria-label')
       ])
@@ -2156,21 +1685,21 @@ test("a channel's name shows its window in place of the one in front, closing th
       ])
       nameButton(grid, 'Snare').dispatchEvent(new MouseEvent('click', { bubbles: true, altKey: true }))
       yield* drawn(50)
-      expect(windowsShown(target)).toEqual(['Channels', 'Arrangement', 'Mixer', 'Synth', 'Snare'])
+      expect(windowsShown(target)).toEqual(['Arrangement', 'Synth', 'Snare'])
       expect(frameOf(target, 'Snare')).not.toBe(place)
       // In place of the Snare's, in front, and the Synth's closed.
       const front = frameOf(target, 'Snare')
       nameButton(grid, 'Kick').click()
       yield* drawn(50)
-      expect(windowsShown(target)).toEqual(['Channels', 'Arrangement', 'Mixer', 'Kick'])
+      expect(windowsShown(target)).toEqual(['Arrangement', 'Kick'])
       expect(frameOf(target, 'Kick')).toBe(front)
     })
   ))
 
-test("a channel's name opens its window in place of the channel window last turned to, not the newest", () =>
+test("a track's name opens its window in place of the track window last turned to, not the newest", () =>
   page(({ grid, target, button }) =>
     Effect.gen(function* () {
-      button('Add a channel').click()
+      button('Add a track').click()
       yield* drawn()
       nameButton(grid, 'Kick').click()
       yield* drawn(50)
@@ -2185,19 +1714,19 @@ test("a channel's name opens its window in place of the channel window last turn
       synth.focus()
       synth.click()
       yield* drawn(50)
-      expect(windowsShown(target)).toEqual(['Channels', 'Arrangement', 'Mixer', 'Synth'])
+      expect(windowsShown(target)).toEqual(['Arrangement', 'Synth'])
       expect(frameOf(target, 'Synth')).toBe(kickPlace)
     })
   ))
 
-test("a channel's window is named by the channel to screen readers, and dims as its row does while not heard", () =>
+test("a track's window is named by the track to screen readers, and dims as its head does while not heard", () =>
   page(({ grid, target, button }) =>
     Effect.gen(function* () {
       nameButton(grid, 'Kick').click()
       yield* drawn(50)
       expect(target.querySelector('[role="tab"][aria-label="Kick"]')).not.toBeNull()
       const settings = Option.getOrThrow(
-        Option.flatMapNullishOr(channelWindow(target, 'Kick'), (window) => window.querySelector('.channel-settings'))
+        Option.flatMapNullishOr(trackWindow(target, 'Kick'), (window) => window.querySelector('.track-settings'))
       )
       expect(settings.getAttribute('data-unheard')).toBe('false')
       button('Kick: mute').click()
@@ -2206,20 +1735,20 @@ test("a channel's window is named by the channel to screen readers, and dims as 
     })
   ))
 
-test("a channel's window turns the same pan and volume as its row", () =>
+test("a track's window turns the same pan and volume as its head", () =>
   page(({ doc, grid, target }) =>
     Effect.gen(function* () {
       nameButton(grid, 'Kick').click()
       yield* drawn(50)
       const pan = Option.getOrThrow(
-        Option.flatMapNullishOr(channelWindow(target, 'Kick'), (window) =>
+        Option.flatMapNullishOr(trackWindow(target, 'Kick'), (window) =>
           window.querySelector('[role="slider"][aria-label="Pan"]')
         )
       )
       key(pan, 'End')
       keyUp(pan)
       yield* drawn()
-      expect(readProject(doc).value.channels[0].strip.pan).toBe(1)
+      expect(readProject(doc).value.tracks[0].strip.pan).toBe(1)
       expect(grid.querySelector('[aria-label="Kick: pan"]')?.getAttribute('aria-valuetext')).toBe('100% right')
     })
   ))
@@ -2234,6 +1763,7 @@ test('the layout is kept for the project: opened again, it shows the windows as 
     ({ target, button }) =>
       Effect.gen(function* () {
         yield* pressWindowButton(target, 'Debug')
+        yield* pressWindowButton(target, 'Mixer')
         button('Close Mixer').click()
         yield* saved
       }),
@@ -2245,11 +1775,10 @@ test('the layout is kept for the project: opened again, it shows the windows as 
       page(
         ({ target }) =>
           Effect.sync(() => {
-            expect(windowsShown(target)).toEqual(['Channels', 'Arrangement', 'Debug'])
+            expect(windowsShown(target)).toEqual(['Arrangement', 'Debug'])
             expect(windowButtons(target)).toEqual([
-              ['Channels', true],
-              ['Piano roll', false],
               ['Arrangement', true],
+              ['Piano roll', false],
               ['Mixer', false],
               ['Debug', true]
             ])
@@ -2263,7 +1792,7 @@ test('the layout is kept for the project: opened again, it shows the windows as 
       page(
         ({ target }) =>
           Effect.sync(() => {
-            expect(windowsShown(target)).toEqual(['Channels', 'Arrangement', 'Mixer'])
+            expect(windowsShown(target)).toEqual(['Arrangement'])
           }),
         {},
         {},
@@ -2289,7 +1818,7 @@ test.each<[string, unknown]>([
   return page(
     ({ target }) =>
       Effect.sync(() => {
-        expect(windowsShown(target)).toEqual(['Channels', 'Arrangement', 'Mixer'])
+        expect(windowsShown(target)).toEqual(['Arrangement'])
       }),
     {},
     {},
@@ -2297,12 +1826,14 @@ test.each<[string, unknown]>([
   )
 })
 
-/** The Channels window and Debug as two tabs of one docked group, the Channels window in front. */
+/** The Arrangement and Debug as two tabs of one docked group, the Arrangement in front. */
 const tabbed = {
   grid: {
     root: {
       type: 'branch',
-      data: [{ type: 'leaf', data: { views: ['channels', 'debug'], activeView: 'channels', id: '1' }, size: 100 }],
+      data: [
+        { type: 'leaf', data: { views: ['arrangement', 'debug'], activeView: 'arrangement', id: '1' }, size: 100 }
+      ],
       size: 100
     },
     width: 100,
@@ -2310,7 +1841,7 @@ const tabbed = {
     orientation: 'HORIZONTAL'
   },
   panels: {
-    channels: { id: 'channels', contentComponent: 'channels', title: 'Channels' },
+    arrangement: { id: 'arrangement', contentComponent: 'arrangement', title: 'Arrangement' },
     debug: { id: 'debug', contentComponent: 'debug', title: 'Debug' }
   },
   activeGroup: '1'
@@ -2321,20 +1852,18 @@ test("a window behind another tab isn't lit, and its button brings it forward ra
   return page(
     ({ target }) =>
       Effect.gen(function* () {
-        expect(windowsShown(target)).toEqual(['Channels', 'Debug'])
+        expect(windowsShown(target)).toEqual(['Arrangement', 'Debug'])
         expect(windowButtons(target)).toEqual([
-          ['Channels', true],
+          ['Arrangement', true],
           ['Piano roll', false],
-          ['Arrangement', false],
           ['Mixer', false],
           ['Debug', false]
         ])
         yield* pressWindowButton(target, 'Debug')
-        expect(windowsShown(target)).toEqual(['Channels', 'Debug'])
+        expect(windowsShown(target)).toEqual(['Arrangement', 'Debug'])
         expect(windowButtons(target)).toEqual([
-          ['Channels', false],
-          ['Piano roll', false],
           ['Arrangement', false],
+          ['Piano roll', false],
           ['Mixer', false],
           ['Debug', true]
         ])
@@ -2364,20 +1893,21 @@ test("a press with Shift in a floating window turns the knob finely, and doesn't
 test("a window's button brings an open window forward first, and closes it once it is in front", () =>
   page(({ target }) =>
     Effect.gen(function* () {
-      // The Mixer opened last, in front of the Channels window.
-      yield* pressWindowButton(target, 'Channels')
-      expect(windowsShown(target)).toEqual(['Channels', 'Arrangement', 'Mixer'])
-      expect(windowButton(target, 'Channels').dataset.hint).toContain('in front: a click closes it')
-      expect(windowButton(target, 'Mixer').dataset.hint).toContain('open: a click brings it forward')
-      yield* pressWindowButton(target, 'Channels')
+      // The Mixer opened last, in front of the Arrangement.
+      yield* pressWindowButton(target, 'Mixer')
+      yield* pressWindowButton(target, 'Arrangement')
       expect(windowsShown(target)).toEqual(['Arrangement', 'Mixer'])
-      expect(windowButton(target, 'Channels').dataset.hint).toContain('Show Channels')
+      expect(windowButton(target, 'Arrangement').dataset.hint).toContain('in front: a click closes it')
+      expect(windowButton(target, 'Mixer').dataset.hint).toContain('open: a click brings it forward')
+      yield* pressWindowButton(target, 'Arrangement')
+      expect(windowsShown(target)).toEqual(['Mixer'])
+      expect(windowButton(target, 'Arrangement').dataset.hint).toContain('Show Arrangement')
     })
   ))
 
 test('only a build for development has Debug: the bar holds the main windows', () => {
-  expect(deskWindows(true)).toEqual(['channels', 'piano-roll', 'arrangement', 'mixer', 'debug'])
-  expect(deskWindows(false)).toEqual(['channels', 'piano-roll', 'arrangement', 'mixer'])
+  expect(deskWindows(true)).toEqual(['arrangement', 'piano-roll', 'mixer', 'debug'])
+  expect(deskWindows(false)).toEqual(['arrangement', 'piano-roll', 'mixer'])
 })
 
 test("a build for users has no Debug button, and doesn't take a saved layout that holds Debug", () => {
@@ -2387,8 +1917,8 @@ test("a build for users has no Debug button, and doesn't take a saved layout tha
     ({ target }) =>
       Effect.sync(() => {
         const titles = Array.from(target.querySelectorAll('.btn--window')).map((button) => button.textContent)
-        expect(titles).toEqual(['Channels', 'Piano roll', 'Arrangement', 'Mixer'])
-        expect(windowsShown(target)).toEqual(['Channels', 'Arrangement', 'Mixer'])
+        expect(titles).toEqual(['Arrangement', 'Piano roll', 'Mixer'])
+        expect(windowsShown(target)).toEqual(['Arrangement'])
       }),
     {},
     {},
@@ -2396,20 +1926,20 @@ test("a build for users has no Debug button, and doesn't take a saved layout tha
   ).finally(() => vi.unstubAllEnvs())
 })
 
-test("a channel's window goes with its channel, by Cmd+Z on + or deleted while the page was away; else it comes back with the page", () => {
+test("a track's window goes with its track, by Cmd+Z on + or deleted while the page was away; else it comes back with the page", () => {
   const views = memoryViews()
   const doc = projectDoc()
   return page(
     ({ grid, target, button }) =>
       Effect.gen(function* () {
-        button('Add a channel').click()
+        button('Add a track').click()
         yield* drawn()
         nameButton(grid, 'Synth').click()
         yield* drawn(50)
-        expect(windowsShown(target)).toEqual(['Channels', 'Arrangement', 'Mixer', 'Synth'])
+        expect(windowsShown(target)).toEqual(['Arrangement', 'Synth'])
         press(document.body, { key: 'z', metaKey: true })
         yield* drawn(50)
-        expect(windowsShown(target)).toEqual(['Channels', 'Arrangement', 'Mixer'])
+        expect(windowsShown(target)).toEqual(['Arrangement'])
         nameButton(grid, 'Kick').click()
         yield* saved
       }),
@@ -2419,17 +1949,16 @@ test("a channel's window goes with its channel, by Cmd+Z on + or deleted while t
   )
     .then(() =>
       page(
-        ({ target }) =>
-          Effect.sync(() => expect(windowsShown(target)).toEqual(['Channels', 'Arrangement', 'Mixer', 'Kick'])),
+        ({ target }) => Effect.sync(() => expect(windowsShown(target)).toEqual(['Arrangement', 'Kick'])),
         {},
         {},
         { views, doc }
       )
     )
     .then(() => {
-      doc.transact(() => doc.getMap('channels').delete(readProject(doc).value.channels[0].id))
+      doc.transact(() => doc.getMap('tracks').delete(readProject(doc).value.tracks[0].id))
       return page(
-        ({ target }) => Effect.sync(() => expect(windowsShown(target)).toEqual(['Channels', 'Arrangement', 'Mixer'])),
+        ({ target }) => Effect.sync(() => expect(windowsShown(target)).toEqual(['Arrangement'])),
         {},
         {},
         { views, doc }
@@ -2437,7 +1966,7 @@ test("a channel's window goes with its channel, by Cmd+Z on + or deleted while t
     })
 })
 
-test("a channel's window that names no channel, as a broken saved layout may hold, doesn't open", () => {
+test("a track's window that names no track, as a broken saved layout may hold, doesn't open", () => {
   const views = memoryViews()
   const doc = projectDoc()
   const key = `layout:${Option.getOrThrow(readProjectId(doc))}`
@@ -2454,17 +1983,17 @@ test("a channel's window that names no channel, as a broken saved layout may hol
     // The dock's layout is JSON of its own inside the saved view.
     const view = JSON.parse(Option.getOrThrow(Option.fromUndefinedOr(Effect.runSync(views.get(key)))))
     const layout = JSON.parse(view.layout)
-    const channel = Option.getOrThrow(
-      Option.fromUndefinedOr(Object.keys(layout.panels).find((id) => id.startsWith('channel:')))
+    const track = Option.getOrThrow(
+      Option.fromUndefinedOr(Object.keys(layout.panels).find((id) => id.startsWith('track:')))
     )
-    layout.panels[channel].params = { channel: '' }
+    layout.panels[track].params = { track: '' }
     Effect.runSync(views.set(key, JSON.stringify({ ...view, layout: JSON.stringify(layout) })))
     return page(
       ({ target }) =>
         Effect.sync(() => {
-          expect(windowsShown(target)).toEqual(['Channels', 'Arrangement', 'Mixer'])
+          expect(windowsShown(target)).toEqual(['Arrangement'])
           // Not even as an empty window, with no title to close it by.
-          expect(target.querySelectorAll('.dv-tab')).toHaveLength(3)
+          expect(target.querySelectorAll('.dv-tab')).toHaveLength(1)
         }),
       {},
       {},
@@ -2473,110 +2002,40 @@ test("a channel's window that names no channel, as a broken saved layout may hol
   })
 })
 
-/** The project's notes, by channel's name, each where it starts, how high and how long. */
+/** The notes of the clips, each by its track's name, where it starts, how high and how long. */
 const notesByName = (doc: Y.Doc) => {
-  const { channels, patterns } = readProject(doc).value
-  return patterns[0].notes.map(({ channel, tick, key, length }) => ({
-    channel: channels.find(({ id }) => id === channel)?.name,
-    tick,
-    key,
-    length
-  }))
+  const { tracks, clips, patterns } = readProject(doc).value
+  return clips.flatMap(({ track, pattern }) =>
+    (patterns.find(({ id }) => id === pattern)?.notes ?? []).map(({ tick, key, length }) => ({
+      track: tracks.find(({ id }) => id === track)?.name,
+      tick,
+      key,
+      length
+    }))
+  )
 }
 
-const channelId = (doc: Y.Doc, name: string) =>
-  Option.getOrThrow(Option.fromUndefinedOr(readProject(doc).value.channels.find((channel) => channel.name === name))).id
+/** The first clip on the track of this name. */
+const clipOn = (doc: Y.Doc, name: string) => {
+  const { tracks, clips } = readProject(doc).value
+  const track = Option.getOrThrow(Option.fromUndefinedOr(tracks.find((one) => one.name === name))).id
+  return Option.getOrThrow(Option.fromUndefinedOr(clips.find((clip) => clip.track === track)))
+}
 
-const patternId = (doc: Y.Doc) => readProject(doc).value.patterns[0].id
+/** The notes of the Kick's clip. */
+const kickNotes = (doc: Y.Doc) =>
+  readProject(doc).value.patterns.find(({ id }) => id === clipOn(doc, 'Kick').pattern)?.notes ?? []
 
-/** A note of the channel put by another client. */
+/** How many bars the Kick's clip plays, as long as its pattern. */
+const kickClipBars = (doc: Y.Doc) => patternEnd(kickNotes(doc)) / barTicks
+
+/** A note of the track's clip put by another client. */
 const noteElsewhere = (doc: Y.Doc, name: string, step: number, key: number, steps = 1) =>
-  addNote(doc, elsewhere, patternId(doc), channelId(doc, name), {
+  addNote(doc, elsewhere, clipOn(doc, name).id, {
     tick: Tick(step * stepTicks),
     key: MidiKey(key),
     length: steps * stepTicks
   })
-
-const stepsOf = (grid: HTMLElement, name: string) => grid.querySelectorAll(`.step[aria-label^="${name}, bar"]`)
-
-test("a channel whose notes steps can't show has them small in place of its steps; it has steps again once they can", () =>
-  page(({ doc, grid, target, button }) =>
-    Effect.gen(function* () {
-      noteElsewhere(doc, 'Kick', 1, 60)
-      yield* drawn()
-      expect(stepsOf(grid, 'Kick')).toHaveLength(2 * barSteps)
-      expect(
-        pressed(
-          Option.getOrThrow(
-            Option.fromNullishOr(grid.querySelector<HTMLButtonElement>('[aria-label="Kick, bar 1, step 2"]'))
-          )
-        )
-      ).toBe(true)
-      noteElsewhere(doc, 'Kick', 4, 64, 2)
-      yield* drawn()
-      expect(stepsOf(grid, 'Kick')).toHaveLength(0)
-      expect(stepsOf(grid, 'Snare')).toHaveLength(2 * barSteps)
-      const preview = Option.getOrThrow(
-        Option.fromNullishOr(grid.querySelector<HTMLButtonElement>('[aria-label="Kick: notes"]'))
-      )
-      expect(preview.dataset.hint).toContain('opens them in the piano roll')
-      preview.click()
-      yield* drawn(50)
-      expect(windowsShown(target)).toEqual(['Channels', 'Arrangement', 'Mixer', 'Piano roll'])
-      expect(subOf(target, 'Piano roll')).toBe('Kick')
-      const e5 = readProject(doc).value.patterns[0].notes.filter(({ key }) => key === 64)
-      eraseNotes(
-        doc,
-        elsewhere,
-        patternId(doc),
-        e5.map(({ id }) => id)
-      )
-      yield* drawn()
-      expect(stepsOf(grid, 'Kick')).toHaveLength(2 * barSteps)
-      // A step's note in the second bar: the pattern grows to it, and the steps show it.
-      noteElsewhere(doc, 'Snare', 16, 60)
-      yield* drawn()
-      expect(stepsOf(grid, 'Snare')).toHaveLength(3 * barSteps)
-      expect(pressed(button('Snare, bar 2, step 1'))).toBe(true)
-      eraseNotes(
-        doc,
-        elsewhere,
-        patternId(doc),
-        readProject(doc)
-          .value.patterns[0].notes.filter(({ tick }) => tick === 16 * stepTicks)
-          .map(({ id }) => id)
-      )
-      yield* drawn()
-      expect(stepsOf(grid, 'Snare')).toHaveLength(2 * barSteps)
-      // Longer than a step, or off a step's start, a note is no step's.
-      yield* Effect.forEach(
-        [
-          { tick: 240, length: 480 },
-          { tick: 250, length: 240 }
-        ],
-        (note) =>
-          Effect.gen(function* () {
-            addNote(doc, elsewhere, patternId(doc), channelId(doc, 'Snare'), {
-              ...note,
-              tick: Tick(note.tick),
-              key: MidiKey(60)
-            })
-            yield* drawn()
-            expect(stepsOf(grid, 'Snare')).toHaveLength(0)
-            eraseNotes(
-              doc,
-              elsewhere,
-              patternId(doc),
-              readProject(doc)
-                .value.patterns[0].notes.filter(({ tick }) => tick === note.tick)
-                .map(({ id }) => id)
-            )
-            yield* drawn()
-            expect(stepsOf(grid, 'Snare')).toHaveLength(2 * barSteps)
-          })
-      )
-    })
-  ))
 
 // happy-dom lays nothing out: the roll gets the size a window would give it, four bars wide and all but a few keys high,
 // so a point past it is past it, as in a browser; none behind a tab, where the dock takes it out of the page.
@@ -2584,18 +2043,12 @@ const rollSize = { clientWidth: keysWidth + 4 * barSteps * stepWidth, clientHeig
 const rollBehindTab = { now: false }
 // The arrangement, eight bars wide and ten tracks high; none behind a tab, as the roll.
 const arrangementSize = {
-  clientWidth: namesWidth + 8 * barWidth,
+  clientWidth: headsWidth + 8 * barWidth,
   clientHeight: arrangementRulerHeight + 10 * trackHeight
 }
 const arrangementBehindTab = { now: false }
-// And the Channels window as wide across as a test makes it, so its steps follow the playhead; unmade, none.
-const channelsBody = { width: 0 }
 Object.entries(rollSize).forEach(([name, size]) => {
   const laid = Object.getOwnPropertyDescriptor(Element.prototype, name)
-  const isChannels = (element: HTMLElement) =>
-    name === 'clientWidth' &&
-    channelsBody.width > 0 &&
-    element.querySelector(':scope > .dock-fit > .seq-frame') !== null
   Object.defineProperty(HTMLElement.prototype, name, {
     configurable: true,
     get(this: HTMLElement) {
@@ -2608,11 +2061,7 @@ Object.entries(rollSize).forEach(([name, size]) => {
                 onTrue: () => 0,
                 onFalse: () => arrangementSize[name as keyof typeof arrangementSize]
               }),
-            onFalse: () =>
-              Boolean.match(isChannels(this), {
-                onTrue: () => channelsBody.width,
-                onFalse: () => laid?.get?.call(this) ?? 0
-              })
+            onFalse: () => laid?.get?.call(this) ?? 0
           })
       })
     }
@@ -2685,24 +2134,24 @@ const rollIn = (target: HTMLElement) =>
 test('the piano roll puts a note where it is clicked, on its step, as long as the note last touched; Cmd+Z takes it back', () =>
   page(({ doc, target, button }) =>
     Effect.gen(function* () {
-      yield* pressWindowButton(target, 'Piano roll')
+      yield* openKickClip(target)
       // No channel chosen and none with notes: the first.
       expect(subOf(target, 'Piano roll')).toBe('Kick')
       const { click } = yield* rollIn(target)
       click(2, 64)
       yield* drawn()
-      expect(notesByName(doc)).toEqual([{ channel: 'Kick', tick: 2 * stepTicks, key: 64, length: stepTicks }])
+      expect(notesByName(doc)).toEqual([{ track: 'Kick', tick: 2 * stepTicks, key: 64, length: stepTicks }])
       noteElsewhere(doc, 'Kick', 8, 67, 3)
       yield* drawn()
       // A click on a note takes its length, wherever on it, and writes nothing.
       expect(updatesDuring(doc, () => click(10, 67))).toBe(0)
       click(4, 62)
       yield* drawn()
-      expect(notesByName(doc)).toContainEqual({ channel: 'Kick', tick: 4 * stepTicks, key: 62, length: 3 * stepTicks })
+      expect(notesByName(doc)).toContainEqual({ track: 'Kick', tick: 4 * stepTicks, key: 62, length: 3 * stepTicks })
       // Whole into the next bar, the pattern growing to it.
       click(15, 60)
       yield* drawn()
-      expect(notesByName(doc)).toContainEqual({ channel: 'Kick', tick: 15 * stepTicks, key: 60, length: 3 * stepTicks })
+      expect(notesByName(doc)).toContainEqual({ track: 'Kick', tick: 15 * stepTicks, key: 60, length: 3 * stepTicks })
       button('Undo').click()
       yield* drawn()
       expect(
@@ -2719,7 +2168,7 @@ test('a right click in the piano roll erases a note; a drag with it, all it pass
       ;[0, 2, 4].forEach((step) => noteElsewhere(doc, 'Kick', step, 64))
       noteElsewhere(doc, 'Kick', 8, 60)
       yield* drawn()
-      yield* pressWindowButton(target, 'Piano roll')
+      yield* openKickClip(target)
       const { roll, at } = yield* rollIn(target)
       // The browser's menu stays shut.
       expect(roll.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }))).toBe(false)
@@ -2776,7 +2225,7 @@ test('a drag in the piano roll moves a note by steps and keys, written once let 
     Effect.gen(function* () {
       noteElsewhere(doc, 'Kick', 2, 64)
       yield* drawn()
-      yield* pressWindowButton(target, 'Piano roll')
+      yield* openKickClip(target)
       const { at, click } = yield* rollIn(target)
       click(12, 70)
       yield* drawn()
@@ -2795,12 +2244,12 @@ test('a drag in the piano roll moves a note by steps and keys, written once let 
       expect(updatesDuring(doc, () => at('pointerup', 5.2, 67, { buttons: 0 }))).toBe(1)
       yield* drawn()
       expect(notesInTime(doc)).toEqual([
-        { channel: 'Kick', tick: 5 * stepTicks, key: 67, length: stepTicks },
-        { channel: 'Kick', tick: 12 * stepTicks, key: 70, length: stepTicks }
+        { track: 'Kick', tick: 5 * stepTicks, key: 67, length: stepTicks },
+        { track: 'Kick', tick: 12 * stepTicks, key: 70, length: stepTicks }
       ])
       button('Undo').click()
       yield* drawn()
-      expect(notesByName(doc)).toContainEqual({ channel: 'Kick', tick: 2 * stepTicks, key: 64, length: stepTicks })
+      expect(notesByName(doc)).toContainEqual({ track: 'Kick', tick: 2 * stepTicks, key: 64, length: stepTicks })
       expect(notesByName(doc)).toHaveLength(2)
     })
   ))
@@ -2810,7 +2259,7 @@ test("a note's right edge in the piano roll makes it longer or shorter by steps,
     Effect.gen(function* () {
       noteElsewhere(doc, 'Kick', 4, 64, 2)
       yield* drawn()
-      yield* pressWindowButton(target, 'Piano roll')
+      yield* openKickClip(target)
       const { roll, at, click, drag } = yield* rollIn(target)
       const length = () => notesByName(doc).map(({ length }) => length / stepTicks)
       // Over the note, a cursor to move it; over its last pixels, one to stretch it.
@@ -2825,7 +2274,7 @@ test("a note's right edge in the piano roll makes it longer or shorter by steps,
       expect(roll.dataset.grab).toBe('none')
       drag([5.4, 64], [8.2, 66])
       yield* drawn()
-      expect(notesByName(doc)).toEqual([{ channel: 'Kick', tick: 4 * stepTicks, key: 64, length: 5 * stepTicks }])
+      expect(notesByName(doc)).toEqual([{ track: 'Kick', tick: 4 * stepTicks, key: 64, length: 5 * stepTicks }])
       drag([8.4, 64], [1.4, 64])
       yield* drawn()
       expect(length()).toEqual([1])
@@ -2847,14 +2296,14 @@ test('a press on empty ground in the piano roll puts a note that goes with the p
     Effect.gen(function* () {
       noteElsewhere(doc, 'Kick', 6, 67, 2)
       yield* drawn()
-      yield* pressWindowButton(target, 'Piano roll')
+      yield* openKickClip(target)
       const { drag } = yield* rollIn(target)
       drag([1, 60], [3, 62], [6, 67])
       yield* drawn()
-      expect(notesByName(doc)).toEqual([{ channel: 'Kick', tick: 6 * stepTicks, key: 67, length: stepTicks }])
+      expect(notesByName(doc)).toEqual([{ track: 'Kick', tick: 6 * stepTicks, key: 67, length: stepTicks }])
       button('Undo').click()
       yield* drawn()
-      expect(notesByName(doc)).toEqual([{ channel: 'Kick', tick: 6 * stepTicks, key: 67, length: 2 * stepTicks }])
+      expect(notesByName(doc)).toEqual([{ track: 'Kick', tick: 6 * stepTicks, key: 67, length: 2 * stepTicks }])
     })
   ))
 
@@ -2863,31 +2312,26 @@ test('a note dragged in the piano roll stays under the pointer as the wheel scro
     Effect.gen(function* () {
       noteElsewhere(doc, 'Kick', 0, 100)
       yield* drawn()
-      yield* pressWindowButton(target, 'Piano roll')
+      yield* openKickClip(target)
       const { roll, at } = yield* rollIn(target)
       at('pointerdown', 0, 100)
       roll.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY: 2 * rowHeight }))
       yield* drawn()
       at('pointerup', 0, 100, { buttons: 0 })
       yield* drawn()
-      expect(notesByName(doc)).toEqual([{ channel: 'Kick', tick: 0, key: 98, length: stepTicks }])
+      expect(notesByName(doc)).toEqual([{ track: 'Kick', tick: 0, key: 98, length: stepTicks }])
     })
   ))
 
 /** A bar of the piano roll, in pixels. */
 const rollBar = barSteps * stepWidth
 
-/**
- * The page's frames heard so many bars into a loop of sixteen, of a pattern alone unless of the arrangement, or none
- * heard, as stopped; a few frames on.
- */
-const heardAt = (frame: { current: Frame | undefined }, bars: Option.Option<number>, arrangement = false) => {
+/** The page's frames heard so many bars into a loop of sixteen of the arrangement, or none heard, as stopped; a few frames on. */
+const heardAt = (frame: { current: Frame | undefined }, bars: Option.Option<number>) => {
   frame.current = {
     engine: 1,
     telemetry: undefined,
-    heard: Option.getOrUndefined(
-      Option.map(bars, (bars) => ({ tick: bars * barTicks, loop: 16 * barTicks, arrangement }))
-    ),
+    heard: Option.getOrUndefined(Option.map(bars, (bars) => ({ tick: bars * barTicks, loop: 16 * barTicks }))),
     stats: undefined
   }
   return drawn(50)
@@ -2899,7 +2343,7 @@ test("the piano roll scrolls across with a swipe and with Shift and the wheel, u
       // Eight bars long, in a roll four bars wide: as far as the ninth bar, five bars across.
       noteElsewhere(doc, 'Kick', 8 * barSteps - 1, 40)
       yield* drawn()
-      yield* pressWindowButton(target, 'Piano roll')
+      yield* openKickClip(target)
       const { click, at, wheel } = yield* rollIn(target)
       /** The note the click put on the key. */
       const onKey = (key: number) => notesByName(doc).find((note) => note.key === key)
@@ -2908,7 +2352,7 @@ test("the piano roll scrolls across with a swipe and with Shift and the wheel, u
       yield* drawn()
       click(0, 60)
       yield* drawn()
-      expect(onKey(60)).toEqual({ channel: 'Kick', tick: 2 * barTicks, key: 60, length: stepTicks })
+      expect(onKey(60)).toEqual({ track: 'Kick', tick: 2 * barTicks, key: 60, length: stepTicks })
       // A swipe sideways, back a bar; in lines, a step each.
       wheel({ deltaX: -rollBar })
       yield* drawn()
@@ -2916,18 +2360,18 @@ test("the piano roll scrolls across with a swipe and with Shift and the wheel, u
       yield* drawn()
       click(0, 62)
       yield* drawn()
-      expect(onKey(62)).toEqual({ channel: 'Kick', tick: barTicks + 3 * stepTicks, key: 62, length: stepTicks })
+      expect(onKey(62)).toEqual({ track: 'Kick', tick: barTicks + 3 * stepTicks, key: 62, length: stepTicks })
       wheel({ deltaX: 10 ** 6 })
       yield* drawn()
       click(0, 64)
       yield* drawn()
-      expect(onKey(64)).toEqual({ channel: 'Kick', tick: 5 * barTicks, key: 64, length: stepTicks })
+      expect(onKey(64)).toEqual({ track: 'Kick', tick: 5 * barTicks, key: 64, length: stepTicks })
       // With Ctrl, as a trackpad's pinch comes: nowhere, and not the page's zoom.
       expect(wheel({ ctrlKey: true, deltaX: -rollBar, deltaY: 5 * rowHeight })).toBe(false)
       yield* drawn()
       click(0, 65)
       yield* drawn()
-      expect(onKey(65)).toEqual({ channel: 'Kick', tick: 5 * barTicks, key: 65, length: stepTicks })
+      expect(onKey(65)).toEqual({ track: 'Kick', tick: 5 * barTicks, key: 65, length: stepTicks })
       // A note held as the bars go by stays under the pointer.
       wheel({ deltaX: -4 * rollBar })
       yield* drawn()
@@ -2936,34 +2380,34 @@ test("the piano roll scrolls across with a swipe and with Shift and the wheel, u
       yield* drawn()
       at('pointerup', 0, 67, { buttons: 0 })
       yield* drawn()
-      expect(onKey(67)).toEqual({ channel: 'Kick', tick: 2 * barTicks, key: 67, length: stepTicks })
+      expect(onKey(67)).toEqual({ track: 'Kick', tick: 2 * barTicks, key: 67, length: stepTicks })
       // Shorter, as far as it goes, the roll comes back to the bar after the end, and stays there as it grows again.
       wheel({ deltaX: 10 ** 6 })
       yield* drawn()
       eraseNotes(
         doc,
         elsewhere,
-        patternId(doc),
-        readProject(doc)
-          .value.patterns[0].notes.filter(({ tick }) => tick > 2 * barTicks)
+        clipOn(doc, 'Kick').id,
+        kickNotes(doc)
+          .filter(({ tick }) => tick > 2 * barTicks)
           .map(({ id }) => id)
       )
       yield* drawn()
       click(0, 69)
       yield* drawn()
-      expect(onKey(69)).toEqual({ channel: 'Kick', tick: 0, key: 69, length: stepTicks })
+      expect(onKey(69)).toEqual({ track: 'Kick', tick: 0, key: 69, length: stepTicks })
       noteElsewhere(doc, 'Kick', 8 * barSteps - 1, 40)
       yield* drawn()
       click(1, 70)
       yield* drawn()
-      expect(onKey(70)).toEqual({ channel: 'Kick', tick: stepTicks, key: 70, length: stepTicks })
+      expect(onKey(70)).toEqual({ track: 'Kick', tick: stepTicks, key: 70, length: stepTicks })
       // A note held as the wheel turns past the end goes no further than the roll does.
       at('pointerdown', 0, 71)
       wheel({ deltaX: 10 ** 6 })
       yield* drawn()
       at('pointerup', 0, 71, { buttons: 0 })
       yield* drawn()
-      expect(onKey(71)).toEqual({ channel: 'Kick', tick: 5 * barTicks, key: 71, length: stepTicks })
+      expect(onKey(71)).toEqual({ track: 'Kick', tick: 5 * barTicks, key: 71, length: stepTicks })
     })
   ))
 
@@ -2977,7 +2421,7 @@ test('the piano roll follows the playhead to its bar as it starts to be heard an
       const tickOf = (key: number) => notesByName(doc).find((note) => note.key === key)?.tick
       // Opened while it plays: on the playhead's bar.
       yield* heardAt(frame, Option.some(2.5))
-      yield* pressWindowButton(target, 'Piano roll')
+      yield* openKickClip(target)
       const { click, at, wheel } = yield* rollIn(target)
       yield* drawn(50)
       click(0, 60)
@@ -3076,7 +2520,7 @@ test('the piano roll come forward from behind a tab while it plays goes to the p
     Effect.gen(function* () {
       noteElsewhere(doc, 'Kick', 16 * barSteps - 1, 40)
       yield* drawn()
-      yield* pressWindowButton(target, 'Piano roll')
+      yield* openKickClip(target)
       const { click } = yield* rollIn(target)
       yield* heardAt(frame, Option.some(0.5))
       rollBehindTab.now = true
@@ -3099,7 +2543,7 @@ test('the piano roll come forward from behind a tab while it plays goes to the p
 /** The note's velocity, as another client sets it: a note changes as a whole. */
 const setVelocity = (doc: Y.Doc, id: string, velocity: number) =>
   doc.transact(() => {
-    const notes = doc.getMap<object>(`notes/${patternId(doc)}`)
+    const notes = doc.getMap<object>(`notes/${clipOn(doc, 'Kick').pattern}`)
     notes.set(id, { ...notes.get(id), vel: velocity })
   })
 
@@ -3108,24 +2552,24 @@ test('a press on a key of the piano roll wakes the sound and plays it while held
   return page(
     ({ doc, target, auditions }) =>
       Effect.gen(function* () {
-        yield* pressWindowButton(target, 'Piano roll')
+        yield* openKickClip(target)
         const { at, atPoint } = yield* rollIn(target)
-        const kick = channelId(doc, 'Kick')
-        const played = () => auditions().map(({ channel, key, velocity }) => ({ channel, key, velocity }))
+        const kick = clipOn(doc, 'Kick').track
+        const played = () => auditions().map(({ track, key, velocity }) => ({ track, key, velocity }))
         // Left of the first step: on the keyboard.
         expect(at('pointerdown', -1, 60)).toBe(false)
         yield* drawn()
-        expect(played()).toEqual([{ channel: kick, key: 60, velocity: 1 }])
+        expect(played()).toEqual([{ track: kick, key: 60, velocity: 1 }])
         expect(woken.count).toBe(1)
         const [first] = auditions()
         at('pointermove', -1, 62, { button: -1 })
         yield* drawn()
-        expect(played()).toEqual([{ channel: kick, key: 62, velocity: 1 }])
+        expect(played()).toEqual([{ track: kick, key: 62, velocity: 1 }])
         expect(auditions()[0].press).not.toBe(first.press)
         // Past the keyboard, the row's key; nothing put.
         at('pointermove', 4, 64, { button: -1 })
         yield* drawn()
-        expect(played()).toEqual([{ channel: kick, key: 64, velocity: 1 }])
+        expect(played()).toEqual([{ track: kick, key: 64, velocity: 1 }])
         at('pointerup', 4, 64, { buttons: 0 })
         yield* drawn()
         expect(auditions()).toEqual([])
@@ -3141,20 +2585,20 @@ test('a press on a key of the piano roll wakes the sound and plays it while held
         const beside = (part: number) => ({ x: keysWidth - 4, y: yOf(view, 61) + part * rowHeight })
         atPoint('pointerdown', beside(0.25))
         yield* drawn()
-        expect(played()).toEqual([{ channel: kick, key: 62, velocity: 1 }])
+        expect(played()).toEqual([{ track: kick, key: 62, velocity: 1 }])
         atPoint('pointermove', beside(0.75))
         yield* drawn()
-        expect(played()).toEqual([{ channel: kick, key: 60, velocity: 1 }])
+        expect(played()).toEqual([{ track: kick, key: 60, velocity: 1 }])
         // A press again on the key, its release unheard: played anew.
         const [held] = auditions()
         atPoint('pointerdown', beside(0.75))
         yield* drawn()
-        expect(played()).toEqual([{ channel: kick, key: 60, velocity: 1 }])
+        expect(played()).toEqual([{ track: kick, key: 60, velocity: 1 }])
         expect(auditions()[0].press).not.toBe(held.press)
         // Down past the roll's lowest key in sight: no lower than it.
         atPoint('pointermove', { x: 4, y: rollSize.clientHeight + 50 * rowHeight })
         yield* drawn()
-        expect(played()).toEqual([{ channel: kick, key: 127 - 119, velocity: 1 }])
+        expect(played()).toEqual([{ track: kick, key: 127 - 119, velocity: 1 }])
         atPoint('pointerup', { x: 4, y: rollSize.clientHeight }, 0)
         yield* drawn()
         expect(auditions()).toEqual([])
@@ -3167,13 +2611,31 @@ test('a press on a key of the piano roll wakes the sound and plays it while held
   )
 })
 
+test('a key held in the piano roll sounds on the track its clip is moved to meanwhile', () =>
+  page(({ doc, target, auditions }) =>
+    Effect.gen(function* () {
+      yield* openKickClip(target)
+      const { at } = yield* rollIn(target)
+      const { id, tick } = clipOn(doc, 'Kick')
+      const [, snare] = readProject(doc).value.tracks
+      at('pointerdown', -1, 60)
+      yield* drawn()
+      moveClip(doc, elsewhere, id, { track: snare.id, tick })
+      yield* drawn()
+      expect(auditions().map(({ track, key }) => ({ track, key }))).toEqual([{ track: snare.id, key: 60 }])
+      at('pointerup', -1, 60, { buttons: 0 })
+      yield* drawn()
+      expect(auditions()).toEqual([])
+    })
+  ))
+
 test('a note held in the piano roll plays where it is, as loud as it is, anew on another key only; erasing plays nothing', () =>
   page(({ doc, target, auditions }) =>
     Effect.gen(function* () {
       noteElsewhere(doc, 'Kick', 8, 67)
       setVelocity(doc, readProject(doc).value.patterns[0].notes[0].id, 0.5)
       yield* drawn()
-      yield* pressWindowButton(target, 'Piano roll')
+      yield* openKickClip(target)
       const { at } = yield* rollIn(target)
       const played = () => auditions().map(({ key, velocity }) => ({ key, velocity }))
       // One put plays from the press, as loud as a step's.
@@ -3208,7 +2670,7 @@ test('a note held in the piano roll plays where it is, as loud as it is, anew on
 test('a key held in the piano roll is let go of as the roll closes', () =>
   page(({ target, auditions }) =>
     Effect.gen(function* () {
-      yield* pressWindowButton(target, 'Piano roll')
+      yield* openKickClip(target)
       const { at } = yield* rollIn(target)
       at('pointerdown', -1, 60)
       yield* drawn()
@@ -3224,7 +2686,7 @@ test('a note dragged back out of the last bar, the roll scrolled to the end, sta
       // Eight bars long, in a roll four bars wide scrolled as far as it goes: bars six to nine.
       noteElsewhere(doc, 'Kick', 8 * barSteps - 1, 40)
       yield* drawn()
-      yield* pressWindowButton(target, 'Piano roll')
+      yield* openKickClip(target)
       const { at, click, wheel } = yield* rollIn(target)
       wheel({ deltaX: 10 ** 6 })
       yield* drawn()
@@ -3236,7 +2698,7 @@ test('a note dragged back out of the last bar, the roll scrolled to the end, sta
       at('pointerup', 20, 40, { buttons: 0 })
       yield* drawn()
       expect(notesByName(doc)).toEqual([
-        { channel: 'Kick', tick: (5 * barSteps + 20) * stepTicks, key: 40, length: stepTicks }
+        { track: 'Kick', tick: (5 * barSteps + 20) * stepTicks, key: 40, length: stepTicks }
       ])
       // Let go, the pattern shorter takes the roll back to the bar after its end.
       click(0, 60)
@@ -3250,7 +2712,7 @@ test('a press in the piano roll is its own: no floating window takes it for a dr
     Effect.gen(function* () {
       noteElsewhere(doc, 'Kick', 0, 60)
       yield* drawn()
-      yield* pressWindowButton(target, 'Piano roll')
+      yield* openKickClip(target)
       const { at } = yield* rollIn(target)
       expect(at('pointerdown', 0, 60)).toBe(false)
       at('pointerup', 0, 60, { buttons: 0 })
@@ -3266,22 +2728,22 @@ test('a drag in the piano roll writes only what it changes: a length or a place 
     Effect.gen(function* () {
       noteElsewhere(doc, 'Kick', 0, 60)
       yield* drawn()
-      yield* pressWindowButton(target, 'Piano roll')
+      yield* openKickClip(target)
       const { at, drag } = yield* rollIn(target)
       const [{ id }] = readProject(doc).value.patterns[0].notes
       at('pointerdown', 0, 60)
-      stretchNote(doc, elsewhere, patternId(doc), id, 4 * stepTicks)
+      stretchNote(doc, elsewhere, clipOn(doc, 'Kick').id, id, 4 * stepTicks)
       at('pointermove', 2, 62, { button: -1 })
       at('pointerup', 2, 62, { buttons: 0 })
       yield* drawn()
-      expect(notesByName(doc)).toEqual([{ channel: 'Kick', tick: 2 * stepTicks, key: 62, length: 4 * stepTicks }])
+      expect(notesByName(doc)).toEqual([{ track: 'Kick', tick: 2 * stepTicks, key: 62, length: 4 * stepTicks }])
       // By its right edge.
       at('pointerdown', 5.4, 62)
-      moveNote(doc, elsewhere, patternId(doc), id, { tick: Tick(8 * stepTicks), key: MidiKey(67) })
+      moveNote(doc, elsewhere, clipOn(doc, 'Kick').id, id, { tick: Tick(8 * stepTicks), key: MidiKey(67) })
       at('pointermove', 6.4, 62, { button: -1 })
       at('pointerup', 6.4, 62, { buttons: 0 })
       yield* drawn()
-      expect(notesByName(doc)).toEqual([{ channel: 'Kick', tick: 8 * stepTicks, key: 67, length: 5 * stepTicks }])
+      expect(notesByName(doc)).toEqual([{ track: 'Kick', tick: 8 * stepTicks, key: 67, length: 5 * stepTicks }])
       // A press alone writes nothing, though the note is two of different lengths, put by two tabs at once.
       const apart = new Y.Doc()
       Y.applyUpdate(apart, Y.encodeStateAsUpdate(doc))
@@ -3300,20 +2762,20 @@ test('a press in the piano roll lets go of a drag whose release went unheard; on
     Effect.gen(function* () {
       noteElsewhere(doc, 'Kick', 0, 60)
       yield* drawn()
-      yield* pressWindowButton(target, 'Piano roll')
+      yield* openKickClip(target)
       const { at } = yield* rollIn(target)
       at('pointerdown', 0, 60)
       at('pointermove', 2, 60, { button: -1 })
       at('pointerdown', 6, 64, { pointerId: 2 })
       at('pointercancel', 6, 64, { pointerId: 2, buttons: 0 })
       yield* drawn()
-      expect(notesByName(doc)).toEqual([{ channel: 'Kick', tick: 2 * stepTicks, key: 60, length: stepTicks }])
+      expect(notesByName(doc)).toEqual([{ track: 'Kick', tick: 2 * stepTicks, key: 60, length: stepTicks }])
       expect(button('Undo').disabled).toBe(false)
       at('pointerdown', 2, 60)
       at('pointermove', 5, 60, { button: -1 })
       at('pointercancel', 5, 60, { buttons: 0 })
       yield* drawn()
-      expect(notesByName(doc)).toEqual([{ channel: 'Kick', tick: 2 * stepTicks, key: 60, length: stepTicks }])
+      expect(notesByName(doc)).toEqual([{ track: 'Kick', tick: 2 * stepTicks, key: 60, length: stepTicks }])
       expect(button('Undo').disabled).toBe(false)
     })
   ))
@@ -3324,7 +2786,7 @@ test('the cursor over the piano roll follows the notes under a still pointer, an
       noteElsewhere(doc, 'Kick', 0, 60)
       noteElsewhere(doc, 'Kick', 4, 60)
       yield* drawn()
-      yield* pressWindowButton(target, 'Piano roll')
+      yield* openKickClip(target)
       const { roll, at } = yield* rollIn(target)
       at('pointermove', 0, 60, { button: -1, buttons: 0 })
       yield* drawn()
@@ -3332,9 +2794,9 @@ test('the cursor over the piano roll follows the notes under a still pointer, an
       eraseNotes(
         doc,
         elsewhere,
-        patternId(doc),
-        readProject(doc)
-          .value.patterns[0].notes.filter(({ tick }) => tick === 0)
+        clipOn(doc, 'Kick').id,
+        kickNotes(doc)
+          .filter(({ tick }) => tick === 0)
           .map(({ id }) => id)
       )
       yield* drawn()
@@ -3352,7 +2814,7 @@ test("a right click's menu, coming after its release as on Windows, erases nothi
       noteElsewhere(doc, 'Kick', 0, 60, 4)
       noteElsewhere(doc, 'Kick', 1, 60)
       yield* drawn()
-      yield* pressWindowButton(target, 'Piano roll')
+      yield* openKickClip(target)
       const { at } = yield* rollIn(target)
       at('pointerdown', 1, 60, { button: 2, buttons: 2 })
       at('pointerup', 1, 60, { button: 2, buttons: 0 })
@@ -3367,21 +2829,21 @@ test('a drag in the piano roll lets go where the page heard no release, and once
     Effect.gen(function* () {
       noteElsewhere(doc, 'Kick', 0, 60)
       yield* drawn()
-      yield* pressWindowButton(target, 'Piano roll')
+      yield* openKickClip(target)
       const { at } = yield* rollIn(target)
       at('pointerdown', 0, 60)
       at('pointermove', 3, 60, { button: -1 })
       at('pointermove', 5, 60, { button: -1, buttons: 0 })
       yield* drawn()
-      expect(notesByName(doc)).toEqual([{ channel: 'Kick', tick: 3 * stepTicks, key: 60, length: stepTicks }])
+      expect(notesByName(doc)).toEqual([{ track: 'Kick', tick: 3 * stepTicks, key: 60, length: stepTicks }])
       expect(button('Undo').disabled).toBe(false)
       at('pointerdown', 3, 60)
       at('pointermove', 6, 60, { button: -1 })
       eraseNotes(
         doc,
         elsewhere,
-        patternId(doc),
-        readProject(doc).value.patterns[0].notes.map(({ id }) => id)
+        clipOn(doc, 'Kick').id,
+        kickNotes(doc).map(({ id }) => id)
       )
       yield* drawn()
       expect(updatesDuring(doc, () => at('pointerup', 6, 60, { buttons: 0 }))).toBe(0)
@@ -3390,49 +2852,45 @@ test('a drag in the piano roll lets go where the page heard no release, and once
       yield* drawn()
       at('pointerdown', 0, 60)
       at('pointermove', 2, 60, { button: -1 })
-      deleteChannel(doc, elsewhere, channelId(doc, 'Kick'))
+      deleteTrack(doc, elsewhere, clipOn(doc, 'Kick').track)
       yield* drawn()
-      expect(subOf(target, 'Piano roll')).toBe('Snare')
+      expect(subOf(target, 'Piano roll')).toBe('No clip')
       // The buttons are drawn again once the roll that went has let go.
       yield* drawn()
       expect(button('Undo').disabled).toBe(false)
     })
   ))
 
-test('the piano roll turns to another channel when the one it shows is deleted, and keeps it when that one comes back', () =>
-  page(({ doc, grid, target }) =>
+test('the piano roll shows no clip once its clip is erased, and that one again as an undo brings it back', () =>
+  page(({ doc, target }) =>
     Effect.gen(function* () {
-      noteElsewhere(doc, 'Snare', 1, 64)
-      yield* drawn()
-      // None chosen: the first with notes.
-      yield* pressWindowButton(target, 'Piano roll')
-      expect(subOf(target, 'Piano roll')).toBe('Snare')
-      grid.querySelector<HTMLButtonElement>('[aria-label="Snare: notes"]')?.click()
-      yield* drawn(50)
-      const snare = channelId(doc, 'Snare')
-      deleteChannel(doc, elsewhere, snare)
-      yield* drawn(50)
+      noteElsewhere(doc, 'Kick', 1, 64)
+      yield* openKickClip(target)
       expect(subOf(target, 'Piano roll')).toBe('Kick')
-      // Back, as another client's undo brings it.
-      Option.map(
-        Option.liftPredicate(doc.getMap('channels').get(snare), (found) => found instanceof Y.Map),
-        (found) => doc.transact(() => found.set('deleted', false), elsewhere)
+      expect(target.querySelector('.roll')).not.toBeNull()
+      const clip = clipOn(doc, 'Kick').id
+      const map = Option.getOrThrow(
+        Option.liftPredicate(doc.getMap('clips').get(clip), (found): found is Y.Map<unknown> => found instanceof Y.Map)
       )
+      doc.transact(() => map.set('deleted', true), elsewhere)
+      yield* drawn(50)
+      expect(subOf(target, 'Piano roll')).toBe('No clip')
+      expect(target.querySelector('.roll')).toBeNull()
+      // Back, as another client's undo brings it.
+      doc.transact(() => map.set('deleted', false), elsewhere)
       yield* drawn(50)
       expect(subOf(target, 'Piano roll')).toBe('Kick')
+      expect(target.querySelector('.roll')).not.toBeNull()
     })
   ))
 
-test('the layout keeps the channel chosen for the piano roll: opened again, it shows that one', () => {
+test('the layout keeps the clip open in the piano roll: opened again, it shows that one', () => {
   const views = memoryViews()
   const doc = projectDoc()
   return page(
-    ({ grid }) =>
+    ({ target }) =>
       Effect.gen(function* () {
-        noteElsewhere(doc, 'Snare', 1, 64)
-        noteElsewhere(doc, 'Kick', 1, 64)
-        yield* drawn()
-        grid.querySelector<HTMLButtonElement>('[aria-label="Snare: notes"]')?.click()
+        yield* openKickClip(target)
         yield* saved
       }),
     {},
@@ -3442,8 +2900,9 @@ test('the layout keeps the channel chosen for the piano roll: opened again, it s
     page(
       ({ target }) =>
         Effect.sync(() => {
-          expect(windowsShown(target)).toEqual(['Channels', 'Arrangement', 'Mixer', 'Piano roll'])
-          expect(subOf(target, 'Piano roll')).toBe('Snare')
+          expect(windowsShown(target)).toEqual(['Arrangement', 'Piano roll'])
+          expect(subOf(target, 'Piano roll')).toBe('Kick')
+          expect(target.querySelector('.roll')).not.toBeNull()
         }),
       {},
       {},
@@ -3452,31 +2911,22 @@ test('the layout keeps the channel chosen for the piano roll: opened again, it s
   )
 })
 
-test('the piano roll opened by its button stays on the channel it shows as other channels get notes, and after a reload', () => {
-  const views = memoryViews()
-  const doc = projectDoc()
-  return page(
-    ({ target }) =>
-      Effect.gen(function* () {
-        yield* pressWindowButton(target, 'Piano roll')
-        expect(subOf(target, 'Piano roll')).toBe('Kick')
-        noteElsewhere(doc, 'Snare', 1, 64)
-        yield* drawn(50)
-        expect(subOf(target, 'Piano roll')).toBe('Kick')
-        yield* saved
-      }),
-    {},
-    {},
-    { views, doc }
-  ).then(() =>
-    page(({ target }) => Effect.sync(() => expect(subOf(target, 'Piano roll')).toBe('Kick')), {}, {}, { views, doc })
-  )
-})
+test('the piano roll opened by its button shows no clip until a double click on one opens it there', () =>
+  page(({ target }) =>
+    Effect.gen(function* () {
+      yield* pressWindowButton(target, 'Piano roll')
+      expect(subOf(target, 'Piano roll')).toBe('No clip')
+      expect(target.querySelector('.roll')).toBeNull()
+      yield* openKickClip(target)
+      expect(subOf(target, 'Piano roll')).toBe('Kick')
+      expect(target.querySelector('.roll')).not.toBeNull()
+    })
+  ))
 
 /** The Arrangement, scrolled to its first track and bar, and presses on it by bar and track's place. */
 const arrangementIn = (target: HTMLElement) => {
-  const arrangement = Option.getOrThrow(Option.fromNullishOr(target.querySelector<HTMLElement>('.arrangement')))
-  const view: ArrangementView = { width: 0, height: 0, top: 0, left: 0 }
+  const arrangement = Option.getOrThrow(Option.fromNullishOr(target.querySelector<HTMLElement>('.arrangement__lanes')))
+  const view: ArrangementView = { width: 0, height: 0, top: 0, left: 0, tracks: 0 }
   /** A press, a move or a release in the middle of the track's row in the bar, with this button. */
   const at = (
     type: string,
@@ -3499,6 +2949,19 @@ const arrangementIn = (target: HTMLElement) => {
   const click = (bar: number, place: number) => {
     at('pointerdown', bar, place)
     at('pointerup', bar, place, { buttons: 0 })
+  }
+  /** Two clicks and the double click after them, as the browser sends them, in the middle of the track's row in the bar. */
+  const doubleClick = (bar: number, place: number) => {
+    click(bar, place)
+    click(bar, place)
+    arrangement.dispatchEvent(
+      new MouseEvent('dblclick', {
+        bubbles: true,
+        cancelable: true,
+        clientX: arrangementXOf(view, (bar + 0.5) * barTicks),
+        clientY: arrangementYOf(view, place) + trackHeight / 2
+      })
+    )
   }
   /** A press, moves to each place after, and a release at the last, with this button. */
   const drag = (button: number, ...places: ReadonlyArray<readonly [bar: number, place: number]>) => {
@@ -3524,69 +2987,79 @@ const arrangementIn = (target: HTMLElement) => {
     Object.defineProperty(event, 'shiftKey', { value: shiftKey })
     return arrangement.dispatchEvent(event)
   }
-  return { at, click, drag, menu, wheel }
+  return { at, click, doubleClick, drag, menu, wheel }
 }
 
-/** The project's clips, by ID, each by its track, its bar and its pattern's name. */
+/** The Kick's clip, from the first bar on the first track, opened in the piano roll by a double click. */
+const openKickClip = (target: HTMLElement) =>
+  Effect.sync(() => arrangementIn(target).doubleClick(0, 0)).pipe(Effect.andThen(drawn(50)))
+
+/** The project's clips, by ID, each by its track's name and its bar. */
 const clipsOf = (doc: Y.Doc) => {
-  const { patterns, clips } = readProject(doc).value
-  return clips.map(({ track, tick, pattern }) => ({
-    track,
-    bar: tick / barTicks,
-    pattern: patterns.find(({ id }) => id === pattern)?.name
-  }))
+  const { tracks, clips } = readProject(doc).value
+  return clips.map(({ track, tick }) => ({ track: tracks.find(({ id }) => id === track)?.name, bar: tick / barTicks }))
 }
 
-/** The current pattern's name, as the Channels window's title shows it. */
-const currentName = (target: HTMLElement) => target.querySelector('.dock-tab__sub')?.textContent
-
-test('a click on the Arrangement puts a clip of the current pattern on the bar; a drag moves it once let go; Cmd+Z takes each back', () =>
-  page(({ doc, target, button }) =>
-    Effect.gen(function* () {
-      const { at, click, drag } = arrangementIn(target)
-      click(1, 0)
-      yield* drawn()
-      expect(clipsOf(doc)).toEqual([{ track: '1', bar: 1, pattern: 'Pattern 1' }])
-      // Held, it is where it was in the document.
-      at('pointerdown', 1, 0)
-      at('pointermove', 3, 2, { button: -1 })
-      yield* drawn()
-      expect(clipsOf(doc)).toEqual([{ track: '1', bar: 1, pattern: 'Pattern 1' }])
-      at('pointerup', 3, 2, { buttons: 0 })
-      yield* drawn()
-      expect(clipsOf(doc)).toEqual([{ track: '3', bar: 3, pattern: 'Pattern 1' }])
-      // Put and moved in one drag, as one step; never before the first bar or above the first track.
-      drag(0, [5, 4], [6, 5], [-3, -2])
-      yield* drawn()
-      expect(
-        clipsOf(doc)
-          .map(({ track, bar }) => [track, bar])
-          .toSorted()
-      ).toEqual([
-        ['1', 0],
-        ['3', 3]
-      ])
-      button('Undo').click()
-      yield* drawn()
-      expect(clipsOf(doc)).toEqual([{ track: '3', bar: 3, pattern: 'Pattern 1' }])
-      button('Undo').click()
-      button('Undo').click()
-      yield* drawn()
-      expect(clipsOf(doc)).toEqual([])
-    })
+test("a double click on a track's row puts a clip of its own there from the bar and opens it; a drag moves it, to another track too; Cmd+Z takes each back", () =>
+  page(
+    ({ doc, target, button }) =>
+      Effect.gen(function* () {
+        const { at, click, doubleClick, drag } = arrangementIn(target)
+        // A click alone puts nothing.
+        click(1, 0)
+        yield* drawn()
+        expect(clipsOf(doc)).toEqual([])
+        doubleClick(1, 0)
+        yield* drawn(50)
+        expect(clipsOf(doc)).toEqual([{ track: 'Kick', bar: 1 }])
+        expect(subOf(target, 'Piano roll')).toBe('Kick')
+        // None under the last track, and none of its own on one there.
+        doubleClick(1, 2)
+        doubleClick(1, 0)
+        yield* drawn(50)
+        expect(clipsOf(doc)).toEqual([{ track: 'Kick', bar: 1 }])
+        // Held, it is where it was in the document.
+        at('pointerdown', 1, 0)
+        at('pointermove', 3, 1, { button: -1 })
+        yield* drawn()
+        expect(clipsOf(doc)).toEqual([{ track: 'Kick', bar: 1 }])
+        at('pointerup', 3, 1, { buttons: 0 })
+        yield* drawn()
+        expect(clipsOf(doc)).toEqual([{ track: 'Snare', bar: 3 }])
+        // Never before the first bar, above the first track or past the last.
+        drag(0, [3, 1], [-3, -2])
+        yield* drawn()
+        expect(clipsOf(doc)).toEqual([{ track: 'Kick', bar: 0 }])
+        drag(0, [0, 0], [0, 9])
+        yield* drawn()
+        expect(clipsOf(doc)).toEqual([{ track: 'Snare', bar: 0 }])
+        button('Undo').click()
+        yield* drawn()
+        expect(clipsOf(doc)).toEqual([{ track: 'Kick', bar: 0 }])
+        button('Undo').click()
+        button('Undo').click()
+        yield* drawn()
+        expect(clipsOf(doc)).toEqual([{ track: 'Kick', bar: 1 }])
+        button('Undo').click()
+        yield* drawn()
+        expect(clipsOf(doc)).toEqual([])
+      }),
+    {},
+    {},
+    { doc: tracksDoc() }
   ))
 
 test("a clip's right edge dragged makes it shorter or longer by bars once let go, a press alone writing nothing; the cursor says so; Cmd+Z takes it back", () =>
   page(({ doc, target, button }) =>
     Effect.gen(function* () {
       const { at, click, drag } = arrangementIn(target)
-      const arrangement = Option.getOrThrow(Option.fromNullishOr(target.querySelector<HTMLElement>('.arrangement')))
+      const arrangement = Option.getOrThrow(
+        Option.fromNullishOr(target.querySelector<HTMLElement>('.arrangement__lanes'))
+      )
       /** Each clip's own length in bars; none while it is as long as its pattern. */
       const ownBars = () =>
         readProject(doc).value.clips.map(({ ownLength }) => Option.map(ownLength, (length) => length / barTicks))
-      // A bar long, as its pattern: 0.45 of a bar on, the press is 3 pixels in from its end, on its edge.
-      click(0, 0)
-      yield* drawn()
+      // The Kick's, a bar long, as its pattern: 0.45 of a bar on, the press is 3 pixels in from its end, on its edge.
       const hover = (bar: number) => at('pointermove', bar, 0, { buttons: 0 })
       hover(0.45)
       yield* drawn()
@@ -3610,7 +3083,7 @@ test("a clip's right edge dragged makes it shorter or longer by bars once let go
       at('pointerup', 2.45, 3, { buttons: 0 })
       yield* drawn()
       expect(ownBars()).toEqual([Option.some(3)])
-      expect(clipsOf(doc)).toEqual([{ track: '1', bar: 0, pattern: 'Pattern 1' }])
+      expect(clipsOf(doc)).toEqual([{ track: 'Kick', bar: 0 }])
       // Shorter, no shorter than a bar.
       drag(0, [2.45, 0], [-5, 0])
       yield* drawn()
@@ -3624,11 +3097,39 @@ test("a clip's right edge dragged makes it shorter or longer by bars once let go
     })
   ))
 
+test("a clip's edge let go writes its length though tracks went meanwhile, its own row with them", () => {
+  const doc = tracksDoc()
+  const [kick, snare] = readProject(doc).value.tracks
+  addClip(doc, elsewhere, { track: snare.id, tick: Tick(0) })
+  return page(
+    ({ target }) =>
+      Effect.gen(function* () {
+        const { at } = arrangementIn(target)
+        // On the Snare's row, the last; the Kick's going takes it up to the first.
+        at('pointerdown', 0.45, 1)
+        at('pointermove', 2.45, 1, { button: -1 })
+        yield* drawn()
+        deleteTrack(doc, elsewhere, kick.id)
+        yield* drawn()
+        at('pointerup', 2.45, 1, { buttons: 0 })
+        yield* drawn()
+        expect(
+          readProject(doc).value.clips.map(({ ownLength }) => Option.map(ownLength, (length) => length / barTicks))
+        ).toEqual([Option.some(3)])
+      }),
+    {},
+    {},
+    { doc }
+  )
+})
+
 test("a clip's left edge dragged starts it later or earlier by bars once let go, its end where it was, from further into its pattern; Cmd+Z takes it back", () =>
   page(({ doc, target, button }) =>
     Effect.gen(function* () {
       const { at, drag } = arrangementIn(target)
-      const arrangement = Option.getOrThrow(Option.fromNullishOr(target.querySelector<HTMLElement>('.arrangement')))
+      const arrangement = Option.getOrThrow(
+        Option.fromNullishOr(target.querySelector<HTMLElement>('.arrangement__lanes'))
+      )
       /** Each clip's start, own length and offset, in bars. */
       const spans = () =>
         readProject(doc).value.clips.map(({ tick, ownLength, offset }) => [
@@ -3636,14 +3137,11 @@ test("a clip's left edge dragged starts it later or earlier by bars once let go,
           Option.getOrUndefined(Option.map(ownLength, (length) => length / barTicks)),
           offset / barTicks
         ])
-      // Bars 2 to 5 of a pattern two bars long, by a note in its second bar: 0.05 of a bar in, the press is 3 pixels in
-      // from its start.
-      const [channel] = readProject(doc).value.channels
-      addNote(doc, elsewhere, patternId(doc), channel.id, { tick: Tick(barTicks), key: MidiKey(60), length: 1 })
-      expect(Option.isSome(addClip(doc, elsewhere, patternId(doc), { track: Id('1'), tick: Tick(2 * barTicks) }))).toBe(
-        true
-      )
-      const [clip] = readProject(doc).value.clips
+      // The Kick's from bar 2 to 5, of a pattern two bars long, by a note in its second bar: 0.05 of a bar in, the press
+      // is 3 pixels in from its start.
+      const clip = clipOn(doc, 'Kick')
+      addNote(doc, elsewhere, clip.id, { tick: Tick(barTicks), key: MidiKey(60), length: 1 })
+      expect(moveClip(doc, elsewhere, clip.id, { track: clip.track, tick: Tick(2 * barTicks) })).toBe(true)
       expect(resizeClip(doc, elsewhere, clip.id, 4 * barTicks)).toBe(true)
       yield* drawn()
       at('pointermove', 1.55, 0, { buttons: 0 })
@@ -3666,154 +3164,210 @@ test("a clip's left edge dragged starts it later or earlier by bars once let go,
     })
   ))
 
-test('a press on a clip makes its pattern current, as the next click puts', () =>
-  page(({ doc, target, button }) =>
+test('a double click on a clip opens it in the piano roll, and puts no clip; one on the heads puts none', () =>
+  page(({ doc, grid, target }) =>
     Effect.gen(function* () {
-      expect(Option.isSome(addClip(doc, elsewhere, patternId(doc), { track: Id('2'), tick: Tick(0) }))).toBe(true)
-      button('Add a pattern').click()
+      const { doubleClick } = arrangementIn(target)
+      doubleClick(0, 0)
+      yield* drawn(50)
+      expect(clipsOf(doc)).toEqual([{ track: 'Kick', bar: 0 }])
+      expect(windowsShown(target)).toEqual(['Arrangement', 'Piano roll'])
+      expect(subOf(target, 'Piano roll')).toBe('Kick')
+      grid.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true, clientX: 10, clientY: 30 }))
       yield* drawn()
-      expect(currentName(target)).toBe('Pattern 2')
-      const { click } = arrangementIn(target)
-      click(0, 1)
-      yield* drawn()
-      expect(currentName(target)).toBe('Pattern 1')
-      click(2, 1)
-      yield* drawn()
-      expect(clipsOf(doc)).toContainEqual({ track: '2', bar: 2, pattern: 'Pattern 1' })
-      expect(clipsOf(doc)).toHaveLength(2)
+      expect(clipsOf(doc)).toHaveLength(1)
     })
   ))
 
-test('a right click erases a clip, a drag with it all it passes over as one step, and so does Ctrl and a click on a Mac', () =>
-  page(({ doc, target, button }) =>
+/** How high the floating window that holds what the selector finds stands: the one raised last, the highest. */
+const levelOf = (target: HTMLElement, selector: string) =>
+  Number(target.querySelector(selector)?.closest('.dv-resize-container')?.getAttribute('aria-level'))
+
+test('a press in a window brings it in front, as its button says; a clip opened again brings the piano roll back over it', () =>
+  page(({ target }) =>
     Effect.gen(function* () {
-      ;[0, 1, 2, 3].forEach((place) =>
-        addClip(doc, elsewhere, patternId(doc), { track: Id(String(place + 1)), tick: Tick(0) })
-      )
-      const { at, drag, menu } = arrangementIn(target)
-      drag(2, [0, 0], [0, 1], [0, 2])
-      // The menu a right click's release asks for erases no more.
-      menu(0, 3)
+      const { at, doubleClick } = arrangementIn(target)
+      yield* openKickClip(target)
+      expect(windowButton(target, 'Piano roll').dataset.hint).toContain('in front')
+      // A press on the clip, as a drag's: its gesture keeps the focus where it was.
+      at('pointerdown', 0, 0)
+      at('pointerup', 0, 0, { buttons: 0 })
       yield* drawn()
-      expect(clipsOf(doc).map(({ track }) => track)).toEqual(['4'])
-      button('Undo').click()
-      yield* drawn()
-      expect(clipsOf(doc)).toHaveLength(4)
-      // Ctrl and a press is no click yet; the menu it asks for erases.
-      at('pointerdown', 0, 3, { ctrlKey: true })
-      at('pointerup', 0, 3, { buttons: 0, ctrlKey: true })
-      expect(clipsOf(doc)).toHaveLength(4)
-      menu(0, 3)
-      yield* drawn()
-      expect(
-        clipsOf(doc)
-          .map(({ track }) => track)
-          .toSorted()
-      ).toEqual(['1', '2', '3'])
+      expect(windowButton(target, 'Arrangement').dataset.hint).toContain('in front')
+      expect(levelOf(target, '.arrangement')).toBeGreaterThan(levelOf(target, '.roll'))
+      doubleClick(0, 0)
+      yield* drawn(50)
+      expect(windowButton(target, 'Piano roll').dataset.hint).toContain('in front')
+      expect(levelOf(target, '.roll')).toBeGreaterThan(levelOf(target, '.arrangement'))
     })
   ))
 
-test('the wheel goes through the tracks, and Shift and the wheel through the bars, as far as the last clip', () =>
-  page(({ doc, target }) =>
-    Effect.gen(function* () {
-      addClip(doc, elsewhere, patternId(doc), { track: Id('1'), tick: Tick(20 * barTicks) })
-      yield* drawn()
-      const { click, wheel } = arrangementIn(target)
-      // Each in a task of its own, as the browser sends them: the page draws between them.
-      expect(wheel({ deltaY: 3 * trackHeight, deltaMode: 0 })).toBe(false)
-      yield* drawn()
-      expect(wheel({ deltaY: 2, deltaMode: 1 })).toBe(false)
-      yield* drawn()
-      // Past the last clip's end, as far as it, at the names.
-      expect(wheel({ deltaY: 100 * barWidth, deltaMode: 0, shiftKey: true })).toBe(false)
-      yield* drawn()
-      click(0, 0)
-      yield* drawn()
-      expect(clipsOf(doc)).toContainEqual({ track: '6', bar: 21, pattern: 'Pattern 1' })
-    })
-  ))
+test('a right click erases a clip, a drag with it all it passes over as one step, and so does Ctrl and a click on a Mac', () => {
+  const doc = manyTracksDoc(4)
+  readProject(doc).value.tracks.forEach(({ id }) => addClip(doc, elsewhere, { track: id, tick: Tick(0) }))
+  return page(
+    ({ target, button }) =>
+      Effect.gen(function* () {
+        const { at, drag, menu } = arrangementIn(target)
+        drag(2, [0, 0], [0, 1], [0, 2])
+        // The menu a right click's release asks for erases no more.
+        menu(0, 3)
+        yield* drawn()
+        expect(clipsOf(doc).map(({ track }) => track)).toEqual(['Synth 2'])
+        button('Undo').click()
+        yield* drawn()
+        expect(clipsOf(doc)).toHaveLength(4)
+        // Ctrl and a press is no click yet; the menu it asks for erases.
+        at('pointerdown', 0, 3, { ctrlKey: true })
+        at('pointerup', 0, 3, { buttons: 0, ctrlKey: true })
+        expect(clipsOf(doc)).toHaveLength(4)
+        menu(0, 3)
+        yield* drawn()
+        expect(
+          clipsOf(doc)
+            .map(({ track }) => track)
+            .toSorted()
+        ).toEqual(['Kick', 'Snare', 'Synth'])
+      }),
+    {},
+    {},
+    { doc }
+  )
+})
 
-/** The bar the clip on the track starts at: a click at the Arrangement's left puts it on the bar shown there. */
-const barOnTrack = (doc: Y.Doc, track: string) => clipsOf(doc).find((clip) => clip.track === track)?.bar
+test('the wheel goes through the tracks, and Shift and the wheel through the bars, as far as the last clip', () => {
+  const doc = manyTracksDoc(20)
+  addClip(doc, elsewhere, { track: readProject(doc).value.tracks[0].id, tick: Tick(20 * barTicks) })
+  return page(
+    ({ target }) =>
+      Effect.gen(function* () {
+        const { doubleClick, wheel } = arrangementIn(target)
+        // Each in a task of its own, as the browser sends them: the page draws between them.
+        expect(wheel({ deltaY: 3 * trackHeight, deltaMode: 0 })).toBe(false)
+        yield* drawn()
+        expect(wheel({ deltaY: 2, deltaMode: 1 })).toBe(false)
+        yield* drawn()
+        // Past the last clip's end, as far as it, at the heads.
+        expect(wheel({ deltaY: 100 * barWidth, deltaMode: 0, shiftKey: true })).toBe(false)
+        yield* drawn()
+        doubleClick(0, 0)
+        yield* drawn()
+        expect(clipsOf(doc)).toContainEqual({ track: trackAt(doc, 5), bar: 21 })
+      }),
+    {},
+    {},
+    { doc }
+  )
+})
 
-test('in Arrangement mode the Arrangement follows the playhead to its bar as it starts to be heard and as it leaves; not while a pattern alone is heard, nor once scrolled away, nor while a clip is held', () =>
-  page(({ doc, target, frame }) =>
-    Effect.gen(function* () {
-      // Twenty-four bars long, in an Arrangement eight bars wide and ten tracks high: the last clip on a track below.
-      addClip(doc, elsewhere, patternId(doc), { track: Id('20'), tick: Tick(23 * barTicks) })
-      yield* drawn()
-      const { at, click, wheel } = arrangementIn(target)
-      const arrangementAt = (bars: Option.Option<number>) => heardAt(frame, bars, true)
-      /** The bar shown at the Arrangement's left, as a click there puts a clip on the track's place. */
-      const leftOn = (place: number) =>
-        Effect.gen(function* () {
-          click(0, place)
-          yield* drawn()
-          return barOnTrack(doc, String(place + 1))
-        })
-      // In Pattern mode Play plays no arrangement: no playhead to follow.
-      yield* heardAt(frame, Option.some(10.5))
-      expect(yield* leftOn(0)).toBe(0)
-      // Switched to Arrangement while it plays: not while the pattern is still heard, then to the playhead's bar.
-      modeButton(target, 'Arrangement').click()
-      yield* heardAt(frame, Option.some(10.5))
-      expect(yield* leftOn(1)).toBe(0)
-      yield* arrangementAt(Option.some(10.5))
-      expect(yield* leftOn(2)).toBe(10)
-      // Past the right edge of the eight bars shown: to the next.
-      yield* arrangementAt(Option.some(17.9))
-      yield* arrangementAt(Option.some(18))
-      expect(yield* leftOn(3)).toBe(18)
-      // Round from the end of the arrangement to its start.
-      yield* arrangementAt(Option.some(23.5))
-      yield* arrangementAt(Option.some(0.25))
-      expect(yield* leftOn(4)).toBe(0)
-      // Scrolled away from it: the Arrangement stays where it was taken, the playhead leaving or coming in sight.
-      expect(wheel({ deltaY: 8 * barWidth, deltaMode: 0, shiftKey: true })).toBe(false)
-      yield* arrangementAt(Option.some(6.9))
-      yield* arrangementAt(Option.some(7))
-      expect(yield* leftOn(5)).toBe(8)
-      // In sight again, it leaves while a clip is held: no jump under the pointer, nor once let go.
-      yield* arrangementAt(Option.some(15.9))
-      at('pointerdown', 2, 6)
-      yield* arrangementAt(Option.some(16))
-      at('pointerup', 2, 6, { buttons: 0 })
-      yield* drawn()
-      expect(barOnTrack(doc, '7')).toBe(10)
-      yield* arrangementAt(Option.some(16.5))
-      expect(yield* leftOn(7)).toBe(8)
-      // Scrolled by hand in the frame the playhead leaves, as the scroll takes it out: the hand's, the Arrangement
-      // staying.
-      yield* arrangementAt(Option.some(14.45))
-      expect(wheel({ deltaX: -1.5 * barWidth, deltaMode: 0 })).toBe(false)
-      yield* arrangementAt(Option.some(14.6))
-      yield* arrangementAt(Option.some(14.7))
-      expect(yield* leftOn(8)).toBe(7)
-      // Stopped, then played again: to the playhead's bar.
-      yield* arrangementAt(Option.none())
-      yield* arrangementAt(Option.some(3.5))
-      expect(yield* leftOn(9)).toBe(3)
-    })
-  ))
+test('the Arrangement scrolled down stays where tracks taken away took it back, as tracks put later come', () => {
+  const doc = manyTracksDoc(20)
+  return page(
+    ({ target }) =>
+      Effect.gen(function* () {
+        const { doubleClick, wheel } = arrangementIn(target)
+        wheel({ deltaY: 100 * trackHeight, deltaMode: 0 })
+        yield* drawn()
+        // All but three gone, all in sight from the first; as many put again, below them.
+        readProject(doc)
+          .value.tracks.slice(3)
+          .forEach(({ id }) => deleteTrack(doc, elsewhere, id))
+        yield* drawn()
+        Array.from({ length: 17 }).forEach(() => addTrack(doc, elsewhere))
+        yield* drawn()
+        doubleClick(0, 0)
+        yield* drawn()
+        expect(clipsOf(doc)).toEqual([{ track: trackAt(doc, 0), bar: 0 }])
+      }),
+    {},
+    {},
+    { doc }
+  )
+})
+
+/** The bar the clip on the track at the place starts at: a double click at the Arrangement's left puts it on the bar shown there. */
+const barOnTrack = (doc: Y.Doc, place: number) => clipsOf(doc).find((clip) => clip.track === trackAt(doc, place))?.bar
+
+test('the Arrangement follows the playhead to its bar as it starts to be heard and as it leaves; not once scrolled away, nor while a clip is held', () => {
+  // Twenty-four bars long, in an Arrangement eight bars wide and ten tracks high: the last clip on a track below.
+  const doc = manyTracksDoc(20)
+  addClip(doc, elsewhere, { track: readProject(doc).value.tracks[19].id, tick: Tick(23 * barTicks) })
+  return page(
+    ({ target, frame }) =>
+      Effect.gen(function* () {
+        const { at, doubleClick, wheel } = arrangementIn(target)
+        const arrangementAt = (bars: Option.Option<number>) => heardAt(frame, bars)
+        /** The bar shown at the Arrangement's left, as a double click there puts a clip on the track at the place. */
+        const leftOn = (place: number) =>
+          Effect.gen(function* () {
+            doubleClick(0, place)
+            yield* drawn()
+            return barOnTrack(doc, place)
+          })
+        yield* arrangementAt(Option.some(10.5))
+        expect(yield* leftOn(0)).toBe(10)
+        // Past the right edge of the eight bars shown: to the next.
+        yield* arrangementAt(Option.some(17.9))
+        yield* arrangementAt(Option.some(18))
+        expect(yield* leftOn(1)).toBe(18)
+        // Round from the end of the arrangement to its start.
+        yield* arrangementAt(Option.some(23.5))
+        yield* arrangementAt(Option.some(0.25))
+        expect(yield* leftOn(2)).toBe(0)
+        // Scrolled away from it: the Arrangement stays where it was taken, the playhead leaving or coming in sight.
+        expect(wheel({ deltaY: 8 * barWidth, deltaMode: 0, shiftKey: true })).toBe(false)
+        yield* arrangementAt(Option.some(6.9))
+        yield* arrangementAt(Option.some(7))
+        expect(yield* leftOn(3)).toBe(8)
+        // In sight again, it leaves while a clip is held: no jump under the pointer, nor once let go.
+        yield* arrangementAt(Option.some(15.9))
+        at('pointerdown', 0, 3)
+        yield* arrangementAt(Option.some(16))
+        at('pointerup', 0, 3, { buttons: 0 })
+        yield* drawn()
+        expect(barOnTrack(doc, 3)).toBe(8)
+        yield* arrangementAt(Option.some(16.5))
+        expect(yield* leftOn(4)).toBe(8)
+        // Scrolled by hand in the frame the playhead leaves, as the scroll takes it out: the hand's, the Arrangement
+        // staying.
+        yield* arrangementAt(Option.some(14.45))
+        expect(wheel({ deltaX: -1.5 * barWidth, deltaMode: 0 })).toBe(false)
+        yield* arrangementAt(Option.some(14.6))
+        yield* arrangementAt(Option.some(14.7))
+        expect(yield* leftOn(5)).toBe(7)
+        // Stopped, then played again: to the playhead's bar.
+        yield* arrangementAt(Option.none())
+        yield* arrangementAt(Option.some(3.5))
+        expect(yield* leftOn(6)).toBe(3)
+      }),
+    {},
+    {},
+    { doc }
+  )
+})
 
 test('the Arrangement come forward from behind a tab while the arrangement plays goes to the playhead, as one opened would', () => {
   const resized = resizes('arrangement')
-  return page(({ doc, target, frame }) =>
-    Effect.gen(function* () {
-      addClip(doc, elsewhere, patternId(doc), { track: Id('10'), tick: Tick(23 * barTicks) })
-      modeButton(target, 'Arrangement').click()
-      yield* heardAt(frame, Option.some(0.5), true)
-      arrangementBehindTab.now = true
-      resized()
-      yield* heardAt(frame, Option.some(5), true)
-      yield* heardAt(frame, Option.some(12.5), true)
-      arrangementBehindTab.now = false
-      resized()
-      yield* drawn(50)
-      arrangementIn(target).click(0, 0)
-      yield* drawn()
-      expect(barOnTrack(doc, '1')).toBe(12)
-    })
+  const doc = manyTracksDoc(10)
+  addClip(doc, elsewhere, { track: readProject(doc).value.tracks[9].id, tick: Tick(23 * barTicks) })
+  return page(
+    ({ target, frame }) =>
+      Effect.gen(function* () {
+        yield* heardAt(frame, Option.some(0.5))
+        arrangementBehindTab.now = true
+        resized()
+        yield* heardAt(frame, Option.some(5))
+        yield* heardAt(frame, Option.some(12.5))
+        arrangementBehindTab.now = false
+        resized()
+        yield* drawn(50)
+        arrangementIn(target).doubleClick(0, 0)
+        yield* drawn()
+        expect(barOnTrack(doc, 0)).toBe(12)
+      }),
+    {},
+    {},
+    { doc }
   ).finally(() => {
     arrangementBehindTab.now = false
     vi.unstubAllGlobals()
@@ -3850,27 +3404,32 @@ const oneFrame = Effect.callback<void>((resume) => {
 
 test('the Arrangement gone on to the playhead shows it in the frame it goes in, on the bars it went to', () => {
   const canvases = fillsOnCanvases()
-  return page(({ doc, target, frame }) =>
-    Effect.gen(function* () {
-      addClip(doc, elsewhere, patternId(doc), { track: Id('20'), tick: Tick(23 * barTicks) })
-      modeButton(target, 'Arrangement').click()
-      yield* heardAt(frame, Option.some(9.9), true)
-      frame.current = {
-        engine: 1,
-        telemetry: undefined,
-        heard: { tick: 17.25 * barTicks, loop: 16 * barTicks, arrangement: true },
-        stats: undefined
-      }
-      yield* oneFrame
-      // Gone on to the bar it is in: a quarter of the bar in.
-      const line = (x: number, y: number, width: number) =>
-        x === namesWidth + barWidth / 4 && y === arrangementRulerHeight && width === 1
-      expect(
-        Option.exists(canvases.filled(target.querySelectorAll<HTMLCanvasElement>('.arrangement canvas')[3]), (rects) =>
-          rects.some(([x, y, width]) => line(x, y, width))
-        )
-      ).toBe(true)
-    })
+  const doc = projectDoc()
+  addClip(doc, elsewhere, { track: readProject(doc).value.tracks[1].id, tick: Tick(23 * barTicks) })
+  return page(
+    ({ target, frame }) =>
+      Effect.gen(function* () {
+        yield* heardAt(frame, Option.some(9.9))
+        frame.current = {
+          engine: 1,
+          telemetry: undefined,
+          heard: { tick: 17.25 * barTicks, loop: 16 * barTicks },
+          stats: undefined
+        }
+        yield* oneFrame
+        // Gone on to the bar it is in: a quarter of the bar in.
+        const line = (x: number, y: number, width: number) =>
+          x === headsWidth + barWidth / 4 && y === arrangementRulerHeight && width === 1
+        expect(
+          Option.exists(
+            canvases.filled(target.querySelectorAll<HTMLCanvasElement>('.arrangement canvas')[3]),
+            (rects) => rects.some(([x, y, width]) => line(x, y, width))
+          )
+        ).toBe(true)
+      }),
+    {},
+    {},
+    { doc }
   ).finally(canvases.restore)
 })
 
@@ -3878,8 +3437,7 @@ test('a clip longer than its pattern has a line in it where the pattern starts a
   const canvases = fillsOnCanvases()
   return page(({ doc, target }) =>
     Effect.gen(function* () {
-      const clip = Option.getOrThrow(addClip(doc, elsewhere, patternId(doc), { track: Id('1'), tick: Tick(0) }))
-      expect(resizeClip(doc, elsewhere, clip, 3 * barTicks)).toBe(true)
+      expect(resizeClip(doc, elsewhere, clipOn(doc, 'Kick').id, 3 * barTicks)).toBe(true)
       yield* drawn()
       // A bar of the pattern each: the lines at the second and third bars, none at its end.
       const lines = Option.map(
@@ -3889,8 +3447,8 @@ test('a clip longer than its pattern has a line in it where the pattern starts a
       const y = arrangementRulerHeight + 5
       expect(lines).toEqual(
         Option.some([
-          [namesWidth + barWidth, y, trackHeight - 11],
-          [namesWidth + 2 * barWidth, y, trackHeight - 11]
+          [headsWidth + barWidth, y, trackHeight - 11],
+          [headsWidth + 2 * barWidth, y, trackHeight - 11]
         ])
       )
     })
@@ -3903,10 +3461,8 @@ test('a clip started inside its pattern has its lines where the pattern starts a
     Effect.gen(function* () {
       // A pattern two bars long, by a note in its second bar; the clip from bar 2, three bars long, from the pattern's
       // second bar: an offset past the period goes round it, as another client may write it.
-      const pattern = patternId(doc)
-      const [channel] = readProject(doc).value.channels
-      addNote(doc, elsewhere, pattern, channel.id, { tick: Tick(barTicks), key: MidiKey(60), length: 1 })
-      const clip = Option.getOrThrow(addClip(doc, elsewhere, pattern, { track: Id('1'), tick: Tick(0) }))
+      const clip = clipOn(doc, 'Kick').id
+      addNote(doc, elsewhere, clip, { tick: Tick(barTicks), key: MidiKey(60), length: 1 })
       const span = { tick: Tick(2 * barTicks), length: 3 * barTicks, offset: 3 * barTicks }
       expect(trimClip(doc, elsewhere, clip, span)).toBe(true)
       yield* drawn()
@@ -3915,7 +3471,7 @@ test('a clip started inside its pattern has its lines where the pattern starts a
         (rects) => rects.filter(([, , width]) => width === 1).map(([x]) => x)
       )
       // The second round from its second bar, none before it: one line.
-      expect(lines).toEqual(Option.some([namesWidth + 3 * barWidth]))
+      expect(lines).toEqual(Option.some([headsWidth + 3 * barWidth]))
     })
   ).finally(canvases.restore)
 })
@@ -3929,6 +3485,6 @@ test('on a desk with no room for them, as before it is laid out, the windows ope
         box.style.width,
         box.style.height
       ])
-      expect(sizes).toEqual(['Channels', 'Arrangement', 'Mixer'].map((title) => [title, '240px', '160px']))
+      expect(sizes).toEqual([['Arrangement', '240px', '160px']])
     })
   ))

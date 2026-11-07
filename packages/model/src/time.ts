@@ -1,7 +1,7 @@
 import { lastTick, MidiKey, maxVelocity, ticksPerQuarter } from '@escapement/engine-description'
 import type { Note } from './project'
 
-/** A step of the step sequencer is a sixteenth note. */
+/** A step of the piano roll's grid is a sixteenth note. */
 export const stepTicks = ticksPerQuarter / 4
 
 /** The steps in a bar. */
@@ -9,9 +9,6 @@ export const barSteps = 16
 
 /** A bar, in ticks. */
 export const barTicks = barSteps * stepTicks
-
-/** The most bars the step sequencer has, 512 steps: notes past them are the piano roll's. */
-export const stepBars = 32
 
 /** The longest a pattern or an arrangement plays: the whole bars a loop of the engine's ticks holds. */
 const longestLoop = Math.floor(lastTick / barTicks) * barTicks
@@ -37,9 +34,7 @@ export const arrangementEnd = (clips: ReadonlyArray<{ readonly tick: number; rea
 /** Where in a round of its pattern a clip starts: its offset taken round its pattern's length, from 0. */
 export const startInRound = (offset: number, period: number) => ((offset % period) + period) % period
 
-/** What a step switched on plays: middle C, as long as the step, at full strength. */
-export const stepNote = { key: MidiKey(60), length: stepTicks, velocity: maxVelocity }
-
-/** A note a step switched on would make: middle C, a step long, starting on a step of the step sequencer's bars. */
-export const isStepNote = ({ tick, length, key }: Pick<Note, 'tick' | 'length' | 'key'>) =>
-  key === stepNote.key && length === stepNote.length && tick % stepTicks === 0 && tick < stepBars * barTicks
+/**
+ * What a note the document holds without them has, and a new one's strength: middle C, a step long, at full strength.
+ */
+export const defaultNote = { key: MidiKey(60), length: stepTicks, velocity: maxVelocity }

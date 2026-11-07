@@ -88,7 +88,7 @@ body {
   color: var(--t-lo);
 }
 
-:where(.btn, .toggle, .field, .knob, .step, .seq-row__name):focus-visible {
+:where(.btn, .toggle, .field, .knob, .track-head__name):focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: 2px;
 }

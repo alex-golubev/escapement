@@ -72,7 +72,7 @@ const Dial = ({
 
 /**
  * A parameter's knob, its number under it, which a drag turns too, then its name. `owner` names whose parameter it is,
- * such as the channel.
+ * such as the track.
  */
 export const Knob = ({
   owner,
@@ -104,7 +104,7 @@ export const Knob = ({
   )
 }
 
-/** A knob without its name and number, as on a channel's row, where the hint reads them out. */
+/** A knob without its name and number, as in a track's head, where the hint reads them out. */
 export const SmallKnob = ({
   owner,
   param,

@@ -4,7 +4,7 @@ import { Id } from './id'
 /** The mixer's inserts besides the master, built in: none are added. */
 export const insertCount = 500
 
-/** The insert every channel goes into unless it goes into another, and every other insert goes into. */
+/** The insert every track goes into unless it goes into another, and every other insert goes into. */
 export const master = Id('master')
 
 /**

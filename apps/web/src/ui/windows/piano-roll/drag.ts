@@ -1,14 +1,5 @@
 import { highestKey, lastTick, lowestKey, MidiKey, Tick } from '@escapement/engine-description'
-import {
-  type Id,
-  type NewNote,
-  type Note,
-  type NotePlace,
-  stepTicks,
-  withMoved,
-  withPut,
-  withStretched
-} from '@escapement/model'
+import { type NewNote, type Note, stepTicks, withMoved, withPut, withStretched } from '@escapement/model'
 import { Array, Boolean, Data, Number, Option } from 'effect'
 import { onRightEdge } from '../../kit/edge'
 import type { Point } from '../../kit/pointer'
@@ -107,15 +98,10 @@ export const draggedTo = (grab: Grab, view: View, point: Point): NewNote => {
 }
 
 /**
- * The channel's notes as a drag shows them: as the edit let go there would make them, the note held on top. One gone
- * from the document meanwhile shows nowhere.
+ * The clip's notes as a drag shows them: as the edit let go there would make them, the note held on top. One gone from
+ * the document meanwhile shows nowhere.
  */
-export const draggedNotes = (
-  notes: ReadonlyArray<Note>,
-  channel: Id,
-  grab: Grab,
-  place: NewNote
-): ReadonlyArray<NewNote> => {
+export const draggedNotes = (notes: ReadonlyArray<Note>, grab: Grab, place: NewNote): ReadonlyArray<NewNote> => {
   const held = (note: Note, edit: (now: Note) => ReadonlyArray<Note>) =>
     Option.match(
       Array.findFirst(notes, (now) => now.id === note.id),
@@ -124,6 +110,6 @@ export const draggedNotes = (
   return Grab.$match(grab, {
     Move: ({ note }) => held(note, (now) => withMoved(notes, now, place)),
     Stretch: ({ note }) => held(note, (now) => withStretched(notes, now, place.length)),
-    Put: () => withPut<NewNote & NotePlace>(notes, { channel, ...place })
+    Put: () => withPut<NewNote>(notes, place)
   })
 }

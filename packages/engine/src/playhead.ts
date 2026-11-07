@@ -3,7 +3,7 @@ import { Boolean, Option } from 'effect'
 import type { Telemetry } from './telemetry'
 
 /** A read of the board: where the transport was at a frame of the context. */
-export type Snapshot = Pick<Telemetry, 'frame' | 'playing' | 'position' | 'loopTicks' | 'arrangement' | 'tempo'>
+export type Snapshot = Pick<Telemetry, 'frame' | 'playing' | 'position' | 'loopTicks' | 'tempo'>
 
 /** The context's frame heard at `now`, a `performance.now()`; none until the output starts. */
 export const heardFrame = (
@@ -32,11 +32,10 @@ export const keepAudible = (
   return Boolean.match(heard > 0, { onTrue: () => all.slice(heard), onFalse: () => all })
 }
 
-/** Where the transport is heard: the tick, the loop it goes round in, and whether the loop plays the arrangement. */
+/** Where the transport is heard: the tick, and the loop it goes round in. */
 export interface Heard {
   readonly tick: number
   readonly loop: number
-  readonly arrangement: boolean
 }
 
 /**
@@ -50,9 +49,9 @@ export const heardTick = (
 ): Option.Option<Heard> =>
   Option.fromUndefinedOr(snapshots.findLast(({ frame }) => frame <= heardFrame)).pipe(
     Option.filter(({ playing }) => playing),
-    Option.map(({ tempo, position, loopTicks, arrangement, frame }) => {
+    Option.map(({ tempo, position, loopTicks, frame }) => {
       const ticksPerFrame = (tempo * ticksPerQuarter) / (60 * sampleRate)
-      return { tick: (position + (heardFrame - frame) * ticksPerFrame) % loopTicks, loop: loopTicks, arrangement }
+      return { tick: (position + (heardFrame - frame) * ticksPerFrame) % loopTicks, loop: loopTicks }
     })
   )
 

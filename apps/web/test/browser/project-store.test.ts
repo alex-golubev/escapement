@@ -1,6 +1,6 @@
 import 'fake-indexeddb/auto'
 import { describe, it } from '@effect/vitest'
-import { defaultTempo, Sha256 } from '@escapement/engine-description'
+import { defaultTempo } from '@escapement/engine-description'
 import { newId, newWriter, type Project, readProject, readProjectId, setTempo } from '@escapement/model'
 import { Effect, Fiber, Option } from 'effect'
 import { SecureRandom } from 'effect/crypto'
@@ -16,8 +16,6 @@ const by = newWriter('test')
 
 /** The ID a page opens the project with, as its address names it. */
 const id = newId()
-
-const channels = ['Kick', 'Snare', 'Hat', 'Clap'].map((name, i) => ({ name, sound: Sha256(`${i}a`.repeat(32)) }))
 
 /** Bytes no update starts with: Yjs throws on them. */
 const broken = new Uint8Array([1, 2, 3])
@@ -35,14 +33,14 @@ interface Opened {
 /** The project opened and closed again, edited meanwhile. */
 const opened = (name: string, edit: (doc: Y.Doc) => void = () => {}) =>
   Effect.scoped(
-    Effect.map(openProjectStorage(name, by, channels, id), ({ doc, loaded }) => {
+    Effect.map(openProjectStorage(name, by, id), ({ doc, loaded }) => {
       edit(doc)
       return { loaded, project: readProject(doc).value } satisfies Opened
     })
   )
 
 /** Storage of the test's own, with a new project made in it, as by New project. */
-const made = Effect.tap(freshName, (name) => makeProject(name, by, channels, id).pipe(Effect.orDie))
+const made = Effect.tap(freshName, (name) => makeProject(name, by, id).pipe(Effect.orDie))
 
 const request = <A>(pending: IDBRequest<A>) =>
   Effect.callback<A, DOMException | null>((resume) => {
@@ -84,8 +82,6 @@ const projectOf = (updates: ReadonlyArray<Uint8Array>) => {
   return readProject(doc).value
 }
 
-const ids = ({ channels }: Project) => channels.map(({ id }) => id)
-
 const add = IDBObjectStore.prototype.add
 
 // Also if a test failed before y-indexeddb's next write.
@@ -108,7 +104,7 @@ const refuseNextWrite = () => {
 const refusedAfter = (name: string, refuse: (storage: ProjectStorage) => Effect.Effect<void>) =>
   Effect.scoped(
     Effect.gen(function* () {
-      const storage = yield* openProjectStorage(name, by, channels, id)
+      const storage = yield* openProjectStorage(name, by, id)
       setTempo(storage.doc, by, 150)
       yield* refuse(storage)
       const stopped = yield* storage.stopped
@@ -118,16 +114,14 @@ const refusedAfter = (name: string, refuse: (storage: ProjectStorage) => Effect.
   )
 
 describe('project storage', () => {
-  it.effect('a new project is made with the ID given, and opens as saved, with its channels', () =>
+  it.effect('a new project is made with the ID given, and opens as saved, empty', () =>
     Effect.gen(function* () {
       const name = yield* made
       const { loaded, project } = yield* opened(name)
       expect(loaded).toBe('saved')
-      expect(project.channels.map(({ name }) => name)).toEqual(['Kick', 'Snare', 'Hat', 'Clap'])
+      expect(project.tracks).toEqual([])
       expect(project.tempo).toBe(defaultTempo)
-      const ids = yield* Effect.scoped(
-        Effect.map(openProjectStorage(name, by, channels, id), ({ doc }) => readProjectId(doc))
-      )
+      const ids = yield* Effect.scoped(Effect.map(openProjectStorage(name, by, id), ({ doc }) => readProjectId(doc)))
       expect(ids).toEqual(Option.some(id))
     })
   )
@@ -148,9 +142,9 @@ describe('project storage', () => {
     () =>
       Effect.gen(function* () {
         const name = yield* freshName
-        const { doc, loaded } = yield* Effect.scoped(openProjectStorage(name, by, channels, id))
+        const { doc, loaded } = yield* Effect.scoped(openProjectStorage(name, by, id))
         expect(loaded).toBe('missing')
-        expect(readProject(doc).value.channels).toHaveLength(4)
+        expect(readProject(doc).value.tracks).toEqual([])
         expect(Option.isSome(readProjectId(doc))).toBe(true)
         expect(readProjectId(doc)).not.toEqual(Option.some(id))
         // No project was written in its place.
@@ -161,7 +155,7 @@ describe('project storage', () => {
   it.effect('storage that holds another project is missing the one the page opens', () =>
     Effect.gen(function* () {
       const name = yield* freshName
-      yield* makeProject(name, by, channels, newId())
+      yield* makeProject(name, by, newId())
       expect((yield* opened(name)).loaded).toBe('missing')
     })
   )
@@ -176,7 +170,7 @@ describe('project storage', () => {
         written.addEventListener('success', () => this.transaction.abort())
         return written
       }
-      expect(yield* Effect.flip(makeProject(name, by, channels, id))).toBeInstanceOf(NotMade)
+      expect(yield* Effect.flip(makeProject(name, by, id))).toBeInstanceOf(NotMade)
       // y-indexeddb goes on reading in the transaction aborted under it, and loses the error event it rejects with.
       expect(yield* Fiber.join(failed)).toHaveProperty('type', 'error')
       expect((yield* opened(name)).loaded).toBe('missing')
@@ -189,7 +183,7 @@ describe('project storage', () => {
       IDBObjectStore.prototype.add = () => {
         throw new DOMException('', 'InvalidStateError')
       }
-      const making = yield* Effect.forkChild(Effect.flip(makeProject(name, by, channels, id)), {
+      const making = yield* Effect.forkChild(Effect.flip(makeProject(name, by, id)), {
         startImmediately: true
       })
       yield* TestClock.adjust(storageTimeout)
@@ -205,7 +199,7 @@ describe('project storage', () => {
         const first = yield* opened(name)
         yield* withUpdates(name, (updates) => updates.add(broken))
         const failed = yield* unhandledRejection
-        const opening = yield* Effect.forkChild(openProjectStorage(name, by, channels, id), { startImmediately: true })
+        const opening = yield* Effect.forkChild(openProjectStorage(name, by, id), { startImmediately: true })
         expect(yield* Fiber.join(failed)).toBeInstanceOf(Error)
         yield* TestClock.adjust(storageTimeout)
         const { doc, loaded } = yield* Fiber.join(opening)
@@ -214,8 +208,7 @@ describe('project storage', () => {
         expect(second.loaded).toBe('not-loaded')
         expect(Option.isSome(readProjectId(doc))).toBe(true)
         expect(readProjectId(doc)).not.toEqual(Option.some(id))
-        expect(second.project.channels).toHaveLength(4)
-        expect(ids(second.project)).not.toEqual(ids(first.project))
+        expect(second.project.tracks).toEqual([])
         const kept = yield* records(name)
         expect(kept).toContainEqual(broken)
         expect(projectOf(kept)).toEqual(first.project)
@@ -227,7 +220,7 @@ describe('project storage', () => {
       const name = yield* made
       const changes = yield* Effect.scoped(
         Effect.gen(function* () {
-          const here = yield* openProjectStorage(name, by, channels, id)
+          const here = yield* openProjectStorage(name, by, id)
           yield* Effect.promise(() => clearDocument(name))
           expect(yield* here.stopped).toBe('erased-elsewhere')
           const changes: Array<Uint8Array> = []
@@ -264,7 +257,7 @@ describe('project storage', () => {
       expect((yield* opened(name)).project.tempo).toBe(150)
       yield* Effect.scoped(
         Effect.gen(function* () {
-          const { breakSaving, stopped } = yield* openProjectStorage(name, by, channels, id)
+          const { breakSaving, stopped } = yield* openProjectStorage(name, by, id)
           yield* Effect.promise(() => clearDocument(name))
           expect(yield* stopped).toBe('erased-elsewhere')
           yield* breakSaving

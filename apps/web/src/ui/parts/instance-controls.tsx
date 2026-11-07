@@ -30,7 +30,7 @@ export const gridOf = (plugin: Plugin) => ({
 /**
  * A control for each parameter of the plugin an instance plays, drawn from its values: its choices, or a knob. Those of
  * a group stand together after its name, as an oscillator's, and those of none together too: each window lays them out
- * as it has room, a row in a channel's, a column in a mixer strip.
+ * as it has room, a row in a track's, a column in a mixer strip.
  */
 export const InstanceControls = ({
   owner,

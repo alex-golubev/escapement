@@ -41,12 +41,12 @@ export const turnsOf = Effect.fnUntraced(function* (ops: DomainOps, holds: Atom.
   const turning: { active: ReadonlyArray<Turning> } = { active: [] }
   const write = (target: HoldTarget, value: number) =>
     HoldTarget.$match(target, {
-      ChannelParam: ({ channel, param }) => ops.setChannelParam(channel, param, value),
-      ChannelStrip: ({ channel, param }) => ops.setChannelStrip(channel, param, value),
+      TrackParam: ({ track, param }) => ops.setTrackParam(track, param, value),
+      TrackStrip: ({ track, param }) => ops.setTrackStrip(track, param, value),
       SlotParam: ({ slot, param }) => ops.setMasterParam(slot, param, value),
       InsertStrip: ({ insert, param }) => ops.setInsertStrip(insert, param, value),
-      ChannelInsert: ({ channel }) =>
-        Option.exists(insertOfNumber(Math.round(value)), (insert) => ops.setChannelInsert(channel, insert)),
+      TrackInsert: ({ track }) =>
+        Option.exists(insertOfNumber(Math.round(value)), (insert) => ops.setTrackInsert(track, insert)),
       Tempo: () => ops.setTempo(value)
     })
   const releaseTurnOf = (target: HoldTarget) =>

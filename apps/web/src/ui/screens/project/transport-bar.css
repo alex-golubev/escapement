@@ -26,41 +26,6 @@
   font-size: 13px;
 }
 
-/* Two halves of one switch, Pattern and Arrangement. */
-.play-mode {
-  display: flex;
-  gap: 2px;
-}
-
-/* As wide as a name it is likely to show; a longer one is cut short, whole in the hint. */
-.pattern-pick {
-  display: inline-flex;
-  gap: 6px;
-  justify-content: space-between;
-  width: 112px;
-  color: var(--t-hi);
-}
-
-.pattern-pick__name {
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-
-/* In the name's place, as wide. */
-.pattern-pick__field {
-  width: 112px;
-  height: 26px;
-  padding: 0 8px;
-  font-size: 11px;
-}
-
-.pattern-pick svg {
-  flex: none;
-  width: 10px;
-  height: 10px;
-}
-
 /* What is wrong, on the right; nothing while all is well. */
 .status {
   display: flex;

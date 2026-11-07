@@ -30,27 +30,12 @@ export class SetTransport {
     return this.bb!.readUint32(this.bb_pos + 4)
   }
 
-  /**
-   * What the loop plays, the arrangement or a pattern alone, so the page knows what it hears: the engine plays either
-   * the same, and only says it back in its telemetry.
-   */
-  arrangement(): boolean {
-    return !!this.bb!.readInt8(this.bb_pos + 8)
-  }
-
   static sizeOf(): number {
-    return 12
+    return 8
   }
 
-  static createSetTransport(
-    builder: flatbuffers.Builder,
-    playing: boolean,
-    loop_ticks: number,
-    arrangement: boolean
-  ): flatbuffers.Offset {
-    builder.prep(4, 12)
-    builder.pad(3)
-    builder.writeInt8(Number(Boolean(arrangement)))
+  static createSetTransport(builder: flatbuffers.Builder, playing: boolean, loop_ticks: number): flatbuffers.Offset {
+    builder.prep(4, 8)
     builder.writeInt32(loop_ticks)
     builder.pad(3)
     builder.writeInt8(Number(Boolean(playing)))
