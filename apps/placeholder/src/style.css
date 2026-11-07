@@ -1,0 +1,66 @@
+@import "tailwindcss";
+@import "@fontsource-variable/inter";
+@import "@fontsource-variable/jetbrains-mono";
+
+/* Every colour a variable on the page, as the analyser's script reads them too. */
+@theme static {
+  --font-sans: "Inter Variable", -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono: "JetBrains Mono Variable", Menlo, Consolas, monospace;
+
+  --color-studio-base: #0c0d10;
+  --color-studio-panel: #13151a;
+  --color-studio-surface: #181b22;
+  --color-studio-elevated: #1f232c;
+  --color-studio-hover: #262b36;
+  --color-studio-border: #2b303c;
+  --color-studio-text: #c7ccd6;
+  --color-studio-dim: #737a89;
+  --color-studio-bright: #eef1f6;
+  --color-studio-amber: #e59500;
+  --color-studio-red: #dc2626;
+  --color-studio-green: #16a34a;
+  --color-studio-meter-green: #22c55e;
+  --color-studio-meter-yellow: #eab308;
+  --color-studio-meter-red: #ef4444;
+  --color-studio-track-teal: #2b5357;
+  --color-studio-track-indigo: #3b4363;
+  --color-studio-track-rust: #634433;
+  --color-studio-track-olive: #455038;
+}
+
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--color-studio-base);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-studio-hover);
+  border-radius: 2px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #3b4352;
+}
+
+/* A fine grid, as on a device's faceplate. */
+.hardware-grid {
+  background-size: 24px 24px;
+  background-image:
+    linear-gradient(to right, rgb(255 255 255 / 0.02) 1px, transparent 1px),
+    linear-gradient(to bottom, rgb(255 255 255 / 0.02) 1px, transparent 1px);
+}
+
+.knob-cap {
+  background: radial-gradient(circle at 35% 35%, #2a2f3a 0%, #15181f 70%);
+  box-shadow:
+    0 1px 3px rgb(0 0 0 / 0.6),
+    inset 0 1px 0 rgb(255 255 255 / 0.08);
+}
+
+.tactile-btn:active {
+  transform: translateY(1px);
+}

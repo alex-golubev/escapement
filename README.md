@@ -38,6 +38,7 @@ own must too.
 | Path | What it is |
 |---|---|
 | `apps/web` | The web app |
+| `apps/placeholder` | The page escapement.run shows until the app is out |
 | `packages/model` | The project document on Yjs: how it is stored, read and edited, with undo |
 | `packages/compiler` | Turns the project into what the engine plays, sending only what changed |
 | `packages/engine` | Runs the engine in the browser: the build thread, the AudioWorklet and the shared memory between them |
