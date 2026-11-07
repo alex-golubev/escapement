@@ -41,6 +41,11 @@
   },
   "overrides": [
     {
+      // The placeholder's styles are Tailwind's: its at-rules parse only with them on.
+      "includes": ["apps/placeholder/**"],
+      "css": { "parser": { "tailwindDirectives": true } }
+    },
+    {
       "includes": ["packages/engine/src/schema/**", "packages/engine-description/src/catalog/**"],
       "linter": {
         "rules": {

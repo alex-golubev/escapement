@@ -1,0 +1,650 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full bg-studio-base text-studio-text antialiased">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Escapement — A Digital Audio Workstation in the Browser</title>
+    <meta name="description" content="Escapement is a digital audio workstation in the browser, made for several people working in one project at once. In development." />
+    <meta name="color-scheme" content="dark" />
+    <meta name="theme-color" content="#0c0d10" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/src/style.css" />
+</head>
+<body class="min-h-full bg-studio-base text-studio-text font-sans antialiased selection:bg-studio-amber selection:text-black">
+    <svg class="absolute w-0 h-0" aria-hidden="true">
+        <defs>
+            <path id="kick-wave" d="M0 12L0.4 9.9L0.8 5L1.2 3.1L1.6 2.5L2 3.1L2.4 4.7L2.8 6.9L3.2 9.5L3.6 12.1L4 14.5L4.4 16.6L4.8 18.1L5.2 19L5.6 19.3L6 19.1L6.4 18.5L6.8 17.4L7.2 16.1L7.6 14.6L8 13.1L8.4 11.6L8.8 10.3L9.2 9.1L9.6 8.1L10 7.4L10.4 6.9L10.8 6.7L11.2 6.8L11.6 7L12 7.5L12.4 8.1L12.8 8.8L13.2 9.6L13.6 10.4L14 11.3L14.4 12.1L14.8 12.9L15.2 13.6L15.6 14.2L16 14.7L16.4 15L16.8 15.3L17.2 15.4L17.6 15.5L18 15.4L18.4 15.2L18.8 15L19.2 14.6L19.6 14.2L20 13.8L20.4 13.3L20.8 12.9L21.2 12.4L21.6 11.9L22 11.5L22.4 11.1L22.8 10.8L23.2 10.5L23.6 10.2L24 10L24.4 9.9L24.8 9.8L25.2 9.8L25.6 9.9L26 10L26.4 10.1L26.8 10.3L27.2 10.5L27.6 10.8L28 11L28.4 11.3L28.8 11.6L29.2 11.9L29.6 12.1L30 12.4L30.4 12.6L30.8 12.8L31.2 13L31.6 13.1L32 13.2L32.4 13.3L32.8 13.3L33.2 13.3L33.6 13.3L34 13.2L34.4 13.1L34.8 13L35.2 12.9L35.6 12.8L36 12.6L36.4 12.5L36.8 12.3L37.2 12.1L37.6 12L38 11.8L38.4 11.7L38.8 11.6L39.2 11.5L39.6 11.4L40 11.3L40.4 11.3L40.8 11.2L41.2 11.2L41.6 11.2L42 11.2L42.4 11.3L42.8 11.3L43.2 11.4L43.6 11.5L44 11.6L44.4 11.7L44.8 11.8L45.2 11.8L45.6 11.9L46 12L46.4 12.1L46.8 12.2L47.2 12.3L47.6 12.3L48 12.4L48.4 12.4L48.8 12.4L49.2 12.5L49.6 12.5L50 12.5L50.4 9.9L50.8 5L51.2 3.1L51.6 2.5L52 3.1L52.4 4.7L52.8 6.9L53.2 9.5L53.6 12.1L54 14.5L54.4 16.6L54.8 18.1L55.2 19L55.6 19.3L56 19.1L56.4 18.5L56.8 17.4L57.2 16.1L57.6 14.6L58 13.1L58.4 11.6L58.8 10.3L59.2 9.1L59.6 8.1L60 7.4L60.4 6.9L60.8 6.7L61.2 6.8L61.6 7L62 7.5L62.4 8.1L62.8 8.8L63.2 9.6L63.6 10.4L64 11.3L64.4 12.1L64.8 12.9L65.2 13.6L65.6 14.2L66 14.7L66.4 15L66.8 15.3L67.2 15.4L67.6 15.5L68 15.4L68.4 15.2L68.8 15L69.2 14.6L69.6 14.2L70 13.8L70.4 13.3L70.8 12.9L71.2 12.4L71.6 11.9L72 11.5L72.4 11.1L72.8 10.8L73.2 10.5L73.6 10.2L74 10L74.4 9.9L74.8 9.8L75.2 9.8L75.6 9.9L76 10L76.4 10.1L76.8 10.3L77.2 10.5L77.6 10.8L78 11L78.4 11.3L78.8 11.6L79.2 11.9L79.6 12.1L80 12.4L80.4 12.6L80.8 12.8L81.2 13L81.6 13.1L82 13.2L82.4 13.3L82.8 13.3L83.2 13.3L83.6 13.3L84 13.2L84.4 13.1L84.8 13L85.2 12.9L85.6 12.8L86 12.6L86.4 12.5L86.8 12.3L87.2 12.1L87.6 12L88 11.8L88.4 11.7L88.8 11.6L89.2 11.5L89.6 11.4L90 11.3L90.4 11.3L90.8 11.2L91.2 11.2L91.6 11.2L92 11.2L92.4 11.3L92.8 11.3L93.2 11.4L93.6 11.5L94 11.6L94.4 11.7L94.8 11.8L95.2 11.8L95.6 11.9L96 12L96.4 12.1L96.8 12.2L97.2 12.3L97.6 12.3L98 12.4L98.4 12.4L98.8 12.4L99.2 12.5L99.6 12.5L100 12L100.4 9.9L100.8 5L101.2 3.1L101.6 2.5L102 3.1L102.4 4.7L102.8 6.9L103.2 9.5L103.6 12.1L104 14.5L104.4 16.6L104.8 18.1L105.2 19L105.6 19.3L106 19.1L106.4 18.5L106.8 17.4L107.2 16.1L107.6 14.6L108 13.1L108.4 11.6L108.8 10.3L109.2 9.1L109.6 8.1L110 7.4L110.4 6.9L110.8 6.7L111.2 6.8L111.6 7L112 7.5L112.4 8.1L112.8 8.8L113.2 9.6L113.6 10.4L114 11.3L114.4 12.1L114.8 12.9L115.2 13.6L115.6 14.2L116 14.7L116.4 15L116.8 15.3L117.2 15.4L117.6 15.5L118 15.4L118.4 15.2L118.8 15L119.2 14.6L119.6 14.2L120 13.8L120.4 13.3L120.8 12.9L121.2 12.4L121.6 11.9L122 11.5L122.4 11.1L122.8 10.8L123.2 10.5L123.6 10.2L124 10L124.4 9.9L124.8 9.8L125.2 9.8L125.6 9.9L126 10L126.4 10.1L126.8 10.3L127.2 10.5L127.6 10.8L128 11L128.4 11.3L128.8 11.6L129.2 11.9L129.6 12.1L130 12.4L130.4 12.6L130.8 12.8L131.2 13L131.6 13.1L132 13.2L132.4 13.3L132.8 13.3L133.2 13.3L133.6 13.3L134 13.2L134.4 13.1L134.8 13L135.2 12.9L135.6 12.8L136 12.6L136.4 12.5L136.8 12.3L137.2 12.1L137.6 12L138 11.8L138.4 11.7L138.8 11.6L139.2 11.5L139.6 11.4L140 11.3L140.4 11.3L140.8 11.2L141.2 11.2L141.6 11.2L142 11.2L142.4 11.3L142.8 11.3L143.2 11.4L143.6 11.5L144 11.6L144.4 11.7L144.8 11.8L145.2 11.8L145.6 11.9L146 12L146.4 12.1L146.8 12.2L147.2 12.3L147.6 12.3L148 12.4L148.4 12.4L148.8 12.4L149.2 12.5L149.6 12.5L150 12L150.4 9.9L150.8 5L151.2 3.1L151.6 2.5L152 3.1L152.4 4.7L152.8 6.9L153.2 9.5L153.6 12.1L154 14.5L154.4 16.6L154.8 18.1L155.2 19L155.6 19.3L156 19.1L156.4 18.5L156.8 17.4L157.2 16.1L157.6 14.6L158 13.1L158.4 11.6L158.8 10.3L159.2 9.1L159.6 8.1L160 7.4L160.4 6.9L160.8 6.7L161.2 6.8L161.6 7L162 7.5L162.4 8.1L162.8 8.8L163.2 9.6L163.6 10.4L164 11.3L164.4 12.1L164.8 12.9L165.2 13.6L165.6 14.2L166 14.7L166.4 15L166.8 15.3L167.2 15.4L167.6 15.5L168 15.4L168.4 15.2L168.8 15L169.2 14.6L169.6 14.2L170 13.8L170.4 13.3L170.8 12.9L171.2 12.4L171.6 11.9L172 11.5L172.4 11.1L172.8 10.8L173.2 10.5L173.6 10.2L174 10L174.4 9.9L174.8 9.8L175.2 9.8L175.6 9.9L176 10L176.4 10.1L176.8 10.3L177.2 10.5L177.6 10.8L178 11L178.4 11.3L178.8 11.6L179.2 11.9L179.6 12.1L180 12.4L180.4 12.6L180.8 12.8L181.2 13L181.6 13.1L182 13.2L182.4 13.3L182.8 13.3L183.2 13.3L183.6 13.3L184 13.2L184.4 13.1L184.8 13L185.2 12.9L185.6 12.8L186 12.6L186.4 12.5L186.8 12.3L187.2 12.1L187.6 12L188 11.8L188.4 11.7L188.8 11.6L189.2 11.5L189.6 11.4L190 11.3L190.4 11.3L190.8 11.2L191.2 11.2L191.6 11.2L192 11.2L192.4 11.3L192.8 11.3L193.2 11.4L193.6 11.5L194 11.6L194.4 11.7L194.8 11.8L195.2 11.8L195.6 11.9L196 12L196.4 12.1L196.8 12.2L197.2 12.3L197.6 12.3L198 12.4L198.4 12.4L198.8 12.4L199.2 12.5L199.6 12.5L200 12" stroke-width="1.2" vector-effect="non-scaling-stroke" />
+        </defs>
+    </svg>
+
+    <header class="border-b border-studio-border bg-studio-panel/95 sticky top-0 z-50 select-none">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 h-13 py-2.5 flex items-center justify-between">
+            
+            <div class="flex items-center gap-4">
+                <div class="flex items-center gap-2">
+                    <span class="w-3 h-3 rounded-none bg-studio-amber flex-shrink-0"></span>
+                    <span class="font-bold text-base tracking-wider text-studio-bright font-mono">ESCAPEMENT</span>
+                    <span class="text-[11px] font-mono text-studio-dim border-l border-studio-border pl-3 hidden sm:inline-block">DAW / AUDIO-ENGINE</span>
+                </div>
+                <div class="hidden md:flex items-center gap-1.5 px-2 py-0.5 rounded bg-studio-surface border border-studio-border text-[11px] font-mono text-studio-dim">
+                    <span class="text-studio-bright">48.0 kHz</span>
+                    <span class="text-studio-dim">/</span>
+                    <span>128 spls (2.7ms)</span>
+                </div>
+            </div>
+
+            <div class="hidden lg:flex items-center gap-2 text-xs font-mono">
+                <span class="w-2 h-2 rounded-full bg-studio-green"></span>
+                <span class="text-studio-dim">ENGINE:</span>
+                <span class="text-studio-bright">RUST → WASM SIMD</span>
+                <span class="text-studio-dim mx-1">•</span>
+                <span class="text-studio-amber">IN DEVELOPMENT</span>
+            </div>
+
+            <div class="flex items-center gap-3">
+                <a href="https://github.com/alex-golubev/escapement" class="p-1.5 rounded hover:bg-studio-surface text-studio-dim hover:text-studio-bright transition-colors" title="Source on GitHub" aria-label="Source on GitHub">
+                    <svg class="w-4 h-4" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M6.766 11.328c-2.063-.25-3.516-1.734-3.516-3.656 0-.781.281-1.625.75-2.188-.203-.515-.172-1.609.063-2.062.625-.078 1.468.25 1.968.703.594-.187 1.219-.281 1.985-.281.765 0 1.39.094 1.953.265.484-.437 1.344-.765 1.969-.687.218.422.25 1.515.046 2.047.5.593.766 1.39.766 2.203 0 1.922-1.453 3.375-3.547 3.64.531.344.89 1.094.89 1.954v1.625c0 .468.391.734.86.547C13.781 14.359 16 11.53 16 8.03 16 3.61 12.406 0 7.984 0 3.563 0 0 3.61 0 8.031a7.88 7.88 0 0 0 5.172 7.422c.422.156.828-.125.828-.547v-1.25c-.219.094-.5.156-.75.156-1.031 0-1.64-.562-2.078-1.609-.172-.422-.36-.672-.719-.719-.187-.015-.25-.093-.25-.187 0-.188.313-.328.625-.328.453 0 .844.281 1.25.86.313.452.64.655 1.031.655s.641-.14 1-.5c.266-.265.47-.5.657-.656"/></svg>
+                </a>
+                <a href="https://github.com/alex-golubev/escapement" class="px-3 py-1.5 rounded bg-studio-elevated hover:bg-studio-hover border border-studio-border text-xs font-mono font-medium text-studio-bright tactile-btn transition-colors">
+                    View Source
+                </a>
+            </div>
+        </div>
+    </header>
+
+    <main class="hardware-grid">
+
+        <section class="max-w-7xl mx-auto px-4 sm:px-6 pt-16 sm:pt-24 pb-16">
+            <div class="max-w-3xl">
+                <div class="inline-flex items-center gap-2 px-2.5 py-1 rounded bg-studio-surface border border-studio-border text-xs font-mono mb-6">
+                    <span class="w-1.5 h-1.5 bg-studio-amber"></span>
+                    <span class="text-studio-dim">CORE SPECIFICATION:</span>
+                    <span class="text-studio-bright">ISOLATED AUDIO-WORKLET THREAD</span>
+                </div>
+
+                <h1 class="text-3xl sm:text-5xl lg:text-6xl font-bold tracking-tight text-studio-bright leading-[1.1] mb-6">
+                    A real digital audio workstation.
+                    <span class="text-studio-dim font-normal block sm:inline"> Native to the browser.</span>
+                </h1>
+
+                <p class="text-base sm:text-lg text-studio-dim leading-relaxed mb-8 max-w-2xl font-sans">
+                    Up to five people in one project, every change heard by everyone as it happens. No installers, nothing to set up: a Rust audio engine compiled to WebAssembly, running on the browser's own audio thread.
+                </p>
+
+                <!-- No sign-up: there is nothing to try yet, only the code to read. -->
+                <div class="max-w-xl">
+                    <div class="flex flex-col sm:flex-row gap-2">
+                        <a href="https://github.com/alex-golubev/escapement" class="h-11 px-5 rounded bg-studio-bright hover:bg-white text-studio-base font-semibold text-xs uppercase tracking-wider font-mono tactile-btn transition-colors flex items-center justify-center gap-2">
+                            <span>View Source on GitHub</span>
+                            <svg class="w-4 h-4 text-studio-base" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14" /> <path d="m12 5 7 7-7 7" /></svg>
+                        </a>
+                        <div class="h-11 px-3.5 flex items-center gap-2 bg-studio-panel border border-studio-border rounded text-xs font-mono text-studio-dim">
+                            <span class="w-2 h-2 bg-studio-amber"></span>
+                            <span>Nothing to try yet</span>
+                        </div>
+                    </div>
+
+                    <div class="flex flex-wrap items-center gap-x-4 gap-y-1 mt-3 text-[11px] font-mono text-studio-dim">
+                        <span>• Open source, AGPL-3.0</span>
+                        <span>• Offline-first</span>
+                        <span>• No cookies on this page</span>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section class="max-w-7xl mx-auto px-4 sm:px-6 pb-24">
+            
+            <div data-workstation class="rounded-lg border border-studio-border bg-studio-panel shadow-2xl overflow-hidden">
+                
+                <div class="bg-studio-surface px-4 py-2.5 border-b border-studio-border flex flex-wrap items-center justify-between gap-3 text-xs select-none">
+                    
+                    <div class="flex items-center gap-3">
+                        
+                        <div class="flex items-center border border-studio-border rounded bg-studio-panel p-0.5">
+                            <button type="button" data-rewind aria-label="Return to zero" class="p-1.5 hover:bg-studio-surface text-studio-dim hover:text-studio-bright tactile-btn rounded-sm" title="Return to Zero (0:00)">
+                                <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 6a2 2 0 0 0-3.414-1.414l-6 6a2 2 0 0 0 0 2.828l6 6A2 2 0 0 0 12 18z" /> <path d="M22 6a2 2 0 0 0-3.414-1.414l-6 6a2 2 0 0 0 0 2.828l6 6A2 2 0 0 0 22 18z" /></svg>
+                            </button>
+                            <button type="button" data-play aria-pressed="true" aria-label="Play" class="px-3 py-1.5 border border-studio-amber bg-studio-amber text-studio-base font-bold tactile-btn rounded-sm flex items-center gap-1" title="Play">
+                                <svg class="w-3.5 h-3.5 fill-current" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 5a2 2 0 0 1 3.008-1.728l11.997 6.998a2 2 0 0 1 .003 3.458l-12 7A2 2 0 0 1 5 19z" /></svg>
+                            </button>
+                            <button type="button" data-stop aria-label="Stop" class="p-1.5 hover:bg-studio-surface text-studio-dim hover:text-studio-bright tactile-btn rounded-sm" title="Stop">
+                                <svg class="w-3.5 h-3.5 fill-current" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="18" height="18" x="3" y="3" rx="2" /></svg>
+                            </button>
+                            <span class="p-1.5 text-studio-red rounded-sm" aria-hidden="true">
+                                <svg class="w-3 h-3 fill-current" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10" /></svg>
+                            </span>
+                        </div>
+
+                        <div class="bg-studio-panel px-3 py-1 rounded border border-studio-border font-mono flex items-center gap-1">
+                            <span class="text-studio-dim text-[10px]">BAR</span>
+                            <span data-bar class="text-studio-bright font-bold">001</span>
+                            <span class="text-studio-border">.</span>
+                            <span data-beat class="text-studio-bright font-bold">01</span>
+                            <span class="text-studio-border">.</span>
+                            <span data-tick class="text-studio-dim font-bold">000</span>
+                        </div>
+
+                        <div class="hidden sm:flex bg-studio-panel px-3 py-1 rounded border border-studio-border font-mono items-center gap-1">
+                            <span class="text-studio-dim text-[10px]">TIME</span>
+                            <span data-time class="text-studio-bright font-medium">00:00:00.000</span>
+                        </div>
+
+                        <div class="flex items-center gap-1 font-mono">
+                            <div class="bg-studio-panel px-2.5 py-1 rounded border border-studio-border flex items-center gap-1.5">
+                                <span class="text-studio-dim text-[10px]">BPM</span>
+                                <span data-bpm class="text-studio-bright font-bold">124.00</span>
+                            </div>
+                            <div class="bg-studio-panel px-2 py-1 rounded border border-studio-border text-studio-dim">
+                                4/4
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="flex items-center gap-5 font-mono text-[11px]">
+                        
+                        <div class="hidden md:flex items-center gap-2">
+                            <span class="text-studio-dim">DSP LOAD:</span>
+                            <div class="w-20 h-2 bg-studio-panel rounded-none border border-studio-border overflow-hidden p-[1px]">
+                                <div class="h-full bg-studio-bright w-[18%]"></div>
+                            </div>
+                            <span class="text-studio-bright font-semibold">18.2%</span>
+                        </div>
+
+                        <div class="flex items-center gap-2 bg-studio-panel px-2.5 py-1 rounded border border-studio-border">
+                            <span class="text-studio-dim text-[10px]">MASTER</span>
+                            <div class="flex flex-col gap-0.5">
+                                <div class="flex gap-[2px] items-center" id="meter-l">
+                                    <span class="w-1.5 h-2 bg-studio-meter-green opacity-90"></span>
+                                    <span class="w-1.5 h-2 bg-studio-meter-green opacity-90"></span>
+                                    <span class="w-1.5 h-2 bg-studio-meter-green opacity-90"></span>
+                                    <span class="w-1.5 h-2 bg-studio-meter-green opacity-90"></span>
+                                    <span class="w-1.5 h-2 bg-studio-meter-green opacity-90"></span>
+                                    <span class="w-1.5 h-2 bg-studio-meter-yellow opacity-90"></span>
+                                    <span class="w-1.5 h-2 bg-studio-meter-yellow opacity-90"></span>
+                                    <span class="w-1.5 h-2 bg-studio-meter-red opacity-20"></span>
+                                </div>
+                                <div class="flex gap-[2px] items-center" id="meter-r">
+                                    <span class="w-1.5 h-2 bg-studio-meter-green opacity-90"></span>
+                                    <span class="w-1.5 h-2 bg-studio-meter-green opacity-90"></span>
+                                    <span class="w-1.5 h-2 bg-studio-meter-green opacity-90"></span>
+                                    <span class="w-1.5 h-2 bg-studio-meter-green opacity-90"></span>
+                                    <span class="w-1.5 h-2 bg-studio-meter-green opacity-70"></span>
+                                    <span class="w-1.5 h-2 bg-studio-meter-yellow opacity-60"></span>
+                                    <span class="w-1.5 h-2 bg-studio-meter-yellow opacity-20"></span>
+                                    <span class="w-1.5 h-2 bg-studio-meter-red opacity-20"></span>
+                                </div>
+                            </div>
+                            <span class="text-studio-dim text-[10px] pl-1">-2.4 dB</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-12 min-h-[290px] border-b border-studio-border">
+                    
+                    <div class="col-span-4 sm:col-span-3 bg-studio-surface/80 border-r border-studio-border divide-y divide-studio-border select-none">
+                        
+                        <div class="h-7 px-3 flex items-center justify-between text-[10px] font-mono text-studio-dim uppercase tracking-wider bg-studio-panel">
+                            <span>Track Name</span>
+                            <span>IO / Pan</span>
+                        </div>
+
+                        <div class="h-16 px-3 py-2 flex flex-col justify-between border-l-2 border-l-studio-track-teal hover:bg-studio-surface transition-colors">
+                            <div class="flex items-center justify-between">
+                                <span class="text-xs font-mono font-medium text-studio-bright truncate">01 909 Kick Sub</span>
+                                <div class="flex items-center gap-1 font-mono text-[10px]">
+                                    <span class="px-1.5 py-0.5 rounded bg-studio-panel border border-studio-border text-studio-dim">M</span>
+                                    <span class="px-1.5 py-0.5 rounded bg-studio-amber text-studio-base font-bold">S</span>
+                                </div>
+                            </div>
+                            <div class="flex items-center justify-between text-[10px] font-mono text-studio-dim">
+                                <span>AUDIO IN 1/2</span>
+                                <span class="text-studio-bright">C • 0.0 dB</span>
+                            </div>
+                        </div>
+
+                        <div class="h-16 px-3 py-2 flex flex-col justify-between border-l-2 border-l-studio-track-indigo hover:bg-studio-surface transition-colors bg-studio-surface/40">
+                            <div class="flex items-center justify-between">
+                                <span class="text-xs font-mono font-medium text-studio-bright truncate">02 Poly Chords</span>
+                                <div class="flex items-center gap-1 font-mono text-[10px]">
+                                    <span class="px-1.5 py-0.5 rounded bg-studio-panel border border-studio-border text-studio-dim">M</span>
+                                    <span class="px-1.5 py-0.5 rounded bg-studio-panel border border-studio-border text-studio-dim">S</span>
+                                </div>
+                            </div>
+                            <div class="flex items-center justify-between text-[10px] font-mono text-studio-dim">
+                                <span>MIDI CH 01</span>
+                                <span class="text-studio-bright">L14 • -3.2 dB</span>
+                            </div>
+                        </div>
+
+                        <div class="h-16 px-3 py-2 flex flex-col justify-between border-l-2 border-l-studio-track-rust hover:bg-studio-surface transition-colors">
+                            <div class="flex items-center justify-between">
+                                <span class="text-xs font-mono font-medium text-studio-bright truncate">03 Acid 303 Lead</span>
+                                <div class="flex items-center gap-1 font-mono text-[10px]">
+                                    <span class="px-1.5 py-0.5 rounded bg-studio-panel border border-studio-border text-studio-dim">M</span>
+                                    <span class="px-1.5 py-0.5 rounded bg-studio-panel border border-studio-border text-studio-dim">S</span>
+                                </div>
+                            </div>
+                            <div class="flex items-center justify-between text-[10px] font-mono text-studio-dim">
+                                <span>INTERNAL DSP</span>
+                                <span class="text-studio-bright">R22 • -1.5 dB</span>
+                            </div>
+                        </div>
+
+                        <div class="h-16 px-3 py-2 flex flex-col justify-between border-l-2 border-l-studio-track-olive hover:bg-studio-surface transition-colors">
+                            <div class="flex items-center justify-between">
+                                <span class="text-xs font-mono font-medium text-studio-bright truncate">04 Transient Hats</span>
+                                <div class="flex items-center gap-1 font-mono text-[10px]">
+                                    <span class="px-1.5 py-0.5 rounded bg-studio-panel border border-studio-border text-studio-dim">M</span>
+                                    <span class="px-1.5 py-0.5 rounded bg-studio-panel border border-studio-border text-studio-dim">S</span>
+                                </div>
+                            </div>
+                            <div class="flex items-center justify-between text-[10px] font-mono text-studio-dim">
+                                <span>SAMPLER OPFS</span>
+                                <span class="text-studio-bright">C • -6.0 dB</span>
+                            </div>
+                        </div>
+
+                    </div>
+
+                    <div class="col-span-8 sm:col-span-9 relative bg-studio-base overflow-hidden select-none">
+                        
+                        <div class="relative h-7 bg-studio-panel border-b border-studio-border flex text-[10px] font-mono text-studio-dim items-center">
+                            <span data-loop-bars="5" class="absolute top-0 left-0 w-[30rem] h-[3px] bg-studio-amber/70"></span>
+                            <span data-bar-width class="w-24 shrink-0 pl-2 border-r border-studio-border/50">01.01.00</span>
+                            <span class="w-24 shrink-0 pl-2 border-r border-studio-border/50">02.01.00</span>
+                            <span class="w-24 shrink-0 pl-2 border-r border-studio-border/50">03.01.00</span>
+                            <span class="w-24 shrink-0 pl-2 border-r border-studio-border/50">04.01.00</span>
+                            <span class="w-24 shrink-0 pl-2 border-r border-studio-border/50 whitespace-nowrap">05.01.00 <span class="text-studio-amber">LOOP</span></span>
+                            <span class="w-24 shrink-0 pl-2 border-r border-studio-border/50">06.01.00</span>
+                        </div>
+
+                        <div data-playhead class="absolute top-0 bottom-0 left-0 w-[1px] bg-studio-bright z-20 pointer-events-none">
+                            <div class="w-0 h-0 border-l-[4px] border-l-transparent border-r-[4px] border-r-transparent border-t-[5px] border-t-studio-bright -ml-[3.5px]"></div>
+                        </div>
+
+                        <div class="divide-y divide-studio-border">
+                            
+                            <div class="h-16 p-1.5 flex gap-2 relative">
+                                <div class="w-56 shrink-0 h-full bg-studio-track-teal/40 border border-studio-track-teal rounded-sm p-1.5 flex flex-col justify-between overflow-hidden">
+                                    <div class="flex justify-between text-[9px] font-mono text-studio-bright">
+                                        <span>kick_909_solid.flac</span>
+                                        <span class="text-studio-dim">48k / 24b</span>
+                                    </div>
+                                    <svg class="w-full h-6 stroke-studio-text fill-none opacity-80" viewBox="0 0 200 24" preserveAspectRatio="none">
+                                        <use href="#kick-wave" />
+                                    </svg>
+                                </div>
+                                <div class="w-56 shrink-0 h-full bg-studio-track-teal/40 border border-studio-track-teal rounded-sm p-1.5 flex flex-col justify-between overflow-hidden">
+                                    <div class="flex justify-between text-[9px] font-mono text-studio-bright">
+                                        <span>kick_909_solid.flac</span>
+                                    </div>
+                                    <svg class="w-full h-6 stroke-studio-text fill-none opacity-80" viewBox="0 0 200 24" preserveAspectRatio="none">
+                                        <use href="#kick-wave" />
+                                    </svg>
+                                </div>
+                            </div>
+
+                            <div class="h-16 p-1.5 flex gap-2 relative">
+                                <div class="ml-16 w-72 shrink-0 h-full bg-studio-track-indigo/40 border border-studio-track-indigo rounded-sm p-1.5 flex flex-col justify-between">
+                                    <div class="flex justify-between text-[9px] font-mono text-studio-bright">
+                                        <span>D_Minor_Chord_Prog.mid</span>
+                                        <span class="text-studio-dim">120 PPQ</span>
+                                    </div>
+                                    <div class="w-full h-6 bg-studio-panel/60 rounded-sm relative p-1 overflow-hidden">
+                                        <span class="absolute left-2 top-1 w-10 h-1 bg-studio-text rounded-xs"></span>
+                                        <span class="absolute left-2 top-3 w-10 h-1 bg-studio-text rounded-xs"></span>
+                                        <span class="absolute left-16 top-2 w-12 h-1 bg-studio-text rounded-xs"></span>
+                                        <span class="absolute left-16 top-4 w-12 h-1 bg-studio-text rounded-xs"></span>
+                                        <span class="absolute left-32 top-1 w-14 h-1 bg-studio-text rounded-xs"></span>
+                                        <span class="absolute left-32 top-3.5 w-14 h-1 bg-studio-text rounded-xs"></span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="h-16 p-1.5 flex gap-2 relative">
+                                <div class="w-80 shrink-0 h-full bg-studio-track-rust/30 border border-studio-track-rust rounded-sm p-1.5 flex flex-col justify-between">
+                                    <div class="flex justify-between text-[9px] font-mono text-studio-bright">
+                                        <span>acid_line_cutoff_mod</span>
+                                        <span class="text-studio-amber">CC 74 (CUTOFF)</span>
+                                    </div>
+                                    <svg class="w-full h-6 stroke-studio-amber fill-none" viewBox="0 0 300 24" preserveAspectRatio="none">
+                                        <polyline points="0,20 40,18 70,5 110,22 150,12 190,4 230,16 280,2 300,10" stroke-width="1.5" />
+                                    </svg>
+                                </div>
+                            </div>
+
+                            <div class="h-16 p-1.5 flex gap-2 relative">
+                                <div class="w-64 shrink-0 h-full bg-studio-track-olive/40 border border-studio-track-olive rounded-sm p-1.5 flex flex-col justify-between">
+                                    <div class="flex justify-between text-[9px] font-mono text-studio-bright">
+                                        <span>closed_hat_16th_groove</span>
+                                        <span class="text-studio-dim">1/16 SWING 54%</span>
+                                    </div>
+                                    <div class="flex items-center justify-between gap-1 h-5 px-1">
+                                        <span class="h-4 w-1 bg-studio-text"></span>
+                                        <span class="h-2 w-1 bg-studio-dim"></span>
+                                        <span class="h-3 w-1 bg-studio-text"></span>
+                                        <span class="h-2 w-1 bg-studio-dim"></span>
+                                        <span class="h-4 w-1 bg-studio-text"></span>
+                                        <span class="h-2 w-1 bg-studio-dim"></span>
+                                        <span class="h-3 w-1 bg-studio-text"></span>
+                                        <span class="h-2 w-1 bg-studio-dim"></span>
+                                        <span class="h-4 w-1 bg-studio-text"></span>
+                                        <span class="h-2 w-1 bg-studio-dim"></span>
+                                        <span class="h-3 w-1 bg-studio-text"></span>
+                                        <span class="h-2 w-1 bg-studio-dim"></span>
+                                    </div>
+                                </div>
+                            </div>
+
+                        </div>
+                    </div>
+                </div>
+
+                <div class="bg-studio-panel p-3.5 select-none">
+                    
+                    <div class="flex items-center justify-between mb-3 border-b border-studio-border pb-2">
+                        <div class="flex items-center gap-3 text-xs font-mono">
+                            <span class="text-studio-bright font-bold uppercase tracking-wider">Master Channel Strip</span>
+                            <span class="text-studio-border">|</span>
+                            <span class="text-studio-dim">DEVICE CHAIN (SERIAL)</span>
+                        </div>
+                        <div class="flex items-center gap-2 text-[11px] font-mono text-studio-dim">
+                            <span class="w-2 h-2 rounded-none bg-studio-amber"></span>
+                            <span>BYPASS: OFF [CMD+B]</span>
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+                        
+                        <div class="bg-studio-surface border border-studio-border rounded p-3 flex flex-col justify-between">
+                            <div class="flex items-center justify-between mb-2">
+                                <div class="flex items-center gap-2">
+                                    <span class="w-2 h-2 bg-studio-amber"></span>
+                                    <span class="text-xs font-mono font-bold text-studio-bright">PARAMETRIC EQ</span>
+                                </div>
+                                <span class="text-[10px] font-mono text-studio-dim">4 BANDS</span>
+                            </div>
+
+                            <div class="h-24 bg-studio-panel rounded border border-studio-border relative overflow-hidden mb-2.5">
+                                <canvas data-analyser class="w-full h-full block"></canvas>
+                                <div class="absolute bottom-1 right-2 text-[9px] font-mono text-studio-dim">FFT 2048 PTS</div>
+                            </div>
+
+                            <div class="grid grid-cols-4 gap-2 text-center font-mono">
+                                <div class="bg-studio-panel p-1.5 rounded border border-studio-border">
+                                    <span class="text-[9px] text-studio-dim block">HPF</span>
+                                    <span class="text-xs text-studio-bright font-semibold">32 Hz</span>
+                                </div>
+                                <div class="bg-studio-panel p-1.5 rounded border border-studio-border">
+                                    <span class="text-[9px] text-studio-dim block">LOW-MID</span>
+                                    <span class="text-xs text-studio-bright font-semibold">-1.8 dB</span>
+                                </div>
+                                <div class="bg-studio-panel p-1.5 rounded border border-studio-border">
+                                    <span class="text-[9px] text-studio-dim block">HIGH-MID</span>
+                                    <span class="text-xs text-studio-bright font-semibold">+2.1 dB</span>
+                                </div>
+                                <div class="bg-studio-panel p-1.5 rounded border border-studio-border">
+                                    <span class="text-[9px] text-studio-dim block">AIR SHELF</span>
+                                    <span class="text-xs text-studio-amber font-semibold">+1.0 dB</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="bg-studio-surface border border-studio-border rounded p-3 flex flex-col justify-between">
+                            <div class="flex items-center justify-between mb-2">
+                                <div class="flex items-center gap-2">
+                                    <span class="w-2 h-2 bg-studio-amber"></span>
+                                    <span class="text-xs font-mono font-bold text-studio-bright">COMPRESSOR</span>
+                                </div>
+                                <span class="text-[10px] font-mono text-studio-dim">SIDECHAIN: 01 KICK</span>
+                            </div>
+
+                            <div class="h-24 bg-studio-panel rounded border border-studio-border p-2.5 flex flex-col justify-between relative mb-2.5">
+                                <div class="flex justify-between text-[9px] font-mono text-studio-dim">
+                                    <span>-20 dB</span>
+                                    <span>-12</span>
+                                    <span>-6</span>
+                                    <span>-3</span>
+                                    <span>0 dB (GR)</span>
+                                </div>
+                                <div class="h-3 bg-studio-surface rounded-none border border-studio-border overflow-hidden relative">
+                                    <div data-reduction class="h-full w-[28%] bg-studio-amber float-right transition-all duration-75"></div>
+                                </div>
+                                <div class="flex justify-between items-center text-[10px] font-mono">
+                                    <span class="text-studio-dim">PEAK DETECT: <span class="text-studio-bright">FAST</span></span>
+                                    <span class="text-studio-bright font-semibold">-3.8 dB GR</span>
+                                </div>
+                            </div>
+
+                            <div class="grid grid-cols-4 gap-2 text-center font-mono">
+                                <div>
+                                    <div class="w-8 h-8 mx-auto rounded-full knob-cap border border-studio-border relative flex items-center justify-center">
+                                        <div class="w-[2px] h-2 bg-studio-bright rounded-none absolute top-1 origin-[1px_11px] rotate-[72deg]"></div>
+                                    </div>
+                                    <span class="text-[9px] text-studio-dim block mt-1">THR -14dB</span>
+                                </div>
+                                <div>
+                                    <div class="w-8 h-8 mx-auto rounded-full knob-cap border border-studio-border relative flex items-center justify-center">
+                                        <div class="w-[2px] h-2 bg-studio-bright rounded-none absolute top-1 origin-[1px_11px] rotate-[-10deg]"></div>
+                                    </div>
+                                    <span class="text-[9px] text-studio-dim block mt-1">RAT 4:1</span>
+                                </div>
+                                <div>
+                                    <div class="w-8 h-8 mx-auto rounded-full knob-cap border border-studio-border relative flex items-center justify-center">
+                                        <div class="w-[2px] h-2 bg-studio-bright rounded-none absolute top-1 origin-[1px_11px] rotate-[88deg]"></div>
+                                    </div>
+                                    <span class="text-[9px] text-studio-dim block mt-1">ATK 30ms</span>
+                                </div>
+                                <div>
+                                    <div class="w-8 h-8 mx-auto rounded-full knob-cap border border-studio-border relative flex items-center justify-center">
+                                        <div class="w-[2px] h-2 bg-studio-amber rounded-none absolute top-1 origin-[1px_11px] rotate-[-104deg]"></div>
+                                    </div>
+                                    <span class="text-[9px] text-studio-amber block mt-1">MKP +2.8</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="bg-studio-surface border border-studio-border rounded p-3 flex flex-col justify-between">
+                            <div class="flex items-center justify-between mb-2">
+                                <div class="flex items-center gap-2">
+                                    <span class="w-2 h-2 bg-studio-amber"></span>
+                                    <span class="text-xs font-mono font-bold text-studio-bright">TEMPO DELAY</span>
+                                </div>
+                                <span class="text-[10px] font-mono text-studio-dim">SYNCED TO BPM</span>
+                            </div>
+
+                            <div class="h-24 bg-studio-panel rounded border border-studio-border p-2 flex items-center justify-center relative mb-2.5">
+                                <!-- The echoes: each a step later and quieter than the one before, a blurred copy under each glowing as it sounds. -->
+                                <svg data-echo-beats="0.75" class="w-full h-16 fill-none" viewBox="0 0 100 50">
+                                    <defs>
+                                        <filter id="tap-glow" filterUnits="userSpaceOnUse" x="-10" y="-10" width="120" height="70">
+                                            <feGaussianBlur stdDeviation="3.5" />
+                                        </filter>
+                                    </defs>
+                                    <line x1="0" y1="45" x2="100" y2="45" class="stroke-studio-border" stroke-width="0.8" stroke-dasharray="2 2" />
+                                    <g filter="url(#tap-glow)">
+                                        <line data-glow="0" x1="8" y1="45" x2="8" y2="6" class="stroke-studio-bright" stroke-width="10" opacity="0" />
+                                        <line data-glow="1" x1="26" y1="45" x2="26" y2="16" class="stroke-studio-amber" stroke-width="10" opacity="0" />
+                                        <line data-glow="2" x1="44" y1="45" x2="44" y2="24" class="stroke-studio-amber" stroke-width="10" opacity="0" />
+                                        <line data-glow="3" x1="62" y1="45" x2="62" y2="31" class="stroke-studio-amber" stroke-width="10" opacity="0" />
+                                        <line data-glow="4" x1="80" y1="45" x2="80" y2="36" class="stroke-studio-amber" stroke-width="10" opacity="0" />
+                                        <line data-glow="5" x1="98" y1="45" x2="98" y2="40" class="stroke-studio-amber" stroke-width="10" opacity="0" />
+                                    </g>
+                                    <line data-tap="0" x1="8" y1="45" x2="8" y2="6" class="stroke-studio-bright" stroke-width="4" />
+                                    <line data-tap="1" x1="26" y1="45" x2="26" y2="16" class="stroke-studio-amber" stroke-width="4" />
+                                    <line data-tap="2" x1="44" y1="45" x2="44" y2="24" class="stroke-studio-amber" stroke-width="4" opacity="0.95" />
+                                    <line data-tap="3" x1="62" y1="45" x2="62" y2="31" class="stroke-studio-amber" stroke-width="4" opacity="0.85" />
+                                    <line data-tap="4" x1="80" y1="45" x2="80" y2="36" class="stroke-studio-amber" stroke-width="4" opacity="0.75" />
+                                    <line data-tap="5" x1="98" y1="45" x2="98" y2="40" class="stroke-studio-amber" stroke-width="4" opacity="0.65" />
+                                </svg>
+                                <span class="absolute bottom-1.5 left-2 text-[9px] font-mono text-studio-dim">PING-PONG: OFF</span>
+                            </div>
+
+                            <div class="grid grid-cols-4 gap-2 text-center font-mono">
+                                <div>
+                                    <div class="w-8 h-8 mx-auto rounded-full knob-cap border border-studio-border relative flex items-center justify-center">
+                                        <div class="w-[2px] h-2 bg-studio-bright rounded-none absolute top-1 origin-[1px_11px] rotate-[0deg]"></div>
+                                    </div>
+                                    <span class="text-[9px] text-studio-dim block mt-1">TIME 1/8.</span>
+                                </div>
+                                <div>
+                                    <div class="w-8 h-8 mx-auto rounded-full knob-cap border border-studio-border relative flex items-center justify-center">
+                                        <div class="w-[2px] h-2 bg-studio-bright rounded-none absolute top-1 origin-[1px_11px] rotate-[-32deg]"></div>
+                                    </div>
+                                    <span class="text-[9px] text-studio-dim block mt-1">FDBK 38%</span>
+                                </div>
+                                <div>
+                                    <div class="w-8 h-8 mx-auto rounded-full knob-cap border border-studio-border relative flex items-center justify-center">
+                                        <div class="w-[2px] h-2 bg-studio-bright rounded-none absolute top-1 origin-[1px_11px] rotate-[88deg]"></div>
+                                    </div>
+                                    <span class="text-[9px] text-studio-dim block mt-1">HI-CUT 6k</span>
+                                </div>
+                                <div>
+                                    <div class="w-8 h-8 mx-auto rounded-full knob-cap border border-studio-border relative flex items-center justify-center">
+                                        <div class="w-[2px] h-2 bg-studio-bright rounded-none absolute top-1 origin-[1px_11px] rotate-[-70deg]"></div>
+                                    </div>
+                                    <span class="text-[9px] text-studio-dim block mt-1">MIX 24%</span>
+                                </div>
+                            </div>
+                        </div>
+
+                    </div>
+                </div>
+
+            </div>
+        </section>
+
+        <section class="max-w-7xl mx-auto px-4 sm:px-6 pb-24 border-t border-studio-border pt-16">
+            <div class="flex flex-col md:flex-row md:items-end justify-between mb-12">
+                <div>
+                    <h2 class="text-xs font-mono uppercase tracking-widest text-studio-amber mb-2">Under the Hood</h2>
+                    <p class="text-2xl sm:text-3xl font-bold text-studio-bright tracking-tight">Audio Architecture</p>
+                </div>
+                <div class="text-xs font-mono text-studio-dim mt-2 md:mt-0">
+                    TARGET ENGINE RUNTIME: CHROMIUM / WEBKIT / GECKO (WASM SIMD ENABLED)
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 font-mono">
+                
+                <div class="bg-studio-panel border border-studio-border p-5 rounded">
+                    <div class="flex items-center justify-between text-xs text-studio-dim mb-4 border-b border-studio-border pb-2">
+                        <span>01 / CONCURRENCY</span>
+                        <svg class="w-4 h-4 text-studio-bright" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20v2" /> <path d="M12 2v2" /> <path d="M17 20v2" /> <path d="M17 2v2" /> <path d="M2 12h2" /> <path d="M2 17h2" /> <path d="M2 7h2" /> <path d="M20 12h2" /> <path d="M20 17h2" /> <path d="M20 7h2" /> <path d="M7 20v2" /> <path d="M7 2v2" /> <rect x="4" y="4" width="16" height="16" rx="2" /> <rect x="8" y="8" width="8" height="8" rx="1" /></svg>
+                    </div>
+                    <h3 class="text-sm font-bold text-studio-bright mb-2">AudioWorklet Thread Isolation</h3>
+                    <p class="text-xs font-sans text-studio-dim leading-relaxed">
+                        The real-time audio thread never touches the DOM or the page's garbage-collected heap. Lock-free ring buffers carry every change across, so a busy page doesn't stop the sound.
+                    </p>
+                </div>
+
+                <div class="bg-studio-panel border border-studio-border p-5 rounded">
+                    <div class="flex items-center justify-between text-xs text-studio-dim mb-4 border-b border-studio-border pb-2">
+                        <span>02 / DSP PERFORMANCE</span>
+                        <svg class="w-4 h-4 text-studio-bright" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15.914 4a1.5 1.5 0 00-2.474-1.561l-9 9A1.5 1.5 0 005.5 14h4.002a.5.5 0 01.471.666L8.086 20a1.5 1.5 0 002.475 1.56l9-9A1.5 1.5 0 0018.5 10h-3.997a.5.5 0 01-.472-.667z" /></svg>
+                    </div>
+                    <h3 class="text-sm font-bold text-studio-bright mb-2">WebAssembly 128-bit SIMD</h3>
+                    <p class="text-xs font-sans text-studio-dim leading-relaxed">
+                        The engine is written in Rust and compiled to WebAssembly with SIMD: mixing, synthesis and filters work on four samples per instruction.
+                    </p>
+                </div>
+
+                <div class="bg-studio-panel border border-studio-border p-5 rounded">
+                    <div class="flex items-center justify-between text-xs text-studio-dim mb-4 border-b border-studio-border pb-2">
+                        <span>03 / DISK I/O</span>
+                        <svg class="w-4 h-4 text-studio-bright" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 16h.01" /> <path d="M2.212 11.577a2 2 0 0 0-.212.896V18a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-5.527a2 2 0 0 0-.212-.896L18.55 5.11A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z" /> <path d="M21.946 12.013H2.054" /> <path d="M6 16h.01" /></svg>
+                    </div>
+                    <h3 class="text-sm font-bold text-studio-bright mb-2">Origin Private File System (OPFS)</h3>
+                    <p class="text-xs font-sans text-studio-dim leading-relaxed">
+                        Samples are cached on your disk by their content hash, and long recordings stream straight from it instead of filling memory.
+                    </p>
+                </div>
+
+                <div class="bg-studio-panel border border-studio-border p-5 rounded">
+                    <div class="flex items-center justify-between text-xs text-studio-dim mb-4 border-b border-studio-border pb-2">
+                        <span>04 / COLLABORATION</span>
+                        <svg class="w-4 h-4 text-studio-bright" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" /> <path d="M16 3.128a4 4 0 0 1 0 7.744" /> <path d="M22 21v-2a4 4 0 0 0-3-3.87" /> <circle cx="9" cy="7" r="4" /></svg>
+                    </div>
+                    <h3 class="text-sm font-bold text-studio-bright mb-2">Up to Five in One Project</h3>
+                    <p class="text-xs font-sans text-studio-dim leading-relaxed">
+                        Edits merge as they happen, without locks: nothing is overwritten and nobody waits. Solo and the view stay your own.
+                    </p>
+                </div>
+
+                <div class="bg-studio-panel border border-studio-border p-5 rounded">
+                    <div class="flex items-center justify-between text-xs text-studio-dim mb-4 border-b border-studio-border pb-2">
+                        <span>05 / OFFLINE</span>
+                        <svg class="w-4 h-4 text-studio-bright" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h.01" /> <path d="M8.5 16.429a5 5 0 0 1 7 0" /> <path d="M5 12.859a10 10 0 0 1 5.17-2.69" /> <path d="M19 12.859a10 10 0 0 0-2.007-1.523" /> <path d="M2 8.82a15 15 0 0 1 4.177-2.643" /> <path d="M22 8.82a15 15 0 0 0-11.288-3.764" /> <path d="m2 2 20 20" /></svg>
+                    </div>
+                    <h3 class="text-sm font-bold text-studio-bright mb-2">Offline-First Projects</h3>
+                    <p class="text-xs font-sans text-studio-dim leading-relaxed">
+                        Projects live in your browser. Keep working without a connection; your changes merge back once you are online.
+                    </p>
+                </div>
+
+                <div class="bg-studio-panel border border-studio-border p-5 rounded">
+                    <div class="flex items-center justify-between text-xs text-studio-dim mb-4 border-b border-studio-border pb-2">
+                        <span>06 / OPEN SOURCE</span>
+                        <svg class="w-4 h-4 text-studio-bright" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m16 18 6-6-6-6" /> <path d="m8 6-6 6 6 6" /></svg>
+                    </div>
+                    <h3 class="text-sm font-bold text-studio-bright mb-2">AGPL-3.0, on GitHub</h3>
+                    <p class="text-xs font-sans text-studio-dim leading-relaxed">
+                        The engine and the app are open source. Read the code, follow along, or open an issue.
+                    </p>
+                </div>
+
+                <div class="bg-studio-panel border border-studio-border p-5 rounded">
+                    <div class="flex items-center justify-between text-xs text-studio-dim mb-4 border-b border-studio-border pb-2">
+                        <span>07 / HARDWARE PROTOCOL</span>
+                        <svg class="w-4 h-4 text-studio-bright" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 5H3" /> <path d="M12 19H3" /> <path d="M14 3v4" /> <path d="M16 17v4" /> <path d="M21 12h-9" /> <path d="M21 19h-5" /> <path d="M21 5h-7" /> <path d="M8 10v4" /> <path d="M8 12H3" /></svg>
+                    </div>
+                    <h3 class="text-sm font-bold text-studio-bright mb-2">WebMIDI Controllers</h3>
+                    <p class="text-xs font-sans text-studio-dim leading-relaxed">
+                        Play the piano roll from a MIDI keyboard and turn knobs from a controller. No drivers to install, and the setup stays on your device, not in the project.
+                    </p>
+                </div>
+
+                <div class="bg-studio-panel border border-studio-border p-5 rounded">
+                    <div class="flex items-center justify-between text-xs text-studio-dim mb-4 border-b border-studio-border pb-2">
+                        <span>08 / MODULAR EXTENSIONS</span>
+                        <svg class="w-4 h-4 text-studio-bright" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z" /> <path d="m3.3 7 8.7 5 8.7-5" /> <path d="M12 22V12" /></svg>
+                    </div>
+                    <h3 class="text-sm font-bold text-studio-bright mb-2">Sandboxed Plugins</h3>
+                    <p class="text-xs font-sans text-studio-dim leading-relaxed">
+                        Instruments and effects by others, as WebAssembly modules in a sandbox: no network, no page, no reach into the engine, only what it hands them.
+                    </p>
+                </div>
+
+                <div class="bg-studio-panel border border-studio-border p-5 rounded">
+                    <div class="flex items-center justify-between text-xs text-studio-dim mb-4 border-b border-studio-border pb-2">
+                        <span>09 / EXPORT INTEGRITY</span>
+                        <svg class="w-4 h-4 text-studio-bright" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6.835V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.706.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2h-.343" /> <path d="M14 2v5a1 1 0 0 0 1 1h5" /> <path d="M2 19a2 2 0 0 1 4 0v1a2 2 0 0 1-4 0v-4a6 6 0 0 1 12 0v4a2 2 0 0 1-4 0v-1a2 2 0 0 1 4 0" /></svg>
+                    </div>
+                    <h3 class="text-sm font-bold text-studio-bright mb-2">Offline Render (Bouncing)</h3>
+                    <p class="text-xs font-sans text-studio-dim leading-relaxed">
+                        Export runs the same engine in a worker, faster than real time, so the file sounds exactly like playback.
+                    </p>
+                </div>
+
+            </div>
+        </section>
+
+    </main>
+
+    <footer class="border-t border-studio-border bg-studio-panel py-8 font-mono text-xs text-studio-dim select-none">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 flex flex-col sm:flex-row items-center justify-between gap-4">
+            <div class="flex items-center gap-3">
+                <span class="w-2 h-2 bg-studio-amber"></span>
+                <span class="font-bold text-studio-bright">ESCAPEMENT</span>
+                <span class="text-studio-dim">IN DEVELOPMENT · AGPL-3.0</span>
+            </div>
+            <div class="flex items-center gap-6">
+                <a href="https://github.com/alex-golubev/escapement" class="hover:text-studio-bright transition-colors">GITHUB</a>
+            </div>
+        </div>
+    </footer>
+
+    <script type="module" src="/src/main.ts"></script>
+</body>
+</html>
