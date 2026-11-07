@@ -1,5 +1,5 @@
-/* A channel's window: its pan and volume, then its instrument's controls, each over its number and name. */
-.channel-settings {
+/* A track's window: its pan and volume, then its instrument's controls, each over its number and name. */
+.track-settings {
   display: flex;
   flex-direction: column;
   gap: calc(var(--u) * 3);
@@ -7,7 +7,7 @@
 }
 
 /* Their names in a line at the foot, a field without a knob too. */
-.channel-settings__knobs {
+.track-settings__knobs {
   display: flex;
   align-items: flex-end;
   gap: calc(var(--u) * 3);
@@ -18,33 +18,33 @@
  * names in a column as wide as the longest, then a column to a knob, all as wide as the widest a control needs. A row
  * of choices takes as many columns as the page says (`--choice-columns`).
  */
-.channel-settings__controls {
+.track-settings__controls {
   display: grid;
   grid-template-columns: max-content repeat(var(--columns), 1fr);
   gap: calc(var(--u) * 2) calc(var(--u) * 3);
 }
 
-.channel-settings .control-group {
+.track-settings .control-group {
   display: grid;
   grid-column: 1 / -1;
   grid-template-columns: subgrid;
 }
 
-.channel-settings .control-group__controls {
+.track-settings .control-group__controls {
   display: grid;
   grid-column: 2 / -1;
   grid-template-columns: subgrid;
 }
 
-.channel-settings .control-group__controls .param {
+.track-settings .control-group__controls .param {
   width: auto;
 }
 
-.channel-settings .control-group__controls .choices {
+.track-settings .control-group__controls .choices {
   grid-column: span var(--choice-columns);
 }
 
-.channel-settings__instrument {
+.track-settings__instrument {
   display: flex;
   flex-direction: column;
   gap: calc(var(--u) * 1.5);
@@ -52,7 +52,7 @@
   border-top: 1px solid var(--line-soft);
 }
 
-/* A channel not heard dims what sounds, as its row does. */
-.channel-settings[data-unheard="true"] :is(.param, .choices) {
+/* A track not heard dims what sounds, as its head does. */
+.track-settings[data-unheard="true"] :is(.param, .choices) {
   opacity: 0.4;
 }

@@ -67,7 +67,7 @@ export interface Follow {
   readonly frame: (lane: Option.Option<Lane>, held: boolean, heard: Option.Option<number>) => Option.Option<number>
 }
 
-/** The playhead followed from frame to frame, as the piano roll, the Channels window and the Arrangement do. */
+/** The playhead followed from frame to frame, as the piano roll and the Arrangement do. */
 export const useFollow = (): Follow => {
   const heardBefore = useRef(Option.none<number>())
   const byHand = useRef(false)

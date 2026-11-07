@@ -40,21 +40,21 @@ const typedDigit = ({ key, metaKey, ctrlKey, altKey }: KeyboardEvent) =>
   /^[0-9]$/.test(key) && !metaKey && !ctrlKey && !altKey
 
 /**
- * The mixer's insert a channel goes into, as its number, a dash for the master: dragged up or down, or typed while it
+ * The mixer's insert a track goes into, as its number, a dash for the master: dragged up or down, or typed while it
  * has the focus and kept with Enter or a click elsewhere, Esc leaving it as it was. While a number is typed, the keys
  * that turn it, and the page's own, leave it be.
  */
 export const InsertField = ({
-  channel,
+  track,
   owner,
   insert
 }: {
-  readonly channel: Id
+  readonly track: Id
   readonly owner: string
   readonly insert: Id
 }) => {
   const { turns } = useCore()
-  const target = HoldTarget.ChannelInsert({ channel })
+  const target = HoldTarget.TrackInsert({ track })
   const turned = useTurnGesture(
     target,
     Option.getOrElse(insertNumber(insert), () => 0),

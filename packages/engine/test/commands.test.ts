@@ -13,8 +13,8 @@ const commands = [
   Command.AfterBatch({ batch: 7 }),
   Command.NoteOn({ node: NodeHandle(1), key: MidiKey(60), velocity: 0.75, note: PageNote(7) }),
   Command.SetTempo({ bpm: 128.5 }),
-  Command.SetTransport({ playing: true, loopTicks: LoopTicks(3840), arrangement: true }),
-  Command.SetTransport({ playing: false, loopTicks: LoopTicks(0xffff_ffff), arrangement: false }),
+  Command.SetTransport({ playing: true, loopTicks: LoopTicks(3840) }),
+  Command.SetTransport({ playing: false, loopTicks: LoopTicks(0xffff_ffff) }),
   Command.PanicAudio({ code: 7 }),
   Command.HangAudio({ code: 8 }),
   Command.NoteOff({ node: NodeHandle(1), note: PageNote(7) }),
@@ -42,7 +42,7 @@ it('a loop is a whole number of ticks from 1 that fits 32 bits, so the engine ta
   const notLoops = [0, 2 ** 32, -1, 0.5, Number.NaN, Number.POSITIVE_INFINITY]
   notLoops.forEach((ticks) => expect(() => LoopTicks(ticks)).toThrow('not a loop length in ticks'))
   // @ts-expect-error A plain number isn't a loop length.
-  Command.SetTransport({ playing: true, loopTicks: 3840, arrangement: false })
+  Command.SetTransport({ playing: true, loopTicks: 3840 })
 })
 
 it("a live note is named below 2^31, as the pattern's notes take the rest", () => {

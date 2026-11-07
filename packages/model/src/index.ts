@@ -1,84 +1,61 @@
 export { batchedState, byContent, followProject, type ProjectAtoms } from './atoms'
-export { channelStrip, defaultChannelStrip } from './channel-strip'
 export { type Editor, editorOf } from './editor'
 export { Id, newId, storedId } from './id'
 export { type Hold, type Holds, HoldTarget, heldOver, heldValue, holding, lettingGo, noHolds, readHolds } from './holds'
 export {
-  type CurrentPattern,
-  currentPattern,
-  currentPatternOf,
-  heardChannels,
   heardOf,
+  heardTracks,
   type Listening,
   newListening,
   type Played,
   type PlayedClip,
-  type PlayMode,
   playedOf,
-  playModes,
-  toggledMode,
   toggledSolo
 } from './listening'
 export {
-  addChannel,
   addClip,
   addNote,
-  addPattern,
-  canDeletePattern,
+  addTrack,
   type ClipPlace,
   type ClipSpan,
-  clonePattern,
   createProject,
-  deleteChannel,
-  deletePattern,
+  deleteTrack,
   eraseClips,
   eraseNotes,
   moveClip,
-  resizeClip,
-  trimClip,
   moveNote,
-  type NewChannel,
+  type NewInstrument,
   type NewNote,
-  renameChannel,
-  renamePattern,
-  setChannelInsert,
-  setChannelParam,
-  setChannelStrip,
+  renameTrack,
+  resizeClip,
   setInsertMute,
   setInsertStrip,
   setMasterParam,
   setMute,
   setTempo,
+  setTrackInsert,
+  setTrackParam,
+  setTrackStrip,
   stretchNote,
-  toggleStep
+  synth,
+  trimClip
 } from './operations'
 export { type NotePlace, samePlace, withMoved, withPut, withStretched } from './notes'
 export { noAuditions, type Audition, type Auditions } from './audition'
-export { arrangementTracks, trackCount, trackPlace } from './arrangement'
 export { insertCount, insertNumber, insertOfNumber, master, mixerInserts } from './mixer'
 export type {
-  Channel,
+  ArrangementClip,
   Clip,
   Insert,
   Master,
   Note,
   Pattern,
-  PatternPlace,
   PluginInstance,
   Project,
   Slot,
-  ArrangementClip
+  Track
 } from './project'
 export { type Read, type Replacement, readProject, readProjectId } from './read'
-export {
-  arrangementEnd,
-  barSteps,
-  barTicks,
-  isStepNote,
-  patternEnd,
-  startInRound,
-  stepBars,
-  stepNote,
-  stepTicks
-} from './steps'
+export { arrangementEnd, barSteps, barTicks, defaultNote, patternEnd, startInRound, stepTicks } from './time'
+export { defaultTrackStrip, trackStrip } from './track-strip'
 export { newWriter, type Writer } from './writer'

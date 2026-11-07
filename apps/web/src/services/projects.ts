@@ -4,7 +4,6 @@ import { Atom, AtomRegistry } from 'effect/reactivity'
 import { Page } from './page'
 import { ListError, type ListedProject, listNew, type ProjectList, ProjectLists } from './project-list'
 import { ProjectStore } from './project-store'
-import { manifestChannels } from './samples'
 import { forgetView, ViewStores } from './view-store'
 
 /** What the list refused the last time it was asked: a new project, a name, or deleting one. */
@@ -52,7 +51,7 @@ const allOf = (list: ProjectList) =>
 /** A new project: its document made in `store`, then listed; neither, if either fails. */
 const made = (store: ProjectStore, list: ProjectList) => {
   const id = newId()
-  return Effect.andThen(store.make(id, by, manifestChannels), listNew(list, id)).pipe(
+  return Effect.andThen(store.make(id, by), listNew(list, id)).pipe(
     // No address would lead to it. Apart: the page tells what went wrong meanwhile.
     Effect.tapError(() => Effect.forkDetach(store.erase(id))),
     Effect.as(id)

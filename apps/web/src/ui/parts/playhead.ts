@@ -1,11 +1,10 @@
-import type { PlayMode } from '@escapement/model'
 import { Option } from 'effect'
 import type { RefObject } from 'preact'
 import { useLayoutEffect, useRef } from 'preact/hooks'
 import { cleared } from '../kit/canvas'
 import type { Size } from '../kit/fit'
 import { type Follow, inSight, type Lane, useFollow } from './follow'
-import { heardTickIn, useFrame } from './frames'
+import { heardTick, useFrame } from './frames'
 
 /**
  * A window drawn on canvases as its playhead goes along: its size, its lane, where a tick is across it, as its own
@@ -48,8 +47,8 @@ export const drawPlayhead = (
 
 /** What a window drawn on canvases tells its playhead as it draws. */
 export interface CanvasPlayhead {
-  /** What Play plays in the mode the window shows the playhead of. */
-  readonly mode: PlayMode
+  /** Where the arrangement's tick heard falls in the window's own time; none where the window doesn't show it. */
+  readonly place: (tick: number) => Option.Option<number>
   /** The canvas over the others, the playhead's own. */
   readonly canvas: RefObject<HTMLCanvasElement | null>
   /** None until the window is laid out. */
@@ -66,7 +65,7 @@ export interface CanvasPlayhead {
  * frame, and the window following it; the `Follow` given is told of the window's scrolls by hand. A window scrolled
  * to the playhead is drawn anew before the frame shows, and so is the playhead on it, at the tick that frame heard.
  */
-export const useCanvasPlayhead = ({ mode, canvas, laid, colours, held, scrollTo }: CanvasPlayhead): Follow => {
+export const useCanvasPlayhead = ({ place, canvas, laid, colours, held, scrollTo }: CanvasPlayhead): Follow => {
   const follow = useFollow()
   const heard = useRef(Option.none<number>())
   const drawnAt = useRef('')
@@ -84,7 +83,7 @@ export const useCanvasPlayhead = ({ mode, canvas, laid, colours, held, scrollTo 
     })
   useLayoutEffect(() => void draw())
   useFrame((frame) => {
-    heard.current = heardTickIn(mode, frame)
+    heard.current = Option.flatMap(heardTick(frame), place)
     // The lane in sight: none behind a tab.
     const lane = Option.filter(
       Option.map(laid, ({ lane }) => lane),

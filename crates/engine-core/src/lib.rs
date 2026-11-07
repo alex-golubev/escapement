@@ -49,7 +49,6 @@ pub fn new(sample_rate: f32) -> (Builder, Engine) {
         parcels: audio,
         clock: 0,
         transport: Transport::new(sample_rate),
-        arrangement: false,
         sequencer: Sequencer {
             patterns: Patterns::new(FIRST_PATTERN_CELLS),
             arrangement: Arrangement::default(),
@@ -73,8 +72,6 @@ pub struct Engine {
     clock: u64,
     /// Not part of a session: a reset leaves it, so a rebuild doesn't start the pattern over.
     transport: Transport,
-    /// Whether the transport's loop plays the arrangement, as the page said with it last; said back in the telemetry.
-    arrangement: bool,
     /// Its patterns and clips are of the session: the reset's parcel takes them away.
     sequencer: Sequencer,
     held: Held,
@@ -139,7 +136,6 @@ impl Engine {
         telemetry.playing = position.is_some().into();
         telemetry.position = position.unwrap_or(0);
         telemetry.loop_ticks = loop_ticks.unwrap_or(0);
-        telemetry.arrangement = (position.is_some() && self.arrangement).into();
         telemetry.tempo = self.transport.tempo();
         self.meter.update(&self.output, frames);
         telemetry.peaks = self.meter.levels();
@@ -165,7 +161,6 @@ impl Engine {
             parcels,
             clock,
             transport,
-            arrangement,
             sequencer,
             held,
             input,
@@ -194,9 +189,9 @@ impl Engine {
                     .ok_or(Rejection::UnknownTarget)
                     .and_then(|node| node.note_off(0, page_note(note.note())?)),
                 Ok(Command::SetTempo(tempo)) => transport.set_tempo(tempo.bpm()),
-                Ok(Command::SetTransport(state)) => transport
-                    .set(state.playing(), state.loop_ticks())
-                    .map(|()| *arrangement = state.arrangement()),
+                Ok(Command::SetTransport(state)) => {
+                    transport.set(state.playing(), state.loop_ticks())
+                }
                 Ok(Command::PanicAudio(panic)) => panic!("PanicAudio {}", panic.code()),
                 Ok(Command::HangAudio(_)) => hang(),
                 Ok(Command::AfterBatch(marker)) => match parcels.take(marker.batch()) {
@@ -338,7 +333,7 @@ mod tests {
     use crate::commands::PARSE_BUDGET;
     use crate::commands::tests::{
         after_batch, hang_audio, no_kind, note_off, note_on, panic_audio, set_param,
-        set_strip_param, set_tempo, set_transport, set_transport_of, unknown_kind, wrong_size,
+        set_strip_param, set_tempo, set_transport, unknown_kind, wrong_size,
     };
     use crate::events::EVENT_CAPACITY;
     use crate::events::tests::decode;
@@ -1873,27 +1868,6 @@ mod tests {
         assert_eq!(looped(&mut rig.engine), (at(800) % BAR, BAR));
         rig.write(&[set_transport(false, BAR)]);
         assert_eq!(looped(&mut rig.engine), (0, 0));
-    }
-
-    #[test]
-    fn the_board_says_whether_the_loop_plays_the_arrangement_as_the_page_said_with_it() {
-        let mut rig = Rig::empty();
-        let arrangement = |engine: &mut Engine| {
-            engine.process(BLOCK_FRAMES);
-            engine.telemetry().arrangement
-        };
-        rig.write(&[set_transport_of(true, BAR, true)]);
-        assert_eq!(arrangement(&mut rig.engine), 1);
-        rig.write(&[set_transport_of(true, 2 * BAR, false)]);
-        assert_eq!(arrangement(&mut rig.engine), 0);
-        // A loop of no ticks is refused, and what it would play with it.
-        rig.write(&[set_transport_of(true, 0, true)]);
-        assert_eq!(arrangement(&mut rig.engine), 0);
-        rig.write(&[set_transport_of(true, BAR, true)]);
-        assert_eq!(arrangement(&mut rig.engine), 1);
-        // Stopped, it plays nothing.
-        rig.write(&[set_transport_of(false, BAR, true)]);
-        assert_eq!(arrangement(&mut rig.engine), 0);
     }
 
     #[test]

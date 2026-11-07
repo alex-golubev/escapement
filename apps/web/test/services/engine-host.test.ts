@@ -9,15 +9,18 @@ import {
   startEngine,
   type TestEngine
 } from '@escapement/engine/testing'
+import { plugins, Tick } from '@escapement/engine-description'
 import {
+  addClip,
+  addNote,
+  addTrack,
   createProject,
+  defaultNote,
   HoldTarget,
   holding,
   newWriter,
   noHolds,
-  readProject,
-  stepTicks,
-  toggleStep
+  stepTicks
 } from '@escapement/model'
 import { Boolean, Cause, Effect, Fiber, Layer, Option } from 'effect'
 import { Digest } from 'effect/crypto'
@@ -142,9 +145,32 @@ const hosted = (
 ) => {
   const doc = new Y.Doc()
   const by = newWriter('test')
-  createProject(doc, by, [{ name: 'Kick', sound: kick }])
-  const { channels, patterns } = readProject(doc).value
-  toggleStep(doc, by, patterns[0].id, channels[0].id, 0)
+  createProject(doc, by)
+  // A kick from the start, its track's clip a bar long.
+  Option.map(addTrack(doc, by, { plugin: plugins.sampler, sounds: { sample: kick } }), (track) =>
+    Option.map(addClip(doc, by, { track, tick: Tick(0) }), (clip) =>
+      addNote(doc, by, clip, { tick: Tick(0), key: defaultNote.key, length: defaultNote.length })
+    )
+  )
+  // The filter on the master, for Load to turn, as no operation puts an effect anywhere yet.
+  doc.transact(() =>
+    doc.getMap('mixer/master').set(
+      'slots',
+      new Y.Map<unknown>([
+        [
+          'filter',
+          new Y.Map<unknown>(
+            Object.entries({
+              plugin: { id: plugins.filter.id, version: plugins.filter.version },
+              params: new Y.Map(),
+              order: 'a0',
+              deleted: false
+            })
+          )
+        ]
+      ])
+    )
+  )
   const { context, wake, resumes } = sleepingContext(wakes, running)
   const started: Array<Started> = []
   const tried = { count: 0 }
@@ -246,7 +272,7 @@ const ready = ({ host, registry, started }: Hosting, count: number) =>
     Effect.map(() => started[count - 1])
   )
 
-/** Plays the pattern on the first engine, once it is ready. */
+/** Plays the arrangement on the first engine, once it is ready. */
 const playing = (hosting: Hosting) =>
   Effect.gen(function* () {
     const first = yield* ready(hosting, 1)
@@ -298,7 +324,7 @@ const panicked = (hosting: Hosting, engine: Started, next: number) =>
     return yield* ready(hosting, next)
   })
 
-/** Whether an engine plays the pattern: its first step, from the loop's start. */
+/** Whether an engine plays the arrangement: its first step, from the loop's start. */
 const playsFromTheStart = (engine: Started) => {
   engine.settle()
   const heard = engine.blocks(1)
@@ -316,8 +342,8 @@ test("another tab's hold plays over the document, as this page's own does, until
       const { registry, session } = hosting
       const first = yield* playing(hosting)
       expect(loudest(first.blocks(bar))).toBeGreaterThan(0)
-      const volume = HoldTarget.ChannelStrip({
-        channel: Option.getOrThrow(Option.fromUndefinedOr(registry.get(session.project.channelIds)[0])),
+      const volume = HoldTarget.TrackStrip({
+        track: Option.getOrThrow(Option.fromUndefinedOr(registry.get(session.project.trackIds)[0])),
         param: 'volume'
       })
       registry.set(session.heldElsewhere, holding(noHolds, volume, 0))
@@ -365,7 +391,7 @@ test('a restart while Play wakes the sound leaves the new engine playing once th
     })
   ))
 
-test('Play waits while the sound wakes: a second press starts nothing, and the pattern plays once it runs', () =>
+test('Play waits while the sound wakes: a second press starts nothing, and the arrangement plays once it runs', () =>
   hosting((hosting) =>
     Effect.gen(function* () {
       const { host, registry, wake, resumes } = hosting
@@ -386,7 +412,7 @@ test('Play waits while the sound wakes: a second press starts nothing, and the p
     })
   ))
 
-test('a press of Play interrupted while the sound wakes leaves the pattern stopped', () =>
+test('a press of Play interrupted while the sound wakes leaves the arrangement stopped', () =>
   hosting((hosting) =>
     Effect.gen(function* () {
       const { host, registry } = hosting
@@ -398,7 +424,7 @@ test('a press of Play interrupted while the sound wakes leaves the pattern stopp
     })
   ))
 
-test('a give-up while Play wakes the sound leaves the pattern stopped, and Play then does nothing', () =>
+test('a give-up while Play wakes the sound leaves the arrangement stopped, and Play then does nothing', () =>
   hosting((hosting) =>
     Effect.gen(function* () {
       const { host, registry, wake } = hosting
@@ -471,7 +497,7 @@ test('the time back counts from the first failure, however many new engines fail
     { startHangs: (attempt) => attempt === 2 }
   ))
 
-test('a failure while the pattern is stopped shows no time back: no sound went', () =>
+test('a failure while the arrangement is stopped shows no time back: no sound went', () =>
   hosting((hosting) =>
     Effect.gen(function* () {
       const { host, registry } = hosting
@@ -515,7 +541,7 @@ test('a panic of the build thread: the watchdog makes a new engine, which plays 
     })
   ))
 
-test('on the third failure within a minute the watchdog gives up and the pattern stops; a restart counts afresh', () =>
+test('on the third failure within a minute the watchdog gives up and the arrangement stops; a restart counts afresh', () =>
   hosting((hosting) =>
     Effect.gen(function* () {
       const { host, registry } = hosting
@@ -620,7 +646,7 @@ test("an engine that can't start isn't tried again", () =>
     { starts: () => false }
   ))
 
-test("Play on a context that won't wake leaves the pattern stopped", () =>
+test("Play on a context that won't wake leaves the arrangement stopped", () =>
   hosting(
     (hosting) =>
       Effect.gen(function* () {

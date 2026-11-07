@@ -1,26 +1,30 @@
 import { type CompiledEngine, compile, type SoundLibrary } from '@escapement/compiler'
 import type { BenchmarkPlay, BuildThreadError } from '@escapement/engine'
+import { plugins, Tick } from '@escapement/engine-description'
 import {
+  addClip,
+  addNote,
+  addTrack,
+  type Auditions,
+  barSteps,
   createProject,
+  defaultNote,
   followProject,
   type Holds,
   type Listening,
-  newWriter,
-  noHolds,
-  noAuditions,
   newListening,
-  type Auditions,
-  readProject,
-  barSteps,
-  toggleStep
+  newWriter,
+  noAuditions,
+  noHolds,
+  stepTicks
 } from '@escapement/model'
-import { Data, Effect, Ref } from 'effect'
+import { Array, Data, Effect, Option, Ref } from 'effect'
 import { Atom, AtomRegistry } from 'effect/reactivity'
 import * as Y from 'yjs'
 import {
   isLost,
-  manifestChannels,
   manifestLibrary,
+  manifestSamples,
   type SampleLoading,
   type ShowSample,
   sampleLoading,
@@ -30,15 +34,18 @@ import {
 /** A sound of the benchmark's project didn't get into the engine: the render would time its silence. */
 export class BenchmarkSoundLost extends Data.TaggedError('BenchmarkSoundLost')<{ readonly message: string }> {}
 
-/** The heaviest the slice plays: the starter project with every step of every channel on. */
+/** A track for each sample of the manifest, a sampler playing it a note on every step of a bar, from the start. */
 export const benchmarkProject = () => {
   const doc = new Y.Doc()
   const by = newWriter('benchmark')
-  createProject(doc, by, manifestChannels)
-  const { channels, patterns } = readProject(doc).value
-  patterns.forEach((pattern) =>
-    channels.forEach((channel) =>
-      Array.from({ length: barSteps }, (_, step) => toggleStep(doc, by, pattern.id, channel.id, step))
+  createProject(doc, by)
+  manifestSamples.forEach(({ hash }) =>
+    Option.map(addTrack(doc, by, { plugin: plugins.sampler, sounds: { sample: hash } }), (track) =>
+      Option.map(addClip(doc, by, { track, tick: Tick(0) }), (clip) =>
+        Array.range(0, barSteps - 1).forEach((step) =>
+          addNote(doc, by, clip, { tick: Tick(step * stepTicks), key: defaultNote.key, length: defaultNote.length })
+        )
+      )
     )
   )
   return doc

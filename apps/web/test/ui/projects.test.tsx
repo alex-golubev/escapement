@@ -62,7 +62,7 @@ const listedId = Effect.suspend(() => {
 /** As `listedId`, with its document made first, as the page makes it. */
 const madeBefore = Effect.suspend(() => {
   const id = newId()
-  return makeProject(storageOf(id), newWriter('test'), [], id).pipe(
+  return makeProject(storageOf(id), newWriter('test'), id).pipe(
     Effect.orDie,
     Effect.andThen(inList((list) => listNew(list, id))),
     Effect.as(id)
@@ -82,7 +82,7 @@ const listedNow = Effect.scoped(Effect.flatMap(list, (list) => list.all)).pipe(E
 
 /** How the page finds the project's storage as it opens it. */
 const loadedOf = (id: Id) =>
-  Effect.scoped(Effect.map(openProjectStorage(storageOf(id), newWriter('test'), [], id), ({ loaded }) => loaded))
+  Effect.scoped(Effect.map(openProjectStorage(storageOf(id), newWriter('test'), id), ({ loaded }) => loaded))
 
 /** IndexedDB that refuses to open any database. */
 const refusing = Layer.succeed(

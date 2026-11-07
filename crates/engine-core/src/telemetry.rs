@@ -25,9 +25,6 @@ pub struct Telemetry {
     pub position: u32,
     /// The loop's ticks at the last block's start, the length the position goes round in; 0 while stopped.
     pub loop_ticks: u32,
-    /// 1 while the loop at the last block's start plays the arrangement, as the page said with it; 0 for a pattern
-    /// alone, and while stopped.
-    pub arrangement: u32,
     /// Quarter notes a minute in the last block.
     pub tempo: f32,
     /// 1 once the commands' bounds are lost and the engine takes no more of them; said every block, as the one event
@@ -54,7 +51,6 @@ impl Default for Telemetry {
             playing: 0,
             position: 0,
             loop_ticks: 0,
-            arrangement: 0,
             tempo: 0.0,
             stream_lost: 0,
             overs: [0; CHANNELS],
@@ -218,7 +214,7 @@ mod tests {
         assert_eq!(size_of::<MeterRecord>(), 4 * (1 + 2 * CHANNELS));
         assert_eq!(
             TELEMETRY_WORDS,
-            12 + 2 * CHANNELS + METERS * (1 + 2 * CHANNELS)
+            11 + 2 * CHANNELS + METERS * (1 + 2 * CHANNELS)
         );
     }
 

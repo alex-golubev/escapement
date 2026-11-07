@@ -12,12 +12,11 @@ const peaks = [6, 7] as const
 const playing = 8
 const position = 9
 const loopTicks = 10
-const arrangement = 11
-const tempo = 12
-const streamLost = 13
-const overs = [14, 15] as const
-const metersUsed = 16
-const metersStart = 17
+const tempo = 11
+const streamLost = 12
+const overs = [13, 14] as const
+const metersUsed = 15
+const metersStart = 16
 /** A meter's record: its number, then its peaks and its overs per channel. */
 const meterWords = 5
 
@@ -41,8 +40,6 @@ export interface Telemetry {
   readonly position: number
   /** The loop's ticks at the last block's start, the length the position goes round in; 0 while stopped. */
   readonly loopTicks: number
-  /** Whether the loop at the last block's start plays the arrangement, as the page said with it; not while stopped. */
-  readonly arrangement: boolean
   /** Quarter notes a minute in the last block. */
   readonly tempo: number
   /** Once the engine lost its command stream: it takes no more commands. */
@@ -105,7 +102,6 @@ export const telemetryReader = (board: SharedArrayBuffer) => {
     playing: Atomics.load(words, playing) !== 0,
     position: Atomics.load(words, position),
     loopTicks: Atomics.load(words, loopTicks),
-    arrangement: Atomics.load(words, arrangement) !== 0,
     tempo: floatAt(tempo),
     streamLost: Atomics.load(words, streamLost) !== 0,
     overs: [Atomics.load(words, overs[0]), Atomics.load(words, overs[1])],

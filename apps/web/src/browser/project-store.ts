@@ -1,4 +1,4 @@
-import { createProject, type Id, type NewChannel, newId, readProjectId, type Writer } from '@escapement/model'
+import { createProject, type Id, newId, readProjectId, type Writer } from '@escapement/model'
 import { Boolean, Deferred, Effect, FiberSet, Layer, Match, Option } from 'effect'
 import { clearDocument, IndexeddbPersistence } from 'y-indexeddb'
 import * as Y from 'yjs'
@@ -50,20 +50,15 @@ const abortedWith = ({ target }: Event) =>
     (transaction) => transaction.error
   )
 
-/** A new project with these channels and this ID, written by `by`, in a document of its own. */
-const madeIn = (by: Writer, channels: ReadonlyArray<NewChannel>, id: Id) => {
+/** A new project with this ID, written by `by`, in a document of its own. */
+const madeIn = (by: Writer, id: Id) => {
   const doc = new Y.Doc()
-  createProject(doc, by, channels, id)
+  createProject(doc, by, id)
   return doc
 }
 
 /** As `ProjectStore.open`, with the project saved under `name`. */
-export const openProjectStorage = Effect.fnUntraced(function* (
-  name: string,
-  by: Writer,
-  channels: ReadonlyArray<NewChannel>,
-  id: Id
-) {
+export const openProjectStorage = Effect.fnUntraced(function* (name: string, by: Writer, id: Id) {
   const persistence = yield* persistenceOf(name, new Y.Doc())
   const synced = Option.isSome(
     yield* Effect.promise(() => persistence.whenSynced).pipe(Effect.timeoutOption(storageTimeout))
@@ -112,7 +107,7 @@ export const openProjectStorage = Effect.fnUntraced(function* (
   // Not in the storage's: y-indexeddb tells only of a load that worked, and one that didn't may have left part of a
   // record in its document.
   const doc = yield* Effect.sync(() =>
-    Boolean.match(saved, { onTrue: () => persistence.doc, onFalse: () => madeIn(by, channels, newId()) })
+    Boolean.match(saved, { onTrue: () => persistence.doc, onFalse: () => madeIn(by, newId()) })
   )
   return {
     doc,
@@ -139,11 +134,11 @@ const persisted = (name: string, doc: Y.Doc) =>
  * As `ProjectStore.make`, with the project saved under `name`: read back from there before it counts, as the browser
  * may refuse the write once it has answered it, as it commits.
  */
-export const makeProject = (name: string, by: Writer, channels: ReadonlyArray<NewChannel>, id: Id) =>
+export const makeProject = (name: string, by: Writer, id: Id) =>
   inTimeOrRefused(
     Effect.gen(function* () {
       // y-indexeddb saves what the document already holds as it opens.
-      yield* Effect.scoped(persisted(name, yield* Effect.sync(() => madeIn(by, channels, id))))
+      yield* Effect.scoped(persisted(name, yield* Effect.sync(() => madeIn(by, id))))
       return yield* Effect.scoped(Effect.map(persisted(name, new Y.Doc()), ({ doc }) => readProjectId(doc)))
     }),
     (cause) => new NotMade({ cause })
@@ -160,8 +155,8 @@ export const erase = (name: string) => Effect.tryPromise(() => clearDocument(nam
 
 /** In IndexedDB, through y-indexeddb: a database for each project. */
 export const projectStoreLayer = Layer.succeed(ProjectStore, {
-  open: (id, by, channels) => openProjectStorage(storageOf(id), by, channels, id),
-  make: (id, by, channels) => makeProject(storageOf(id), by, channels, id),
+  open: (id, by) => openProjectStorage(storageOf(id), by, id),
+  make: (id, by) => makeProject(storageOf(id), by, id),
   erase: (id) =>
     erase(storageOf(id)).pipe(Effect.catch((error) => Effect.logWarning("The project's storage wasn't erased", error)))
 })

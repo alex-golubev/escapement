@@ -3,7 +3,7 @@
 /** A key's row. */
 export const rowHeight = 12
 
-/** A step's column: a bar of sixteen fills a window as wide as the Channels window. */
+/** A step's column: a bar of sixteen, 512 pixels, beside the keys. */
 export const stepWidth = 32
 
 /** The keyboard on the left. */

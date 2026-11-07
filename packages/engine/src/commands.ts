@@ -51,10 +51,9 @@ interface CommandFields {
   readonly SetTempo: { readonly bpm: number }
   /**
    * The whole state of the transport, not a press of a button: sent again, it changes nothing. Stopped to playing
-   * starts at the beginning, playing to stopped goes back to it; a position past a new loop's end wraps around. What
-   * the loop plays, the arrangement or a pattern alone, the engine only says back with where it plays.
+   * starts at the beginning, playing to stopped goes back to it; a position past a new loop's end wraps around.
    */
-  readonly SetTransport: { readonly playing: boolean; readonly loopTicks: LoopTicks; readonly arrangement: boolean }
+  readonly SetTransport: { readonly playing: boolean; readonly loopTicks: LoopTicks }
   /** The audio thread panics, so the page's recovery can be checked; the code goes into the panic's message. */
   readonly PanicAudio: { readonly code: number }
   /** The audio thread loops for ever, so the page's recovery can be checked; the code only marks the press. */
@@ -75,8 +74,7 @@ const writeRecord = (builder: Builder, command: Command): void => {
     NoteOn: ({ node, key, velocity, note }) => NoteOn.createNoteOn(builder, node, key, velocity, note),
     NoteOff: ({ node, note }) => NoteOff.createNoteOff(builder, node, note),
     SetTempo: ({ bpm }) => SetTempo.createSetTempo(builder, bpm),
-    SetTransport: ({ playing, loopTicks, arrangement }) =>
-      SetTransport.createSetTransport(builder, playing, loopTicks, arrangement),
+    SetTransport: ({ playing, loopTicks }) => SetTransport.createSetTransport(builder, playing, loopTicks),
     PanicAudio: ({ code }) => PanicAudio.createPanicAudio(builder, code),
     HangAudio: ({ code }) => HangAudio.createHangAudio(builder, code),
     SetStripParam: ({ node, param, value }) => SetStripParam.createSetStripParam(builder, node, param, value)

@@ -25,7 +25,6 @@ import {
 import { Array, Boolean, Option, Order, Predicate, Schema } from 'effect'
 import type * as Y from 'yjs'
 import {
-  type ChannelFields,
   get,
   foundInsertMap,
   idsOf,
@@ -41,29 +40,18 @@ import {
   patternNotes,
   projectMaps,
   type SlotFields,
-  type Stored
+  type Stored,
+  type TrackFields
 } from './document'
-import { channelStrip } from './channel-strip'
 import { Id, storedId } from './id'
-import { trackPlace } from './arrangement'
 import { insertNumber, master } from './mixer'
-import type {
-  Channel,
-  Clip,
-  Insert,
-  Master,
-  Note,
-  Pattern,
-  PatternPlace,
-  PluginInstance,
-  Project,
-  Slot
-} from './project'
-import { stepNote } from './steps'
+import type { Clip, Insert, Master, Note, Pattern, PluginInstance, Project, Slot, Track } from './project'
+import { defaultNote } from './time'
+import { trackStrip } from './track-strip'
 
 /** A place where the document holds what reading couldn't take as it is, for the UI to point at. */
 export interface Replacement {
-  /** From the document's top, e.g. `['channels', id, 'instrument', 'params', 'volume']`. */
+  /** From the document's top, e.g. `['tracks', id, 'instrument', 'params', 'volume']`. */
   readonly path: ReadonlyArray<string>
   readonly found: unknown
   /** What reading took instead: the default, the nearest value in range, or nothing, leaving the object out. */
@@ -95,7 +83,6 @@ const sha256 = Schema.decodeUnknownOption(Schema.String.pipe(Schema.fromBrand('S
 const pluginRef = Schema.decodeUnknownOption(Schema.Struct({ id: Schema.Int, version: Schema.Int }))
 /** What makes a note itself; the rest has defaults. */
 const NoteFieldsRead = Schema.Struct({
-  channel: Schema.NonEmptyString,
   tick: Schema.Finite,
   len: Schema.optionalKey(Schema.Unknown),
   key: Schema.optionalKey(Schema.Unknown),
@@ -229,7 +216,7 @@ const instanceOf = (name: PluginName, map: Stored<PluginFields>, report: Report,
   } as PluginInstance
 }
 
-/** None for one without a channel or a tick: no default puts it anywhere. It ends by `latestEnd`. */
+/** None for one without a tick: no default puts it anywhere. It ends by `latestEnd`. */
 export const readNote = (id: Id, found: unknown, report: Report = ignore, path: Path = []): Option.Option<Note> =>
   Option.flatMap(noteFields(found), (fields) => {
     const tick = Math.round(fields.tick)
@@ -252,17 +239,16 @@ const noteOf = (id: Id, fields: NoteFieldsRead, tick: number, report: Report, pa
   const velocity = { min: minVelocity, max: maxVelocity }
   return {
     id,
-    channel: Id(fields.channel),
     tick: Tick(tick),
-    length: numberOr(report, [...path, 'len'], fields.len, length, stepNote.length),
-    key: MidiKey(numberOr(report, [...path, 'key'], fields.key, key, stepNote.key)),
-    velocity: numberOr(report, [...path, 'vel'], fields.vel, velocity, stepNote.velocity)
+    length: numberOr(report, [...path, 'len'], fields.len, length, defaultNote.length),
+    key: MidiKey(numberOr(report, [...path, 'key'], fields.key, key, defaultNote.key)),
+    velocity: numberOr(report, [...path, 'vel'], fields.vel, velocity, defaultNote.velocity)
   }
 }
 
 const byId = Order.mapInput(Order.String, ({ id }: { readonly id: Id }) => id)
 
-/** Every note that has a channel and a tick, by ID. */
+/** Every note that has a tick, by ID. */
 export const readNotes = (
   notes: Stored<Record<string, NoteFields>>,
   report: Report = ignore,
@@ -308,19 +294,19 @@ const readStrip = (
     params.map((param) => [param.id, numberOr(report, [...path, param.id], get(map, param.id), param, param.default)])
   ) as StripValues
 
-export const readChannel = (
+export const readTrack = (
   report: Report,
-  channels: Stored<Record<string, Stored<ChannelFields>>>,
+  tracks: Stored<Record<string, Stored<TrackFields>>>,
   id: Id
-): Option.Option<Ordered<Channel>> =>
-  Option.map(liveEntry(report, ['channels'], channels, id), (map) => {
-    const path = ['channels', id]
+): Option.Option<Ordered<Track>> =>
+  Option.map(liveEntry(report, ['tracks'], tracks, id), (map) => {
+    const path = ['tracks', id]
     return {
       value: {
         id,
         name: stringOr(report, [...path, 'name'], get(map, 'name'), ''),
         mute: booleanOr(report, [...path, 'mute'], get(map, 'mute'), false),
-        strip: readStrip(map, channelStrip, report, path),
+        strip: readStrip(map, trackStrip, report, path),
         instrument: Option.flatMap(mapUnder(report, path, map, 'instrument', 'skipped', true), (instrument) =>
           readInstance(instrument, report, [...path, 'instrument'])
         ),
@@ -330,34 +316,8 @@ export const readChannel = (
     }
   })
 
-/** A live pattern but its notes, which are a map of their own. */
-export const readPatternEntry = (
-  report: Report,
-  patterns: ProjectMaps['patterns'],
-  id: Id
-): Option.Option<Ordered<Omit<Pattern, 'notes'>>> =>
-  Option.map(liveEntry(report, ['patterns'], patterns, id), (map) => {
-    const path = ['patterns', id]
-    return {
-      value: { id, name: stringOr(report, [...path, 'name'], get(map, 'name'), '') },
-      order: stringOr(report, [...path, 'order'], get(map, 'order'), '')
-    }
-  })
-
-export const readPatternPlace = (patterns: ProjectMaps['patterns'], id: Id): Option.Option<Ordered<PatternPlace>> =>
-  Option.map(mapUnder(ignore, ['patterns'], patterns, id, 'skipped'), (map) => ({
-    value: { id, live: !isDeleted(map) },
-    order: stringOr(ignore, ['patterns', id, 'order'], get(map, 'order'), '')
-  }))
-
 export const readPatternNotes = (doc: Y.Doc, id: Id, report: Report = ignore) =>
   readNotes(patternNotes(doc, id), report, [notesName(id)])
-
-export const readPattern = (report: Report, doc: Y.Doc, id: Id): Option.Option<Ordered<Pattern>> =>
-  Option.map(readPatternEntry(report, projectMaps(doc).patterns, id), ({ value, order }) => ({
-    value: { ...value, notes: readPatternNotes(doc, id, report) },
-    order
-  }))
 
 /** How far into its pattern's rounds a clip may start: whole, no further either way than the last tick. */
 const clipOffset = { min: -lastTick, max: lastTick, whole: true }
@@ -382,28 +342,24 @@ const clipLength = (report: Report, path: Path, found: unknown, tick: number): O
   )
 
 /**
- * A live clip of a pattern on one of the arrangement's tracks, from a tick in range, the nearest whole one; none for
- * one without them.
+ * A live clip, on a track and of a pattern by their IDs, from a tick in range, the nearest whole one; none for one
+ * without them.
  */
 export const readClip = (report: Report, clips: ProjectMaps['clips'], id: Id): Option.Option<Clip> =>
   Option.flatMap(liveEntry(report, ['clips'], clips, id), (map) => {
     const path = ['clips', id]
     const found = { track: get(map, 'track'), bounds: get(map, 'bounds'), pattern: get(map, 'pattern') }
-    return Option.flatMap(clipFields(found), ({ track, bounds, pattern }) => {
-      const tick = Math.round(bounds.tick)
-      return Option.map(
-        Option.all({
-          track: Option.liftPredicate(Id(track), (track) => Option.isSome(trackPlace(track))),
-          tick: Option.liftPredicate(tick, (tick) => tick >= 0 && tick <= lastTick)
-        }),
-        ({ track, tick }): Clip => {
+    return Option.flatMap(clipFields(found), ({ track, bounds, pattern }) =>
+      Option.map(
+        Option.liftPredicate(Math.round(bounds.tick), (tick) => tick >= 0 && tick <= lastTick),
+        (tick): Clip => {
           reportWhen(report, tick !== bounds.tick, { path: [...path, 'bounds'], found: bounds, read: 'nearest' })
           const ownLength = clipLength(report, [...path, 'bounds', 'length'], bounds.length, tick)
           const offset = numberOr(report, [...path, 'bounds', 'offset'], bounds.offset, clipOffset, 0)
-          return { id, track, tick: Tick(tick), pattern: Id(pattern), ownLength, offset }
+          return { id, track: Id(track), tick: Tick(tick), pattern: Id(pattern), ownLength, offset }
         }
       )
-    }).pipe(
+    ).pipe(
       Option.orElse(() => {
         report({ path, found, read: 'skipped' })
         return Option.none()
@@ -412,26 +368,26 @@ export const readClip = (report: Report, clips: ProjectMaps['clips'], id: Id): O
   })
 
 /**
- * The clips of the live patterns given, by ID. What is replaced reading one is told unless it names a pattern not live,
- * which no one sees, as a deleted pattern's notes aren't read.
+ * The clips on the live tracks given, by ID. What is replaced reading one is told unless it is on a track not live,
+ * which no one sees, as a deleted track's clips are hidden with it.
  */
 export const readClips = (
   report: Report,
   clips: ProjectMaps['clips'],
-  patterns: ReadonlyArray<Id>
+  tracks: ReadonlyArray<Id>
 ): ReadonlyArray<Clip> => {
-  const live = new Set<unknown>(patterns)
+  const live = new Set<unknown>(tracks)
   const seen = (id: Id) =>
     Option.match(mapAt(clips, id), {
       onNone: () => true,
-      onSome: (map) => !Predicate.isString(get(map, 'pattern')) || live.has(get(map, 'pattern'))
+      onSome: (map) => !Predicate.isString(get(map, 'track')) || live.has(get(map, 'track'))
     })
   return Array.sort(
     idsOf(clips).flatMap((id) =>
       Option.toArray(
         Option.filter(
           readClip(Boolean.match(seen(id), { onTrue: () => report, onFalse: () => ignore }), clips, id),
-          ({ pattern }) => live.has(pattern)
+          ({ track }) => live.has(track)
         )
       )
     ),
@@ -511,20 +467,23 @@ export const readProject = (doc: Y.Doc): Read<Project> => {
   const report: Report = (replacement) => {
     replacements.push(replacement)
   }
-  const { meta, channels, patterns, clips } = projectMaps(doc)
+  const { meta, tracks, clips } = projectMaps(doc)
   // Replacements are told in the order of the project's parts.
   const tempo = readTempo(report, meta)
-  const channelsRead = inOrder(idsOf(channels).flatMap((id) => Option.toArray(readChannel(report, channels, id))))
-  const patternsRead = inOrder(idsOf(patterns).flatMap((id) => Option.toArray(readPattern(report, doc, id))))
+  const tracksRead = inOrder(idsOf(tracks).flatMap((id) => Option.toArray(readTrack(report, tracks, id))))
+  const clipsRead = readClips(
+    report,
+    clips,
+    tracksRead.map(({ id }) => id)
+  )
+  const patterns = Array.sort(Array.dedupe(clipsRead.map(({ pattern }) => pattern)), Order.String).map(
+    (id): Pattern => ({ id, notes: readPatternNotes(doc, id, report) })
+  )
   const value: Project = {
     tempo,
-    channels: channelsRead,
-    patterns: patternsRead,
-    clips: readClips(
-      report,
-      clips,
-      patternsRead.map(({ id }) => id)
-    ),
+    tracks: tracksRead,
+    clips: clipsRead,
+    patterns,
     master: readMaster(report, doc),
     inserts: readInserts(report, doc)
   }

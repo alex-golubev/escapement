@@ -1,13 +1,16 @@
 import { expect, type Page } from '@playwright/test'
-import { heardOn, newProject, panAll, switchOn, test } from './page'
+import { addTrack, heardOn, nameOf, newClip, newProject, panAll, putNote, test, toggleWindow } from './page'
 
-/** The channel sent into the mixer strip by its number, typed into its field. */
-const sendInto = async (page: Page, channel: string, strip: number) => {
-  const field = page.getByRole('spinbutton', { name: `${channel}: mixer strip`, exact: true })
+/** The track sent into the mixer strip by its number, typed into its field in the track's window. */
+const sendInto = async (page: Page, track: string, strip: number) => {
+  await nameOf(page, track).click()
+  const field = page.getByRole('spinbutton', { name: `${track}: mixer strip`, exact: true })
   await field.focus()
   await field.press(String(strip))
   await field.press('Enter')
   await expect(field).toHaveAttribute('aria-valuetext', `strip ${strip}`)
+  await nameOf(page, track).click()
+  await expect(field).toHaveCount(0)
 }
 
 /**
@@ -27,22 +30,27 @@ const stripSounds = (page: Page, output: string, sounding: ReadonlyArray<number>
     { timeout: 10_000, polling: 'raf' }
   )
 
-test('channels sent into strips of their own sound through them: a strip muted or faded out is heard no more', async ({
+test('tracks sent into strips of their own sound through them: a strip muted or faded out is heard no more', async ({
   page
 }) => {
   await newProject(page)
-  // Each channel heard on a side of its own.
-  await panAll(page, 'Kick', 'Home', '100% left')
-  await panAll(page, 'Snare', 'End', '100% right')
-  await sendInto(page, 'Kick', 1)
-  await sendInto(page, 'Snare', 2)
-  await switchOn(page, 'Kick, bar 1, step 1')
-  await switchOn(page, 'Snare, bar 1, step 1')
+  // Each track heard on a side of its own, a note in a clip of its own.
+  await addTrack(page, 'Synth')
+  await addTrack(page, 'Synth 2')
+  await panAll(page, 'Synth', 'Home', '100% left')
+  await panAll(page, 'Synth 2', 'End', '100% right')
+  await newClip(page, 0, 0, 'Synth')
+  await putNote(page, 0)
+  await newClip(page, 0, 1, 'Synth 2')
+  await putNote(page, 0)
+  await sendInto(page, 'Synth', 1)
+  await sendInto(page, 'Synth 2', 2)
+  await toggleWindow(page, 'Mixer')
   const play = page.getByRole('button', { name: 'Play', exact: true })
   await play.click()
   await heardOn(page, { silent: [], sounding: [0] })
   await heardOn(page, { silent: [], sounding: [1] })
-  // Each strip's meters show what it passes on: its own channel, on its side.
+  // Each strip's meters show what it passes on: its own track, on its side.
   await stripSounds(page, 'Strip 1 output', [0])
   await stripSounds(page, 'Strip 2 output', [1])
   await stripSounds(page, 'Strip 3 output', [])

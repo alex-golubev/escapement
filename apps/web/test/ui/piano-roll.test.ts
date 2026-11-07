@@ -34,7 +34,6 @@ const barWidth = widthOf(barTicks)
 
 const note = (id: string, tick: number, key: number, length: number): Note => ({
   id: Id(id),
-  channel: Id('synth'),
   tick: Tick(tick),
   key: MidiKey(key),
   length,
@@ -281,13 +280,13 @@ test('a drag shows the notes as the edit let go would make them, the note held o
   const grab = Option.getOrThrow(grabAt(notes, view, at(stepTicks / 2, 64), stepTicks))
   const to = { tick: Tick(stepTicks * 2), key: MidiKey(64), length: stepTicks }
   const moved = (one: Note) => ({ ...one, tick: to.tick })
-  expect(draggedNotes(notes, Id('synth'), grab, to)).toEqual([later, moved(copy), moved(held)])
-  expect(draggedNotes([copy, there], Id('synth'), grab, to)).toEqual([copy, there])
+  expect(draggedNotes(notes, grab, to)).toEqual([later, moved(copy), moved(held)])
+  expect(draggedNotes([copy, there], grab, to)).toEqual([copy, there])
   const edge = Option.getOrThrow(grabAt([held], view, at(stepTicks - 1, 64), stepTicks))
-  expect(draggedNotes([held, later], Id('synth'), edge, { ...to, tick: held.tick, length: stepTicks * 3 })).toEqual([
+  expect(draggedNotes([held, later], edge, { ...to, tick: held.tick, length: stepTicks * 3 })).toEqual([
     later,
     { ...held, length: stepTicks * 3 }
   ])
   const put = Option.getOrThrow(grabAt([later], view, at(stepTicks * 5, 60), stepTicks))
-  expect(draggedNotes([there, later], Id('synth'), put, to)).toEqual([later, { channel: Id('synth'), ...to }])
+  expect(draggedNotes([there, later], put, to)).toEqual([later, to])
 })

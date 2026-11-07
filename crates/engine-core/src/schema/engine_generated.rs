@@ -1297,10 +1297,10 @@ impl<'a> SetTempo {
 // struct SetTransport, aligned to 4
 #[repr(transparent)]
 #[derive(Clone, Copy, PartialEq)]
-pub struct SetTransport(pub [u8; 12]);
+pub struct SetTransport(pub [u8; 8]);
 impl Default for SetTransport {
     fn default() -> Self {
-        Self([0; 12])
+        Self([0; 8])
     }
 }
 impl ::core::fmt::Debug for SetTransport {
@@ -1308,7 +1308,6 @@ impl ::core::fmt::Debug for SetTransport {
         f.debug_struct("SetTransport")
             .field("playing", &self.playing())
             .field("loop_ticks", &self.loop_ticks())
-            .field("arrangement", &self.arrangement())
             .finish()
     }
 }
@@ -1358,11 +1357,10 @@ impl<'a> ::flatbuffers::Verifiable for SetTransport {
 
 impl<'a> SetTransport {
     #[allow(clippy::too_many_arguments)]
-    pub fn new(playing: bool, loop_ticks: u32, arrangement: bool) -> Self {
-        let mut s = Self([0; 12]);
+    pub fn new(playing: bool, loop_ticks: u32) -> Self {
+        let mut s = Self([0; 8]);
         s.set_playing(playing);
         s.set_loop_ticks(loop_ticks);
-        s.set_arrangement(arrangement);
         s
     }
 
@@ -1424,38 +1422,6 @@ impl<'a> SetTransport {
                 &x_le as *const _ as *const u8,
                 self.0[4..].as_mut_ptr(),
                 ::core::mem::size_of::<<u32 as ::flatbuffers::EndianScalar>::Scalar>(),
-            );
-        }
-    }
-
-    /// What the loop plays, the arrangement or a pattern alone, so the page knows what it hears: the engine plays either
-    /// the same, and only says it back in its telemetry.
-    pub fn arrangement(&self) -> bool {
-        let mut mem =
-            ::core::mem::MaybeUninit::<<bool as ::flatbuffers::EndianScalar>::Scalar>::uninit();
-        // Safety:
-        // Created from a valid Table for this object
-        // Which contains a valid value in this slot
-        ::flatbuffers::EndianScalar::from_little_endian(unsafe {
-            ::core::ptr::copy_nonoverlapping(
-                self.0[8..].as_ptr(),
-                mem.as_mut_ptr() as *mut u8,
-                ::core::mem::size_of::<<bool as ::flatbuffers::EndianScalar>::Scalar>(),
-            );
-            mem.assume_init()
-        })
-    }
-
-    pub fn set_arrangement(&mut self, x: bool) {
-        let x_le = ::flatbuffers::EndianScalar::to_little_endian(x);
-        // Safety:
-        // Created from a valid Table for this object
-        // Which contains a valid value in this slot
-        unsafe {
-            ::core::ptr::copy_nonoverlapping(
-                &x_le as *const _ as *const u8,
-                self.0[8..].as_mut_ptr(),
-                ::core::mem::size_of::<<bool as ::flatbuffers::EndianScalar>::Scalar>(),
             );
         }
     }

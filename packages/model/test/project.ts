@@ -1,14 +1,22 @@
-import { plugins, Sha256 } from '@escapement/engine-description'
+import { plugins, Sha256, Tick } from '@escapement/engine-description'
 import { Array, Boolean, Option } from 'effect'
 import type { Atom, AtomRegistry } from 'effect/reactivity'
 import * as Y from 'yjs'
-import { addChannel, createProject, type Id, type NewChannel, newWriter, type Project, readProject } from '../src'
-import { notesName } from '../src/document'
+import {
+  addClip,
+  addTrack,
+  createProject,
+  type Id,
+  master,
+  newWriter,
+  type Project,
+  readProject,
+  renameTrack
+} from '../src'
+import { insertMap, notesName } from '../src/document'
 
-export const drums: ReadonlyArray<NewChannel> = ['Kick', 'Snare', 'Hat', 'Clap'].map((name, i) => ({
-  name,
-  sound: Sha256(`${i}a`.repeat(32))
-}))
+/** The drums tests put on tracks, each a sampler playing its sound. */
+export const drums = ['Kick', 'Snare', 'Hat', 'Clap'].map((name, i) => ({ name, sound: Sha256(`${i}a`.repeat(32)) }))
 
 /** Each of a synth's parameters at its default, as a new one reads. */
 export const synthDefaults = Object.fromEntries(plugins.synth.params.map((param) => [param.id, param.default]))
@@ -16,10 +24,10 @@ export const synthDefaults = Object.fromEntries(plugins.synth.params.map((param)
 /** Who writes in tests, unless one says otherwise. */
 export const by = newWriter('test')
 
-/** A new document holding a new project. */
-export const newProject = () => {
+/** A new document holding a new project, as the page makes one: only the master. */
+export const emptyProject = () => {
   const doc = new Y.Doc()
-  return Boolean.match(createProject(doc, by, drums), {
+  return Boolean.match(createProject(doc, by), {
     onTrue: () => doc,
     onFalse: () => {
       throw new Error('The document already holds a project')
@@ -27,30 +35,59 @@ export const newProject = () => {
   })
 }
 
+/** A track playing the sound with a sampler, named so; its ID. */
+export const addDrum = (doc: Y.Doc, { name, sound }: (typeof drums)[number]) => {
+  const track = Option.getOrThrow(addTrack(doc, by, { plugin: plugins.sampler, sounds: { sample: sound } }))
+  renameTrack(doc, by, track, name)
+  return track
+}
+
+/** The filter on the master, as no operation puts an effect anywhere yet. */
+export const putFilterOnMaster = (doc: Y.Doc) =>
+  doc.transact(() => {
+    const slot = new Y.Map<unknown>(
+      Object.entries({
+        plugin: { id: plugins.filter.id, version: plugins.filter.version },
+        params: new Y.Map(),
+        samples: new Y.Map(),
+        order: 'a0',
+        deleted: false
+      })
+    )
+    insertMap(doc, master).set('slots', new Y.Map<unknown>([['filter', slot]]))
+  })
+
+/** A new project as tests start from: a track for each drum, in their order, a clip on the first, and the master's filter. */
+export const newProject = () => {
+  const doc = emptyProject()
+  const [kick] = drums.map((drum) => addDrum(doc, drum))
+  Option.getOrThrow(addClip(doc, by, { track: kick, tick: Tick(0) }))
+  putFilterOnMaster(doc)
+  return doc
+}
+
 export const projectOf = (doc: Y.Doc): Project => readProject(doc).value
 
 export const replacementsOf = (doc: Y.Doc) => readProject(doc).replacements
 
-/** The first channel, pattern and master slot, as tests act on them. */
+/** The first track, the earliest clip and the first master slot, as tests act on them. */
 export const parts = (doc: Y.Doc) => {
-  const { channels, patterns, master } = projectOf(doc)
-  return { channel: channels[0], pattern: patterns[0], slot: master.slots[0] }
+  const { tracks, clips, master } = projectOf(doc)
+  return { track: tracks[0], clip: clips.toSorted((a, b) => a.tick - b.tick)[0], slot: master.slots[0] }
 }
 
 /** A new project with a synth after the drums, added as + adds it: a sampler has no knob of its own to turn. */
 export const newProjectWithSynth = () => {
   const doc = newProject()
-  addChannel(doc, by)
+  Option.getOrThrow(addTrack(doc, by))
   return doc
 }
 
-/** The first channel a synth plays, if any. */
+/** The first track a synth plays, if any. */
 const firstSynth = (doc: Y.Doc) =>
-  Array.findFirst(projectOf(doc).channels, ({ instrument }) =>
-    Option.exists(instrument, ({ name }) => name === 'synth')
-  )
+  Array.findFirst(projectOf(doc).tracks, ({ instrument }) => Option.exists(instrument, ({ name }) => name === 'synth'))
 
-/** The first channel a synth plays. */
+/** The first track a synth plays. */
 export const synthOf = (doc: Y.Doc) => Option.getOrThrow(firstSynth(doc))
 
 /** The first synth's shape, if there is one. */

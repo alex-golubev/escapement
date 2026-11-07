@@ -36,7 +36,7 @@ import {
 
 const sampler = NodeHandle(1)
 const middleC = MidiKey(60)
-const play = Command.SetTransport({ playing: true, loopTicks: patternLoop, arrangement: false })
+const play = Command.SetTransport({ playing: true, loopTicks: patternLoop })
 const loopFrames = patternLoop * framesPerTick
 
 const note = (tick: number, node = sampler, key = middleC, velocity = 1) => ({
@@ -120,7 +120,7 @@ describe('an arrangement', () => {
           ]
         })
       ],
-      commands: [Command.SetTransport({ playing: true, loopTicks: LoopTicks(2 * patternLoop), arrangement: false })]
+      commands: [Command.SetTransport({ playing: true, loopTicks: LoopTicks(2 * patternLoop) })]
     })
     const heard = blocks(engine, blocksOf(3 * loopFrames))
     const pass = [0, stepTicks, patternLoop + stepTicks].map((tick) => tick * framesPerTick)
@@ -139,7 +139,7 @@ describe('an arrangement', () => {
           clips: [{ tick: Tick(0), length: 10 * stepTicks, period: 4 * stepTicks, offset: 0, pattern: drumsPattern }]
         })
       ],
-      commands: [Command.SetTransport({ playing: true, loopTicks: LoopTicks(patternLoop), arrangement: false })]
+      commands: [Command.SetTransport({ playing: true, loopTicks: LoopTicks(patternLoop) })]
     })
     const heard = blocks(engine, blocksOf(loopFrames))
     expect(onsets(heard)).toEqual([0, 2, 4, 6, 8].map((step) => step * stepTicks * framesPerTick))
@@ -164,7 +164,7 @@ describe('an arrangement', () => {
           ]
         })
       ],
-      commands: [Command.SetTransport({ playing: true, loopTicks: LoopTicks(patternLoop), arrangement: false })]
+      commands: [Command.SetTransport({ playing: true, loopTicks: LoopTicks(patternLoop) })]
     })
     const heard = blocks(engine, blocksOf(loopFrames))
     expect(onsets(heard)).toEqual([1, 2, 5].map((step) => step * stepTicks * framesPerTick))

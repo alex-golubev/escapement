@@ -87,7 +87,6 @@ test('every telemetry field reaches the page in its own place', () => {
     playing: false,
     position: 0,
     loopTicks: 0,
-    arrangement: false,
     tempo: 0,
     streamLost: false,
     overs: [0, 0],
@@ -106,7 +105,7 @@ test('every telemetry field reaches the page in its own place', () => {
       missingNode,
       missingNode,
       Command.SetTempo({ bpm: 96 }),
-      Command.SetTransport({ playing: true, loopTicks: LoopTicks(19_207), arrangement: true })
+      Command.SetTransport({ playing: true, loopTicks: LoopTicks(19_207) })
     ]
   })
   // No command makes the audio thread touch the heap; this does.
@@ -137,7 +136,6 @@ test('every telemetry field reaches the page in its own place', () => {
     tempo: counts[7],
     frame: counts[8],
     playing: true,
-    arrangement: true,
     streamLost: false
   })
   // Distinct counts, so fields that swap places can't pass.
@@ -307,7 +305,7 @@ test('the audio thread never touches the heap, from its start on', () => {
     Command.NoteOff({ node: tone, note: PageNote(1) }),
     Command.NoteOff({ node: insert, note: PageNote(2) }),
     Command.SetTempo({ bpm: 140 }),
-    Command.SetTransport({ playing: true, loopTicks: LoopTicks(4), arrangement: false })
+    Command.SetTransport({ playing: true, loopTicks: LoopTicks(4) })
   ]
   roomy.send(live(...commands))
   const edits = [

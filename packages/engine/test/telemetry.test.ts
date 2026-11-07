@@ -11,25 +11,20 @@ import { meterCount } from '../src/protocol'
 const engineWords = (
   counts: readonly [blocks: number, epoch: number, lostEvents: number, lostNotes: number, heapCalls: number],
   peaks: readonly [number, number],
-  [playing, position, loopTicks, arrangement, tempo, streamLost]: readonly [
-    number,
-    number,
-    number,
-    number,
-    number,
-    number
-  ] = [0, 0, 0, 0, 120, 0],
+  [playing, position, loopTicks, tempo, streamLost]: readonly [number, number, number, number, number] = [
+    0, 0, 0, 120, 0
+  ],
   overs: readonly [number, number] = [0, 0],
   meters: ReadonlyArray<MeterReading> = []
 ) => {
   const words = new Uint32Array(engineTelemetryWords)
   words.set(counts)
   new Float32Array(words.buffer, 20, 2).set(peaks)
-  words.set([playing, position, loopTicks, arrangement], 7)
-  new Float32Array(words.buffer, 44, 1).set([tempo])
-  words.set([streamLost, ...overs, meters.length], 12)
+  words.set([playing, position, loopTicks], 7)
+  new Float32Array(words.buffer, 40, 1).set([tempo])
+  words.set([streamLost, ...overs, meters.length], 11)
   meters.forEach(({ meter, peaks, overs }, i) => {
-    const at = 16 + i * 5
+    const at = 15 + i * 5
     words.set([meter], at)
     new Float32Array(words.buffer, (at + 1) * 4, 2).set(peaks)
     words.set(overs, at + 3)
@@ -41,10 +36,7 @@ test('the page reads what the worklet wrote', () => {
   const board = createTelemetryBoard()
   // Past 32 bits: a day and more at 48 kHz.
   const frame = 2 ** 32 + 5 * 128
-  telemetryWriter(board)(
-    engineWords([42, 3, 2, 7, 1], [0.5, 0.25], [1, 1234, 7680, 1, 128.5, 1], [9, 2 ** 32 - 1]),
-    frame
-  )
+  telemetryWriter(board)(engineWords([42, 3, 2, 7, 1], [0.5, 0.25], [1, 1234, 7680, 128.5, 1], [9, 2 ** 32 - 1]), frame)
   expect(telemetryReader(board)()).toEqual({
     blocks: 42,
     epoch: 3,
@@ -55,7 +47,6 @@ test('the page reads what the worklet wrote', () => {
     playing: true,
     position: 1234,
     loopTicks: 7680,
-    arrangement: true,
     tempo: 128.5,
     streamLost: true,
     overs: [9, 2 ** 32 - 1],
@@ -72,15 +63,15 @@ test('the meters in use reach the page, each under its number, and the worklet c
   ] as const
   const written = engineWords([1, 1, 0, 0, 0], [0.5, 0.5], undefined, undefined, meters)
   // A record past the count, as one left from a node gone.
-  written.set([9, 0, 0, 1, 1], 16 + 2 * 5)
+  written.set([9, 0, 0, 1, 1], 15 + 2 * 5)
   // The board's words past what a write copies keep what they had.
   const words = new Uint32Array(board)
-  words.fill(0xdead, 1 + 16 + 2 * 5)
+  words.fill(0xdead, 1 + 15 + 2 * 5)
   telemetryWriter(board)(written, 0)
   expect(telemetryReader(board)()?.meters).toEqual(meters)
-  expect(words[1 + 16 + 2 * 5]).toBe(0xdead)
+  expect(words[1 + 15 + 2 * 5]).toBe(0xdead)
   // However many the engine says it has, no more than there are.
-  written.set([meterCount + 1], 15)
+  written.set([meterCount + 1], 14)
   telemetryWriter(board)(written, 0)
   expect(telemetryReader(board)()?.meters).toHaveLength(meterCount)
 })

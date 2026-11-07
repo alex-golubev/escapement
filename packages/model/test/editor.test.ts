@@ -4,18 +4,19 @@ import { AtomRegistry } from 'effect/reactivity'
 import { describe, expect, test } from 'vitest'
 import * as Y from 'yjs'
 import {
+  addClip,
+  addNote,
   barTicks,
   type Editor,
   editorOf,
-  Id,
   moveClip,
   newWriter,
   type Project,
-  setChannelParam,
+  renameTrack,
   setMute,
   setTempo,
-  stepTicks,
-  toggleStep
+  setTrackParam,
+  stepTicks
 } from '../src'
 import {
   brokenWays,
@@ -30,8 +31,7 @@ import {
   synthOf,
   sync,
   told,
-  shapeOf,
-  updatesDuring
+  shapeOf
 } from './project'
 
 /** Another client, or another part of this one, writing to the same document. */
@@ -61,18 +61,29 @@ const connect = (a: Y.Doc, b: Y.Doc) => {
   b.on('update', (update: Uint8Array, origin: unknown) => origin !== connection && Y.applyUpdate(a, update, connection))
 }
 
-const notesOf = (doc: Y.Doc) => projectOf(doc).patterns[0].notes
+/** The notes of the first clip's pattern. */
+const notesOf = (doc: Y.Doc) =>
+  Option.getOrElse(
+    Option.fromUndefinedOr(projectOf(doc).patterns.find(({ id }) => id === parts(doc).clip.pattern)),
+    () => ({ notes: [] })
+  ).notes
+
+/** The project's first clip erased, as one test of clips counts its own. */
+const eraseFirst = (doc: Y.Doc) => rawMap(doc, 'clips', parts(doc).clip.id).set('deleted', true)
+
+/** A note a step long, at the tick and key given. */
+const note = (tick: number, key = 60) => ({ tick: Tick(tick), key: MidiKey(key), length: stepTicks })
 
 describe('an editor', () => {
   test("takes back its writer's steps and none of another client's, here and there", () => {
     const here = newProjectWithSynth()
     const there = new Y.Doc()
     connect(here, there)
-    const { channel, pattern } = parts(here)
+    const { clip } = parts(here)
     const synth = synthOf(here)
     editing(here, (editor) => {
-      expect(editor.toggleStep(pattern.id, channel.id, 2)).toBe(true)
-      expect(setChannelParam(there, elsewhere, synth.id, 'osc1.shape', 1)).toBe(true)
+      expect(editor.addNote(clip.id, note(2 * stepTicks))).toBe(true)
+      expect(setTrackParam(there, elsewhere, synth.id, 'osc1.shape', 1)).toBe(true)
       expect(setTempo(there, elsewhere, 140)).toBe(true)
       expect(editor.undo()).toBe(true)
       const docs = [here, there]
@@ -88,61 +99,81 @@ describe('an editor', () => {
     })
   })
 
-  test('takes back a channel added as one step, and brings it back', () => {
-    const doc = newProject()
-    editing(doc, (editor) => {
-      expect(editor.addChannel()).toBe(true)
-      expect(projectOf(doc).channels).toHaveLength(5)
-      expect(editor.undo()).toBe(true)
-      expect(projectOf(doc).channels).toHaveLength(4)
-      expect(editor.redo()).toBe(true)
-      expect(projectOf(doc).channels.at(-1)?.name).toBe('Synth')
-    })
-  })
-
-  test('takes back a pattern added into the trash, with the notes another client put in it since; redo brings both', () => {
+  test('takes back a track added into the trash, with what another client wrote into it and put on it since; redo brings them', () => {
     const here = newProject()
     const there = new Y.Doc()
     connect(here, there)
-    const { channel } = parts(here)
-    const names = (doc: Y.Doc) => projectOf(doc).patterns.map(({ name }) => name)
+    const clipIds = (doc: Y.Doc) => projectOf(doc).clips.map(({ id }) => id)
     editing(here, (editor, registry) => {
-      const added = Option.getOrThrow(editor.addPattern())
-      expect(names(there)).toEqual(['Pattern 1', 'Pattern 2'])
-      expect(toggleStep(there, elsewhere, added, channel.id, 3)).toBe(true)
+      const added = Option.getOrThrow(editor.addTrack())
+      expect(projectOf(there).tracks).toHaveLength(5)
+      expect(renameTrack(there, elsewhere, added, 'Lead')).toBe(true)
+      const clip = Option.getOrThrow(addClip(there, elsewhere, { track: added, tick: Tick(0) }))
       expect(editor.undo()).toBe(true)
       ;[here, there].forEach((doc) => {
-        expect(names(doc)).toEqual(['Pattern 1'])
-        expect(rawMap(doc, 'patterns', added).get('deleted')).toBe(true)
-        expect(rawNotes(doc, added).size).toBe(1)
+        expect(projectOf(doc).tracks).toHaveLength(4)
+        expect(rawMap(doc, 'tracks', added).get('deleted')).toBe(true)
+        expect(clipIds(doc)).not.toContain(clip)
+      })
+      // Setting it up was no step: nothing is left to take back.
+      expect(registry.get(editor.canUndo)).toBe(false)
+      expect(editor.redo()).toBe(true)
+      ;[here, there].forEach((doc) => {
+        expect(projectOf(doc).tracks.at(-1)?.name).toBe('Lead')
+        expect(clipIds(doc)).toContain(clip)
+      })
+    })
+  })
+
+  test('takes back a clip added into the trash, with the notes another client put in it since; redo brings both', () => {
+    const here = newProject()
+    const there = new Y.Doc()
+    connect(here, there)
+    const { track, clip: first } = parts(here)
+    const ids = (doc: Y.Doc) => projectOf(doc).clips.map(({ id }) => id)
+    editing(here, (editor, registry) => {
+      const added = Option.getOrThrow(editor.addClip({ track: track.id, tick: Tick(barTicks) }))
+      expect(ids(there).toSorted()).toEqual([first.id, added].toSorted())
+      expect(addNote(there, elsewhere, added, note(3 * stepTicks))).toBe(true)
+      const { pattern } = Option.getOrThrow(
+        Option.fromUndefinedOr(projectOf(there).clips.find(({ id }) => id === added))
+      )
+      expect(editor.undo()).toBe(true)
+      ;[here, there].forEach((doc) => {
+        expect(ids(doc)).toEqual([first.id])
+        expect(rawMap(doc, 'clips', added).get('deleted')).toBe(true)
+        expect(rawNotes(doc, pattern).size).toBe(1)
       })
       // Setting it up was no step: nothing is left to take back.
       expect(registry.get(editor.canUndo)).toBe(false)
       expect(editor.redo()).toBe(true)
       ;[here, there].forEach((doc) =>
-        expect(projectOf(doc).patterns.map(({ id, notes }) => ({ id, ticks: notes.map(({ tick }) => tick) }))).toEqual([
-          { id: parts(here).pattern.id, ticks: [] },
-          { id: added, ticks: [3 * stepTicks] }
-        ])
+        expect(
+          projectOf(doc)
+            .patterns.filter(({ id }) => id === pattern)
+            .map(({ notes }) => notes.map(({ tick }) => tick))
+        ).toEqual([[3 * stepTicks]])
       )
     })
   })
 
-  test('takes back a name as one step, and a deletion: the channel back in its place with its steps and knobs', () => {
+  test('takes back a name as one step, and a deletion: the track back in its place with its clips and knobs', () => {
     const doc = newProject()
-    const { channel, pattern } = parts(doc)
-    const names = () => projectOf(doc).channels.map(({ name }) => name)
+    const { track, clip } = parts(doc)
+    const names = () => projectOf(doc).tracks.map(({ name }) => name)
     const before = names()
     editing(doc, (editor) => {
-      expect(editor.toggleStep(pattern.id, channel.id, 2)).toBe(true)
-      expect(editor.setChannelStrip(channel.id, 'pan', 2)).toBe(true)
-      expect(editor.renameChannel(channel.id, 'Big kick')).toBe(true)
-      expect(editor.deleteChannel(channel.id)).toBe(true)
+      expect(editor.addNote(clip.id, note(2 * stepTicks))).toBe(true)
+      expect(editor.setTrackStrip(track.id, 'pan', 2)).toBe(true)
+      expect(editor.renameTrack(track.id, 'Big kick')).toBe(true)
+      expect(editor.deleteTrack(track.id)).toBe(true)
       expect(names()).toEqual(before.slice(1))
+      expect(projectOf(doc).clips).toEqual([])
       expect(editor.undo()).toBe(true)
       expect(names()).toEqual(['Big kick', ...before.slice(1)])
-      expect(projectOf(doc).channels[0].strip.pan).toBe(1)
-      expect(notesOf(doc).map((note) => note.channel)).toEqual([channel.id])
+      expect(projectOf(doc).tracks[0].strip.pan).toBe(1)
+      expect(projectOf(doc).clips.map(({ id }) => id)).toEqual([clip.id])
+      expect(notesOf(doc).map(({ tick }) => tick)).toEqual([2 * stepTicks])
       expect(editor.undo()).toBe(true)
       expect(names()).toEqual(before)
       expect(editor.redo()).toBe(true)
@@ -157,8 +188,8 @@ describe('an editor', () => {
     connect(here, there)
     const synth = synthOf(here)
     editing(here, (editor, registry) => {
-      editor.setChannelParam(synth.id, 'osc1.shape', 2)
-      setChannelParam(there, elsewhere, synth.id, 'osc1.shape', 1)
+      editor.setTrackParam(synth.id, 'osc1.shape', 2)
+      setTrackParam(there, elsewhere, synth.id, 'osc1.shape', 1)
       expect(registry.get(editor.canUndo)).toBe(true)
       expect(editor.undo()).toBe(false)
       expect(shapeOf(here)).toBe(1)
@@ -169,29 +200,35 @@ describe('an editor', () => {
 
   test('leaves out what another writer of the same document writes, and what its own wrote before it', () => {
     const doc = newProject()
-    const { channel } = parts(doc)
+    const { track } = parts(doc)
     editing(doc, (editor, registry) => {
-      expect(setMute(doc, elsewhere, channel.id, true)).toBe(true)
+      expect(setMute(doc, elsewhere, track.id, true)).toBe(true)
       expect(registry.get(editor.canUndo)).toBe(false)
       expect(editor.undo()).toBe(false)
-      expect(projectOf(doc).channels[0].mute).toBe(true)
-      expect(projectOf(doc).channels).toHaveLength(4)
+      expect(projectOf(doc).tracks[0].mute).toBe(true)
+      expect(projectOf(doc).tracks).toHaveLength(4)
     })
   })
 
   test('takes back each edit as a step of its own, however close together, and makes them again', () => {
     const doc = newProjectWithSynth()
-    const { channel, pattern, slot } = parts(doc)
+    const { track, clip, slot } = parts(doc)
     const synth = synthOf(doc)
     const edits: ReadonlyArray<(editor: Editor) => boolean> = [
-      (editor) => editor.toggleStep(pattern.id, channel.id, 1),
-      (editor) => editor.toggleStep(pattern.id, channel.id, 2),
-      (editor) => editor.toggleStep(pattern.id, channel.id, 1),
-      (editor) => editor.setMute(channel.id, true),
+      (editor) => editor.addNote(clip.id, note(stepTicks)),
+      (editor) => editor.addNote(clip.id, note(2 * stepTicks)),
+      (editor) =>
+        editor.eraseNotes(
+          clip.id,
+          notesOf(doc)
+            .slice(0, 1)
+            .map(({ id }) => id)
+        ),
+      (editor) => editor.setMute(track.id, true),
       (editor) => editor.setTempo(150),
-      (editor) => editor.setChannelParam(synth.id, 'osc1.shape', 0),
-      (editor) => editor.setChannelStrip(channel.id, 'pan', -0.6),
-      (editor) => editor.setChannelStrip(channel.id, 'volume', 0.7),
+      (editor) => editor.setTrackParam(synth.id, 'osc1.shape', 0),
+      (editor) => editor.setTrackStrip(track.id, 'pan', -0.6),
+      (editor) => editor.setTrackStrip(track.id, 'volume', 0.7),
       (editor) => editor.setMasterParam(slot.id, 'cutoff', 500)
     ]
     editing(doc, (editor) => {
@@ -224,11 +261,11 @@ describe('an editor', () => {
       const registry = yield* AtomRegistry.AtomRegistry
       const editor = yield* editorOf(doc, by)
       const end = editor.begin()
-      editor.setChannelParam(synth.id, 'osc1.shape', 0)
+      editor.setTrackParam(synth.id, 'osc1.shape', 0)
       // Past the half second Yjs would make a step of on its own, by the clock it reads.
       yield* Effect.sleep('600 millis')
-      editor.setChannelParam(synth.id, 'osc1.shape', 1)
-      editor.setChannelParam(synth.id, 'osc1.shape', 2)
+      editor.setTrackParam(synth.id, 'osc1.shape', 1)
+      editor.setTrackParam(synth.id, 'osc1.shape', 2)
       end()
       expect(editor.undo()).toBe(true)
       expect(shapeOf(doc)).toBe(plugins.synth.params[0].default)
@@ -240,18 +277,18 @@ describe('an editor', () => {
 
   test('makes one step of all it writes while actions are open: two at once, and edits between', () => {
     const doc = newProjectWithSynth()
-    const { channel, pattern, slot } = parts(doc)
+    const { track, clip, slot } = parts(doc)
     const synth = synthOf(doc)
     editing(doc, (editor) => {
       const before = projectOf(doc)
       const endKnob = editor.begin()
       const endFilter = editor.begin()
       Array.from({ length: 10 }, (_, i) => i).forEach((i) => {
-        editor.setChannelParam(synth.id, 'osc1.shape', i % 5)
+        editor.setTrackParam(synth.id, 'osc1.shape', i % 5)
         editor.setMasterParam(slot.id, 'cutoff', 1000 + i)
       })
-      editor.setMute(channel.id, false)
-      editor.toggleStep(pattern.id, channel.id, 0)
+      editor.setMute(track.id, false)
+      editor.addNote(clip.id, note(0))
       endKnob()
       editor.setMasterParam(slot.id, 'cutoff', 2000)
       endFilter()
@@ -267,7 +304,7 @@ describe('an editor', () => {
     editing(doc, (editor) => {
       const turn = (values: ReadonlyArray<number>) => {
         const end = editor.begin()
-        values.forEach((value) => editor.setChannelParam(synth.id, 'osc1.shape', value))
+        values.forEach((value) => editor.setTrackParam(synth.id, 'osc1.shape', value))
         end()
       }
       turn([0, 1])
@@ -281,77 +318,35 @@ describe('an editor', () => {
     })
   })
 
-  test('adds and clones no pattern while an action is open, which would make it a step of the gesture', () => {
-    const doc = newProject()
-    const { pattern } = parts(doc)
-    editing(doc, (editor) => {
-      const end = editor.begin()
-      expect(
-        updatesDuring(doc, () => {
-          expect(editor.addPattern()).toEqual(Option.none())
-          expect(editor.clonePattern(pattern.id)).toEqual(Option.none())
-        })
-      ).toBe(0)
-      end()
-      expect(Option.isSome(editor.addPattern())).toBe(true)
-      expect(Option.isSome(editor.clonePattern(pattern.id))).toBe(true)
-      expect(projectOf(doc).patterns).toHaveLength(3)
-    })
-  })
-
-  test("takes back a pattern's rename, clone and deletion, a step each; the clone goes to the trash with its notes", () => {
-    const doc = newProject()
-    const { channel, pattern } = parts(doc)
-    const names = () => projectOf(doc).patterns.map(({ name }) => name)
-    editing(doc, (editor) => {
-      expect(editor.toggleStep(pattern.id, channel.id, 1)).toBe(true)
-      expect(editor.renamePattern(pattern.id, 'Intro')).toBe(true)
-      const clone = Option.getOrThrow(editor.clonePattern(pattern.id))
-      expect(editor.deletePattern(pattern.id)).toBe(true)
-      expect(names()).toEqual(['Intro #2'])
-      expect(editor.undo()).toBe(true)
-      expect(names()).toEqual(['Intro', 'Intro #2'])
-      expect(editor.undo()).toBe(true)
-      expect(names()).toEqual(['Intro'])
-      expect(rawMap(doc, 'patterns', clone).get('deleted')).toBe(true)
-      expect(rawNotes(doc, clone).size).toBe(1)
-      expect(editor.undo()).toBe(true)
-      expect(names()).toEqual(['Pattern 1'])
-      expect(notesOf(doc)).toHaveLength(1)
-      ;[1, 2, 3].forEach(() => expect(editor.redo()).toBe(true))
-      expect(names()).toEqual(['Intro #2'])
-      expect(projectOf(doc).patterns[0].notes.map(({ tick }) => tick)).toEqual([stepTicks])
-    })
-  })
-
   test("takes back a clip put, moved, resized, trimmed and erased, a step each; the one put goes to the trash with another client's move", () => {
     const doc = newProject()
-    const { pattern } = parts(doc)
+    const [first, second, , fifth] = projectOf(doc).tracks.map(({ id }) => id)
+    eraseFirst(doc)
     const clips = () => projectOf(doc).clips.map(({ track, tick }) => [track, tick])
     const ownLengths = () => projectOf(doc).clips.map(({ ownLength }) => ownLength)
     editing(doc, (editor) => {
-      const clip = Option.getOrThrow(editor.addClip(pattern.id, { track: Id('1'), tick: Tick(0) }))
-      expect(editor.moveClip(clip, { track: Id('2'), tick: Tick(barTicks) })).toBe(true)
+      const clip = Option.getOrThrow(editor.addClip({ track: first, tick: Tick(0) }))
+      expect(editor.moveClip(clip, { track: second, tick: Tick(barTicks) })).toBe(true)
       expect(editor.resizeClip(clip, 3 * barTicks)).toBe(true)
       expect(editor.trimClip(clip, { tick: Tick(2 * barTicks), length: 2 * barTicks, offset: 0 })).toBe(true)
       expect(editor.eraseClips([clip])).toBe(true)
       expect(clips()).toEqual([])
       expect(editor.undo()).toBe(true)
-      expect(clips()).toEqual([['2', 2 * barTicks]])
+      expect(clips()).toEqual([[second, 2 * barTicks]])
       expect(editor.undo()).toBe(true)
       expect(ownLengths()).toEqual([Option.some(3 * barTicks)])
       expect(editor.undo()).toBe(true)
       expect(ownLengths()).toEqual([Option.none()])
-      expect(clips()).toEqual([['2', barTicks]])
+      expect(clips()).toEqual([[second, barTicks]])
       expect(editor.undo()).toBe(true)
-      expect(clips()).toEqual([['1', 0]])
-      expect(moveClip(doc, elsewhere, clip, { track: Id('5'), tick: Tick(0) })).toBe(true)
+      expect(clips()).toEqual([[first, 0]])
+      expect(moveClip(doc, elsewhere, clip, { track: fifth, tick: Tick(0) })).toBe(true)
       expect(editor.undo()).toBe(true)
       expect(clips()).toEqual([])
-      expect(rawMap(doc, 'clips', clip).toJSON()).toMatchObject({ track: '5', deleted: true })
+      expect(rawMap(doc, 'clips', clip).toJSON()).toMatchObject({ track: fifth, deleted: true })
       expect(editor.undo()).toBe(false)
       expect(editor.redo()).toBe(true)
-      expect(clips()).toEqual([['5', 0]])
+      expect(clips()).toEqual([[fifth, 0]])
     })
   })
 
@@ -383,13 +378,13 @@ describe('an editor', () => {
 
   test('tells when it can undo and redo; an edit that changes nothing is no step, a new one drops what was undone', () => {
     const doc = newProject()
-    const { channel } = parts(doc)
+    const { track } = parts(doc)
     editing(doc, (editor, registry) => {
       const canUndo = told(registry, editor.canUndo)
       const canRedo = told(registry, editor.canRedo)
-      expect(editor.setMute(channel.id, false)).toBe(true)
+      expect(editor.setMute(track.id, false)).toBe(true)
       expect(canUndo).toEqual([false])
-      editor.setMute(channel.id, true)
+      editor.setMute(track.id, true)
       editor.undo()
       expect(canUndo).toEqual([false, true, false])
       expect(canRedo).toEqual([false, true])
@@ -397,7 +392,7 @@ describe('an editor', () => {
       expect(canUndo).toEqual([false, true, false, true])
       expect(canRedo).toEqual([false, true, false])
       expect(editor.redo()).toBe(false)
-      expect(projectOf(doc).channels[0].mute).toBe(false)
+      expect(projectOf(doc).tracks[0].mute).toBe(false)
     })
   })
 })
@@ -409,16 +404,16 @@ describe('an edit into a map made anew, its old one missing or something else in
       const there = new Y.Doc()
       connect(here, there)
       const synth = synthOf(here)
-      const instrument = rawMap(here, 'channels', synth.id, 'instrument')
+      const instrument = rawMap(here, 'tracks', synth.id, 'instrument')
       breakIt(instrument, 'params')
       editing(here, (editor) => {
-        expect(editor.setChannelParam(synth.id, 'osc1.shape', 1)).toBe(true)
+        expect(editor.setTrackParam(synth.id, 'osc1.shape', 1)).toBe(true)
         expect(editor.undo()).toBe(true)
         expect(shapeOf(here)).toBe(plugins.synth.params[0].default)
         expect(instrument.get('params')).toBeInstanceOf(Y.Map)
         expect(editor.redo()).toBe(true)
         expect(shapeOf(there)).toBe(1)
-        setChannelParam(there, elsewhere, synth.id, 'osc1.shape', 2)
+        setTrackParam(there, elsewhere, synth.id, 'osc1.shape', 2)
         expect(editor.undo()).toBe(false)
         expect(shapeOf(here)).toBe(2)
         expect(shapeOf(there)).toBe(2)
@@ -429,11 +424,11 @@ describe('an edit into a map made anew, its old one missing or something else in
   test('the map made anew is no step of any history: broken and mended, there is nothing to take back but the edit', () => {
     const doc = newProjectWithSynth()
     const synth = synthOf(doc)
-    const instrument = rawMap(doc, 'channels', synth.id, 'instrument')
+    const instrument = rawMap(doc, 'tracks', synth.id, 'instrument')
     editing(doc, (editor, registry) => {
       doc.transact(() => instrument.set('params', 'broken'), elsewhere)
       expect(registry.get(editor.canUndo)).toBe(false)
-      expect(editor.setChannelParam(synth.id, 'osc1.shape', 1)).toBe(true)
+      expect(editor.setTrackParam(synth.id, 'osc1.shape', 1)).toBe(true)
       expect(editor.undo()).toBe(true)
       expect(registry.get(editor.canUndo)).toBe(false)
       expect(shapeOf(doc)).toBe(plugins.synth.params[0].default)
@@ -444,16 +439,14 @@ describe('an edit into a map made anew, its old one missing or something else in
 
 test('takes back notes put one by one a step each, and notes erased in one action, such as a drag, as one step', () => {
   const doc = newProject()
-  const { channel, pattern } = parts(doc)
+  const { clip } = parts(doc)
   const keys = () => notesOf(doc).map(({ key }) => key)
   editing(doc, (editor) => {
-    ;[60, 64, 67].forEach((key) =>
-      editor.addNote(pattern.id, channel.id, { tick: Tick(0), key: MidiKey(key), length: stepTicks })
-    )
+    ;[60, 64, 67].forEach((key) => editor.addNote(clip.id, note(0, key)))
     expect(editor.undo()).toBe(true)
     expect(keys().toSorted()).toEqual([60, 64])
     const end = editor.begin()
-    notesOf(doc).forEach(({ id }) => editor.eraseNotes(pattern.id, [id]))
+    notesOf(doc).forEach(({ id }) => editor.eraseNotes(clip.id, [id]))
     end()
     expect(keys()).toEqual([])
     expect(editor.undo()).toBe(true)
@@ -463,18 +456,18 @@ test('takes back notes put one by one a step each, and notes erased in one actio
 
 test('takes back a note moved, with the one it took the place of, and a note stretched, a step each', () => {
   const doc = newProject()
-  const { channel, pattern } = parts(doc)
-  const place = (key: number) => ({ tick: Tick(0), key: MidiKey(key), length: stepTicks })
+  const { clip } = parts(doc)
+  const place = (key: number) => note(0, key)
   const shape = () =>
     notesOf(doc)
       .map(({ key, length }) => ({ key, length: length / stepTicks }))
       .toSorted((a, b) => a.key - b.key)
   editing(doc, (editor) => {
-    editor.addNote(pattern.id, channel.id, place(60))
-    editor.addNote(pattern.id, channel.id, place(64))
+    editor.addNote(clip.id, place(60))
+    editor.addNote(clip.id, place(64))
     const [moved] = notesOf(doc).filter(({ key }) => key === 64)
-    expect(editor.moveNote(pattern.id, moved.id, place(60))).toBe(true)
-    expect(editor.stretchNote(pattern.id, moved.id, 2 * stepTicks)).toBe(true)
+    expect(editor.moveNote(clip.id, moved.id, place(60))).toBe(true)
+    expect(editor.stretchNote(clip.id, moved.id, 2 * stepTicks)).toBe(true)
     expect(shape()).toEqual([{ key: 60, length: 2 }])
     expect(editor.undo()).toBe(true)
     expect(shape()).toEqual([{ key: 60, length: 1 }])

@@ -1,6 +1,6 @@
-/* As wide as the last insert's number; a row of channels makes room for it by `--insert-w`. */
+/* As wide as the last insert's number. */
 .insert-field {
-  width: var(--insert-w, 28px);
+  width: 28px;
   flex: none;
 }
 

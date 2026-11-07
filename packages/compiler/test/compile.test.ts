@@ -23,44 +23,41 @@ import {
   Tick
 } from '@escapement/engine-description'
 import {
-  addChannel,
   addClip,
   addNote,
-  addPattern,
+  addTrack,
+  type Auditions,
   barTicks,
   batchedState,
-  insertCount,
   createProject,
-  defaultChannelStrip,
-  deleteChannel,
-  deletePattern,
+  defaultTrackStrip,
+  deleteTrack,
+  eraseClips,
   followProject,
   HoldTarget,
   type Holds,
   holding,
   Id,
+  insertCount,
   lettingGo,
   moveClip,
-  resizeClip,
-  trimClip,
-  newWriter,
-  noHolds,
-  noAuditions,
   newListening,
-  type Auditions,
+  newWriter,
+  noAuditions,
+  noHolds,
   readProject,
-  setChannelInsert,
-  setChannelParam,
-  setChannelStrip,
+  resizeClip,
   setInsertMute,
   setInsertStrip,
   setMasterParam,
   setMute,
   setTempo,
+  setTrackInsert,
+  setTrackParam,
+  setTrackStrip,
   stepTicks,
-  toggledMode,
   toggledSolo,
-  toggleStep
+  trimClip
 } from '@escapement/model'
 import { Array, Boolean, Deferred, Effect, Exit, Fiber, Option, Order } from 'effect'
 import { Atom, AtomRegistry } from 'effect/reactivity'
@@ -74,31 +71,46 @@ const sounds = ['Kick', 'Snare'].map((name, i) => ({ name, sound: Sha256(`${i}b`
 const [kick, snare] = sounds.map(({ sound }) => sound)
 const other = Sha256('cd'.repeat(32))
 
-/** The handle a cell's first node gets: nodes are made channels first, then the master: its insert, slots and fader. */
+/** The handle a cell's first node gets: nodes are made tracks first, then the master: its insert, slots and fader. */
 const cell = (n: number) => NodeHandle(n)
 const [kickNode, snareNode, insert, filter, masterFader] = [1, 2, 3, 4, 5].map(cell)
 
-/** The handle the current pattern of a new project gets, the first one a clip plays. */
+/** The handle the pattern of the kick's clip gets, the first one a clip plays. */
 const firstPattern = PatternHandle(1)
 
-/** The current pattern alone, from the start, for a bar or `length`. */
+/** The kick's clip alone, from the start, for a bar or `length`. */
 const alone = (pattern: PatternHandle, length = barTicks) =>
   DeviceEdit.SetClips({ clips: [{ tick: Tick(0), length, period: length, offset: 0, pattern }] })
 
-/** A channel's sampler, with its strip: as a new channel has it, unless given. */
-const sampler = (node: NodeHandle, sound: Sha256, strip: StripValues = defaultChannelStrip) =>
+/** A track's sampler, with its strip: as a new track has it, unless given. */
+const sampler = (node: NodeHandle, sound: Sha256, strip: StripValues = defaultTrackStrip) =>
   createNode(plugins.sampler, node, {}, { sample: sound }, strip)
 
-/** A new channel's strip with its volume at `volume`. */
-const turnedTo = (volume: number): StripValues => ({ ...defaultChannelStrip, volume })
+/** A new track's strip with its volume at `volume`. */
+const turnedTo = (volume: number): StripValues => ({ ...defaultTrackStrip, volume })
 
-/** The transport of a pattern played alone, unless it plays the arrangement. */
-const transport = (playing: boolean, loopTicks = barTicks, arrangement = false) =>
-  Command.SetTransport({ playing, loopTicks: LoopTicks(loopTicks), arrangement })
+const transport = (playing: boolean, loopTicks = barTicks) =>
+  Command.SetTransport({ playing, loopTicks: LoopTicks(loopTicks) })
+
+/** A note a step long on the step given, middle C unless another key is. */
+const step = (n: number, key = 60) => ({ tick: Tick(n * stepTicks), key: MidiKey(key), length: stepTicks })
+
+/** As the engine gets a note a step long at full strength on the node. */
+const played = (node: NodeHandle, n: number, key = 60) => ({
+  tick: Tick(n * stepTicks),
+  node,
+  key: MidiKey(key),
+  velocity: 1,
+  length: stepTicks
+})
 
 interface Run {
   readonly doc: Y.Doc
-  readonly channels: ReadonlyArray<Id>
+  /** The kick's and the snare's, each a sampler. */
+  readonly tracks: ReadonlyArray<Id>
+  /** The kick's, from the start: the only clip of a new run. */
+  readonly clip: Id
+  /** The kick clip's. */
   readonly pattern: Id
   readonly slot: Id
   readonly compiler: Compiler
@@ -112,19 +124,15 @@ interface Run {
   /** From now on a send throws, as a bug in the ring or the protocol would. */
   readonly breakSending: () => void
   /** Into solo or out of it, in this client's listening. */
-  readonly solo: (channel: Id) => void
-  /** The pattern this client chooses to hear. */
-  readonly choose: (pattern: Id) => void
+  readonly solo: (track: Id) => void
   /** The engine runs, or stops taking what is in the ring. */
   readonly setRunning: (running: boolean) => void
   /** This client turns a control to the value, or lets it go. */
   readonly hold: (target: HoldTarget, value?: number) => void
-  /** This client plays the pattern, or stops it. */
+  /** This client plays the arrangement, or stops it. */
   readonly play: (playing: boolean) => void
   /** This client plays these notes by hand now. */
   readonly audition: (auditions: Auditions) => void
-  /** From Pattern to Arrangement, or back, in this client's listening. */
-  readonly toggleMode: () => void
 }
 
 /** Once every store and show started so far has run: they run apart from the compiler. */
@@ -136,9 +144,23 @@ const endedNow = <A, E>(effect: Effect.Effect<A, E>) =>
     Option.fromUndefinedOr(fiber.pollUnsafe())
   )
 
+/** The filter on the master, at its defaults, as no operation puts an effect anywhere yet. */
+const putFilterOnMaster = (doc: Y.Doc) =>
+  doc.transact(() => {
+    const slot = new Y.Map<unknown>(
+      Object.entries({
+        plugin: { id: plugins.filter.id, version: plugins.filter.version },
+        params: new Y.Map(),
+        order: 'a0',
+        deleted: false
+      })
+    )
+    doc.getMap('mixer/master').set('slots', new Y.Map<unknown>([['filter', slot]]))
+  })
+
 /**
- * Compiles a project of the two sounds while `use` runs, into an engine that keeps what it was sent. Each sound is in
- * once `storing` ends.
+ * Compiles a project of the two sounds, each on a track, the kick's with a clip from the start, and the filter on the
+ * master, while `use` runs, into an engine that keeps what it was sent. Each sound is in once `storing` ends.
  */
 const compiled = (
   use: (run: Run) => Effect.Effect<void>,
@@ -150,8 +172,13 @@ const compiled = (
   }: { running?: boolean; playing?: boolean; storing?: Effect.Effect<void>; broken?: boolean } = {}
 ) => {
   const doc = new Y.Doc()
-  createProject(doc, by, sounds)
-  const { channels, patterns, master } = readProject(doc).value
+  createProject(doc, by)
+  const tracks = sounds.map(({ sound }) =>
+    Option.getOrThrow(addTrack(doc, by, { plugin: plugins.sampler, sounds: { sample: sound } }))
+  )
+  const clip = Option.getOrThrow(addClip(doc, by, { track: tracks[0], tick: Tick(0) }))
+  putFilterOnMaster(doc)
+  const { clips, master } = readProject(doc).value
   const sent: Array<Transaction> = []
   const stored: Array<Sha256> = []
   const evicted: Array<Sha256> = []
@@ -198,8 +225,9 @@ const compiled = (
     )
     yield* use({
       doc,
-      channels: channels.map(({ id }) => id),
-      pattern: patterns[0].id,
+      tracks,
+      clip,
+      pattern: clips[0].pattern,
       slot: master.slots[0].id,
       compiler,
       sent,
@@ -212,8 +240,7 @@ const compiled = (
       breakSending: () => {
         sending.send = throwing
       },
-      solo: (channel) => registry.update(listening, (state) => toggledSolo(state, channel)),
-      choose: (pattern) => registry.update(listening, (state) => ({ ...state, pattern: Option.some(pattern) })),
+      solo: (track) => registry.update(listening, (state) => toggledSolo(state, track)),
       setRunning: (value) => registry.set(running, value),
       hold: (target, value) =>
         registry.update(holds, (held) =>
@@ -223,8 +250,7 @@ const compiled = (
           })
         ),
       play: (value) => registry.set(playing, value),
-      audition: (value) => registry.set(auditions, value),
-      toggleMode: () => registry.update(listening, toggledMode)
+      audition: (value) => registry.set(auditions, value)
     })
   })
   return program.pipe(Effect.scoped, Effect.provideService(AtomRegistry.AtomRegistry, AtomRegistry.make()))
@@ -252,11 +278,11 @@ const rebuilding = (run: Run) =>
     return { taken, sent: run.sent.slice(from) }
   })
 
-const setSound = (doc: Y.Doc, channel: Id, sound: Sha256) =>
+const setSound = (doc: Y.Doc, track: Id, sound: Sha256) =>
   doc.transact(() => {
     const instrument = Option.getOrThrowWith(
-      Option.liftPredicate(doc.getMap('channels').get(channel), (instrument) => instrument instanceof Y.Map),
-      () => new Error('No channel')
+      Option.liftPredicate(doc.getMap('tracks').get(track), (instrument) => instrument instanceof Y.Map),
+      () => new Error('No track')
     )
     const samples = (instrument.get('instrument') as Y.Map<Y.Map<unknown>>).get('samples')
     samples?.set('sample', sound)
@@ -307,11 +333,11 @@ describe('the compiler', () => {
     compiled(
       (run) =>
         Effect.gen(function* () {
-          const { doc, channels, pattern } = run
+          const { doc, tracks, clip } = run
           expect(run.sent).toHaveLength(1)
-          toggleStep(doc, by, pattern, channels[0], 0)
-          setChannelStrip(doc, by, channels[1], 'volume', 0.3)
-          setSound(doc, channels[1], other)
+          addNote(doc, by, clip, step(0))
+          setTrackStrip(doc, by, tracks[1], 'volume', 0.3)
+          setSound(doc, tracks[1], other)
           expect(run.sent).toHaveLength(1)
           yield* settled(run)
           expect(run.stored).toEqual([kick, snare])
@@ -346,18 +372,17 @@ describe('the compiler', () => {
         Effect.sync(() => {
           const { doc, slot } = run
           // A synth, as + adds it, in the next cell: a sampler has no parameter of its own.
-          changes(run, () => addChannel(doc, by))
-          const synth = Option.getOrThrow(Option.fromUndefinedOr(readProject(doc).value.channels.at(-1))).id
+          const synth = Option.getOrThrow(addTrack(doc, by))
           const synthNode = cell(6)
-          const shape = HoldTarget.ChannelParam({ channel: synth, param: 'osc1.shape' })
+          const shape = HoldTarget.TrackParam({ track: synth, param: 'osc1.shape' })
           expect(changes(run, () => run.hold(shape, 1))).toEqual([
             { edits: [], commands: [setParam(plugins.synth, synthNode, 'osc1.shape', 1)] }
           ])
-          expect(changes(run, () => setChannelParam(doc, by, synth, 'osc1.shape', 0))).toEqual([])
+          expect(changes(run, () => setTrackParam(doc, by, synth, 'osc1.shape', 0))).toEqual([])
           expect(changes(run, () => run.hold(shape, 2))).toEqual([
             { edits: [], commands: [setParam(plugins.synth, synthNode, 'osc1.shape', 2)] }
           ])
-          setChannelParam(doc, by, synth, 'osc1.shape', 2)
+          setTrackParam(doc, by, synth, 'osc1.shape', 2)
           expect(changes(run, () => run.hold(shape))).toEqual([])
 
           const cutoff = HoldTarget.SlotParam({ slot, param: 'cutoff' })
@@ -396,60 +421,58 @@ describe('the compiler', () => {
           run.hold(HoldTarget.Tempo())
 
           // A held parameter the instrument doesn't have plays nothing: the synth has no cutoff, the sampler no shape.
+          expect(changes(run, () => run.hold(HoldTarget.TrackParam({ track: synth, param: 'cutoff' }), 500))).toEqual(
+            []
+          )
           expect(
-            changes(run, () => run.hold(HoldTarget.ChannelParam({ channel: synth, param: 'cutoff' }), 500))
-          ).toEqual([])
-          expect(
-            changes(run, () => run.hold(HoldTarget.ChannelParam({ channel: run.channels[0], param: 'osc1.shape' }), 1))
+            changes(run, () => run.hold(HoldTarget.TrackParam({ track: run.tracks[0], param: 'osc1.shape' }), 1))
           ).toEqual([])
         })
       )
   )
 
-  it.effect(
-    "plays a channel's strip on its node, a held value over the document's, and makes a node anew with it",
-    () =>
-      compiled((run) =>
-        Effect.sync(() => {
-          const { doc, channels } = run
-          expect(changes(run, () => setChannelStrip(doc, by, channels[0], 'pan', -0.5))).toEqual([
-            { edits: [], commands: [setStripParam(kickNode, 'pan', -0.5)] }
-          ])
-          const volume = HoldTarget.ChannelStrip({ channel: channels[0], param: 'volume' })
-          expect(changes(run, () => run.hold(volume, 0.3))).toEqual([
-            { edits: [], commands: [setStripParam(kickNode, 'volume', 0.3)] }
-          ])
-          expect(changes(run, () => setChannelStrip(doc, by, channels[0], 'volume', 0.25))).toEqual([])
-          // As the document's would read: in range, and a number.
-          expect(changes(run, () => run.hold(volume, 5))).toEqual([
-            { edits: [], commands: [setStripParam(kickNode, 'volume', 1)] }
-          ])
-          expect(changes(run, () => run.hold(volume, Number.NaN))).toEqual([
-            { edits: [], commands: [setStripParam(kickNode, 'volume', 0.25)] }
-          ])
-          expect(changes(run, () => run.hold(volume))).toEqual([])
-          const kickAgain = NodeHandle((1 << 16) | 1)
-          expect(changes(run, () => setSound(doc, channels[0], other))).toEqual([
-            {
-              edits: [
-                DeviceEdit.DestroyNode({ node: kickNode }),
-                sampler(kickAgain, other, { volume: 0.25, pan: -0.5 }),
-                DeviceEdit.Connect({ from: kickAgain, to: insert })
-              ],
-              commands: []
-            }
-          ])
-        })
-      )
+  it.effect("plays a track's strip on its node, a held value over the document's, and makes a node anew with it", () =>
+    compiled((run) =>
+      Effect.sync(() => {
+        const { doc, tracks } = run
+        expect(changes(run, () => setTrackStrip(doc, by, tracks[0], 'pan', -0.5))).toEqual([
+          { edits: [], commands: [setStripParam(kickNode, 'pan', -0.5)] }
+        ])
+        const volume = HoldTarget.TrackStrip({ track: tracks[0], param: 'volume' })
+        expect(changes(run, () => run.hold(volume, 0.3))).toEqual([
+          { edits: [], commands: [setStripParam(kickNode, 'volume', 0.3)] }
+        ])
+        expect(changes(run, () => setTrackStrip(doc, by, tracks[0], 'volume', 0.25))).toEqual([])
+        // As the document's would read: in range, and a number.
+        expect(changes(run, () => run.hold(volume, 5))).toEqual([
+          { edits: [], commands: [setStripParam(kickNode, 'volume', 1)] }
+        ])
+        expect(changes(run, () => run.hold(volume, Number.NaN))).toEqual([
+          { edits: [], commands: [setStripParam(kickNode, 'volume', 0.25)] }
+        ])
+        expect(changes(run, () => run.hold(volume))).toEqual([])
+        const kickAgain = NodeHandle((1 << 16) | 1)
+        expect(changes(run, () => setSound(doc, tracks[0], other))).toEqual([
+          {
+            edits: [
+              DeviceEdit.DestroyNode({ node: kickNode }),
+              sampler(kickAgain, other, { volume: 0.25, pan: -0.5 }),
+              DeviceEdit.Connect({ from: kickAgain, to: insert })
+            ],
+            commands: []
+          }
+        ])
+      })
+    )
   )
 
   it.effect('holds the changes again once the engine stops running, and a rebuild with them', () =>
     compiled((run) =>
       Effect.gen(function* () {
-        const { doc, channels } = run
+        const { doc, tracks } = run
         run.setRunning(false)
-        setChannelStrip(doc, by, channels[0], 'volume', 0.1)
-        setChannelStrip(doc, by, channels[0], 'volume', 0.2)
+        setTrackStrip(doc, by, tracks[0], 'volume', 0.1)
+        setTrackStrip(doc, by, tracks[0], 'volume', 0.2)
         expect(yield* rebuilding(run)).toEqual({ taken: true, sent: [] })
         const [rebuilt] = changes(run, () => run.setRunning(true))
         expect(rebuilt.edits?.[0]).toEqual(DeviceEdit.Reset({ epoch: 1 }))
@@ -523,8 +546,8 @@ describe('the compiler', () => {
   it.effect('sends a knob and the tempo as they play, and the pattern whole', () =>
     compiled((run) =>
       Effect.sync(() => {
-        const { doc, channels, pattern, slot } = run
-        expect(changes(run, () => setChannelStrip(doc, by, channels[1], 'volume', 0.3))).toEqual([
+        const { doc, tracks, clip, slot } = run
+        expect(changes(run, () => setTrackStrip(doc, by, tracks[1], 'volume', 0.3))).toEqual([
           { edits: [], commands: [setStripParam(snareNode, 'volume', 0.3)] }
         ])
         expect(changes(run, () => setMasterParam(doc, by, slot, 'cutoff', 500))).toEqual([
@@ -533,26 +556,26 @@ describe('the compiler', () => {
         expect(changes(run, () => setTempo(doc, by, 90))).toEqual([
           { edits: [], commands: [Command.SetTempo({ bpm: 90 })] }
         ])
-        toggleStep(doc, by, pattern, channels[0], 0)
-        const [change] = changes(run, () => toggleStep(doc, by, pattern, channels[1], 2))
+        addNote(doc, by, clip, step(0))
+        const [change] = changes(run, () => addNote(doc, by, clip, step(2)))
         const [edit] = change.edits ?? []
         expect(change.commands).toEqual([])
         expect(edit?._tag === 'SetPattern' && edit.notes.toSorted((a, b) => a.tick - b.tick)).toEqual([
-          { tick: Tick(0), node: kickNode, key: MidiKey(60), velocity: 1, length: stepTicks },
-          { tick: Tick(2 * stepTicks), node: snareNode, key: MidiKey(60), velocity: 1, length: stepTicks }
+          played(kickNode, 0),
+          played(kickNode, 2)
         ])
       })
     )
   )
 
-  it.effect('makes a channel anew in a fresh cell when its sound changes, and swaps the sounds', () =>
+  it.effect('makes a track anew in a fresh cell when its sound changes, and swaps the sounds', () =>
     compiled((run) =>
       Effect.gen(function* () {
-        const { doc, channels, pattern } = run
-        toggleStep(doc, by, pattern, channels[0], 0)
-        setChannelStrip(doc, by, channels[0], 'volume', 0.5)
+        const { doc, tracks, clip } = run
+        addNote(doc, by, clip, step(0))
+        setTrackStrip(doc, by, tracks[0], 'volume', 0.5)
         const kickAgain = NodeHandle((1 << 16) | 1)
-        expect(changes(run, () => setSound(doc, channels[0], snare))).toEqual([
+        expect(changes(run, () => setSound(doc, tracks[0], snare))).toEqual([
           {
             edits: [
               DeviceEdit.DestroyNode({ node: kickNode }),
@@ -567,9 +590,9 @@ describe('the compiler', () => {
           }
         ])
         expect(run.evicted).toEqual([kick])
-        setSound(doc, channels[1], other)
+        setSound(doc, tracks[1], other)
         expect(run.evicted).toEqual([kick])
-        setSound(doc, channels[0], other)
+        setSound(doc, tracks[0], other)
         expect(run.evicted).toEqual([kick, snare])
         yield* settled(run)
         expect(run.shown.slice(2)).toEqual([
@@ -626,17 +649,16 @@ describe('the compiler', () => {
     )
   )
 
-  it.effect('plays notes alike once, and none of a channel that has no node', () =>
+  it.effect('plays notes alike once, and none on a track that has no node', () =>
     compiled((run) =>
       Effect.sync(() => {
-        const { doc, channels, pattern } = run
-        const note = (channel: string, key: number) => ({ channel, tick: 0, len: stepTicks, key, vel: 1 })
+        const { doc, tracks, pattern } = run
+        const note = (key: number) => ({ tick: 0, len: stepTicks, key, vel: 1 })
         const notes = doc.getMap(`notes/${pattern}`)
         doc.transact(() => {
-          notes.set('b', note(channels[0], 60))
-          notes.set('a', { ...note(channels[0], 60), vel: 0.5 })
-          notes.set('c', note(channels[0], 62))
-          notes.set('d', note('nowhere', 60))
+          notes.set('b', note(60))
+          notes.set('a', { ...note(60), vel: 0.5 })
+          notes.set('c', note(62))
         })
         expect(run.sent.at(-1)?.edits).toEqual([
           DeviceEdit.SetPattern({
@@ -647,8 +669,8 @@ describe('the compiler', () => {
             ]
           })
         ])
-        const channel = doc.getMap('channels').get(channels[0]) as Y.Map<unknown>
-        expect(changes(run, () => doc.transact(() => channel.delete('instrument')))).toEqual([
+        const track = doc.getMap('tracks').get(tracks[0]) as Y.Map<unknown>
+        expect(changes(run, () => doc.transact(() => track.delete('instrument')))).toEqual([
           {
             edits: [
               DeviceEdit.DestroyNode({ node: kickNode }),
@@ -667,12 +689,12 @@ describe('the compiler', () => {
     () =>
       compiled((run) =>
         Effect.sync(() => {
-          const { doc, channels, pattern, play } = run
+          const { doc, pattern, play } = run
           const notes = doc.getMap(`notes/${pattern}`)
           play(true)
           doc.transact(() => {
-            notes.set('b', { channel: channels[0], tick: barTicks - 1, len: stepTicks, key: 62, vel: 1 })
-            notes.set('c', { channel: channels[0], tick: barTicks, len: stepTicks, key: 64, vel: 1 })
+            notes.set('b', { tick: barTicks - 1, len: stepTicks, key: 62, vel: 1 })
+            notes.set('c', { tick: barTicks, len: stepTicks, key: 64, vel: 1 })
           })
           expect(run.sent.at(-1)).toEqual({
             edits: [
@@ -688,7 +710,7 @@ describe('the compiler', () => {
             commands: [transport(true, 2 * barTicks)]
           })
           // As long as the document lets a note at the start be, longer than the wire's 32 bits can carry.
-          doc.transact(() => notes.set('a', { channel: channels[0], tick: 0, len: 2 ** 32, key: 60, vel: 1 }))
+          doc.transact(() => notes.set('a', { tick: 0, len: 2 ** 32, key: 60, vel: 1 }))
           const longest = Math.floor(lastTick / barTicks) * barTicks
           expect(run.sent.at(-1)?.commands).toEqual([transport(true, longest)])
           expect(run.sent.at(-1)?.edits?.at(0)).toMatchObject({
@@ -701,109 +723,49 @@ describe('the compiler', () => {
       )
   )
 
-  it.effect('plays the pattern this client chooses, its notes and loop; once it is gone, the one before it', () =>
-    compiled((run) =>
-      Effect.sync(() => {
-        const { doc, channels, pattern, play, choose } = run
-        play(true)
-        toggleStep(doc, by, pattern, channels[0], 0)
-        const chosen = Option.getOrThrow(addPattern(doc, by))
-        const late = { tick: Tick(barTicks), key: MidiKey(64), length: stepTicks }
-        // Not the current one yet: nothing it plays changes.
-        expect(changes(run, () => addNote(doc, by, chosen, channels[1], late))).toEqual([])
-        // The engine has only the pattern it plays: the one before goes, and its cell, in its next generation, is the new one's.
-        const [inCell, again] = [1, 2].map((generation) => PatternHandle((generation << 16) | 1))
-        expect(changes(run, () => choose(chosen))).toEqual([
-          {
-            edits: [
-              DeviceEdit.DestroyPattern({ pattern: firstPattern }),
-              DeviceEdit.SetPattern({ pattern: inCell, notes: [{ ...late, node: snareNode, velocity: 1 }] }),
-              alone(inCell, 2 * barTicks)
-            ],
-            commands: [transport(true, 2 * barTicks)]
-          }
-        ])
-        const entry = doc.getMap('patterns').get(chosen) as Y.Map<unknown>
-        expect(changes(run, () => doc.transact(() => entry.set('deleted', true)))).toEqual([
-          {
-            edits: [
-              DeviceEdit.DestroyPattern({ pattern: inCell }),
-              DeviceEdit.SetPattern({
-                pattern: again,
-                notes: [{ tick: Tick(0), node: kickNode, key: MidiKey(60), velocity: 1, length: stepTicks }]
-              }),
-              alone(again)
-            ],
-            commands: [transport(true)]
-          }
-        ])
-      })
-    )
-  )
-
   it.effect(
-    "plays the arrangement in Arrangement mode: each pattern a clip plays once, and the loop to its last clip's bar",
+    "plays the arrangement: each clip's pattern on its track's node, sent once, and the loop to its last clip's bar",
     () =>
       compiled((run) =>
         Effect.sync(() => {
-          const { doc, channels, pattern, play } = run
+          const { doc, tracks, clip, play } = run
           play(true)
-          toggleStep(doc, by, pattern, channels[0], 0)
-          const second = Option.getOrThrow(addPattern(doc, by))
-          addNote(doc, by, second, channels[1], { tick: Tick(barTicks), key: MidiKey(64), length: stepTicks })
-          const place = (track: string, bar: number) => ({ track: Id(track), tick: Tick(bar * barTicks) })
-          addClip(doc, by, pattern, place('1', 0))
-          addClip(doc, by, second, place('2', 0))
-          const moved = Option.getOrThrow(addClip(doc, by, second, place('1', 2)))
-          const [arrangement] = changes(run, run.toggleMode)
-          // The current pattern's notes are in already: only the other one goes, to a cell of its own.
+          addNote(doc, by, clip, step(0))
+          const place = (track: Id, bar: number) => ({ track, tick: Tick(bar * barTicks) })
+          // A clip of its own pattern: the pattern goes to a cell of its own, empty, and the clips with it.
           const other = PatternHandle(2)
-          const snareAt = (tick: number) => ({
-            tick: Tick(tick),
-            node: snareNode,
-            key: MidiKey(64),
-            velocity: 1,
-            length: stepTicks
-          })
-          expect(arrangement.edits?.at(0)).toEqual(
-            DeviceEdit.SetPattern({ pattern: other, notes: [snareAt(barTicks)] })
+          const kickClip = { tick: Tick(0), length: barTicks, period: barTicks, offset: 0, pattern: firstPattern }
+          const [added] = changes(run, () => addClip(doc, by, place(tracks[1], 2)))
+          const snare = Option.getOrThrow(
+            Option.fromUndefinedOr(readProject(doc).value.clips.find(({ track }) => track === tracks[1]))
           )
-          expect(clipsIn(arrangement.edits?.at(1))).toEqual([
-            { tick: Tick(0), length: barTicks, period: barTicks, offset: 0, pattern: firstPattern },
-            { tick: Tick(0), length: 2 * barTicks, period: 2 * barTicks, offset: 0, pattern: other },
-            { tick: Tick(2 * barTicks), length: 2 * barTicks, period: 2 * barTicks, offset: 0, pattern: other }
+          expect(added.edits?.at(0)).toEqual(DeviceEdit.SetPattern({ pattern: other, notes: [] }))
+          expect(clipsIn(added.edits?.at(1))).toEqual([
+            kickClip,
+            { tick: Tick(2 * barTicks), length: barTicks, period: barTicks, offset: 0, pattern: other }
           ])
-          expect(arrangement.edits).toHaveLength(2)
-          expect(arrangement.commands).toEqual([transport(true, 4 * barTicks, true)])
-          // A note of a pattern sends that pattern alone, however many clips play it.
-          expect(
-            changes(run, () =>
-              addNote(doc, by, second, channels[1], { tick: Tick(0), key: MidiKey(64), length: stepTicks })
-            )
-          ).toEqual([
-            {
-              edits: [
-                DeviceEdit.SetPattern({
-                  pattern: other,
-                  notes: expect.arrayContaining([snareAt(0), snareAt(barTicks)])
-                })
-              ],
-              commands: []
-            }
-          ])
-          // A clip moved sends the clips alone, and the loop as the arrangement's end moves.
-          const [movedClip] = changes(run, () => moveClip(doc, by, moved, place('1', 4)))
-          expect(movedClip.edits).toHaveLength(1)
-          expect(clipsIn(movedClip.edits?.at(0)).at(-1)).toEqual({
-            tick: Tick(4 * barTicks),
+          expect(added.edits).toHaveLength(2)
+          expect(added.commands).toEqual([transport(true, 3 * barTicks)])
+          // A note of the second bar sends its pattern alone, on the snare, and the clips as long as it grew.
+          const [noted] = changes(run, () => addNote(doc, by, snare.id, { ...step(0, 64), tick: Tick(barTicks) }))
+          expect(noted.edits?.at(0)).toEqual(
+            DeviceEdit.SetPattern({ pattern: other, notes: [{ ...played(snareNode, 0, 64), tick: Tick(barTicks) }] })
+          )
+          expect(clipsIn(noted.edits?.at(1)).at(-1)).toEqual({
+            tick: Tick(2 * barTicks),
             length: 2 * barTicks,
             period: 2 * barTicks,
             offset: 0,
             pattern: other
           })
-          expect(movedClip.commands).toEqual([transport(true, 6 * barTicks, true)])
+          expect(noted.commands).toEqual([transport(true, 4 * barTicks)])
+          // A clip moved sends the clips alone, and the loop as the arrangement's end moves.
+          const [moved] = changes(run, () => moveClip(doc, by, snare.id, place(tracks[1], 4)))
+          expect(moved.edits).toHaveLength(1)
+          expect(clipsIn(moved.edits?.at(0)).at(-1)).toMatchObject({ tick: Tick(4 * barTicks), pattern: other })
+          expect(moved.commands).toEqual([transport(true, 6 * barTicks)])
           // A clip made longer than its pattern sends the clips alone, going round the pattern, and the loop to its end.
-          const [longer] = changes(run, () => resizeClip(doc, by, moved, 5 * barTicks))
+          const [longer] = changes(run, () => resizeClip(doc, by, snare.id, 5 * barTicks))
           expect(longer.edits).toHaveLength(1)
           expect(clipsIn(longer.edits?.at(0)).at(-1)).toEqual({
             tick: Tick(4 * barTicks),
@@ -812,24 +774,61 @@ describe('the compiler', () => {
             offset: 0,
             pattern: other
           })
-          expect(longer.commands).toEqual([transport(true, 9 * barTicks, true)])
+          expect(longer.commands).toEqual([transport(true, 9 * barTicks)])
           // Trimmed at its start, from its pattern's second bar: the clips alone, the loop as it was.
           const trimmed = changes(run, () =>
-            trimClip(doc, by, moved, { tick: Tick(5 * barTicks), length: 4 * barTicks, offset: barTicks })
+            trimClip(doc, by, snare.id, { tick: Tick(5 * barTicks), length: 4 * barTicks, offset: barTicks })
           )
           expect(trimmed.map(({ edits }) => clipsIn(edits?.at(0)).at(-1))).toEqual([
             { tick: Tick(5 * barTicks), length: 4 * barTicks, period: 2 * barTicks, offset: barTicks, pattern: other }
           ])
           expect(trimmed.map(({ commands }) => commands)).toEqual([[]])
-          // A pattern deleted takes its clips with it.
-          const [deleted] = changes(run, () => deletePattern(doc, by, second))
-          expect(deleted).toEqual({
-            edits: [DeviceEdit.DestroyPattern({ pattern: other }), alone(firstPattern)],
-            commands: [transport(true, barTicks, true)]
-          })
-          // Back in Pattern mode, the current pattern alone, as the arrangement now is: only what the loop plays
-          // changes.
-          expect(changes(run, run.toggleMode)).toEqual([{ edits: [], commands: [transport(true)] }])
+          // Erased, it takes its pattern with it.
+          expect(changes(run, () => eraseClips(doc, by, [snare.id]))).toEqual([
+            { edits: [DeviceEdit.DestroyPattern({ pattern: other }), alone(firstPattern)], commands: [transport(true)] }
+          ])
+        })
+      )
+  )
+
+  it.effect(
+    "plays a clip moved to another track on that track's node, and one pattern on two tracks as two in the engine",
+    () =>
+      compiled((run) =>
+        Effect.sync(() => {
+          const { doc, tracks, clip, pattern } = run
+          addNote(doc, by, clip, step(0))
+          const inCell = PatternHandle((1 << 16) | 1)
+          // Another key in the engine: the pattern on the kick's goes, and the one on the snare's takes its cell.
+          expect(changes(run, () => moveClip(doc, by, clip, { track: tracks[1], tick: Tick(0) }))).toEqual([
+            {
+              edits: [
+                DeviceEdit.DestroyPattern({ pattern: firstPattern }),
+                DeviceEdit.SetPattern({ pattern: inCell, notes: [played(snareNode, 0)] }),
+                alone(inCell)
+              ],
+              commands: []
+            }
+          ])
+          // A clip of the same pattern on the kick's, as a client of a later build may write it.
+          const [both] = changes(run, () =>
+            doc.transact(() =>
+              doc
+                .getMap('clips')
+                .set(
+                  'copy',
+                  new Y.Map<unknown>(
+                    Object.entries({ track: tracks[0], bounds: { tick: barTicks }, pattern, deleted: false })
+                  )
+                )
+            )
+          )
+          const kickCell = PatternHandle(2)
+          expect(both.edits?.at(0)).toEqual(DeviceEdit.SetPattern({ pattern: kickCell, notes: [played(kickNode, 0)] }))
+          expect(clipsIn(both.edits?.at(1)).map(({ tick, pattern }) => [tick, pattern])).toEqual([
+            [0, inCell],
+            [barTicks, kickCell]
+          ])
         })
       )
   )
@@ -837,25 +836,24 @@ describe('the compiler', () => {
   it.effect("makes a pattern keyed as an object's own names are, as another client may write it, as any other", () =>
     compiled((run) =>
       Effect.sync(() => {
-        const { doc, channels, choose } = run
-        doc.transact(() => {
-          doc.getMap('patterns').set('toString', new Y.Map(Object.entries({ name: 'Odd', order: '~', deleted: false })))
-          doc.getMap('notes/toString').set('n', { channel: channels[0], tick: 0, len: stepTicks, key: 60, vel: 1 })
-        })
-        const inCell = PatternHandle((1 << 16) | 1)
-        expect(changes(run, () => choose(Id('toString')))).toEqual([
-          {
-            edits: [
-              DeviceEdit.DestroyPattern({ pattern: firstPattern }),
-              DeviceEdit.SetPattern({
-                pattern: inCell,
-                notes: [{ tick: Tick(0), node: kickNode, key: MidiKey(60), velocity: 1, length: stepTicks }]
-              }),
-              alone(inCell)
-            ],
-            commands: []
-          }
-        ])
+        const { doc, tracks } = run
+        const [added] = changes(run, () =>
+          doc.transact(() => {
+            doc
+              .getMap('clips')
+              .set(
+                'toString',
+                new Y.Map<unknown>(
+                  Object.entries({ track: tracks[0], bounds: { tick: barTicks }, pattern: 'toString', deleted: false })
+                )
+              )
+            doc.getMap('notes/toString').set('n', { tick: 0, len: stepTicks, key: 60, vel: 1 })
+          })
+        )
+        expect(added.edits?.at(0)).toEqual(
+          DeviceEdit.SetPattern({ pattern: PatternHandle(2), notes: [played(kickNode, 0)] })
+        )
+        expect(clipsIn(added.edits?.at(1))).toHaveLength(2)
       })
     )
   )
@@ -863,17 +861,17 @@ describe('the compiler', () => {
   it.effect('carries a change the engine found no room for in the next one, and follows the sounds meanwhile', () =>
     compiled((run) =>
       Effect.gen(function* () {
-        const { doc, channels } = run
+        const { doc, tracks } = run
         run.refuseNext()
-        setChannelStrip(doc, by, channels[0], 'volume', 0.1)
-        expect(changes(run, () => setChannelStrip(doc, by, channels[1], 'volume', 0.2))).toEqual([
+        setTrackStrip(doc, by, tracks[0], 'volume', 0.1)
+        expect(changes(run, () => setTrackStrip(doc, by, tracks[1], 'volume', 0.2))).toEqual([
           {
             edits: [],
             commands: [setStripParam(kickNode, 'volume', 0.1), setStripParam(snareNode, 'volume', 0.2)]
           }
         ])
         run.refuseNext()
-        setSound(doc, channels[0], other)
+        setSound(doc, tracks[0], other)
         expect(run.evicted).toEqual([kick])
         run.refuseNext()
         expect(yield* run.compiler.rebuild).toBe(false)
@@ -887,8 +885,8 @@ describe('the compiler', () => {
   it.effect('rebuilds from nothing in the next session, keeping the sounds', () =>
     compiled((run) =>
       Effect.gen(function* () {
-        const { doc, channels, pattern } = run
-        toggleStep(doc, by, pattern, channels[0], 0)
+        const { doc, clip } = run
+        addNote(doc, by, clip, step(0))
         yield* settled(run)
         const next = (n: number) => NodeHandle((1 << 16) | n)
         expect(yield* rebuilding(run)).toEqual({
@@ -927,13 +925,13 @@ describe('the compiler', () => {
       })
     )
   )
-  it.effect('mutes a channel: its notes leave the pattern, it is cut off, and it keeps its node and sound', () =>
+  it.effect('mutes a track: its notes leave the pattern, it is cut off, and it keeps its node and sound', () =>
     compiled((run) =>
       Effect.sync(() => {
-        const { doc, channels, pattern } = run
-        toggleStep(doc, by, pattern, channels[0], 0)
+        const { doc, tracks, clip } = run
+        addNote(doc, by, clip, step(0))
         const kick = { tick: Tick(0), node: kickNode, key: MidiKey(60), velocity: 1, length: stepTicks }
-        expect(changes(run, () => setMute(doc, by, channels[0], true))).toEqual([
+        expect(changes(run, () => setMute(doc, by, tracks[0], true))).toEqual([
           {
             edits: [
               DeviceEdit.Disconnect({ from: kickNode, to: insert }),
@@ -943,7 +941,7 @@ describe('the compiler', () => {
             commands: []
           }
         ])
-        expect(changes(run, () => setMute(doc, by, channels[0], false))).toEqual([
+        expect(changes(run, () => setMute(doc, by, tracks[0], false))).toEqual([
           {
             edits: [
               DeviceEdit.Connect({ from: kickNode, to: insert }),
@@ -968,11 +966,11 @@ describe('the compiler', () => {
           ],
           commands: []
         }
-        expect(changes(run, () => run.solo(channels[1]))).toEqual([out])
-        expect(changes(run, () => run.solo(channels[1]))).toEqual([back])
+        expect(changes(run, () => run.solo(tracks[1]))).toEqual([out])
+        expect(changes(run, () => run.solo(tracks[1]))).toEqual([back])
         // Muted in the document, a solo brings it back, leaving the others out, and its end mutes it again.
-        expect(changes(run, () => setMute(doc, by, channels[0], true))).toEqual([out])
-        expect(changes(run, () => run.solo(channels[0]))).toEqual([
+        expect(changes(run, () => setMute(doc, by, tracks[0], true))).toEqual([out])
+        expect(changes(run, () => run.solo(tracks[0]))).toEqual([
           {
             edits: [
               DeviceEdit.Disconnect({ from: snareNode, to: insert }),
@@ -983,7 +981,7 @@ describe('the compiler', () => {
             commands: []
           }
         ])
-        expect(changes(run, () => run.solo(channels[0]))).toEqual([
+        expect(changes(run, () => run.solo(tracks[0]))).toEqual([
           {
             edits: [
               DeviceEdit.Disconnect({ from: kickNode, to: insert }),
@@ -999,15 +997,15 @@ describe('the compiler', () => {
     )
   )
 
-  it.effect("sends channels into an insert and back, and plays an insert's strip and mute, and the master's", () =>
+  it.effect("sends tracks into an insert and back, and plays an insert's strip and mute, and the master's", () =>
     compiled((run) =>
       Effect.sync(() => {
-        const { doc, channels } = run
+        const { doc, tracks } = run
         // What goes into it sums at its insert, then plays through its fader, the strip's meter numbered as it is.
         const [third, thirdFader] = [6, 7].map(cell)
         const into = (from: NodeHandle, to: NodeHandle) => DeviceEdit.Connect({ from, to })
         const outOf = (from: NodeHandle, to: NodeHandle) => DeviceEdit.Disconnect({ from, to })
-        expect(changes(run, () => setChannelInsert(doc, by, channels[0], Id('3')))).toEqual([
+        expect(changes(run, () => setTrackInsert(doc, by, tracks[0], Id('3')))).toEqual([
           {
             edits: [
               createInsert(third, defaultStrip),
@@ -1020,7 +1018,7 @@ describe('the compiler', () => {
             commands: []
           }
         ])
-        expect(changes(run, () => setChannelInsert(doc, by, channels[1], Id('3')))).toEqual([
+        expect(changes(run, () => setTrackInsert(doc, by, tracks[1], Id('3')))).toEqual([
           { edits: [outOf(snareNode, insert), into(snareNode, third)], commands: [] }
         ])
         expect(changes(run, () => setInsertStrip(doc, by, Id('3'), 'volume', 0.5))).toEqual([
@@ -1062,7 +1060,7 @@ describe('the compiler', () => {
         expect(changes(run, () => run.hold(fader))).toEqual([
           { edits: [], commands: [setStripParam(masterFader, 'volume', 1)] }
         ])
-        const route = HoldTarget.ChannelInsert({ channel: channels[0] })
+        const route = HoldTarget.TrackInsert({ track: tracks[0] })
         expect(changes(run, () => run.hold(route, 0.2))).toEqual([
           { edits: [outOf(kickNode, third), into(kickNode, insert)], commands: [] }
         ])
@@ -1070,10 +1068,10 @@ describe('the compiler', () => {
           { edits: [outOf(kickNode, insert), into(kickNode, third)], commands: [] }
         ])
         // The last one out of it takes its node with it.
-        expect(changes(run, () => setChannelInsert(doc, by, channels[0], Id('master')))).toEqual([
+        expect(changes(run, () => setTrackInsert(doc, by, tracks[0], Id('master')))).toEqual([
           { edits: [outOf(kickNode, third), into(kickNode, insert)], commands: [] }
         ])
-        expect(changes(run, () => setChannelInsert(doc, by, channels[1], Id('master')))).toEqual([
+        expect(changes(run, () => setTrackInsert(doc, by, tracks[1], Id('master')))).toEqual([
           {
             edits: [
               DeviceEdit.DestroyNode({ node: third }),
@@ -1088,14 +1086,14 @@ describe('the compiler', () => {
   )
 
   it.effect(
-    "sends a channel left out into its insert once it is heard, and keeps an insert's node while one goes in",
+    "sends a track left out into its insert once it is heard, and keeps an insert's node while one goes in",
     () =>
       compiled((run) =>
         Effect.sync(() => {
-          const { doc, channels } = run
+          const { doc, tracks } = run
           const [third, thirdFader] = [6, 7].map(cell)
-          setMute(doc, by, channels[0], true)
-          expect(changes(run, () => setChannelInsert(doc, by, channels[0], Id('3')))).toEqual([
+          setMute(doc, by, tracks[0], true)
+          expect(changes(run, () => setTrackInsert(doc, by, tracks[0], Id('3')))).toEqual([
             {
               edits: [
                 createInsert(third, defaultStrip),
@@ -1106,22 +1104,22 @@ describe('the compiler', () => {
               commands: []
             }
           ])
-          const [unmuted] = changes(run, () => setMute(doc, by, channels[0], false))
+          const [unmuted] = changes(run, () => setMute(doc, by, tracks[0], false))
           expect(unmuted.edits?.slice(0, 1)).toEqual([DeviceEdit.Connect({ from: kickNode, to: third })])
         })
       )
   )
 
-  it.effect('solos channels for this client only, muted in the document or not', () =>
+  it.effect('solos tracks for this client only, muted in the document or not', () =>
     compiled((run) =>
       Effect.sync(() => {
-        const { doc, channels } = run
+        const { doc, tracks } = run
         const updates = { count: 0 }
         doc.on('update', () => {
           updates.count += 1
         })
-        setMute(doc, by, channels[1], true)
-        expect(changes(run, () => run.solo(channels[1]))).toEqual([
+        setMute(doc, by, tracks[1], true)
+        expect(changes(run, () => run.solo(tracks[1]))).toEqual([
           {
             edits: [
               DeviceEdit.Disconnect({ from: kickNode, to: insert }),
@@ -1131,11 +1129,11 @@ describe('the compiler', () => {
             commands: []
           }
         ])
-        expect(changes(run, () => run.solo(channels[0]))).toEqual([
+        expect(changes(run, () => run.solo(tracks[0]))).toEqual([
           { edits: [DeviceEdit.Connect({ from: kickNode, to: insert })], commands: [] }
         ])
-        expect(changes(run, () => setMute(doc, by, channels[0], true))).toEqual([])
-        expect(changes(run, () => run.solo(channels[1]))).toEqual([
+        expect(changes(run, () => setMute(doc, by, tracks[0], true))).toEqual([])
+        expect(changes(run, () => run.solo(tracks[1]))).toEqual([
           {
             edits: [
               DeviceEdit.Disconnect({ from: snareNode, to: insert }),
@@ -1151,13 +1149,13 @@ describe('the compiler', () => {
   )
 
   it.effect(
-    'plays notes by hand on a channel heard while the pattern stops, from press to release, again on a node made anew',
+    'plays notes by hand on a track heard while the arrangement stops, from press to release, again on a node made anew',
     () =>
       compiled((run) =>
         Effect.gen(function* () {
-          const { doc, channels } = run
-          const c5 = { channel: channels[0], key: MidiKey(60), velocity: 1, press: 1 }
-          const e5 = { channel: channels[1], key: MidiKey(64), velocity: 0.5, press: 2 }
+          const { doc, tracks } = run
+          const c5 = { track: tracks[0], key: MidiKey(60), velocity: 1, press: 1 }
+          const e5 = { track: tracks[1], key: MidiKey(64), velocity: 0.5, press: 2 }
           const on = (node: NodeHandle, { key, velocity, press }: typeof c5) =>
             Command.NoteOn({ node, key, velocity, note: PageNote(press) })
           const off = (node: NodeHandle, { press }: typeof c5) => Command.NoteOff({ node, note: PageNote(press) })
@@ -1173,14 +1171,14 @@ describe('the compiler', () => {
           // Another, the first held on: the new one alone; the first let go of, alone too.
           expect(changes(run, () => run.audition([c5, e5]))).toEqual(only(on(snareNode, e5)))
           expect(changes(run, () => run.audition([e5]))).toEqual(only(off(kickNode, c5)))
-          // None while the pattern plays: let go of as it starts, pressed again as it stops.
+          // None while the arrangement plays: let go of as it starts, pressed again as it stops.
           expect(changes(run, () => run.play(true))).toEqual(only(transport(true), off(snareNode, e5)))
           expect(changes(run, () => run.audition([e5, c5]))).toEqual([])
           expect(changes(run, () => run.play(false))).toEqual(
             only(transport(false), on(snareNode, e5), on(kickNode, c5))
           )
-          // None of a channel not heard, its notes let go of with it; heard again, pressed again.
-          expect(changes(run, () => setMute(doc, by, channels[0], true))).toEqual([
+          // None of a track not heard, its notes let go of with it; heard again, pressed again.
+          expect(changes(run, () => setMute(doc, by, tracks[0], true))).toEqual([
             {
               edits: [
                 DeviceEdit.Disconnect({ from: kickNode, to: insert }),
@@ -1189,12 +1187,12 @@ describe('the compiler', () => {
               commands: [off(kickNode, c5)]
             }
           ])
-          expect(changes(run, () => setMute(doc, by, channels[0], false))).toEqual([
+          expect(changes(run, () => setMute(doc, by, tracks[0], false))).toEqual([
             { edits: [DeviceEdit.Connect({ from: kickNode, to: insert })], commands: [on(kickNode, c5)] }
           ])
           // A node made anew holds nothing: pressed on it again.
           const kickAgain = NodeHandle((1 << 16) | 1)
-          expect(changes(run, () => setSound(doc, channels[0], snare))).toEqual([
+          expect(changes(run, () => setSound(doc, tracks[0], snare))).toEqual([
             {
               edits: [
                 DeviceEdit.DestroyNode({ node: kickNode }),
@@ -1210,21 +1208,22 @@ describe('the compiler', () => {
             sent: [rebuilt]
           } = yield* rebuilding(run)
           expect(rebuilt.commands?.slice(-2)).toEqual([on(snareNext, e5), on(NodeHandle((2 << 16) | 1), c5)])
-          // A channel gone takes its notes with its node: nothing to let go of.
-          expect(changes(run, () => deleteChannel(doc, by, channels[1]))).toEqual([
+          // A track gone takes its notes with its node: nothing to let go of.
+          expect(changes(run, () => deleteTrack(doc, by, tracks[1]))).toEqual([
             { edits: [DeviceEdit.DestroyNode({ node: snareNext })], commands: [] }
           ])
         })
       )
   )
 
-  it.effect('rebuilds a muted channel joined to nothing and without its notes', () =>
+  it.effect('rebuilds a muted track joined to nothing and without its notes', () =>
     compiled((run) =>
       Effect.gen(function* () {
-        const { doc, channels, pattern } = run
-        toggleStep(doc, by, pattern, channels[0], 0)
-        toggleStep(doc, by, pattern, channels[1], 2)
-        setMute(doc, by, channels[0], true)
+        const { doc, tracks, clip } = run
+        addNote(doc, by, clip, step(0))
+        const snare = Option.getOrThrow(addClip(doc, by, { track: tracks[1], tick: Tick(barTicks) }))
+        addNote(doc, by, snare, step(2))
+        setMute(doc, by, tracks[0], true)
         const next = (n: number) => NodeHandle((1 << 16) | n)
         const {
           sent: [rebuilt]
@@ -1232,16 +1231,13 @@ describe('the compiler', () => {
         expect(rebuilt.edits).toContainEqual(sampler(next(1), kick))
         expect(rebuilt.edits).toContainEqual(DeviceEdit.Connect({ from: next(2), to: next(3) }))
         expect(rebuilt.edits).not.toContainEqual(DeviceEdit.Connect({ from: next(1), to: next(3) }))
-        expect(rebuilt.edits).toContainEqual(
-          DeviceEdit.SetPattern({
-            pattern: PatternHandle((1 << 16) | 1),
-            notes: [{ tick: Tick(2 * stepTicks), node: next(2), key: MidiKey(60), velocity: 1, length: stepTicks }]
-          })
-        )
+        const patterns = (rebuilt.edits ?? []).filter(DeviceEdit.$is('SetPattern')).map(({ notes }) => notes)
+        expect(patterns).toEqual(expect.arrayContaining([[], [played(next(2), 2)]]))
+        expect(patterns).toHaveLength(2)
       })
     )
   )
-  it.effect('gives a channel and a slot keyed master nodes of their own, apart from the master insert', () =>
+  it.effect('gives a track and a slot keyed master nodes of their own, apart from the master insert', () =>
     compiled((run) =>
       Effect.sync(() => {
         const { doc } = run
@@ -1252,18 +1248,18 @@ describe('the compiler', () => {
             samples: new Y.Map(Object.entries({ sample: kick }))
           })
         )
-        const masterChannel = cell(6)
+        const masterTrack = cell(6)
         expect(
           changes(run, () =>
             doc.transact(() =>
               doc
-                .getMap('channels')
+                .getMap('tracks')
                 .set('master', new Y.Map(Object.entries({ name: 'Tom', order: '~', deleted: false, instrument })))
             )
           )
         ).toEqual([
           {
-            edits: [sampler(masterChannel, kick), DeviceEdit.Connect({ from: masterChannel, to: insert })],
+            edits: [sampler(masterTrack, kick), DeviceEdit.Connect({ from: masterTrack, to: insert })],
             commands: []
           }
         ])
@@ -1286,11 +1282,11 @@ describe('the compiler', () => {
   it.effect('tries a sound the engine never got again on a rebuild, and not on every change', () =>
     compiled((run) =>
       Effect.gen(function* () {
-        const { doc, channels } = run
+        const { doc, tracks } = run
         const missing = () => run.shown.filter(([hash, status]) => hash === other && status === 'Missing').length
-        setSound(doc, channels[0], other)
+        setSound(doc, tracks[0], other)
         yield* settled(run)
-        setChannelStrip(doc, by, channels[1], 'volume', 0.5)
+        setTrackStrip(doc, by, tracks[1], 'volume', 0.5)
         yield* settled(run)
         expect(missing()).toBe(1)
         yield* run.compiler.rebuild

@@ -45,7 +45,7 @@ export interface MetaFields {
   readonly bpm: number
 }
 
-/** A plugin and its state: a channel's instrument or an insert's slot. Each parameter merges on its own. */
+/** A plugin and its state: a track's instrument or an insert's slot. Each parameter merges on its own. */
 export interface PluginFields {
   readonly plugin: { readonly id: number; readonly version: number }
   /** By parameter ID; one left out is at its default. */
@@ -55,9 +55,9 @@ export interface PluginFields {
 }
 
 /** Its strip's parameters by ID, each a key of its own; one left out is at its default. */
-export interface ChannelFields extends Partial<StripValues> {
+export interface TrackFields extends Partial<StripValues> {
   readonly name: string
-  /** A fractional index: channels sort by it. */
+  /** A fractional index: tracks sort by it. */
   readonly order: string
   readonly deleted: boolean
   readonly mute: boolean
@@ -68,21 +68,12 @@ export interface ChannelFields extends Partial<StripValues> {
 
 /** One value: a note changes as a whole. */
 export interface NoteFields {
-  readonly channel: Id
   readonly tick: Tick
   /** Whole ticks, from 1. */
   readonly len: number
   readonly key: MidiKey
   /** From 0 to 1. */
   readonly vel: number
-}
-
-/** Its notes are a map of their own at the document's top: `patternNotes`. */
-export interface PatternFields {
-  readonly name: string
-  /** A fractional index: patterns sort by it. */
-  readonly order: string
-  readonly deleted: boolean
 }
 
 /** One value: where a clip starts, how long it plays and, later, what part of its pattern change together. */
@@ -94,11 +85,12 @@ export interface ClipBounds {
   readonly offset?: number
 }
 
-/** A pattern placed on a track of the arrangement. */
+/** Notes on a track of the arrangement, played by the track's instrument. */
 export interface ClipFields {
-  /** One of the arrangement's tracks, by ID: `arrangementTracks`. */
+  /** By ID. */
   readonly track: Id
   readonly bounds: ClipBounds
+  /** Where its notes are, by ID: a map of their own at the document's top, `patternNotes`. */
   readonly pattern: Id
   readonly deleted: boolean
 }
@@ -119,8 +111,7 @@ export interface InsertFields extends Partial<StripValues> {
 /** The project's top-level maps: a document holds one project. */
 export const projectMaps = (doc: Y.Doc) => ({
   meta: stored<MetaFields>(doc.getMap('meta')),
-  channels: stored<Record<string, Stored<ChannelFields>>>(doc.getMap('channels')),
-  patterns: stored<Record<string, Stored<PatternFields>>>(doc.getMap('patterns')),
+  tracks: stored<Record<string, Stored<TrackFields>>>(doc.getMap('tracks')),
   clips: stored<Record<string, Stored<ClipFields>>>(doc.getMap('clips'))
 })
 
@@ -140,7 +131,8 @@ export const notesPattern = (name: string): Option.Option<Id> =>
 
 /**
  * The pattern's notes by ID, a map of the document's top: no write puts anything else in its place, and two clients
- * that write into it first share it, so it never needs mending. Taking it writes nothing.
+ * that write into it first share it, so it never needs mending. Taking it writes nothing. A pattern is only its notes:
+ * it is there while a clip names it.
  */
 export const patternNotes = (doc: Y.Doc, pattern: Id): Stored<Record<string, NoteFields>> =>
   stored(doc.getMap(notesName(pattern)))

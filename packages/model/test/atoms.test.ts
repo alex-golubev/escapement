@@ -1,17 +1,15 @@
-import { Effect, Option } from 'effect'
+import { lastTick, MidiKey, Tick } from '@escapement/engine-description'
+import { Effect, Option, Order } from 'effect'
 import { Atom, AtomRegistry } from 'effect/reactivity'
 import { describe, expect, test } from 'vitest'
 import * as Y from 'yjs'
-import { lastTick, MidiKey, Tick } from '@escapement/engine-description'
 import {
   addClip,
   addNote,
-  addPattern,
   barTicks,
   batchedState,
   byContent,
-  deleteChannel,
-  deletePattern,
+  deleteTrack,
   eraseClips,
   eraseNotes,
   followProject,
@@ -19,13 +17,11 @@ import {
   moveClip,
   type ProjectAtoms,
   patternEnd,
-  setChannelStrip,
   setInsertMute,
   setInsertStrip,
   setMasterParam,
   setTempo,
-  stepTicks,
-  toggleStep
+  setTrackStrip
 } from '../src'
 import { by, newProject, newProjectWithSynth, parts, projectOf, rawMap, rawNotes, sync, synthOf, told } from './project'
 
@@ -38,18 +34,15 @@ const following = <A>(doc: Y.Doc, use: (atoms: ProjectAtoms, registry: AtomRegis
   return Effect.runSync(
     followProject(doc).pipe(
       Effect.map((atoms) => {
-        const parts: ReadonlyArray<Atom.Atom<unknown>> = [
-          atoms.tempo,
-          atoms.channelIds,
-          atoms.patternPlaces,
-          atoms.patternIds,
-          atoms.clips,
-          atoms.master
-        ]
-        const { channels, patterns } = projectOf(doc)
-        const ofChannels = channels.map(({ id }) => atoms.channel(id))
-        const ofPatterns = patterns.flatMap(({ id }) => [atoms.pattern(id), atoms.patternEnd(id)])
-        ;[...parts, ...ofChannels, ...ofPatterns].forEach((atom) => registry.mount(atom))
+        const parts: ReadonlyArray<Atom.Atom<unknown>> = [atoms.tempo, atoms.trackIds, atoms.clips, atoms.master]
+        const { tracks, clips } = projectOf(doc)
+        const ofTracks = tracks.map(({ id }) => atoms.track(id))
+        const ofClips = clips.flatMap(({ id, pattern }) => [
+          atoms.clip(id),
+          atoms.notes(pattern),
+          atoms.patternEnd(pattern)
+        ])
+        ;[...parts, ...ofTracks, ...ofClips].forEach((atom) => registry.mount(atom))
         return use(atoms, registry)
       }),
       Effect.scoped,
@@ -59,102 +52,100 @@ const following = <A>(doc: Y.Doc, use: (atoms: ProjectAtoms, registry: AtomRegis
 }
 
 const ids = (doc: Y.Doc) => {
-  const { channels, patterns } = projectOf(doc)
-  return { channels: channels.map(({ id }) => id), pattern: patterns[0].id }
+  const { tracks, clips } = projectOf(doc)
+  return { tracks: tracks.map(({ id }) => id), clip: clips[0] }
 }
+
+const note = (tick: number) => ({ tick: Tick(tick), key: MidiKey(60), length: 240 })
 
 describe('the atoms of a project', () => {
   test('read each part as reading the whole project does', () => {
     const doc = newProjectWithSynth()
-    rawMap(doc, 'channels', synthOf(doc).id, 'instrument', 'params').set('osc1.shape', 'saw')
+    rawMap(doc, 'tracks', synthOf(doc).id, 'instrument', 'params').set('osc1.shape', 'saw')
+    rawNotes(doc, parts(doc).clip.pattern).set('n', { tick: 0 })
     const project = projectOf(doc)
     following(doc, (atoms, registry) => {
       expect(registry.get(atoms.tempo)).toBe(project.tempo)
-      expect(registry.get(atoms.channelIds)).toEqual(project.channels.map(({ id }) => id))
-      project.channels.forEach((channel) =>
-        expect(registry.get(atoms.channel(channel.id))).toEqual(Option.some(channel))
-      )
-      expect(registry.get(atoms.patternIds)).toEqual(project.patterns.map(({ id }) => id))
-      project.patterns.forEach((pattern) =>
-        expect(registry.get(atoms.pattern(pattern.id))).toEqual(Option.some(pattern))
-      )
+      expect(registry.get(atoms.trackIds)).toEqual(project.tracks.map(({ id }) => id))
+      project.tracks.forEach((track) => expect(registry.get(atoms.track(track.id))).toEqual(Option.some(track)))
+      expect(registry.get(atoms.clips)).toEqual(project.clips)
+      project.clips.forEach((clip) => expect(registry.get(atoms.clip(clip.id))).toEqual(Option.some(clip)))
+      project.patterns.forEach((pattern) => expect(registry.get(atoms.notes(pattern.id))).toEqual(pattern.notes))
       expect(registry.get(atoms.master)).toEqual(project.master)
     })
   })
 
   test('follow every operation, and tell what depends on two parts once a transaction', () => {
     const doc = newProject()
-    const { channels, pattern } = ids(doc)
+    const { tracks, clip } = ids(doc)
     following(doc, (atoms, registry) => {
       const volumes = byContent((get) =>
-        channels.map((id) => Option.map(get(atoms.channel(id)), (channel) => channel.strip.volume))
+        tracks.map((id) => Option.map(get(atoms.track(id)), (track) => track.strip.volume))
       )
       const values = told(registry, volumes)
       doc.transact(() => {
-        setChannelStrip(doc, by, channels[0], 'volume', 0.1)
-        setChannelStrip(doc, by, channels[1], 'volume', 0.2)
+        setTrackStrip(doc, by, tracks[0], 'volume', 0.1)
+        setTrackStrip(doc, by, tracks[1], 'volume', 0.2)
       })
       expect(values).toHaveLength(2)
       expect(values[1]).toEqual([Option.some(0.1), Option.some(0.2), ...values[0].slice(2)])
       setTempo(doc, by, 90)
       expect(registry.get(atoms.tempo)).toBe(90)
-      toggleStep(doc, by, pattern, channels[0], 3)
-      expect(Option.map(registry.get(atoms.pattern(pattern)), ({ notes }) => notes.map(({ tick }) => tick))).toEqual(
-        Option.some([3 * stepTicks])
-      )
+      addNote(doc, by, clip.id, note(720))
+      expect(registry.get(atoms.notes(clip.pattern)).map(({ tick }) => tick)).toEqual([720])
     })
   })
 
   test('tell nothing to what a change leaves as it was', () => {
     const doc = newProject()
-    const { channels, pattern } = ids(doc)
+    const { tracks, clip } = ids(doc)
     following(doc, (atoms, registry) => {
-      const patterns = told(registry, atoms.pattern(pattern))
-      const patternIds = told(registry, atoms.patternIds)
-      const order = told(registry, atoms.channelIds)
-      setChannelStrip(doc, by, channels[0], 'volume', 0.1)
+      const notes = told(registry, atoms.notes(clip.pattern))
+      const clips = told(registry, atoms.clips)
+      const order = told(registry, atoms.trackIds)
+      setTrackStrip(doc, by, tracks[0], 'volume', 0.1)
       // Written again as it is.
       doc.transact(() => rawMap(doc, 'meta').set('bpm', 120))
-      expect(patterns).toHaveLength(1)
+      expect(notes).toHaveLength(1)
       expect(order).toHaveLength(1)
-      toggleStep(doc, by, pattern, channels[0], 0)
-      expect(patterns).toHaveLength(2)
-      expect(patternIds).toHaveLength(1)
+      addNote(doc, by, clip.id, note(0))
+      expect(notes).toHaveLength(2)
+      expect(clips).toHaveLength(1)
       expect(order).toHaveLength(1)
     })
   })
 
-  test('follow channels deleted, removed, added and moved', () => {
+  test('follow tracks deleted, removed, added and moved', () => {
     const doc = newProject()
-    const { channels } = ids(doc)
+    const { tracks } = ids(doc)
     following(doc, (atoms, registry) => {
-      doc.transact(() => rawMap(doc, 'channels', channels[0]).set('deleted', true))
-      expect(registry.get(atoms.channelIds)).toEqual(channels.slice(1))
-      expect(registry.get(atoms.channel(channels[0]))).toEqual(Option.none())
-      doc.transact(() => doc.getMap('channels').delete(channels[1]))
-      expect(registry.get(atoms.channelIds)).toEqual(channels.slice(2))
-      doc.transact(() => rawMap(doc, 'channels', channels[3]).set('order', ' '))
-      expect(registry.get(atoms.channelIds)).toEqual([channels[3], channels[2]])
+      doc.transact(() => rawMap(doc, 'tracks', tracks[0]).set('deleted', true))
+      expect(registry.get(atoms.trackIds)).toEqual(tracks.slice(1))
+      expect(registry.get(atoms.track(tracks[0]))).toEqual(Option.none())
+      doc.transact(() => doc.getMap('tracks').delete(tracks[1]))
+      expect(registry.get(atoms.trackIds)).toEqual(tracks.slice(2))
+      doc.transact(() => rawMap(doc, 'tracks', tracks[3]).set('order', ' '))
+      expect(registry.get(atoms.trackIds)).toEqual([tracks[3], tracks[2]])
       const added = Id('added')
-      doc.transact(() => doc.getMap('channels').set(added, new Y.Map(Object.entries({ order: '~', deleted: false }))))
-      expect(registry.get(atoms.channelIds)).toEqual([channels[3], channels[2], added])
-      expect(Option.map(registry.get(atoms.channel(added)), ({ instrument }) => instrument)).toEqual(
+      doc.transact(() => doc.getMap('tracks').set(added, new Y.Map(Object.entries({ order: '~', deleted: false }))))
+      expect(registry.get(atoms.trackIds)).toEqual([tracks[3], tracks[2], added])
+      expect(Option.map(registry.get(atoms.track(added)), ({ instrument }) => instrument)).toEqual(
         Option.some(Option.none())
       )
     })
   })
 
-  test('read a channel again when a new one takes its ID, and the master as it changes', () => {
+  test('read a track again when a new one takes its ID, and the master as it changes', () => {
     const doc = newProject()
-    const { channels } = ids(doc)
+    const { tracks } = ids(doc)
     const { slot } = parts(doc)
     following(doc, (atoms, registry) => {
-      const names = told(registry, atoms.channel(channels[0]))
+      const names = told(registry, atoms.track(tracks[0]))
       const masters = told(registry, atoms.master)
       doc.transact(() =>
-        doc.getMap('channels').set(channels[0], new Y.Map(Object.entries({ name: 'Tom', order: 'a0', deleted: false })))
+        doc.getMap('tracks').set(tracks[0], new Y.Map(Object.entries({ name: 'Tom', order: 'a0', deleted: false })))
       )
-      expect(names.map((channel) => Option.map(channel, ({ name }) => name))).toEqual([
+      expect(names.map((track) => Option.map(track, ({ name }) => name))).toEqual([
         Option.some('Kick'),
         Option.some('Tom')
       ])
@@ -166,69 +157,50 @@ describe('the atoms of a project', () => {
     })
   })
 
-  test('follow patterns deleted, removed, added and moved, and the notes of one added', () => {
+  test('follow clips put, moved and erased, and leave out those on a track deleted, until it is back', () => {
     const doc = newProject()
-    const { channels, pattern } = ids(doc)
+    const { tracks, clip: first } = ids(doc)
+    const at = (track: Id, bar: number) => ({ track, tick: Tick(bar * barTicks) })
     following(doc, (atoms, registry) => {
-      const added = Option.getOrThrow(addPattern(doc, by))
-      expect(registry.get(atoms.patternIds)).toEqual([pattern, added])
-      toggleStep(doc, by, added, channels[0], 2)
-      expect(Option.map(registry.get(atoms.pattern(added)), ({ notes }) => notes.map(({ tick }) => tick))).toEqual(
-        Option.some([2 * stepTicks])
+      const clips = () => registry.get(atoms.clips).map(({ id, track, tick }) => ({ id, track, tick }))
+      const clip = Option.getOrThrow(addClip(doc, by, at(tracks[1], 0)))
+      const shown = told(registry, atoms.clip(clip))
+      expect(clips()).toEqual(
+        [
+          { id: first.id, track: tracks[0], tick: 0 },
+          { id: clip, track: tracks[1], tick: 0 }
+        ].toSorted(Order.mapInput(Order.String, ({ id }: { readonly id: Id }) => id))
       )
-      doc.transact(() => rawMap(doc, 'patterns', added).set('order', ' '))
-      expect(registry.get(atoms.patternIds)).toEqual([added, pattern])
-      doc.transact(() => rawMap(doc, 'patterns', pattern).set('deleted', true))
-      expect(registry.get(atoms.patternIds)).toEqual([added])
-      // Where a deleted one stood stays known.
-      expect(registry.get(atoms.patternPlaces)).toEqual([
-        { id: added, live: true },
-        { id: pattern, live: false }
+      moveClip(doc, by, clip, at(tracks[2], 3))
+      deleteTrack(doc, by, tracks[2])
+      expect(clips()).toEqual([{ id: first.id, track: tracks[0], tick: 0 }])
+      doc.transact(() => rawMap(doc, 'tracks', tracks[2]).set('deleted', false))
+      eraseClips(doc, by, [first.id])
+      expect(clips()).toEqual([{ id: clip, track: tracks[2], tick: 3 * barTicks }])
+      expect(shown.map((one) => Option.map(one, ({ track, tick }) => ({ track, tick })))).toEqual([
+        Option.some({ track: tracks[1], tick: 0 }),
+        Option.some({ track: tracks[2], tick: 3 * barTicks }),
+        Option.none(),
+        Option.some({ track: tracks[2], tick: 3 * barTicks })
       ])
-      expect(registry.get(atoms.pattern(pattern))).toEqual(Option.none())
-      doc.transact(() => doc.getMap('patterns').delete(added))
-      expect(registry.get(atoms.patternIds)).toEqual([])
     })
   })
 
-  test('follow clips put, moved and erased, and leave out those of a pattern deleted', () => {
-    const doc = newProject()
-    const { pattern } = ids(doc)
-    const at = (track: string, bar: number) => ({ track: Id(track), tick: Tick(bar * barTicks) })
-    following(doc, (atoms, registry) => {
-      const clips = () => registry.get(atoms.clips).map(({ track, tick, pattern }) => ({ track, tick, pattern }))
-      const clip = Option.getOrThrow(addClip(doc, by, pattern, at('1', 0)))
-      expect(clips()).toEqual([{ track: '1', tick: 0, pattern }])
-      moveClip(doc, by, clip, at('2', 3))
-      expect(clips()).toEqual([{ track: '2', tick: 3 * barTicks, pattern }])
-      const other = Option.getOrThrow(addPattern(doc, by))
-      const second = Option.getOrThrow(addClip(doc, by, other, at('1', 1)))
-      expect(registry.get(atoms.clips).map(({ id }) => id)).toEqual([clip, second].toSorted())
-      deletePattern(doc, by, other)
-      expect(clips()).toEqual([{ track: '2', tick: 3 * barTicks, pattern }])
-      eraseClips(doc, by, [clip])
-      expect(clips()).toEqual([])
-      doc.transact(() => rawMap(doc, 'patterns', other).set('deleted', false))
-      expect(registry.get(atoms.clips).map(({ id }) => id)).toEqual([second])
-    })
-  })
-
-  test('follow the notes of a pattern whose map comes from another client before it is read here', () => {
+  test('follow the notes of a clip whose map comes from another client before it is read here', () => {
     const doc = newProject()
     const other = new Y.Doc()
     sync(doc, other)
-    const { channels, pattern } = ids(doc)
+    const { tracks } = ids(doc)
     following(doc, (atoms, registry) => {
-      const added = Option.getOrThrow(addPattern(other, by))
-      toggleStep(other, by, added, channels[0], 1)
+      const added = Option.getOrThrow(addClip(other, by, { track: tracks[0], tick: Tick(barTicks) }))
+      addNote(other, by, added, note(240))
       sync(doc, other)
-      expect(registry.get(atoms.patternIds)).toEqual([pattern, added])
-      const notes = told(registry, atoms.pattern(added))
-      toggleStep(other, by, added, channels[0], 3)
+      const { pattern } = Option.getOrThrow(registry.get(atoms.clip(added)))
+      const notes = told(registry, atoms.notes(pattern))
+      addNote(other, by, added, note(720))
       sync(doc, other)
-      const steps = (one: (typeof notes)[number]) =>
-        Option.map(one, ({ notes }) => notes.map(({ tick }) => tick / stepTicks).toSorted((a, b) => a - b))
-      expect(notes.map(steps)).toEqual([Option.some([1]), Option.some([1, 3])])
+      const ticks = (one: (typeof notes)[number]) => one.map(({ tick }) => tick).toSorted((a, b) => a - b)
+      expect(notes.map(ticks)).toEqual([[240], [240, 720]])
     })
   })
 
@@ -264,9 +236,8 @@ describe('the atoms of a project', () => {
     const doc = newProject()
     const later = Id('zz')
     following(doc, (_, registry) => {
-      doc.transact(() => doc.getMap('patterns').set(later, new Y.Map(Object.entries({ name: 'Later', order: 'b' }))))
       const held = registry.getNodes().size
-      doc.transact(() => rawNotes(doc, later).set('n', { channel: 'c', tick: 0 }))
+      doc.transact(() => rawNotes(doc, later).set('n', { tick: 0 }))
       expect(registry.getNodes().size).toBe(held)
     })
   })
@@ -280,24 +251,21 @@ describe('the atoms of a project', () => {
   })
 })
 
-test("a pattern plays to the end of the last bar its live channels' notes sound in, a bar at least", () => {
+test('a pattern plays to the end of the last bar its notes sound in, a bar at least', () => {
   const doc = newProject()
-  const { channel, pattern } = parts(doc)
-  const [, other] = projectOf(doc).channels
+  const { clip } = parts(doc)
   following(doc, (atoms, registry) => {
-    const bars = () => registry.get(atoms.patternEnd(pattern.id)) / barTicks
+    const bars = () => registry.get(atoms.patternEnd(clip.pattern)) / barTicks
     expect(bars()).toBe(1)
     // Its tail into the second bar.
-    addNote(doc, by, pattern.id, channel.id, { tick: Tick(barTicks - 1), key: MidiKey(60), length: 2 })
+    addNote(doc, by, clip.id, { tick: Tick(barTicks - 1), key: MidiKey(60), length: 2 })
     expect(bars()).toBe(2)
-    addNote(doc, by, pattern.id, other.id, { tick: Tick(barTicks * 3), key: MidiKey(60), length: barTicks })
+    addNote(doc, by, clip.id, { tick: Tick(barTicks * 3), key: MidiKey(62), length: barTicks })
     expect(bars()).toBe(4)
-    deleteChannel(doc, by, other.id)
-    expect(bars()).toBe(2)
     eraseNotes(
       doc,
       by,
-      pattern.id,
+      clip.id,
       projectOf(doc).patterns[0].notes.map(({ id }) => id)
     )
     expect(bars()).toBe(1)

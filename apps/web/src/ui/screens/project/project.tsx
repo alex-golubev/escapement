@@ -5,8 +5,6 @@ import { MenuHost } from '../../kit/menu'
 import { FramesContext, useFrameLoop } from '../../parts/frames'
 import { Desk, DockProvider } from './desk'
 import { useHistoryKeys } from './history'
-import { usePatternKeys } from './pattern-picker'
-import { usePlayModeKeys } from './play-mode'
 import { TransportBar } from './transport-bar'
 import './project.css'
 
@@ -15,8 +13,6 @@ export const App = () => {
   const { host } = useCore()
   const draws = useFrameLoop(host.frame, useAtomValue(host.state)._tag === 'Ready')
   useHistoryKeys()
-  usePatternKeys()
-  usePlayModeKeys()
   return (
     <FramesContext.Provider value={draws}>
       <DockProvider>

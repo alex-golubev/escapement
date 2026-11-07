@@ -1,7 +1,6 @@
 import type { SoundLibrary, SoundStatus } from '@escapement/compiler'
 import { type SamplePcm, SampleUnavailable } from '@escapement/engine'
 import { Sha256 } from '@escapement/engine-description'
-import type { NewChannel } from '@escapement/model'
 import { Context, Data, Effect, Match, Option } from 'effect'
 import { Digest } from 'effect/crypto'
 import { HttpClient, HttpClientResponse } from 'effect/http'
@@ -140,12 +139,6 @@ const manifestLoad = (context: BaseAudioContext, show: ShowSample, { name, file,
 
 /** Each sample of the manifest and the hash the engine knows it by. */
 export const manifestSamples = manifest.samples.map(({ name, sha256 }) => ({ name, hash: Sha256(sha256) }))
-
-/** The starter project's: a channel for each sample of the manifest. */
-export const manifestChannels: ReadonlyArray<NewChannel> = manifestSamples.map(({ name, hash }) => ({
-  name,
-  sound: hash
-}))
 
 /** The manifest's samples by their hashes, each loaded by the context. */
 export const manifestLoads = (

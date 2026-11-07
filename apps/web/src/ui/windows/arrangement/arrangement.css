@@ -15,6 +15,14 @@
   background: var(--s-well);
   box-shadow: inset 0 0 0 1px var(--line-soft);
   touch-action: none;
+  /* A double click puts a clip: it selects no word of a name beside it. */
+  user-select: none;
+}
+
+/* Over the whole arrangement, the heads' column too: the gestures' points are the arrangement's. */
+.arrangement__lanes {
+  position: absolute;
+  inset: 0;
 }
 
 .arrangement canvas {
@@ -22,14 +30,106 @@
   inset: 0;
   width: 100%;
   height: 100%;
-  /* The arrangement takes the pointer: a canvas holding it would let go of it under the arrangement's capture. */
+  /* The lanes take the pointer: a canvas holding it would let go of it under the lanes' capture. */
   pointer-events: none;
 }
 
-.arrangement[data-grab="move"] {
+.arrangement__lanes[data-grab="move"] {
   cursor: move;
 }
 
-.arrangement[data-grab="resize"] {
+.arrangement__lanes[data-grab="resize"] {
   cursor: ew-resize;
+}
+
+/* ─── Track heads ────────────────────────────────────────────────────────── */
+
+/* Down the left under the ruler, over the canvases' empty column, scrolled with the rows by the page. */
+.track-heads {
+  --small-knob: 22px;
+
+  position: absolute;
+  top: var(--ruler-h);
+  bottom: 0;
+  left: 0;
+  width: var(--heads-w);
+  overflow: hidden;
+  background: var(--s-sunk);
+  box-shadow: inset -1px 0 var(--line);
+}
+
+.track-head {
+  display: flex;
+  align-items: center;
+  gap: var(--u);
+  height: var(--track-h);
+  padding: 0 calc(var(--u) * 1.5);
+  box-shadow:
+    inset 0 -1px var(--line),
+    inset -1px 0 var(--line);
+}
+
+.track-head__strip {
+  display: flex;
+  gap: var(--u);
+  flex: none;
+}
+
+.track-head__strip .knob {
+  --knob-d: var(--small-knob);
+}
+
+/* A button that reads as the track's name: it opens the track's window. */
+.track-head__name {
+  min-width: 0;
+  flex: 1;
+  padding: 3px 4px;
+  overflow: hidden;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  text-align: left;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.track-head__name:hover {
+  background: var(--s-raise);
+}
+
+/* The name's box, its letters where the name's were. */
+.track-head__field {
+  min-width: 0;
+  flex: 1;
+  padding: 2px 3px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.track-head__buttons {
+  display: flex;
+  gap: var(--u);
+  flex: none;
+}
+
+/* A track not heard dims what sounds; its name and buttons stay, to be pressed again. */
+.track-head[data-unheard="true"] .track-head__strip {
+  opacity: 0.4;
+}
+
+/* Under the last track: + alone. */
+.track-head--add {
+  box-shadow: none;
+}
+
+.track-add {
+  min-width: 22px;
+  height: 22px;
+  padding: 0;
+  font-size: 14px;
 }

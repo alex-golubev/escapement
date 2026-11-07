@@ -1,4 +1,4 @@
-import { byContent, type Id, type PlayMode, playModes, readProjectId, storedId } from '@escapement/model'
+import { type Id, readProjectId } from '@escapement/model'
 import {
   Boolean,
   Context,
@@ -27,12 +27,6 @@ const SavedView = Schema.Struct({
   layout: Schema.fromJsonString(Schema.Unknown)
 })
 
-/** The pattern chosen, apart from the layout: a choice is written at once, the layout once the moves stop. */
-const SavedPattern = Schema.Struct({ version: Schema.Literal(1), pattern: storedId })
-
-/** What Play plays, Pattern or Arrangement, written at once as well. */
-const SavedMode = Schema.Struct({ version: Schema.Literal(1), mode: Schema.Literals(playModes) })
-
 /** Sizes and places change on every move of a drag: they are written once the moves stop. */
 export const saveAfter = Duration.millis(300)
 
@@ -45,115 +39,61 @@ export interface ViewStore {
    * The page going away writes what still waits. A failure is logged.
    */
   readonly saveLayout: (read: () => unknown, options: { readonly now: boolean }) => Effect.Effect<void>
-  /** The pattern chosen when the page opened; none if none was, or it can't be read. */
-  readonly pattern: Option.Option<Id>
-  /** Keeps the pattern chosen, at once. A failure is logged. */
-  readonly savePattern: (pattern: Id) => Effect.Effect<void>
-  /** The mode chosen when the page opened; none if none was, or it can't be read. */
-  readonly mode: Option.Option<PlayMode>
-  /** Keeps the mode chosen, at once. A failure is logged. */
-  readonly saveMode: (mode: PlayMode) => Effect.Effect<void>
 }
 
 export const ViewStore = Context.Service<ViewStore>('ViewStore')
 
-/** Nothing kept: the windows open as a new project's each time, its first pattern current and played. */
-const unkept: ViewStore = {
-  layout: Option.none(),
-  saveLayout: () => Effect.void,
-  pattern: Option.none(),
-  savePattern: () => Effect.void,
-  mode: Option.none(),
-  saveMode: () => Effect.void
-}
+/** Nothing kept: the windows open as a new project's each time. */
+const unkept: ViewStore = { layout: Option.none(), saveLayout: () => Effect.void }
 
 /** Where `store` keeps the project's layout. */
 const layoutKey = (id: Id) => `layout:${id}`
 
-/** Where `store` keeps the pattern chosen in the project. */
-const patternKey = (id: Id) => `pattern:${id}`
-
-/** Where `store` keeps the mode chosen in the project. */
-const modeKey = (id: Id) => `mode:${id}`
-
-/** A part of the view, kept under its key in `store` while `kept` holds. */
-interface KeptPart<A> {
-  /** As kept when the page opened; none if nothing was, or it can't be read. */
-  readonly saved: Option.Option<A>
-  /** Keeps what `read` gives as the write starts, once `delay` is over; a new one takes the place of one waiting. */
-  readonly save: (read: () => A, delay: Duration.Duration) => Effect.Effect<void>
-}
-
-/** Read as the page opens, and written as asked; the page going away writes what still waits. */
-const keptPart = <A, I>(
-  store: KeyValueStore.KeyValueStore,
-  schema: Schema.Codec<A, I>,
-  key: string,
-  kept: () => boolean,
-  name: string
-) =>
-  Effect.gen(function* () {
-    const parts = KeyValueStore.toSchemaStore(store, schema)
-    const saved: Option.Option<A> = Option.flatten(
-      yield* inTimeOrNone(parts.get(key), `The saved ${name} was left out`)
-    )
-    /** What to write next, read as the write starts. */
-    const waiting = yield* Ref.make(Option.none<() => A>())
-    // A write under way finishes: an IndexedDB write interrupted is a write lost.
-    const write = Effect.flatMap(Ref.getAndSet(waiting, Option.none()), (next) =>
-      Option.match(Option.filter(next, kept), {
-        onNone: () => Effect.void,
-        onSome: (read) => Effect.suspend(() => parts.set(key, read()))
-      })
-    ).pipe(
-      Effect.uninterruptible,
-      Effect.catchCause((cause) => Effect.logWarning(`The ${name} wasn't saved`, cause))
-    )
-    const saving = yield* FiberHandle.make<void, never>()
-    const runFork = yield* FiberSet.makeRuntime<never>()
-    const writeNow = () => runFork(FiberHandle.run(saving, write))
-    const page = yield* Page
-    yield* Effect.acquireRelease(
-      Effect.sync(() => page.addEventListener('pagehide', writeNow)),
-      () => Effect.sync(() => page.removeEventListener('pagehide', writeNow))
-    )
-    const part: KeptPart<A> = {
-      saved,
-      save: (read, delay) =>
-        Ref.set(waiting, Option.some(read)).pipe(
-          Effect.andThen(FiberHandle.run(saving, Effect.delay(write, delay))),
-          Effect.asVoid
-        )
-    }
-    return part
-  })
-
-/** The view of the project that `id` names, in `store`, written only while `kept` holds. */
+/**
+ * The view of the project that `id` names, in `store`, written only while `kept` holds: read as the page opens, and
+ * written as asked; the page going away writes what still waits.
+ */
 export const viewStoreOf = Effect.fnUntraced(function* (
   store: KeyValueStore.KeyValueStore,
   id: Id,
   kept: () => boolean
 ) {
-  // Together: each waits for a store that may not answer.
-  const [layout, pattern, mode] = yield* Effect.all(
-    [
-      keptPart(store, SavedView, layoutKey(id), kept, 'layout'),
-      keptPart(store, SavedPattern, patternKey(id), kept, 'pattern'),
-      keptPart(store, SavedMode, modeKey(id), kept, 'mode')
-    ],
-    { concurrency: 'unbounded' }
+  const key = layoutKey(id)
+  const views = KeyValueStore.toSchemaStore(store, SavedView)
+  const saved = Option.flatten(yield* inTimeOrNone(views.get(key), 'The saved layout was left out'))
+  /** What to write next, read as the write starts. */
+  const waiting = yield* Ref.make(Option.none<() => unknown>())
+  // A write under way finishes: an IndexedDB write interrupted is a write lost.
+  const write = Effect.flatMap(Ref.getAndSet(waiting, Option.none()), (next) =>
+    Option.match(Option.filter(next, kept), {
+      onNone: () => Effect.void,
+      onSome: (read) => Effect.suspend(() => views.set(key, { version: 1, layout: read() }))
+    })
+  ).pipe(
+    Effect.uninterruptible,
+    Effect.catchCause((cause) => Effect.logWarning("The layout wasn't saved", cause))
+  )
+  const saving = yield* FiberHandle.make<void, never>()
+  const runFork = yield* FiberSet.makeRuntime<never>()
+  const writeNow = () => runFork(FiberHandle.run(saving, write))
+  const page = yield* Page
+  yield* Effect.acquireRelease(
+    Effect.sync(() => page.addEventListener('pagehide', writeNow)),
+    () => Effect.sync(() => page.removeEventListener('pagehide', writeNow))
   )
   const view: ViewStore = {
-    layout: Option.map(layout.saved, (saved) => saved.layout),
+    layout: Option.map(saved, (saved) => saved.layout),
+    // A new one takes the place of one waiting.
     saveLayout: (read, { now }) =>
-      layout.save(
-        () => ({ version: 1, layout: read() }),
-        Boolean.match(now, { onTrue: () => Duration.zero, onFalse: () => saveAfter })
-      ),
-    pattern: Option.map(pattern.saved, (saved) => saved.pattern),
-    savePattern: (chosen) => pattern.save(() => ({ version: 1, pattern: chosen }), Duration.zero),
-    mode: Option.map(mode.saved, (saved) => saved.mode),
-    saveMode: (chosen) => mode.save(() => ({ version: 1, mode: chosen }), Duration.zero)
+      Ref.set(waiting, Option.some(read)).pipe(
+        Effect.andThen(
+          FiberHandle.run(
+            saving,
+            Effect.delay(write, Boolean.match(now, { onTrue: () => Duration.zero, onFalse: () => saveAfter }))
+          )
+        ),
+        Effect.asVoid
+      )
   }
   return view
 })
@@ -191,7 +131,7 @@ export const keptViewsLayer = Layer.effect(
   Effect.flatMap(ViewStores, (stores) => stores.open)
 )
 
-/** The view kept for a deleted project gone, each part apart: one that fails is logged, and the other goes still. */
+/** The view kept for a deleted project gone; a failure is logged. */
 export const forgetView = (id: Id) =>
   Effect.scoped(
     Effect.flatMap(
@@ -199,35 +139,12 @@ export const forgetView = (id: Id) =>
       Option.match({
         onNone: () => Effect.void,
         onSome: (store) =>
-          Effect.forEach(
-            [layoutKey(id), patternKey(id), modeKey(id)],
-            (key) =>
-              store
-                .remove(key)
-                .pipe(
-                  Effect.catch((error) => Effect.logWarning(`The deleted project's ${key} wasn't forgotten`, error))
-                ),
-            { discard: true }
-          )
+          store
+            .remove(layoutKey(id))
+            .pipe(Effect.catch((error) => Effect.logWarning("The deleted project's layout wasn't forgotten", error)))
       })
     )
   )
-
-/**
- * The pattern and the mode kept last are this page's again, and each one chosen on the page is kept, while the scope is
- * open.
- */
-export const keepListening = Effect.fnUntraced(function* (view: ViewStore, session: ProjectSession) {
-  const registry = yield* AtomRegistry.AtomRegistry
-  Option.map(view.pattern, session.choosePattern)
-  Option.map(view.mode, session.chooseMode)
-  const chosen = byContent((get) => get(session.listening).pattern)
-  const runFork = yield* FiberSet.makeRuntime<never>()
-  const kept = (subscribe: () => () => void) =>
-    Effect.acquireRelease(Effect.sync(subscribe), (unsubscribe) => Effect.sync(unsubscribe))
-  yield* kept(() => registry.subscribe(chosen, (pattern) => Option.map(pattern, (id) => runFork(view.savePattern(id)))))
-  yield* kept(() => registry.subscribe(session.mode, (mode) => runFork(view.saveMode(mode))))
-})
 
 /** The view of the project the page opened: a new project, with an ID of its own, starts with the first layout. */
 export const viewStoreLayer = Layer.effect(
@@ -235,8 +152,6 @@ export const viewStoreLayer = Layer.effect(
   Effect.gen(function* () {
     const session = yield* ProjectSession
     const registry = yield* AtomRegistry.AtomRegistry
-    const view = yield* viewStoreFor(yield* KeptViews, session.doc, () => registry.get(session.saving))
-    yield* keepListening(view, session)
-    return view
+    return yield* viewStoreFor(yield* KeptViews, session.doc, () => registry.get(session.saving))
   })
 )

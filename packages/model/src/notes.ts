@@ -1,9 +1,9 @@
 import type { Note } from './project'
 
-/** Where a note plays: notes of one channel at one tick and key play as one and look as one. */
-export type NotePlace = Pick<Note, 'channel' | 'tick' | 'key'>
+/** Where a note plays: notes of one pattern at one tick and key play as one and look as one. */
+export type NotePlace = Pick<Note, 'tick' | 'key'>
 
-export const samePlace = (a: NotePlace, b: NotePlace) => a.channel === b.channel && a.tick === b.tick && a.key === b.key
+export const samePlace = (a: NotePlace, b: NotePlace) => a.tick === b.tick && a.key === b.key
 
 // What an edit makes of a pattern's notes, for the edit to write and a drag to show: the notes it changes come last.
 
@@ -19,7 +19,7 @@ export const withMoved = (
   moved: Note,
   to: Pick<Note, 'tick' | 'key'>
 ): ReadonlyArray<Note> => [
-  ...notes.filter((note) => !samePlace(note, moved) && !samePlace(note, { channel: moved.channel, ...to })),
+  ...notes.filter((note) => !samePlace(note, moved) && !samePlace(note, to)),
   ...notes.filter((note) => samePlace(note, moved)).map((note) => ({ ...note, tick: to.tick, key: to.key }))
 ]
 

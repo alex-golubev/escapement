@@ -193,15 +193,10 @@ pub(crate) mod tests {
         message(CommandKind::SetTempo.0, &SetTempo::new(bpm).0)
     }
 
-    /// The transport of a pattern played alone, as most tests play.
     pub fn set_transport(playing: bool, loop_ticks: u32) -> Vec<u8> {
-        set_transport_of(playing, loop_ticks, false)
-    }
-
-    pub fn set_transport_of(playing: bool, loop_ticks: u32, arrangement: bool) -> Vec<u8> {
         message(
             CommandKind::SetTransport.0,
-            &SetTransport::new(playing, loop_ticks, arrangement).0,
+            &SetTransport::new(playing, loop_ticks).0,
         )
     }
 

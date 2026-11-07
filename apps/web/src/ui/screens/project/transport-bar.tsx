@@ -6,8 +6,6 @@ import { useCore } from '../../core-context'
 import { ToProjects } from '../../parts/to-projects'
 import { WindowButtons } from './desk'
 import { HistoryButtons } from './history'
-import { PatternPicker } from './pattern-picker'
-import { PlayModeSwitch } from './play-mode'
 import { TempoField } from './tempo-field'
 import './transport-bar.css'
 
@@ -143,16 +141,12 @@ const Status = () => {
   )
 }
 
-/**
- * The list of projects, Pattern or Arrangement, Play, undo and redo, the tempo, the current pattern, the windows'
- * buttons; on the right, what is wrong, if anything.
- */
+/** The list of projects, Play, undo and redo, the tempo, the windows' buttons; on the right, what is wrong, if anything. */
 export const TransportBar = () => (
   <div class='transport'>
     <ToProjects />
     <span class='transport__rule' />
     <div class='transport__group'>
-      <PlayModeSwitch />
       <PlayButton />
       <HistoryButtons />
     </div>
@@ -161,10 +155,6 @@ export const TransportBar = () => (
       <span class='cap'>Tempo</span>
       <TempoField />
       <span class='cap'>BPM</span>
-    </div>
-    <span class='transport__rule' />
-    <div class='transport__group'>
-      <PatternPicker />
     </div>
     <span class='transport__rule' />
     <div class='transport__group'>

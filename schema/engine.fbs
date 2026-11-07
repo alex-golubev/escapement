@@ -55,9 +55,6 @@ struct SetTransport {
   playing: bool;
   /// Ticks, 960 to a quarter note, from 1; a position past a new end wraps around.
   loop_ticks: uint32;
-  /// What the loop plays, the arrangement or a pattern alone, so the page knows what it hears: the engine plays either
-  /// the same, and only says it back in its telemetry.
-  arrangement: bool;
 }
 
 /// The audio thread panics, so the page's recovery can be checked; the code goes into the panic's message.

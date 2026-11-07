@@ -9,14 +9,14 @@ import {
   type TestEngine
 } from '@escapement/engine/testing'
 import type { Sha256 } from '@escapement/engine-description'
-import { barTicks, defaultChannelStrip, readProject, barSteps, stepTicks } from '@escapement/model'
+import { barSteps, barTicks, defaultTrackStrip, readProject, stepTicks } from '@escapement/model'
 import { Boolean, Deferred, Effect, Fiber, Option, type Scope } from 'effect'
 import { Atom, AtomRegistry } from 'effect/reactivity'
 import { expect, test } from 'vitest'
 import { BenchmarkSoundLost, benchmarkProject, playBenchmarkProject } from '../../src/services/benchmark-project'
 import { manifestSamples, type ShowSample } from '../../src/services/samples'
 
-/** Shorter than a step, so each step starts in silence; its millisecond's rise keeps the open filter from ringing. */
+/** Shorter than a step, so each step starts in silence, after a millisecond's rise. */
 const hit = () => ({
   sampleRate,
   channels: [
@@ -61,16 +61,17 @@ const run = <A, E>(effect: Effect.Effect<A, E, AtomRegistry.AtomRegistry | Scope
 
 const stepFrames = stepTicks * framesPerTick
 
-/** Each channel adds up to its volume, unless set: past three and a half of them only if all four sound. */
-const allFour = 3.5 * defaultChannelStrip.volume
+/** Each track adds up to its volume, unless set: past three and a half of them only if all four sound. */
+const allFour = 3.5 * defaultTrackStrip.volume
 
-test('the benchmark project has every step of every channel on', () => {
-  const { channels, patterns } = readProject(benchmarkProject()).value
-  expect(channels).toHaveLength(manifestSamples.length)
-  expect(patterns.flatMap(({ notes }) => notes)).toHaveLength(manifestSamples.length * barSteps)
+test('the benchmark project has a track for each sample, a note on every step of its clip', () => {
+  const { tracks, clips, patterns } = readProject(benchmarkProject()).value
+  expect(tracks).toHaveLength(manifestSamples.length)
+  expect(clips).toHaveLength(manifestSamples.length)
+  expect(patterns.map(({ notes }) => notes.length)).toEqual(manifestSamples.map(() => barSteps))
 })
 
-test('the benchmark plays its project: every channel sounds on every step, the engine refuses nothing and loses no note', () =>
+test('the benchmark plays its project: every track sounds on every step, the engine refuses nothing and loses no note', () =>
   run(
     Effect.gen(function* () {
       const engine = startEngine({ initial: {} })

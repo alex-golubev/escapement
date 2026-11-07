@@ -1,5 +1,5 @@
 import { lastTick } from '@escapement/engine-description'
-import { barTicks, type Id, trackCount } from '@escapement/model'
+import { barTicks } from '@escapement/model'
 import { Array, Data, Number, Option } from 'effect'
 import { onLeftEdge, onRightEdge } from '../../kit/edge'
 import type { Point } from '../../kit/pointer'
@@ -10,13 +10,12 @@ import {
   rowAt,
   type Shown,
   type Span,
-  startAt,
   tickUnder,
   type View,
   widthOf,
   xOf
 } from './geometry'
-import { namesWidth } from './layout'
+import { headsWidth } from './layout'
 
 /** Where on the arrangement a point is, as a track's place and a tick, past the grid too: a drag goes on outside it. */
 interface Spot {
@@ -26,24 +25,16 @@ interface Spot {
 
 const spotOf = (view: View, point: Point): Spot => ({ place: rowAt(view, point.y), tick: tickUnder(view, point.x) })
 
-/** The pattern a new clip plays: its name and how long it plays. */
-export interface Source {
-  readonly pattern: Id
-  readonly name: string
-  readonly length: number
-}
-
 /** Which end of a clip an edge is. */
 export type Edge = 'start' | 'end'
 
 /**
  * What a press of the left button takes hold of, and where: a clip by its body, to move, or by an edge, to make it
- * shorter or longer at that end; on empty ground, a new one.
+ * shorter or longer at that end.
  */
 export type Grab = Data.TaggedEnum<{
   Move: { readonly clip: Shown; readonly at: Spot }
   Resize: { readonly clip: Shown; readonly at: Spot; readonly edge: Edge }
-  Put: { readonly source: Source; readonly start: Place; readonly at: Spot }
 }>
 
 export const Grab = Data.taggedEnum<Grab>()
@@ -53,14 +44,14 @@ export type Cursor = 'move' | 'resize' | 'none'
 
 /**
  * The edge of the clip the point is on, if it is: the end's, then the start's, each at most a third of the clip; the
- * start's only in sight, not scrolled under the tracks' names.
+ * start's only in sight, not scrolled under the tracks' heads.
  */
 const edgeAt = (view: View, clip: Shown, x: number): Option.Option<Edge> => {
   const width = widthOf(clip.length)
   const start = xOf(view, clip.tick)
   return Option.firstSomeOf([
     Option.liftPredicate<Edge>('end', () => onRightEdge(x, xOf(view, clip.tick + clip.length), width)),
-    Option.liftPredicate<Edge>('start', () => start >= namesWidth && onLeftEdge(x, start, width))
+    Option.liftPredicate<Edge>('start', () => start >= headsWidth && onLeftEdge(x, start, width))
   ])
 }
 
@@ -68,27 +59,15 @@ const edgeAt = (view: View, clip: Shown, x: number): Option.Option<Edge> => {
 const partAt = (clips: ReadonlyArray<Shown>, view: View, point: Point) =>
   Option.map(clipAt(clips, view, point), (clip) => ({ clip, edge: edgeAt(view, clip, point.x) }))
 
-/** What a press at the point takes hold of: a clip, or a new one of `source`'s. Nothing off the grid. */
-export const grabAt = (
-  clips: ReadonlyArray<Shown>,
-  view: View,
-  point: Point,
-  source: Option.Option<Source>
-): Option.Option<Grab> => {
+/** What a press at the point takes hold of: a clip; nothing on empty ground or off the grid. */
+export const grabAt = (clips: ReadonlyArray<Shown>, view: View, point: Point): Option.Option<Grab> => {
   const at = spotOf(view, point)
-  return Option.match(partAt(clips, view, point), {
-    onSome: ({ clip, edge }) =>
-      Option.some(
-        Option.match(edge, {
-          onSome: (edge) => Grab.Resize({ clip, at, edge }),
-          onNone: () => Grab.Move({ clip, at })
-        })
-      ),
-    onNone: () =>
-      Option.map(Option.all({ source, start: startAt(view, point) }), ({ source, start }) =>
-        Grab.Put({ source, start, at })
-      )
-  })
+  return Option.map(partAt(clips, view, point), ({ clip, edge }) =>
+    Option.match(edge, {
+      onSome: (edge) => Grab.Resize({ clip, at, edge }),
+      onNone: () => Grab.Move({ clip, at })
+    })
+  )
 }
 
 export const cursorAt = (clips: ReadonlyArray<Shown>, view: View, point: Point): Cursor =>
@@ -99,13 +78,15 @@ export const cursorAt = (clips: ReadonlyArray<Shown>, view: View, point: Point):
 
 export const cursorOf = Grab.$match({
   Move: (): Cursor => 'move',
-  Resize: (): Cursor => 'resize',
-  Put: (): Cursor => 'move'
+  Resize: (): Cursor => 'resize'
 })
 
-/** Moved by whole bars and tracks: from the first tick on, so as to end by the tick after the last, among the tracks. */
-const moved = (start: Omit<Span, 'offset'>, from: Spot, to: Spot): Place => ({
-  place: Number.clamp(start.place + to.place - from.place, { minimum: 0, maximum: trackCount - 1 }),
+/**
+ * Moved by whole bars and tracks: from the first tick on, so as to end by the tick after the last, among the `tracks`
+ * there are.
+ */
+const moved = (start: Omit<Span, 'offset'>, from: Spot, to: Spot, tracks: number): Place => ({
+  place: Number.clamp(start.place + to.place - from.place, { minimum: 0, maximum: Math.max(tracks - 1, 0) }),
   tick:
     start.tick +
     Number.clamp(Math.round((to.tick - from.tick) / barTicks), {
@@ -157,13 +138,8 @@ const edges: Record<Edge, (clip: Shown, from: Spot, to: Spot) => Span> = { start
 export const draggedTo = (grab: Grab, view: View, point: Point): Span => {
   const to = spotOf(view, point)
   return Grab.$match(grab, {
-    Move: ({ clip, at }) => ({ ...moved(clip, at, to), length: clip.length, offset: clip.offset }),
-    Resize: ({ clip, at, edge }) => edges[edge](clip, at, to),
-    Put: ({ source, start, at }) => ({
-      ...moved({ ...start, length: source.length }, at, to),
-      length: source.length,
-      offset: 0
-    })
+    Move: ({ clip, at }) => ({ ...moved(clip, at, to, view.tracks), length: clip.length, offset: clip.offset }),
+    Resize: ({ clip, at, edge }) => edges[edge](clip, at, to)
   })
 }
 
@@ -185,6 +161,5 @@ export const draggedClips = (
 ): ReadonlyArray<Drawn> =>
   Grab.$match(grab, {
     Move: ({ clip }) => withHeld(clips, clip, (now) => ({ ...now, place, tick })),
-    Resize: ({ clip }) => withHeld(clips, clip, (now) => ({ ...now, tick, length, offset })),
-    Put: ({ source }) => [...clips, { place, tick, length, offset, period: source.length, name: source.name }]
+    Resize: ({ clip }) => withHeld(clips, clip, (now) => ({ ...now, tick, length, offset }))
   })

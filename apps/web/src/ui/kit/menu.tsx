@@ -14,16 +14,7 @@ export interface MenuItem {
   readonly icon: ComponentChildren
   readonly hint: string
   readonly chosen: () => void
-  /** In a menu of choices, as the patterns to make current: whether it is the one chosen now. */
-  readonly checked?: boolean
 }
-
-/** One of a list of choices, checked or not, or an action. */
-const roleOf = ({ checked }: MenuItem) =>
-  Option.match(Option.fromUndefinedOr(checked), {
-    onNone: () => 'menuitem' as const,
-    onSome: () => 'menuitemradio' as const
-  })
 
 /** What a control offers on a right click, under the name of what it acts on. */
 export interface Menu {
@@ -106,15 +97,7 @@ const place = (menu: HTMLElement, at: MenuPlace) => {
   menu.style.top = `${startOf(from.bottom, from.top, height, window.innerHeight)}px`
 }
 
-const itemsOf = (menu: HTMLElement) =>
-  Array.fromIterable(menu.querySelectorAll<HTMLElement>('[role="menuitem"], [role="menuitemradio"]'))
-
-/** The choice checked, if the menu has one; otherwise its first item. */
-const firstFocused = (items: ReadonlyArray<HTMLElement>) =>
-  Option.getOrElse(
-    Array.findFirstIndex(items, (item) => item.getAttribute('aria-checked') === 'true'),
-    () => 0
-  )
+const itemsOf = (menu: HTMLElement) => Array.fromIterable(menu.querySelectorAll<HTMLElement>('[role="menuitem"]'))
 
 const focusAt = (items: ReadonlyArray<HTMLElement>, at: number) =>
   Option.map(Array.get(items, at), (item) => item.focus())
@@ -143,10 +126,7 @@ export const MenuHost = ({ children }: { readonly children: ComponentChildren })
           // From the pointer, no item is chosen yet, as in the system's menus.
           MenuPlace.$match(at, {
             Pointer: () => menu.focus(),
-            Under: () => {
-              const items = itemsOf(menu)
-              focusAt(items, firstFocused(items))
-            }
+            Under: () => focusAt(itemsOf(menu), 0)
           })
         }
       }),
@@ -205,15 +185,14 @@ export const MenuHost = ({ children }: { readonly children: ComponentChildren })
               <div class='menu__title' aria-hidden='true'>
                 {menu.title}
               </div>
-              {/* By place: two items may have one name, as two patterns can, and a menu doesn't change while open. */}
+              {/* By place: two items may have one name, and a menu doesn't change while open. */}
               {menu.items.map((item, i) => (
                 <button
                   key={i}
                   type='button'
-                  role={roleOf(item)}
+                  role='menuitem'
                   class='menu__item'
                   tabIndex={-1}
-                  aria-checked={item.checked}
                   data-hint={item.hint}
                   onClick={() => {
                     close()

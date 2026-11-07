@@ -123,8 +123,8 @@ export interface Frame {
   /** None until the engine has played a block. */
   readonly telemetry: Telemetry | undefined
   /**
-   * Where the transport is heard now: its tick, between two whole ones as time goes, the loop it goes round in, and
-   * whether the loop plays the arrangement or a pattern alone; none while stopped or before it is heard.
+   * Where the transport is heard now: its tick, between two whole ones as time goes, and the loop it goes round in;
+   * none while stopped or before it is heard.
    */
   readonly heard: Heard | undefined
   /** Counts the browser keeps up to date; none where it reports none. */
@@ -146,10 +146,10 @@ export interface EngineHost {
   readonly restarts: Atom.Atom<Restarts>
   /** Whether the engine's context runs: asleep until Play wakes it, unless the browser lets it run at once. */
   readonly awake: Atom.Atom<boolean>
-  /** Each engine plays the pattern as this says. */
+  /** Each engine plays the arrangement as this says. */
   readonly transport: Atom.Atom<Transport>
   /**
-   * Plays the pattern, waking the sound first if it sleeps; stops it if it plays. It does nothing while the sound wakes,
+   * Plays the arrangement, waking the sound first if it sleeps; stops it if it plays. It does nothing while the sound wakes,
    * or while the engine isn't ready.
    */
   readonly togglePlay: Effect.Effect<void>
@@ -330,7 +330,7 @@ export const engineHostLayer = Layer.effect(
      */
     const silentSince = yield* Ref.make(Option.none<bigint>())
 
-    /** How long since `since` once the engine plays; nothing if the pattern stops first. */
+    /** How long since `since` once the engine plays; nothing if the arrangement stops first. */
     const backIn = (engine: OutputEngine, since: bigint) => {
       const plays = () => {
         const telemetry = engine.readTelemetry()
@@ -423,7 +423,7 @@ export const engineHostLayer = Layer.effect(
         return yield* Effect.die(new Error('The engine stopped without failing'))
       }).pipe(Effect.scoped, Effect.provideService(AtomRegistry.AtomRegistry, registry))
 
-    /** Nothing plays the pattern, and Play can't be pressed. */
+    /** Nothing plays the arrangement, and Play can't be pressed. */
     const giveUp = (cause: Cause.Cause<RunFailure>, gaveUp: GaveUp) =>
       Effect.sync(() => registry.set(state, EngineState.Failed({ cause, gaveUp }))).pipe(Effect.andThen(stop))
 
@@ -630,7 +630,7 @@ export const engineHostLayer = Layer.effect(
     const playPress: Record<Transport, Effect.Effect<void>> = {
       stopped: Effect.sync(() => registry.set(transport, 'starting')).pipe(
         Effect.andThen(wake),
-        // A context that won't wake leaves the pattern stopped.
+        // A context that won't wake leaves the arrangement stopped.
         Effect.onError(() => stop),
         Effect.andThen(
           Effect.sync(() => registry.set(transport, 'playing')).pipe(

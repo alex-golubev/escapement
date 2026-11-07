@@ -69,7 +69,7 @@ export const useTurnGesture = (target: HoldTarget, value: number, scale: TurnSca
     }
   )
   const turning = useRef(Option.none<Turning>())
-  // A control that goes mid-turn, its channel deleted elsewhere, lets go.
+  // A control that goes mid-turn, its track deleted elsewhere, lets go.
   useEffect(() => () => Option.match(turning.current, { onNone: () => {}, onSome: ({ turn }) => turn.release() }), [])
   /** The turn under way, if `by` turns it. */
   const turnBy = (by: Turner) => Option.filter(turning.current, (now) => now.by === by)

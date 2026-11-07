@@ -16,7 +16,7 @@ export {
   defaultStrip,
   formatValue,
   gainText,
-  newChannelPosition,
+  newTrackPosition,
   nearestIn,
   type ParamDescription,
   type ParamId,
