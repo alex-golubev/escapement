@@ -3,9 +3,17 @@
 [![CI](https://github.com/alex-golubev/escapement/actions/workflows/ci.yml/badge.svg)](https://github.com/alex-golubev/escapement/actions/workflows/ci.yml)
 [![License: AGPL-3.0-only](https://img.shields.io/badge/license-AGPL--3.0--only-blue)](LICENSE)
 
-A collaborative DAW in the browser.
+A collaborative DAW in the browser — [escapement.run](https://escapement.run).
 
 Early development — nothing usable yet.
+
+## Roadmap
+
+1. **One person, the whole loop** — now: tracks and clips, piano roll, synth and sampler, a mixer with effects,
+   buses, sends and sidechain, a starter sound library, export to WAV.
+2. **Together** — a server, projects shared live, who is doing what, undo of your own changes, sounds in the cloud.
+3. **Audio** — audio clips and recording, automation clips, export to FLAC and MP3.
+4. **Later** — plugins by others, an AI collaborator, live jams.
 
 ## Stack
 
