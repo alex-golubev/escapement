@@ -6,7 +6,7 @@
   padding: calc(var(--u) * 2);
 }
 
-/* A panel in the middle of the page, standing on it as a window stands on the desk. */
+/* A panel in the middle of the page, standing on it as the project's middle and panel do. */
 .projects {
   display: grid;
   justify-items: center;

@@ -1,4 +1,4 @@
-/* A track's window: its pan and volume, then its instrument's controls, each over its number and name. */
+/* A track below: its pan and volume, then its instrument's controls, each over its number and name. */
 .track-settings {
   display: flex;
   flex-direction: column;

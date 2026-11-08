@@ -218,9 +218,6 @@ importers:
       '@escapement/model':
         specifier: workspace:*
         version: link:../../packages/model
-      dockview-react:
-        specifier: 8.8.3
-        version: 8.8.3(@preact/compat@18.3.2(preact@11.1.0))(@preact/compat@18.3.2(preact@11.1.0))
       effect:
         specifier: 4.1.1
         version: 4.1.1
@@ -957,18 +954,6 @@ packages:
     resolution: {integrity: sha512-Btj2BOOO83o3WyH59e8MgXsxEQVcarkUOpEYrubB0urwnN10yQ364rsiByU11nZlqWYZm05i/of7io4mzihBtQ==}
     engines: {node: '>=8'}
 
-  dockview-core@8.8.3:
-    resolution: {integrity: sha512-B9v+ibiXnZ5qgFJ7VEqMcNxpG0S5Y7Yx7uuGqqSyEFSC3bRZktUoXWo3HCrFp+QTdFmA1dJD1ye/gI4yL3hU2g==}
-
-  dockview-react@8.8.3:
-    resolution: {integrity: sha512-pfd5Dgwbh+OeGIwrctIsRLeDb5rLTuKK9rBM2ZRKEGLri9KHPL58FYAYTzZ2T5m/Fy6ysjRgVe8hBgib2JAmmA==}
-    peerDependencies:
-      react: ^16.8.0 || ^17.0.0 || ^18.0.0 || ^19.0.0
-      react-dom: ^16.8.0 || ^17.0.0 || ^18.0.0 || ^19.0.0
-
-  dockview@8.8.3:
-    resolution: {integrity: sha512-hTb5X4Z74k0+5wtOlx1gNsx/q5ve1p0JQ6s7Ovl24YhdkaR9AhfWFlq1dQYwXjXIoWm8RFW6aTZMhCTiEv94EA==}
-
   effect@4.1.1:
     resolution: {integrity: sha512-XYu65BrcmNqu5i7PPvP4dqL+R5ma37zIsfuSPjcn78mog+6e5PkilNg7Xo+pBpjXJYlWEIpH4j91tMrfW05CMw==}
 
@@ -1698,18 +1683,6 @@ snapshots:
   chai@6.2.2: {}
 
   detect-libc@2.1.2: {}
-
-  dockview-core@8.8.3: {}
-
-  dockview-react@8.8.3(@preact/compat@18.3.2(preact@11.1.0))(@preact/compat@18.3.2(preact@11.1.0)):
-    dependencies:
-      dockview: 8.8.3
-      react: '@preact/compat@18.3.2(preact@11.1.0)'
-      react-dom: '@preact/compat@18.3.2(preact@11.1.0)'
-
-  dockview@8.8.3:
-    dependencies:
-      dockview-core: 8.8.3
 
   effect@4.1.1: {}
 

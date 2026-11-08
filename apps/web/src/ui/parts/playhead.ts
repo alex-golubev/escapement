@@ -2,12 +2,12 @@ import { Option } from 'effect'
 import type { RefObject } from 'preact'
 import { useLayoutEffect, useRef } from 'preact/hooks'
 import { cleared } from '../kit/canvas'
-import type { Size } from '../kit/fit'
+import type { Size } from '../kit/size'
 import { type Follow, inSight, type Lane, useFollow } from './follow'
 import { heardTick, useFrame } from './frames'
 
 /**
- * A window drawn on canvases as its playhead goes along: its size, its lane, where a tick is across it, as its own
+ * A view drawn on canvases as its playhead goes along: its size, its lane, where a tick is across it, as its own
  * geometry has it, and how high its ruler is.
  */
 export interface Laid {
@@ -17,13 +17,13 @@ export interface Laid {
   readonly ruler: number
 }
 
-/** The playhead's colours, as a window's palette names them: its line down the window, and its mark on the ruler. */
+/** The playhead's colours, as a view's palette names them: its line down the view, and its mark on the ruler. */
 export interface Colours {
   readonly playhead: string
   readonly rulerText: string
 }
 
-/** A line down the window at the tick heard, and a mark over it on the ruler; none while it is scrolled out of sight. */
+/** A line down the view at the tick heard, and a mark over it on the ruler; none while it is scrolled out of sight. */
 export const drawPlayhead = (
   g: CanvasRenderingContext2D,
   { size, lane, xOf, ruler }: Laid,
@@ -45,24 +45,24 @@ export const drawPlayhead = (
     }
   )
 
-/** What a window drawn on canvases tells its playhead as it draws. */
+/** What a view drawn on canvases tells its playhead as it draws. */
 export interface CanvasPlayhead {
-  /** Where the arrangement's tick heard falls in the window's own time; none where the window doesn't show it. */
+  /** Where the arrangement's tick heard falls in the view's own time; none where the view doesn't show it. */
   readonly place: (tick: number) => Option.Option<number>
   /** The canvas over the others, the playhead's own. */
   readonly canvas: RefObject<HTMLCanvasElement | null>
-  /** None until the window is laid out. */
+  /** None until the view is laid out. */
   readonly laid: Option.Option<Laid>
   readonly colours: Option.Option<Colours>
-  /** Whether a button is held on the window now. */
+  /** Whether a button is held on the view now. */
   readonly held: () => boolean
-  /** Scrolls the window across to where the playhead takes it. */
+  /** Scrolls the view across to where the playhead takes it. */
   readonly scrollTo: (left: number) => void
 }
 
 /**
- * The playhead over a window drawn on canvases, drawn again as the tick heard or the window changes, not on every
- * frame, and the window following it; the `Follow` given is told of the window's scrolls by hand. A window scrolled
+ * The playhead over a view drawn on canvases, drawn again as the tick heard or the view changes, not on every
+ * frame, and the view following it; the `Follow` given is told of the view's scrolls by hand. A view scrolled
  * to the playhead is drawn anew before the frame shows, and so is the playhead on it, at the tick that frame heard.
  */
 export const useCanvasPlayhead = ({ place, canvas, laid, colours, held, scrollTo }: CanvasPlayhead): Follow => {

@@ -1,9 +1,10 @@
-/* The master pinned at the left, the other inserts scrolling across beside it; every strip as high as the window. */
+/* The master pinned at the left, the other inserts scrolling across beside it; every strip as high as the middle, or as
+   its controls need, the middle scrolling down to them. */
 .mixer {
   display: flex;
   align-items: stretch;
   gap: calc(var(--u) * 2);
-  height: 100%;
+  min-height: 100%;
 }
 
 .rack {

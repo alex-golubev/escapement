@@ -54,9 +54,9 @@ import type { ProjectStorage } from '../src/services/project-store'
 import { sessionOf } from '../src/services/session'
 import type { TabSync } from '../src/services/tab-sync'
 import { turnsOf } from '../src/services/turns'
-import { viewStoreFor } from '../src/services/view-store'
+import { projectViewOf } from '../src/services/project-view'
+import { centresFor, viewStoreFor } from '../src/services/view-store'
 import { type Core, CoreContext } from '../src/ui/core-context'
-import { deskWindows } from '../src/ui/screens/project/desk'
 import { App } from '../src/ui/screens/project/project'
 import { type View, xOf, yOf } from '../src/ui/windows/piano-roll/geometry'
 import { keysWidth, rowHeight, rulerHeight, stepWidth } from '../src/ui/windows/piano-roll/layout'
@@ -121,7 +121,7 @@ interface Page {
   readonly elsewhere: (holds: Holds) => void
   /** The page's own element. */
   readonly target: HTMLElement
-  /** The tracks' heads, down the Arrangement's left. */
+  /** The tracks' heads, down the Arrangement's left; with another view in the middle as the page opens, that view. */
   readonly grid: HTMLElement
   readonly frame: { current: Frame | undefined }
   /** What the heads changed in the DOM while `act` ran and Preact drew after it, and the components it drew. */
@@ -198,7 +198,11 @@ const page = (
     const frame: { current: Frame | undefined } = { current: undefined }
     const session = yield* sessionOf({ ...savedIn(doc), ...storage }, newWriter('page'))
     const ops = yield* editorOf(doc, session.writer)
-    const view = yield* viewStoreFor(Option.some(views), doc, () => 'saved')
+    const view = yield* projectViewOf(
+      yield* viewStoreFor(Option.some(views), doc, () => 'saved'),
+      session.project,
+      centresFor(import.meta.env.DEV)
+    )
     const core: Core = {
       registry,
       session,
@@ -247,18 +251,18 @@ const page = (
           target.remove()
         })
     )
-    // Open once the desk is drawn and the transport bar's buttons follow it; then a frame for the effects left.
+    // Open once the middle and the panel are drawn; then a frame for the effects left.
     yield* drawnWhen(
-      () =>
-        target.querySelector('.track-heads') !== null &&
-        target.querySelector('.btn--window[aria-pressed="true"]') !== null
+      () => target.querySelector('.workspace__centre *') !== null && target.querySelector('.panel') !== null
     )
     yield* drawn(50)
     const opened = drawnComponents.list
-    const grid = yield* Option.match(Option.fromNullishOr(target.querySelector<HTMLElement>('.track-heads')), {
-      onNone: () => Effect.die('No heads'),
-      onSome: Effect.succeed
-    })
+    const grid = yield* Option.match(
+      Option.orElse(Option.fromNullishOr(target.querySelector<HTMLElement>('.track-heads')), () =>
+        Option.fromNullishOr(target.querySelector<HTMLElement>('.workspace__centre'))
+      ),
+      { onNone: () => Effect.die('No middle'), onSome: Effect.succeed }
+    )
     yield* use({
       doc,
       holds: () => registry.get(session.holds),
@@ -293,16 +297,26 @@ const page = (
   }).pipe(
     Effect.scoped,
     Effect.provideService(AtomRegistry.AtomRegistry, AtomRegistry.make(registryOptions)),
-    // The page's window: the layout written as it goes.
+    // The page's window, which the services hear go.
     Effect.provideService(PageEvents, window),
     Effect.runPromise
   )
 
 const pressed = (button: HTMLButtonElement) => button.getAttribute('aria-pressed') === 'true'
 
-/** A window's button on the transport bar pressed, once the dock has drawn what it did. */
-const pressWindowButton = (target: HTMLElement, title: string) =>
-  Effect.sync(() => windowButton(target, title).click()).pipe(Effect.andThen(drawn(50)))
+/** The button on the transport bar for what the middle shows, by its name. */
+const centreButton = (target: HTMLElement, name: string) =>
+  Option.getOrThrow(
+    Option.fromNullishOr(
+      Array.from(target.querySelectorAll<HTMLButtonElement>('.btn--centre')).find(
+        (button) => button.textContent === name
+      )
+    )
+  )
+
+/** What the middle shows turned to by its button, once the page has drawn it. */
+const pressCentre = (target: HTMLElement, name: string) =>
+  Effect.sync(() => centreButton(target, name).click()).pipe(Effect.andThen(drawn(50)))
 
 test("the page draws each track's head once as it opens", () =>
   page(({ opened }) =>
@@ -373,7 +387,7 @@ test.each<[string, Partial<EngineHost>]>([
   page(
     ({ target }) =>
       Effect.gen(function* () {
-        yield* pressWindowButton(target, 'Debug')
+        yield* pressCentre(target, 'Debug')
         expect(target.textContent).toContain(said)
       }),
     host
@@ -596,16 +610,8 @@ test("a note dragged past the bar in the piano roll grows its clip's pattern to 
     })
   ))
 
-/** The page's button that reads `text` among those `selector` finds, such as one of the debug panel's. */
-const textButton = (target: HTMLElement, text: string, selector = 'button') =>
-  Option.getOrThrow(
-    Option.fromNullishOr(
-      Array.from(target.querySelectorAll<HTMLButtonElement>(selector)).find((button) => button.textContent === text)
-    )
-  )
-
-/** The transport bar's button of the window called `title`. */
-const windowButton = (target: HTMLElement, title: string) => textButton(target, title, '.btn--window')
+/** The line over the panel: the chosen track's name and what of it the panel shows, as `Kick|Notes`; empty for none. */
+const below = (target: HTMLElement) => target.querySelector('.panel__title')?.textContent
 
 /** The primary button, held down from press to release unless `buttons` says otherwise. */
 const pointer = (
@@ -629,7 +635,7 @@ const key = (target: Element, key: string) => {
 
 const keyUp = (target: Element) => target.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, key: 'ArrowUp' }))
 
-/** The Kick's own volume, which its head and its window turn. */
+/** The Kick's own volume, which its head and the panel turn. */
 const kickVolume = (doc: Y.Doc) => readProject(doc).value.tracks[0].strip.volume
 
 /** The button of the track's name in its head. */
@@ -642,15 +648,18 @@ const nameButton = (grid: HTMLElement, name: string) =>
     )
   )
 
-/** The window of the track with this name. */
-const trackWindow = (target: HTMLElement, name: string) =>
-  Option.fromNullishOr(target.querySelector<HTMLElement>(`section[aria-label="${name}"]`))
+/** The panel's body, while it shows the track with this name. */
+const trackBelow = (target: HTMLElement, name: string) =>
+  Option.filter(
+    Option.fromNullishOr(target.querySelector<HTMLElement>('.panel__body')),
+    () => below(target) === `${name}|Track`
+  )
 
-/** The Kick's volume in its window: a knob with its name and number, which a drag on the number turns too. */
+/** The Kick's volume below: a knob with its name and number, which a drag on the number turns too. */
 const kickKnob = (target: HTMLElement) =>
   Option.getOrThrow(
-    Option.flatMapNullishOr(trackWindow(target, 'Kick'), (window) =>
-      window.querySelector('[role="slider"][aria-label="Volume"]')
+    Option.flatMapNullishOr(trackBelow(target, 'Kick'), (body) =>
+      body.querySelector('[role="slider"][aria-label="Volume"]')
     )
   )
 
@@ -664,7 +673,7 @@ const kickAt = (doc: Y.Doc) => paramPosition(trackVolume, kickVolume(doc))
 const knobAt = (knob: Element) => paramPosition(trackVolume, Number(knob.getAttribute('aria-valuenow')))
 
 /**
- * The page on a new project with each track's volume knob at 80%, room to turn it either way, and the Kick's window open
+ * The page on a new project with each track's volume knob at 80%, room to turn it either way, and the Kick shown below
  * from its name.
  */
 const knobPage = (use: (page: Page) => Effect.Effect<void>) => {
@@ -698,7 +707,7 @@ test('a knob turns as it is dragged, redrawing only itself, and writes the docum
       const knob = kickKnob(target)
       // 200 pixels the whole way.
       pointer(knob, 'pointerdown', 100)
-      // The press focuses the knob: its window comes forward.
+      // The press focuses the knob.
       yield* drawn()
       const { components } = yield* changed(() => pointer(knob, 'pointermove', 80))
       // The same volume in its row, and the hint line, which tells the value of the knob with the focus.
@@ -722,7 +731,7 @@ test("a knob another tab turns shows its value as it turns, redrawing only itsel
       const knob = kickKnob(target)
       const volume = HoldTarget.TrackStrip({ track: readProject(doc).value.tracks[0].id, param: 'volume' })
       const { components } = yield* changed(() => elsewhere(holding(noHolds, volume, at(0.3))))
-      // In its window and in its row.
+      // Below and in its row.
       expect(components).toEqual(['Dial', 'Knob', 'Dial', 'SmallKnob'])
       expect(knobAt(knob)).toBeCloseTo(0.3, 9)
       expect(kickAt(doc)).toBeCloseTo(0.8, 9)
@@ -905,7 +914,7 @@ test("pan and volume stand before a track's name in its head, turn its strip and
         'track-head__name',
         'track-head__buttons'
       ])
-      // The instrument's knobs are in the track's window, and its mixer strip too.
+      // The instrument's knobs are below, with the track, and its mixer strip too.
       expect(head?.querySelectorAll('[role="slider"]')).toHaveLength(2)
       expect(head?.querySelector('[role="spinbutton"]')).toBeNull()
       // A new track's volume, 5.2 dB down.
@@ -951,7 +960,7 @@ test("pan and volume stand before a track's name in its head, turn its strip and
 /** The mixer strip the Kick goes into. */
 const kickInsert = (doc: Y.Doc) => readProject(doc).value.tracks[0].insert
 
-test("a track's mixer strip, in its window, is dragged, typed and kept with Enter or a click elsewhere, the master on a double click", () =>
+test("a track's mixer strip, below, is dragged, typed and kept with Enter or a click elsewhere, the master on a double click", () =>
   page(({ doc, grid, target }) =>
     Effect.gen(function* () {
       nameButton(grid, 'Kick').click()
@@ -1032,7 +1041,7 @@ const insertIn = (doc: Y.Doc, id: string) =>
 test("the mixer's strips: a fader turns an insert's volume, M mutes it, and the master's fader turns its own", () =>
   page(({ doc, target }) =>
     Effect.gen(function* () {
-      yield* pressWindowButton(target, 'Mixer')
+      yield* pressCentre(target, 'Mix')
       const fader = (label: string) =>
         Option.getOrThrow(Option.fromNullishOr(target.querySelector(`[role="slider"][aria-label="${label}"]`)))
       const first = fader('Strip 1: volume')
@@ -1068,7 +1077,7 @@ test("the mixer's strips: a fader turns an insert's volume, M mutes it, and the 
 test("a strip's meters draw its record on the board, found by its number; its lamp latches, out of sight too", () =>
   page(({ target, frame }) =>
     Effect.gen(function* () {
-      yield* pressWindowButton(target, 'Mixer')
+      yield* pressCentre(target, 'Mix')
       /** The strip's meters, by the lamp over the left one. */
       const stripOf = (output: string) =>
         Option.getOrThrow(
@@ -1134,7 +1143,7 @@ test("a strip's meters draw its record on the board, found by its number; its la
 test("the master's fader has its scale's numbers, the strips' the marks alone", () =>
   page(({ target }) =>
     Effect.gen(function* () {
-      yield* pressWindowButton(target, 'Mixer')
+      yield* pressCentre(target, 'Mix')
       const scales = Array.from(target.querySelectorAll('.fader-scale'), (scale) => ({
         master: scale.closest('.strip--master') !== null,
         text: scale.textContent
@@ -1148,7 +1157,7 @@ test("the master's fader has its scale's numbers, the strips' the marks alone", 
 test('the mixer draws the strips in sight as its rack scrolls', () =>
   page(({ target }) =>
     Effect.gen(function* () {
-      yield* pressWindowButton(target, 'Mixer')
+      yield* pressCentre(target, 'Mix')
       const numbers = () =>
         Array.from(target.querySelectorAll('.rack .strip__index'), (index) => Number(index.textContent))
       const rack = Option.getOrThrow(Option.fromNullishOr(target.querySelector<HTMLElement>('.rack')))
@@ -1160,6 +1169,34 @@ test('the mixer draws the strips in sight as its rack scrolls', () =>
       expect(numbers()).not.toContain(1)
     })
   ))
+
+test("the Arrangement and the mixer's rack stay where they were scrolled as the middle shows the other and back", () => {
+  const doc = manyTracksDoc(4)
+  addClip(doc, elsewhere, { track: readProject(doc).value.tracks[3].id, tick: Tick(23 * barTicks) })
+  return page(
+    ({ target }) =>
+      Effect.gen(function* () {
+        const numbers = () =>
+          Array.from(target.querySelectorAll('.rack .strip__index'), (index) => Number(index.textContent))
+        const rack = () => Option.getOrThrow(Option.fromNullishOr(target.querySelector<HTMLElement>('.rack')))
+        arrangementIn(target).wheel({ deltaX: 10 * barWidth, deltaMode: 0 })
+        yield* drawn()
+        yield* pressCentre(target, 'Mix')
+        rack().scrollLeft = 80 * 20
+        rack().dispatchEvent(new Event('scroll'))
+        yield* drawn()
+        yield* pressCentre(target, 'Arrange')
+        arrangementIn(target).doubleClick(0, 0)
+        yield* drawn()
+        expect(clipsOf(doc).find((clip) => clip.track === trackAt(doc, 0))?.bar).toBe(10)
+        yield* pressCentre(target, 'Mix')
+        expect([numbers()[0], rack().scrollLeft]).toEqual([20, 80 * 20])
+      }),
+    {},
+    {},
+    { doc }
+  )
+})
 
 test('the tempo is dragged in whole BPM, steps with the keys and goes back to 120 on a double click', () =>
   page(({ doc, target }) =>
@@ -1262,7 +1299,7 @@ test('a turn of a knob is one step from press to release, and meanwhile undo doe
 test('two knobs turned at once are one step', () =>
   knobPage(({ doc, grid, target }) =>
     Effect.gen(function* () {
-      // The Kick's in its window, the Snare's in its head.
+      // The Kick's below, the Snare's in its head.
       const kick = kickKnob(target)
       const snare = Option.getOrThrow(
         Option.fromNullishOr(grid.querySelector('[role="slider"][aria-label="Snare: volume"]'))
@@ -1374,70 +1411,90 @@ const boardWith = (
   frame: 0
 })
 
+/** The frame of `engine` with `peaks` and `overs`, once the page has drawn it. */
+const boardShown = (
+  frame: { current: Frame | undefined },
+  engine: number,
+  peaks: readonly [number, number],
+  overs: readonly [number, number]
+) =>
+  Effect.sync(() => {
+    frame.current = { engine, telemetry: boardWith(peaks, overs), heard: undefined, stats: undefined }
+  }).pipe(Effect.andThen(drawn(50)))
+
 test("the meters draw the master's peaks in decibels, and a lamp lights when its side's count of overs moves, until it is clicked", () =>
   page(({ target, frame }) =>
     Effect.gen(function* () {
-      yield* pressWindowButton(target, 'Mixer')
+      yield* pressCentre(target, 'Mix')
       const levels = () =>
         Array.from(target.querySelectorAll<HTMLElement>('.strip--master .meter__fill')).map((fill) =>
           fill.style.getPropertyValue('--level')
         )
       const lamps = Array.from(target.querySelectorAll<HTMLButtonElement>('.strip--master .meter-clip'))
       const lit = () => lamps.map((lamp) => lamp.getAttribute('data-lit'))
-      /** The frame of `engine` with `peaks` and `overs`, once the page has drawn it. */
-      const shown = (engine: number, peaks: readonly [number, number], overs: readonly [number, number]) =>
-        Effect.sync(() => {
-          frame.current = { engine, telemetry: boardWith(peaks, overs), heard: undefined, stats: undefined }
-        }).pipe(Effect.andThen(drawn(50)))
-      yield* pressWindowButton(target, 'Debug')
-      /** The debug panel's level: the louder side's peak. */
-      const level = () =>
-        Option.getOrThrow(
-          Option.fromNullishOr(
-            Array.from(target.querySelectorAll('p')).find((line) => line.textContent.startsWith('Blocks'))
-          )
-        ).querySelectorAll('output')[2].textContent
       // Counted before the page first looked: not news.
-      yield* shown(1, [0.1, 0.5], [0, 4])
+      yield* boardShown(frame, 1, [0.1, 0.5], [0, 4])
       expect(levels()).toEqual(['0.667', '0.900'])
-      expect(level()).toBe('−6.0 dB')
       expect(lit()).toEqual([null, null])
       // The peak fell back below full scale between two looks; the count tells.
-      yield* shown(1, [0, 0.5], [0, 5])
+      yield* boardShown(frame, 1, [0, 0.5], [0, 5])
       expect(levels()).toEqual(['0.000', '0.900'])
       expect(lit()).toEqual([null, 'true'])
       lamps[1].click()
       yield* drawn()
       expect(lit()).toEqual([null, null])
       // A new engine counts from zero: that's no over.
-      yield* shown(2, [0, 0], [0, 0])
+      yield* boardShown(frame, 2, [0, 0], [0, 0])
       expect(lit()).toEqual([null, null])
-      expect(level()).toBe('−∞ dB')
-      yield* shown(2, [1.5, 0], [1, 0])
+      yield* boardShown(frame, 2, [1.5, 0], [1, 0])
       expect(levels()).toEqual(['1.000', '0.000'])
-      expect(level()).toBe('+3.5 dB')
       expect(lit()).toEqual(['true', null])
     })
   ))
 
-/** The windows' buttons on the transport bar, by title, and whether each is lit. */
-const windowButtons = (target: HTMLElement) =>
-  ['Arrangement', 'Piano roll', 'Mixer', 'Debug'].map((title) => [title, pressed(windowButton(target, title))] as const)
+test("the debug panel's level is the louder side's peak in decibels", () =>
+  page(({ target, frame }) =>
+    Effect.gen(function* () {
+      yield* pressCentre(target, 'Debug')
+      const level = () =>
+        Option.getOrThrow(
+          Option.fromNullishOr(
+            Array.from(target.querySelectorAll('p')).find((line) => line.textContent.startsWith('Blocks'))
+          )
+        ).querySelectorAll('output')[2].textContent
+      yield* boardShown(frame, 1, [0.1, 0.5], [0, 0])
+      expect(level()).toBe('−6.0 dB')
+      yield* boardShown(frame, 2, [0, 0], [0, 0])
+      expect(level()).toBe('−∞ dB')
+      yield* boardShown(frame, 2, [1.5, 0], [1, 0])
+      expect(level()).toBe('+3.5 dB')
+    })
+  ))
 
-/** The titles of the windows on the desk. */
-const windowsShown = (target: HTMLElement) =>
-  Array.from(target.querySelectorAll('.dock-tab__title')).map((title) => title.textContent)
+/** The buttons of what the middle shows, by name, and whether each is lit. */
+const centreButtons = (target: HTMLElement) =>
+  Array.from(
+    target.querySelectorAll('.btn--centre'),
+    (button) => [button.textContent, button.getAttribute('aria-pressed') === 'true'] as const
+  )
 
-test('a new project opens with the Arrangement alone, its button lit; the others wait for their buttons', () =>
+/** What the middle shows, by its name. */
+const middle = (target: HTMLElement) => target.querySelector('.workspace__centre')?.getAttribute('aria-label')
+
+/** What the panel says with nothing to show. */
+const nothingBelow = "Click a track's name to see it here, double-click a clip for its notes"
+
+test('a project opens with the Arrangement in the middle, its button lit, and nothing under it', () =>
   page(({ target }) =>
     Effect.sync(() => {
-      expect(windowsShown(target)).toEqual(['Arrangement'])
-      expect(windowButtons(target)).toEqual([
-        ['Arrangement', true],
-        ['Piano roll', false],
-        ['Mixer', false],
+      expect(target.querySelector('section[aria-label="Arrangement"] .arrangement')).not.toBeNull()
+      expect(centreButtons(target)).toEqual([
+        ['Arrange', true],
+        ['Mix', false],
         ['Debug', false]
       ])
+      expect(below(target)).toBe('')
+      expect(target.querySelector('.panel')?.textContent).toBe(nothingBelow)
     })
   ))
 
@@ -1450,33 +1507,27 @@ test('the transport bar leads to the list of projects, first on it', () =>
     })
   ))
 
-test("a window's button opens it and closes it again; its tab's close button closes it too", () =>
-  page(({ target, button }) =>
+test('a button of the middle shows its view there in place of the one before, drawn no more; the panel stays', () =>
+  page(({ grid, target }) =>
     Effect.gen(function* () {
-      yield* pressWindowButton(target, 'Mixer')
-      expect(windowsShown(target)).toEqual(['Arrangement', 'Mixer'])
-      expect(target.querySelector('.strip')).not.toBeNull()
-      expect(windowButtons(target)[2]).toEqual(['Mixer', true])
-      yield* pressWindowButton(target, 'Mixer')
-      expect(windowsShown(target)).toEqual(['Arrangement'])
-      expect(target.querySelector('.strip')).toBeNull()
-      yield* pressWindowButton(target, 'Mixer')
-      button('Close Arrangement').click()
-      yield* drawn(50)
-      expect(windowsShown(target)).toEqual(['Mixer'])
-      expect(windowButtons(target)[0]).toEqual(['Arrangement', false])
+      nameButton(grid, 'Kick').click()
+      yield* pressCentre(target, 'Mix')
+      expect(middle(target)).toBe('Mixer')
+      expect(target.querySelector('section[aria-label="Mixer"] .strip')).not.toBeNull()
+      expect(target.querySelector('.arrangement')).toBeNull()
+      expect(below(target)).toBe('Kick|Track')
+      yield* pressCentre(target, 'Debug')
+      expect(centreButtons(target)).toEqual([
+        ['Arrange', false],
+        ['Mix', false],
+        ['Debug', true]
+      ])
+      expect(target.querySelector('section[aria-label="Mixer"]')).toBeNull()
+      yield* pressCentre(target, 'Arrange')
+      expect(middle(target)).toBe('Arrangement')
+      expect(below(target)).toBe('Kick|Track')
     })
   ))
-
-/** What stands beside the title of the window with this title. */
-const subOf = (target: HTMLElement, title: string) =>
-  Array.from(target.querySelectorAll('.dock-tab'))
-    .find((tab) => tab.querySelector('.dock-tab__title')?.textContent === title)
-    ?.querySelector('.dock-tab__sub')?.textContent
-
-/** The floating window a body stands in. */
-const frameOf = (target: HTMLElement, name: string) =>
-  Option.getOrThrow(trackWindow(target, name)).closest('.dv-resize-container')
 
 /** The labels of the knobs in it, and what they read. */
 const knobsIn = (element: Element) =>
@@ -1485,41 +1536,49 @@ const knobsIn = (element: Element) =>
     knob.getAttribute('aria-valuetext')
   ])
 
-test("a track's name opens its window: its pan and volume and mixer strip, a sampler nothing more; a second click closes it", () =>
+test("a track's name shows it below: its pan and volume and mixer strip, a sampler nothing more", () =>
   page(({ grid, target }) =>
     Effect.gen(function* () {
       nameButton(grid, 'Kick').click()
       yield* drawn(50)
-      expect(windowsShown(target)).toEqual(['Arrangement', 'Kick'])
-      expect(subOf(target, 'Kick')).toBe('Sampler')
-      expect(knobsIn(Option.getOrThrow(trackWindow(target, 'Kick')))).toEqual([
+      expect(below(target)).toBe('Kick|Track')
+      expect(middle(target)).toBe('Arrangement')
+      const kick = Option.getOrThrow(trackBelow(target, 'Kick'))
+      expect(knobsIn(kick)).toEqual([
         ['Pan', 'center'],
         ['Volume', '−5.2 dB']
       ])
-      nameButton(grid, 'Kick').click()
-      yield* drawn(50)
-      expect(windowsShown(target)).toEqual(['Arrangement'])
+      // A sampler named, with no controls of its own.
+      expect(kick.querySelector('.track-settings__instrument')?.textContent).toBe('Sampler')
     })
   ))
 
-test("a second click on a track's name closes its window, though the click takes the focus into the Arrangement", () =>
+test("a click on another track's name shows that one in its place, its head marked; one more leaves it shown", () =>
   page(({ grid, target }) =>
     Effect.gen(function* () {
-      const kick = nameButton(grid, 'Kick')
-      kick.focus()
-      kick.click()
+      const marked = () =>
+        Array.from(grid.querySelectorAll('.track-head__name'), (name) => name.getAttribute('aria-current'))
+      nameButton(grid, 'Kick').click()
       yield* drawn(50)
-      // Turned in its window, a knob takes the focus there.
-      const knob = kickKnob(target)
-      pointer(knob, 'pointerdown', 100)
-      pointer(knob, 'pointerup', 100)
+      expect(marked()).toEqual(['true', 'false'])
+      nameButton(grid, 'Snare').click()
       yield* drawn(50)
-      expect(kick.getAttribute('aria-pressed')).toBe('true')
-      kick.focus()
-      kick.click()
+      expect(below(target)).toBe('Snare|Track')
+      expect(marked()).toEqual(['false', 'true'])
+      expect(grid.querySelector('.track-head[data-chosen="true"] .track-head__name')?.textContent).toBe('Snare')
+      nameButton(grid, 'Snare').click()
       yield* drawn(50)
-      expect(windowsShown(target)).toEqual(['Arrangement'])
-      expect(kick.getAttribute('aria-pressed')).toBe('false')
+      expect(below(target)).toBe('Snare|Track')
+      expect(Option.isSome(trackBelow(target, 'Snare'))).toBe(true)
+    })
+  ))
+
+test('+ shows the track it adds below', () =>
+  page(({ target, button }) =>
+    Effect.gen(function* () {
+      button('Add a track').click()
+      yield* drawn(50)
+      expect(below(target)).toBe('Synth|Track')
     })
   ))
 
@@ -1534,9 +1593,9 @@ const lastSynth = (doc: Y.Doc, param: ParamId<typeof plugins.synth>) =>
 
 const lastShape = (doc: Y.Doc) => lastSynth(doc, 'osc1.shape')
 
-/** The controls of one of a track's groups, such as an oscillator's, in its window. */
-const groupIn = (window: HTMLElement, name: string) =>
-  Option.getOrThrow(Option.fromNullishOr(window.querySelector<HTMLElement>(`[role="group"][aria-label="${name}"]`)))
+/** The controls of one of a track's groups, such as an oscillator's, below. */
+const groupIn = (body: HTMLElement, name: string) =>
+  Option.getOrThrow(Option.fromNullishOr(body.querySelector<HTMLElement>(`[role="group"][aria-label="${name}"]`)))
 
 test("a synth's shape is chosen by a row of its waves, one lit: a click or an arrow writes it, Cmd+Z takes it back", () =>
   page(({ doc, grid, target, button }) =>
@@ -1545,7 +1604,7 @@ test("a synth's shape is chosen by a row of its waves, one lit: a click or an ar
       yield* drawn()
       nameButton(grid, 'Synth').click()
       yield* drawn(50)
-      const synth = groupIn(Option.getOrThrow(trackWindow(target, 'Synth')), 'Osc 1')
+      const synth = groupIn(Option.getOrThrow(trackBelow(target, 'Synth')), 'Osc 1')
       const choices = () => Array.from(synth.querySelectorAll<HTMLButtonElement>('[role="radio"]'))
       const lit = () =>
         choices()
@@ -1615,7 +1674,7 @@ test("a synth's Coarse turns a semitone at a time, by a key or a drag, and its h
       yield* drawn(50)
       const knob = Option.getOrThrow(
         Option.fromNullishOr(
-          groupIn(Option.getOrThrow(trackWindow(target, 'Synth')), 'Osc 2').querySelector(
+          groupIn(Option.getOrThrow(trackBelow(target, 'Synth')), 'Osc 2').querySelector(
             '[role="slider"][aria-label="Coarse"]'
           )
         )
@@ -1639,21 +1698,16 @@ test("a synth's Coarse turns a semitone at a time, by a key or a drag, and its h
     })
   ))
 
-test("a track's name shows its window in place of the one in front, closing the others; with Alt, beside it", () =>
+test("a synth's track below: its own controls under its name, after the track's knobs", () =>
   page(({ grid, target, button }) =>
     Effect.gen(function* () {
       button('Add a track').click()
       yield* drawn()
-      nameButton(grid, 'Kick').click()
-      yield* drawn(50)
-      const place = frameOf(target, 'Kick')
       nameButton(grid, 'Synth').click()
       yield* drawn(50)
-      expect(windowsShown(target)).toEqual(['Arrangement', 'Synth'])
-      expect(frameOf(target, 'Synth')).toBe(place)
       // The synth's own controls under its name, after the track's knobs: an oscillator to a row, Osc 2 an octave
       // down and Osc 3 two, unmixed; then the envelope's, a short note at full level.
-      const synth = Option.getOrThrow(trackWindow(target, 'Synth'))
+      const synth = Option.getOrThrow(trackBelow(target, 'Synth'))
       expect(knobsIn(synth)).toEqual([
         ['Pan', 'center'],
         ['Volume', '−5.2 dB'],
@@ -1683,50 +1737,16 @@ test("a track's name shows its window in place of the one in front, closing the 
         ['Osc 3', 'Shape'],
         ['Envelope', undefined]
       ])
-      nameButton(grid, 'Snare').dispatchEvent(new MouseEvent('click', { bubbles: true, altKey: true }))
-      yield* drawn(50)
-      expect(windowsShown(target)).toEqual(['Arrangement', 'Synth', 'Snare'])
-      expect(frameOf(target, 'Snare')).not.toBe(place)
-      // In place of the Snare's, in front, and the Synth's closed.
-      const front = frameOf(target, 'Snare')
-      nameButton(grid, 'Kick').click()
-      yield* drawn(50)
-      expect(windowsShown(target)).toEqual(['Arrangement', 'Kick'])
-      expect(frameOf(target, 'Kick')).toBe(front)
     })
   ))
 
-test("a track's name opens its window in place of the track window last turned to, not the newest", () =>
-  page(({ grid, target, button }) =>
-    Effect.gen(function* () {
-      button('Add a track').click()
-      yield* drawn()
-      nameButton(grid, 'Kick').click()
-      yield* drawn(50)
-      nameButton(grid, 'Snare').dispatchEvent(new MouseEvent('click', { bubbles: true, altKey: true }))
-      yield* drawn(50)
-      const kickPlace = frameOf(target, 'Kick')
-      // Back to the Kick's window: a knob there turned.
-      const knob = kickKnob(target)
-      pointer(knob, 'pointerdown', 100)
-      pointer(knob, 'pointerup', 100)
-      const synth = nameButton(grid, 'Synth')
-      synth.focus()
-      synth.click()
-      yield* drawn(50)
-      expect(windowsShown(target)).toEqual(['Arrangement', 'Synth'])
-      expect(frameOf(target, 'Synth')).toBe(kickPlace)
-    })
-  ))
-
-test("a track's window is named by the track to screen readers, and dims as its head does while not heard", () =>
+test("a track below dims what sounds as the track's head does while it isn't heard", () =>
   page(({ grid, target, button }) =>
     Effect.gen(function* () {
       nameButton(grid, 'Kick').click()
       yield* drawn(50)
-      expect(target.querySelector('[role="tab"][aria-label="Kick"]')).not.toBeNull()
       const settings = Option.getOrThrow(
-        Option.flatMapNullishOr(trackWindow(target, 'Kick'), (window) => window.querySelector('.track-settings'))
+        Option.flatMapNullishOr(trackBelow(target, 'Kick'), (body) => body.querySelector('.track-settings'))
       )
       expect(settings.getAttribute('data-unheard')).toBe('false')
       button('Kick: mute').click()
@@ -1735,14 +1755,14 @@ test("a track's window is named by the track to screen readers, and dims as its 
     })
   ))
 
-test("a track's window turns the same pan and volume as its head", () =>
+test("a track below turns the same pan and volume as the track's head", () =>
   page(({ doc, grid, target }) =>
     Effect.gen(function* () {
       nameButton(grid, 'Kick').click()
       yield* drawn(50)
       const pan = Option.getOrThrow(
-        Option.flatMapNullishOr(trackWindow(target, 'Kick'), (window) =>
-          window.querySelector('[role="slider"][aria-label="Pan"]')
+        Option.flatMapNullishOr(trackBelow(target, 'Kick'), (body) =>
+          body.querySelector('[role="slider"][aria-label="Pan"]')
         )
       )
       key(pan, 'End')
@@ -1753,18 +1773,17 @@ test("a track's window turns the same pan and volume as its head", () =>
     })
   ))
 
-/** Past the write of a layout that opened or closed a window, which goes at once. */
+/** Past the write of the view, which goes as it changes. */
 const saved = drawn(50)
 
-test('the layout is kept for the project: opened again, it shows the windows as they were left; a new project starts afresh', () => {
+test('the view is kept for the project: opened again, it shows the middle and what is below as they were left; a new project starts afresh', () => {
   const views = memoryViews()
   const doc = projectDoc()
   return page(
-    ({ target, button }) =>
+    ({ grid, target }) =>
       Effect.gen(function* () {
-        yield* pressWindowButton(target, 'Debug')
-        yield* pressWindowButton(target, 'Mixer')
-        button('Close Mixer').click()
+        nameButton(grid, 'Snare').click()
+        yield* pressCentre(target, 'Debug')
         yield* saved
       }),
     {},
@@ -1774,14 +1793,11 @@ test('the layout is kept for the project: opened again, it shows the windows as 
     .then(() =>
       page(
         ({ target }) =>
-          Effect.sync(() => {
-            expect(windowsShown(target)).toEqual(['Arrangement', 'Debug'])
-            expect(windowButtons(target)).toEqual([
-              ['Arrangement', true],
-              ['Piano roll', false],
-              ['Mixer', false],
-              ['Debug', true]
-            ])
+          Effect.gen(function* () {
+            expect(middle(target)).toBe('Debug')
+            expect(below(target)).toBe('Snare|Track')
+            yield* pressCentre(target, 'Arrange')
+            expect(target.querySelector('.track-head[data-chosen="true"] .track-head__name')?.textContent).toBe('Snare')
           }),
         {},
         {},
@@ -1792,7 +1808,8 @@ test('the layout is kept for the project: opened again, it shows the windows as 
       page(
         ({ target }) =>
           Effect.sync(() => {
-            expect(windowsShown(target)).toEqual(['Arrangement'])
+            expect(middle(target)).toBe('Arrangement')
+            expect(below(target)).toBe('')
           }),
         {},
         {},
@@ -1809,16 +1826,16 @@ const viewsWith = (doc: Y.Doc, saved: unknown) => {
 }
 
 test.each<[string, unknown]>([
-  ["the dock can't take", { version: 1, layout: JSON.stringify({ grid: 'none of it' }) }],
-  ['not in JSON', { version: 1, layout: '{ grid' }],
-  ['of another version', { version: 2, layout: '{}' }],
+  ['of another version, as the windows were', { version: 1, layout: '{}' }],
+  ['with what the middle has not', { version: 2, centre: 'track', below: null }],
   ['not a view', 'not a view']
-])('a saved layout %s is left for the first one', (_, saved) => {
+])('a saved view %s is left for the first one', (_, saved) => {
   const doc = projectDoc()
   return page(
     ({ target }) =>
       Effect.sync(() => {
-        expect(windowsShown(target)).toEqual(['Arrangement'])
+        expect(middle(target)).toBe('Arrangement')
+        expect(below(target)).toBe('')
       }),
     {},
     {},
@@ -1826,63 +1843,29 @@ test.each<[string, unknown]>([
   )
 })
 
-/** The Arrangement and Debug as two tabs of one docked group, the Arrangement in front. */
-const tabbed = {
-  grid: {
-    root: {
-      type: 'branch',
-      data: [
-        { type: 'leaf', data: { views: ['arrangement', 'debug'], activeView: 'arrangement', id: '1' }, size: 100 }
-      ],
-      size: 100
-    },
-    width: 100,
-    height: 100,
-    orientation: 'HORIZONTAL'
-  },
-  panels: {
-    arrangement: { id: 'arrangement', contentComponent: 'arrangement', title: 'Arrangement' },
-    debug: { id: 'debug', contentComponent: 'debug', title: 'Debug' }
-  },
-  activeGroup: '1'
-}
-
-test("a window behind another tab isn't lit, and its button brings it forward rather than closing it", () => {
+test.each<[string, unknown]>([
+  ['a track', { _tag: 'Track', track: 'gone' }],
+  ["a clip's notes", { _tag: 'Notes', clip: 'gone' }]
+])('a saved view of %s the project no longer has shows nothing below', (_, shown) => {
   const doc = projectDoc()
   return page(
     ({ target }) =>
-      Effect.gen(function* () {
-        expect(windowsShown(target)).toEqual(['Arrangement', 'Debug'])
-        expect(windowButtons(target)).toEqual([
-          ['Arrangement', true],
-          ['Piano roll', false],
-          ['Mixer', false],
-          ['Debug', false]
-        ])
-        yield* pressWindowButton(target, 'Debug')
-        expect(windowsShown(target)).toEqual(['Arrangement', 'Debug'])
-        expect(windowButtons(target)).toEqual([
-          ['Arrangement', false],
-          ['Piano roll', false],
-          ['Mixer', false],
-          ['Debug', true]
-        ])
+      Effect.sync(() => {
+        expect(below(target)).toBe('')
+        expect(target.querySelector('.panel')?.textContent).toBe(nothingBelow)
       }),
     {},
     {},
-    { views: viewsWith(doc, { version: 1, layout: JSON.stringify(tabbed) }), doc }
+    { views: viewsWith(doc, { version: 2, centre: 'arrangement', below: shown }), doc }
   )
 })
 
-test("a press with Shift in a floating window turns the knob finely, and doesn't take the window along", () =>
+test('a press with Shift on a knob turns it finely', () =>
   knobPage(({ doc, target }) =>
     Effect.gen(function* () {
       const knob = kickKnob(target)
-      const window = Option.getOrThrow(Option.fromNullishOr(knob.closest<HTMLElement>('.dv-resize-container')))
       pointer(knob, 'pointerdown', 100, { shiftKey: true })
       pointer(knob, 'pointermove', 60, { shiftKey: true })
-      // The dock marks a window it drags.
-      expect(window.classList.contains('dv-resize-container-dragging')).toBe(false)
       pointer(knob, 'pointerup', 60, { shiftKey: true })
       yield* drawn()
       expect(kickAt(doc)).toBeCloseTo(0.82, 9)
@@ -1890,56 +1873,45 @@ test("a press with Shift in a floating window turns the knob finely, and doesn't
     })
   ))
 
-test("a window's button brings an open window forward first, and closes it once it is in front", () =>
-  page(({ target }) =>
-    Effect.gen(function* () {
-      // The Mixer opened last, in front of the Arrangement.
-      yield* pressWindowButton(target, 'Mixer')
-      yield* pressWindowButton(target, 'Arrangement')
-      expect(windowsShown(target)).toEqual(['Arrangement', 'Mixer'])
-      expect(windowButton(target, 'Arrangement').dataset.hint).toContain('in front: a click closes it')
-      expect(windowButton(target, 'Mixer').dataset.hint).toContain('open: a click brings it forward')
-      yield* pressWindowButton(target, 'Arrangement')
-      expect(windowsShown(target)).toEqual(['Mixer'])
-      expect(windowButton(target, 'Arrangement').dataset.hint).toContain('Show Arrangement')
-    })
-  ))
-
-test('only a build for development has Debug: the bar holds the main windows', () => {
-  expect(deskWindows(true)).toEqual(['arrangement', 'piano-roll', 'mixer', 'debug'])
-  expect(deskWindows(false)).toEqual(['arrangement', 'piano-roll', 'mixer'])
+test('only a build for development has Debug in the middle', () => {
+  expect(centresFor(true)).toEqual(['arrangement', 'mixer', 'debug'])
+  expect(centresFor(false)).toEqual(['arrangement', 'mixer'])
 })
 
-test("a build for users has no Debug button, and doesn't take a saved layout that holds Debug", () => {
+test('a build for users has no Debug button, and shows the Arrangement for a saved view that showed Debug', () => {
   vi.stubEnv('DEV', false)
   const doc = projectDoc()
   return page(
     ({ target }) =>
       Effect.sync(() => {
-        const titles = Array.from(target.querySelectorAll('.btn--window')).map((button) => button.textContent)
-        expect(titles).toEqual(['Arrangement', 'Piano roll', 'Mixer'])
-        expect(windowsShown(target)).toEqual(['Arrangement'])
+        expect(centreButtons(target)).toEqual([
+          ['Arrange', true],
+          ['Mix', false]
+        ])
+        expect(middle(target)).toBe('Arrangement')
       }),
     {},
     {},
-    { views: viewsWith(doc, { version: 1, layout: JSON.stringify(tabbed) }), doc }
+    { views: viewsWith(doc, { version: 2, centre: 'debug', below: null }), doc }
   ).finally(() => vi.unstubAllEnvs())
 })
 
-test("a track's window goes with its track, by Cmd+Z on + or deleted while the page was away; else it comes back with the page", () => {
+test('the track shown below goes with its track, by Cmd+Z on + or deleted while the page was away, and comes back with it', () => {
   const views = memoryViews()
   const doc = projectDoc()
   return page(
     ({ grid, target, button }) =>
       Effect.gen(function* () {
         button('Add a track').click()
-        yield* drawn()
-        nameButton(grid, 'Synth').click()
         yield* drawn(50)
-        expect(windowsShown(target)).toEqual(['Arrangement', 'Synth'])
+        expect(below(target)).toBe('Synth|Track')
         press(document.body, { key: 'z', metaKey: true })
         yield* drawn(50)
-        expect(windowsShown(target)).toEqual(['Arrangement'])
+        expect(below(target)).toBe('')
+        expect(target.querySelector('.panel')?.textContent).toBe(nothingBelow)
+        press(document.body, { key: 'z', metaKey: true, shiftKey: true })
+        yield* drawn(50)
+        expect(below(target)).toBe('Synth|Track')
         nameButton(grid, 'Kick').click()
         yield* saved
       }),
@@ -1948,58 +1920,12 @@ test("a track's window goes with its track, by Cmd+Z on + or deleted while the p
     { views, doc }
   )
     .then(() =>
-      page(
-        ({ target }) => Effect.sync(() => expect(windowsShown(target)).toEqual(['Arrangement', 'Kick'])),
-        {},
-        {},
-        { views, doc }
-      )
+      page(({ target }) => Effect.sync(() => expect(below(target)).toBe('Kick|Track')), {}, {}, { views, doc })
     )
     .then(() => {
       doc.transact(() => doc.getMap('tracks').delete(readProject(doc).value.tracks[0].id))
-      return page(
-        ({ target }) => Effect.sync(() => expect(windowsShown(target)).toEqual(['Arrangement'])),
-        {},
-        {},
-        { views, doc }
-      )
+      return page(({ target }) => Effect.sync(() => expect(below(target)).toBe('')), {}, {}, { views, doc })
     })
-})
-
-test("a track's window that names no track, as a broken saved layout may hold, doesn't open", () => {
-  const views = memoryViews()
-  const doc = projectDoc()
-  const key = `layout:${Option.getOrThrow(readProjectId(doc))}`
-  return page(
-    ({ grid }) =>
-      Effect.gen(function* () {
-        nameButton(grid, 'Kick').click()
-        yield* saved
-      }),
-    {},
-    {},
-    { views, doc }
-  ).then(() => {
-    // The dock's layout is JSON of its own inside the saved view.
-    const view = JSON.parse(Option.getOrThrow(Option.fromUndefinedOr(Effect.runSync(views.get(key)))))
-    const layout = JSON.parse(view.layout)
-    const track = Option.getOrThrow(
-      Option.fromUndefinedOr(Object.keys(layout.panels).find((id) => id.startsWith('track:')))
-    )
-    layout.panels[track].params = { track: '' }
-    Effect.runSync(views.set(key, JSON.stringify({ ...view, layout: JSON.stringify(layout) })))
-    return page(
-      ({ target }) =>
-        Effect.sync(() => {
-          expect(windowsShown(target)).toEqual(['Arrangement'])
-          // Not even as an empty window, with no title to close it by.
-          expect(target.querySelectorAll('.dv-tab')).toHaveLength(1)
-        }),
-      {},
-      {},
-      { views, doc }
-    )
-  })
 })
 
 /** The notes of the clips, each by its track's name, where it starts, how high and how long. */
@@ -2037,30 +1963,24 @@ const noteElsewhere = (doc: Y.Doc, name: string, step: number, key: number, step
     length: steps * stepTicks
   })
 
-// happy-dom lays nothing out: the roll gets the size a window would give it, four bars wide and all but a few keys high,
-// so a point past it is past it, as in a browser; none behind a tab, where the dock takes it out of the page.
+// happy-dom lays nothing out: the roll gets the size the panel would give it, four bars wide and all but a few keys
+// high, so a point past it is past it, as in a browser.
 const rollSize = { clientWidth: keysWidth + 4 * barSteps * stepWidth, clientHeight: rulerHeight + 120 * rowHeight }
-const rollBehindTab = { now: false }
-// The arrangement, eight bars wide and ten tracks high; none behind a tab, as the roll.
+// The arrangement, eight bars wide and ten tracks high.
 const arrangementSize = {
   clientWidth: headsWidth + 8 * barWidth,
   clientHeight: arrangementRulerHeight + 10 * trackHeight
 }
-const arrangementBehindTab = { now: false }
 Object.entries(rollSize).forEach(([name, size]) => {
   const laid = Object.getOwnPropertyDescriptor(Element.prototype, name)
   Object.defineProperty(HTMLElement.prototype, name, {
     configurable: true,
     get(this: HTMLElement) {
       return Boolean.match(this.classList.contains('roll'), {
-        onTrue: () => Boolean.match(rollBehindTab.now, { onTrue: () => 0, onFalse: () => size }),
+        onTrue: () => size,
         onFalse: () =>
           Boolean.match(this.classList.contains('arrangement'), {
-            onTrue: () =>
-              Boolean.match(arrangementBehindTab.now, {
-                onTrue: () => 0,
-                onFalse: () => arrangementSize[name as keyof typeof arrangementSize]
-              }),
+            onTrue: () => arrangementSize[name as keyof typeof arrangementSize],
             onFalse: () => laid?.get?.call(this) ?? 0
           })
       })
@@ -2136,7 +2056,7 @@ test('the piano roll puts a note where it is clicked, on its step, as long as th
     Effect.gen(function* () {
       yield* openKickClip(target)
       // No channel chosen and none with notes: the first.
-      expect(subOf(target, 'Piano roll')).toBe('Kick')
+      expect(below(target)).toBe('Kick|Notes')
       const { click } = yield* rollIn(target)
       click(2, 64)
       yield* drawn()
@@ -2495,50 +2415,23 @@ test('the piano roll follows the playhead to its bar as it starts to be heard an
     })
   ))
 
-/** happy-dom's `ResizeObserver` tells nothing: one that tells the window's body of this class its size when asked. */
-const resizes = (body: string) => {
-  const told = new Set<() => void>()
-  vi.stubGlobal(
-    'ResizeObserver',
-    class {
-      constructor(private readonly tell: () => void) {}
-      observe(element: Element) {
-        Boolean.match(element.classList.contains(body), { onTrue: () => told.add(this.tell), onFalse: () => {} })
-      }
-      unobserve() {}
-      disconnect() {
-        told.delete(this.tell)
-      }
-    }
-  )
-  return () => told.forEach((tell) => tell())
-}
-
-test('the piano roll come forward from behind a tab while it plays goes to the playhead, as one opened would', () => {
-  const resized = resizes('roll')
-  return page(({ doc, target, frame }) =>
+test("a clip's notes shown again while the arrangement plays go to the playhead, as ones opened anew would", () =>
+  page(({ doc, grid, target, frame }) =>
     Effect.gen(function* () {
       noteElsewhere(doc, 'Kick', 16 * barSteps - 1, 40)
       yield* drawn()
       yield* openKickClip(target)
-      const { click } = yield* rollIn(target)
       yield* heardAt(frame, Option.some(0.5))
-      rollBehindTab.now = true
-      resized()
+      nameButton(grid, 'Kick').click()
       yield* heardAt(frame, Option.some(5))
       yield* heardAt(frame, Option.some(6.5))
-      rollBehindTab.now = false
-      resized()
-      yield* drawn(50)
+      yield* openKickClip(target)
+      const { click } = yield* rollIn(target)
       click(0, 60)
       yield* drawn()
       expect(notesByName(doc).find(({ key }) => key === 60)?.tick).toBe(6 * barTicks)
     })
-  ).finally(() => {
-    rollBehindTab.now = false
-    vi.unstubAllGlobals()
-  })
-})
+  ))
 
 /** The note's velocity, as another client sets it: a note changes as a whole. */
 const setVelocity = (doc: Y.Doc, id: string, velocity: number) =>
@@ -2667,15 +2560,16 @@ test('a note held in the piano roll plays where it is, as loud as it is, anew on
     })
   ))
 
-test('a key held in the piano roll is let go of as the roll closes', () =>
-  page(({ target, auditions }) =>
+test('a key held in the piano roll is let go of as the panel shows the track in place of its notes', () =>
+  page(({ grid, target, auditions }) =>
     Effect.gen(function* () {
       yield* openKickClip(target)
       const { at } = yield* rollIn(target)
       at('pointerdown', -1, 60)
       yield* drawn()
       expect(auditions()).toHaveLength(1)
-      yield* pressWindowButton(target, 'Piano roll')
+      nameButton(grid, 'Kick').click()
+      yield* drawn(50)
       expect(auditions()).toEqual([])
     })
   ))
@@ -2707,7 +2601,7 @@ test('a note dragged back out of the last bar, the roll scrolled to the end, sta
     })
   ))
 
-test('a press in the piano roll is its own: no floating window takes it for a drag of the window', () =>
+test('a press in the piano roll is its own: the browser does nothing else with it', () =>
   page(({ doc, target }) =>
     Effect.gen(function* () {
       noteElsewhere(doc, 'Kick', 0, 60)
@@ -2824,7 +2718,7 @@ test("a right click's menu, coming after its release as on Windows, erases nothi
     })
   ))
 
-test('a drag in the piano roll lets go where the page heard no release, and once its window turns away; one of a note erased writes nothing', () =>
+test('a drag in the piano roll lets go where the page heard no release, and once its clip goes; one of a note erased writes nothing', () =>
   page(({ doc, target, button }) =>
     Effect.gen(function* () {
       noteElsewhere(doc, 'Kick', 0, 60)
@@ -2854,7 +2748,7 @@ test('a drag in the piano roll lets go where the page heard no release, and once
       at('pointermove', 2, 60, { button: -1 })
       deleteTrack(doc, elsewhere, clipOn(doc, 'Kick').track)
       yield* drawn()
-      expect(subOf(target, 'Piano roll')).toBe('No clip')
+      expect(below(target)).toBe('')
       // The buttons are drawn again once the roll that went has let go.
       yield* drawn()
       expect(button('Undo').disabled).toBe(false)
@@ -2866,7 +2760,7 @@ test('the piano roll shows no clip once its clip is erased, and that one again a
     Effect.gen(function* () {
       noteElsewhere(doc, 'Kick', 1, 64)
       yield* openKickClip(target)
-      expect(subOf(target, 'Piano roll')).toBe('Kick')
+      expect(below(target)).toBe('Kick|Notes')
       expect(target.querySelector('.roll')).not.toBeNull()
       const clip = clipOn(doc, 'Kick').id
       const map = Option.getOrThrow(
@@ -2874,17 +2768,17 @@ test('the piano roll shows no clip once its clip is erased, and that one again a
       )
       doc.transact(() => map.set('deleted', true), elsewhere)
       yield* drawn(50)
-      expect(subOf(target, 'Piano roll')).toBe('No clip')
+      expect(below(target)).toBe('')
       expect(target.querySelector('.roll')).toBeNull()
       // Back, as another client's undo brings it.
       doc.transact(() => map.set('deleted', false), elsewhere)
       yield* drawn(50)
-      expect(subOf(target, 'Piano roll')).toBe('Kick')
+      expect(below(target)).toBe('Kick|Notes')
       expect(target.querySelector('.roll')).not.toBeNull()
     })
   ))
 
-test('the layout keeps the clip open in the piano roll: opened again, it shows that one', () => {
+test("the view keeps the notes shown below: opened again, it shows that clip's", () => {
   const views = memoryViews()
   const doc = projectDoc()
   return page(
@@ -2900,8 +2794,7 @@ test('the layout keeps the clip open in the piano roll: opened again, it shows t
     page(
       ({ target }) =>
         Effect.sync(() => {
-          expect(windowsShown(target)).toEqual(['Arrangement', 'Piano roll'])
-          expect(subOf(target, 'Piano roll')).toBe('Kick')
+          expect(below(target)).toBe('Kick|Notes')
           expect(target.querySelector('.roll')).not.toBeNull()
         }),
       {},
@@ -2911,14 +2804,13 @@ test('the layout keeps the clip open in the piano roll: opened again, it shows t
   )
 })
 
-test('the piano roll opened by its button shows no clip until a double click on one opens it there', () =>
+test('no notes are below until a double click on a clip shows its notes there', () =>
   page(({ target }) =>
     Effect.gen(function* () {
-      yield* pressWindowButton(target, 'Piano roll')
-      expect(subOf(target, 'Piano roll')).toBe('No clip')
+      expect(below(target)).toBe('')
       expect(target.querySelector('.roll')).toBeNull()
       yield* openKickClip(target)
-      expect(subOf(target, 'Piano roll')).toBe('Kick')
+      expect(below(target)).toBe('Kick|Notes')
       expect(target.querySelector('.roll')).not.toBeNull()
     })
   ))
@@ -3012,7 +2904,7 @@ test("a double click on a track's row puts a clip of its own there from the bar 
         doubleClick(1, 0)
         yield* drawn(50)
         expect(clipsOf(doc)).toEqual([{ track: 'Kick', bar: 1 }])
-        expect(subOf(target, 'Piano roll')).toBe('Kick')
+        expect(below(target)).toBe('Kick|Notes')
         // None under the last track, and none of its own on one there.
         doubleClick(1, 2)
         doubleClick(1, 0)
@@ -3164,41 +3056,26 @@ test("a clip's left edge dragged starts it later or earlier by bars once let go,
     })
   ))
 
-test('a double click on a clip opens it in the piano roll, and puts no clip; one on the heads puts none', () =>
+test("a double click on a clip shows its notes below and chooses its track, and puts no clip; a click on the track's name shows the track again; one on the heads puts none", () =>
   page(({ doc, grid, target }) =>
     Effect.gen(function* () {
       const { doubleClick } = arrangementIn(target)
+      nameButton(grid, 'Snare').click()
       doubleClick(0, 0)
       yield* drawn(50)
       expect(clipsOf(doc)).toEqual([{ track: 'Kick', bar: 0 }])
-      expect(windowsShown(target)).toEqual(['Arrangement', 'Piano roll'])
-      expect(subOf(target, 'Piano roll')).toBe('Kick')
+      expect(below(target)).toBe('Kick|Notes')
+      expect(grid.querySelector('.track-head[data-chosen="true"] .track-head__name')?.textContent).toBe('Kick')
+      expect(nameButton(grid, 'Kick').getAttribute('data-hint')).toMatch(
+        /^The notes of Kick's clip are below: a click shows Kick in their place\./
+      )
+      nameButton(grid, 'Kick').click()
+      yield* drawn(50)
+      expect(below(target)).toBe('Kick|Track')
+      expect(nameButton(grid, 'Kick').getAttribute('data-hint')).toMatch(/^Kick is below, chosen for you only\./)
       grid.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true, clientX: 10, clientY: 30 }))
       yield* drawn()
       expect(clipsOf(doc)).toHaveLength(1)
-    })
-  ))
-
-/** How high the floating window that holds what the selector finds stands: the one raised last, the highest. */
-const levelOf = (target: HTMLElement, selector: string) =>
-  Number(target.querySelector(selector)?.closest('.dv-resize-container')?.getAttribute('aria-level'))
-
-test('a press in a window brings it in front, as its button says; a clip opened again brings the piano roll back over it', () =>
-  page(({ target }) =>
-    Effect.gen(function* () {
-      const { at, doubleClick } = arrangementIn(target)
-      yield* openKickClip(target)
-      expect(windowButton(target, 'Piano roll').dataset.hint).toContain('in front')
-      // A press on the clip, as a drag's: its gesture keeps the focus where it was.
-      at('pointerdown', 0, 0)
-      at('pointerup', 0, 0, { buttons: 0 })
-      yield* drawn()
-      expect(windowButton(target, 'Arrangement').dataset.hint).toContain('in front')
-      expect(levelOf(target, '.arrangement')).toBeGreaterThan(levelOf(target, '.roll'))
-      doubleClick(0, 0)
-      yield* drawn(50)
-      expect(windowButton(target, 'Piano roll').dataset.hint).toContain('in front')
-      expect(levelOf(target, '.roll')).toBeGreaterThan(levelOf(target, '.arrangement'))
     })
   ))
 
@@ -3346,34 +3223,6 @@ test('the Arrangement follows the playhead to its bar as it starts to be heard a
   )
 })
 
-test('the Arrangement come forward from behind a tab while the arrangement plays goes to the playhead, as one opened would', () => {
-  const resized = resizes('arrangement')
-  const doc = manyTracksDoc(10)
-  addClip(doc, elsewhere, { track: readProject(doc).value.tracks[9].id, tick: Tick(23 * barTicks) })
-  return page(
-    ({ target, frame }) =>
-      Effect.gen(function* () {
-        yield* heardAt(frame, Option.some(0.5))
-        arrangementBehindTab.now = true
-        resized()
-        yield* heardAt(frame, Option.some(5))
-        yield* heardAt(frame, Option.some(12.5))
-        arrangementBehindTab.now = false
-        resized()
-        yield* drawn(50)
-        arrangementIn(target).doubleClick(0, 0)
-        yield* drawn()
-        expect(barOnTrack(doc, 0)).toBe(12)
-      }),
-    {},
-    {},
-    { doc }
-  ).finally(() => {
-    arrangementBehindTab.now = false
-    vi.unstubAllGlobals()
-  })
-})
-
 /** happy-dom draws on no canvas: one whose drawing is the rectangles filled on each canvas since it was last cleared. */
 const fillsOnCanvases = () => {
   const filled = new Map<HTMLCanvasElement, Array<readonly [x: number, y: number, width: number, height: number]>>()
@@ -3396,6 +3245,63 @@ const fillsOnCanvases = () => {
     restore: () => spy.mockRestore()
   }
 }
+
+/** As `fillsOnCanvases`: the rounded rectangles stroked on each canvas since it was cleared, by their lines' width. */
+const ringsOnCanvases = () => {
+  const stroked = new Map<HTMLCanvasElement, Array<number>>()
+  const spy = vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(function (
+    this: HTMLCanvasElement
+  ) {
+    const canvas = this
+    const set: Record<string, unknown> = {}
+    const path = { rects: 0 }
+    const drawing: Record<string, () => void> = {
+      clearRect: () => stroked.set(canvas, []),
+      beginPath: () => {
+        path.rects = 0
+      },
+      roundRect: () => {
+        path.rects += 1
+      },
+      stroke: () => stroked.get(canvas)?.push(...Array.from({ length: path.rects }, () => Number(set.lineWidth)))
+    }
+    return new Proxy(
+      {},
+      {
+        get: (_, name) => drawing[String(name)] ?? (() => {}),
+        set: (_, name, value) => {
+          set[String(name)] = value
+          return true
+        }
+      }
+    ) as CanvasRenderingContext2D
+  } as never)
+  return {
+    stroked: (canvas: HTMLCanvasElement | undefined) =>
+      Option.fromUndefinedOr(canvas).pipe(Option.flatMap((on) => Option.fromUndefinedOr(stroked.get(on)))),
+    restore: () => spy.mockRestore()
+  }
+}
+
+test('the clip whose notes are below is ringed in the Arrangement, the others not; with its track below, none', () => {
+  const canvases = ringsOnCanvases()
+  return page(({ grid, target }) =>
+    Effect.gen(function* () {
+      // Rings a line twice as wide as a clip's edge.
+      const rings = () =>
+        Option.map(
+          canvases.stroked(target.querySelectorAll<HTMLCanvasElement>('.arrangement canvas')[1]),
+          (widths) => widths.filter((width) => width === 2).length
+        )
+      expect(rings()).toEqual(Option.some(0))
+      yield* openKickClip(target)
+      expect(rings()).toEqual(Option.some(1))
+      nameButton(grid, 'Kick').click()
+      yield* drawn(50)
+      expect(rings()).toEqual(Option.some(0))
+    })
+  ).finally(canvases.restore)
+})
 
 /** The next animation frame the page draws, and what the page draws on before the browser shows it. */
 const oneFrame = Effect.callback<void>((resume) => {
@@ -3475,16 +3381,3 @@ test('a clip started inside its pattern has its lines where the pattern starts a
     })
   ).finally(canvases.restore)
 })
-
-test('on a desk with no room for them, as before it is laid out, the windows open no smaller than the least', () =>
-  page(({ target }) =>
-    Effect.sync(() => {
-      // happy-dom lays out no desk: it has no room at all.
-      const sizes = Array.from(target.querySelectorAll<HTMLElement>('.dv-resize-container')).map((box) => [
-        box.querySelector('.dock-tab__title')?.textContent,
-        box.style.width,
-        box.style.height
-      ])
-      expect(sizes).toEqual([['Arrangement', '240px', '160px']])
-    })
-  ))

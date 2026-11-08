@@ -18,11 +18,36 @@ export const test = base.extend<{ complaints: undefined }>({
   ]
 })
 
-/** A new project, opened: the Arrangement alone, + its only button. */
+/** A new project, opened: the Arrangement with + alone in it, the panel under it. */
 export const newProject = async (page: Page) => {
   await page.goto('/')
   await page.getByRole('button', { name: 'New project', exact: true }).click()
   await expect(page.getByRole('button', { name: 'Add a track', exact: true })).toBeVisible()
+}
+
+/**
+ * The page reloaded once what it wrote is in IndexedDB: a reload cuts short a write still going, and a read of every
+ * store starts only after the writes before it end.
+ */
+export const reload = async (page: Page) => {
+  await page.evaluate(async () => {
+    const done = <A>(request: IDBRequest<A>) => {
+      const answered = Promise.withResolvers<A>()
+      request.onsuccess = () => answered.resolve(request.result)
+      request.onerror = () => answered.reject(request.error)
+      return answered.promise
+    }
+    const read = (db: IDBDatabase) => {
+      const ended = Promise.withResolvers<void>()
+      const transaction = db.transaction(Array.from(db.objectStoreNames), 'readonly')
+      transaction.oncomplete = () => ended.resolve()
+      transaction.onabort = () => ended.reject(transaction.error)
+      return ended.promise.finally(() => db.close())
+    }
+    const opened = await Promise.all((await indexedDB.databases()).map(({ name = '' }) => done(indexedDB.open(name))))
+    await Promise.all(opened.filter((db) => db.objectStoreNames.length > 0).map(read))
+  })
+  await page.reload()
 }
 
 /** The button of the track's name in its head. */
@@ -44,8 +69,8 @@ export const arrangementAt = async (page: Page) => {
   })
 }
 
-/** What stands beside the piano roll's title: the name of the track whose clip it shows. */
-export const rollTrack = (page: Page) => page.locator('.dock-tab', { hasText: 'Piano roll' }).locator('.dock-tab__sub')
+/** The line over the panel: the chosen track's name and what of it is shown, as `Synth|Notes`; empty for none. */
+export const below = (page: Page) => page.locator('.panel__title')
 
 /** The colour the roll's canvas, of the grid or of the notes, draws at the point. */
 export const pixelAt = (page: Page, layer: 'grid' | 'notes', { x, y }: { readonly x: number; readonly y: number }) =>
@@ -76,7 +101,7 @@ export const noteDrawn = async (page: Page, point: { readonly x: number; readonl
 export const newClip = async (page: Page, bar: number, place: number, track: string) => {
   const { x, y } = (await arrangementAt(page))(bar, place)
   await page.mouse.dblclick(x, y)
-  await expect(rollTrack(page)).toHaveText(track)
+  await expect(below(page)).toHaveText(`${track}|Notes`)
   // Nor does the double click select a word of a name beside it.
   expect(await page.evaluate(() => getSelection()?.toString())).toBe('')
   await expect(page.locator('.roll')).toBeVisible()
@@ -106,8 +131,15 @@ export const putNote = async (page: Page, step: number, key = 60) => {
   await expect.poll(() => noteDrawn(page, at)).toBe(true)
 }
 
-/** A main window opened or closed by its button on the transport bar. */
-export const toggleWindow = (page: Page, title: string) => page.locator('.btn--window', { hasText: title }).click()
+/** What the middle shows turned to by its button on the transport bar: Arrange, Mix or Debug. */
+export const showCentre = async (page: Page, name: string) => {
+  const button = page.locator('.btn--centre', { hasText: name })
+  await button.click()
+  await expect(button).toHaveAttribute('aria-pressed', 'true')
+}
+
+/** For a poll of what moves as the arrangement plays: every 20 ms, as a poll a second lands on a loop's same places. */
+export const heard: Parameters<typeof expect.poll>[1] = { timeout: 10_000, intervals: [20] }
 
 /** Play pressed, to play or to stop. */
 export const pressPlay = async (page: Page, playing: boolean) => {
@@ -192,18 +224,10 @@ export const playheadAt = (page: Page) =>
     [headsWidth, barWidth, rulerHeight] as const
   )
 
-/**
- * The Mixer opened for its meters, and the piano roll brought forward over it by its button, its keys and notes in
- * reach again.
- */
+/** The Mixer in the middle, for its meters; the panel under it stays as it was. */
 export const listening = async (page: Page) => {
-  await toggleWindow(page, 'Mixer')
+  await showCentre(page, 'Mix')
   await expect(page.locator('.strip--master')).toBeVisible()
-  await toggleWindow(page, 'Piano roll')
-  await expect(page.locator('.btn--window', { hasText: 'Piano roll' })).toHaveAttribute(
-    'data-hint',
-    /in front: a click closes it/
-  )
 }
 
 /** Until one of the master's meters rises, checked at every frame. */

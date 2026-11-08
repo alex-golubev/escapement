@@ -19,7 +19,7 @@ const columnsOf = (param: ParamDescription) =>
   Option.match(Option.fromNullOr(param.choices), { onNone: () => 1, onSome: () => choiceColumns })
 
 /**
- * For a window that stands the controls of every group on one grid, so a group's knobs stand under another's: the
+ * For a view that stands the controls of every group on one grid, so a group's knobs stand under another's: the
  * columns the widest group takes, and those a row of choices does.
  */
 export const gridOf = (plugin: Plugin) => ({
@@ -29,8 +29,8 @@ export const gridOf = (plugin: Plugin) => ({
 
 /**
  * A control for each parameter of the plugin an instance plays, drawn from its values: its choices, or a knob. Those of
- * a group stand together after its name, as an oscillator's, and those of none together too: each window lays them out
- * as it has room, a row in a track's, a column in a mixer strip.
+ * a group stand together after its name, as an oscillator's, and those of none together too: each view lays them out
+ * as it has room, a row in a track below, a column in a mixer strip.
  */
 export const InstanceControls = ({
   owner,

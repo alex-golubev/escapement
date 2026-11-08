@@ -108,7 +108,7 @@ interface Shown {
 }
 
 /**
- * The menu a control opens, over every window, one at a time. Esc, a click elsewhere or the focus leaving it closes it,
+ * The menu a control opens, over the page, one at a time. Esc, a click elsewhere or the focus leaving it closes it,
  * and the browser gives the focus back to where it was; arrows, Home and End go through the items. Its items go once
  * it has closed, on `toggle`: taken out as it closes, the item with the focus would take the focus with it.
  */

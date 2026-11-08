@@ -3,7 +3,7 @@
 :root {
   color-scheme: dark;
 
-  /* Surfaces, from the deepest to the raised: windows stand on the desk, rows sit in wells. */
+  /* Surfaces, from the deepest to the raised: the middle and the panel stand on the page, rows sit in wells. */
   --s-well: #0a0c0f;
   --s-sunk: #0e1114;
   --s-strip: #191d23;

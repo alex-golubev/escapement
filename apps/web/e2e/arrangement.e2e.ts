@@ -4,17 +4,17 @@ import {
   addTrack,
   arrangementAt,
   drawnAt,
+  heard,
+  listening,
   newClip,
   newProject,
   playheadAt,
   pressPlay,
   putNote,
-  test,
-  toggleWindow
+  reload,
+  showCentre,
+  test
 } from './page'
-
-// Past the bars in sight at the fastest tempo, within the test's 30 s.
-const heard = { timeout: 10_000, polling: 'raf' } as const
 
 /** A new project with synths' tracks, `count` of them: "Synth", then "Synth 2" and on. */
 const synths = async (page: Page, count: number) => {
@@ -93,7 +93,7 @@ test('clips put by a double click, dragged and erased stay after a reload, and C
     )
     .toEqual([true, true, true])
 
-  await page.reload()
+  await reload(page)
   await expect(page.getByRole('region', { name: 'Arrangement', exact: true }).first()).toBeInViewport({ ratio: 1 })
   await expect
     .poll(() =>
@@ -117,6 +117,25 @@ const loudness = (page: Page) =>
       )
     )
   )
+
+/** Loudness with the playhead between `from` and `to` bars: seen in the Arrangement, heard in the Mixer. */
+const loudnessPast = async (page: Page, from: number, to: number) => {
+  await showCentre(page, 'Arrange')
+  await expect
+    .poll(async () => {
+      const at = await playheadAt(page)
+      return at > from && at < to
+    }, heard)
+    .toBe(true)
+  await listening(page)
+  // Once the meters are drawn, at a frame.
+  await page.waitForFunction(
+    () => document.querySelectorAll('.strip--master .meter__fill[style*="--level"]').length === 2,
+    undefined,
+    { polling: 'raf' }
+  )
+  return loudness(page)
+}
 
 test("a clip's right edge dragged out to three bars plays its notes in each, and stays so after a reload", async ({
   page
@@ -149,18 +168,17 @@ test("a clip's right edge dragged out to three bars plays its notes in each, and
       ])
     )
     .toEqual([true, false])
-  await toggleWindow(page, 'Mixer')
   await pressPlay(page, true)
   // The meters fall 20 dB in 1.7 s, two bars 47 dB at 120: as loud again early in the third bar only if the note
   // sounds there.
-  const often = { ...heard, intervals: [20] }
-  await expect.poll(() => playheadAt(page), often).toBeGreaterThan(0.2)
-  const struck = await loudness(page)
+  const struck = await loudnessPast(page, 0.2, 0.5)
   expect(struck).toBeGreaterThan(0)
-  await expect.poll(() => playheadAt(page), often).toBeGreaterThan(2.1)
-  expect(await loudness(page)).toBeGreaterThan(struck / 4)
+  expect(await loudnessPast(page, 2.1, 2.4)).toBeGreaterThan(struck / 4)
   await pressPlay(page, false)
-  await page.reload()
+  await reload(page)
+  // The Mixer in the middle again, as left; the clips in the Arrangement.
+  await expect(page.locator('.strip--master')).toBeVisible()
+  await showCentre(page, 'Arrange')
   await expect
     .poll(() =>
       drawnAt(page, [

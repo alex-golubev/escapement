@@ -4,10 +4,10 @@ import { createContext } from 'preact'
 import { useContext } from 'preact/hooks'
 import type { DomainOps } from '../services/domain-ops'
 import type { EngineHost } from '../services/engine-host'
+import type { ProjectView } from '../services/project-view'
 import type { ProjectSession } from '../services/session'
 import type { TabSync } from '../services/tab-sync'
 import type { Turns } from '../services/turns'
-import type { ViewStore } from '../services/view-store'
 
 /** What the components take from the core. */
 export interface Core {
@@ -17,7 +17,7 @@ export interface Core {
   readonly turns: Turns
   readonly host: EngineHost
   readonly tabs: TabSync
-  readonly view: ViewStore
+  readonly view: ProjectView
   /** Runs an action in the core; a failure is logged. */
   readonly run: (effect: Effect.Effect<void>) => void
 }

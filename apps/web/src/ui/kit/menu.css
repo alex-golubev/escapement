@@ -1,5 +1,5 @@
-/* As the system's menus are, so it reads as one and not as another window: see-through over what it opens on,
-   as large as the windows' text, under the name of what it acts on. No line of it wraps: it stretches to its longest,
+/* As the system's menus are, so it reads as one and not as another panel: see-through over what it opens on,
+   as large as the panels' text, under the name of what it acts on. No line of it wraps: it stretches to its longest,
    a long name too, wherever it stands, where one that wrapped would shrink to the room the page's edge leaves it. */
 .menu {
   position: fixed;

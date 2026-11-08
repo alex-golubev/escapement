@@ -1,19 +1,18 @@
-import { useAtomValue } from '@effect/atom-react'
+import { useAtom, useAtomValue } from '@effect/atom-react'
 import { Tick } from '@escapement/engine-description'
 import { byContent } from '@escapement/model'
 import { Array, Boolean, Data, Equal, Option } from 'effect'
 import type { TargetedMouseEvent, TargetedPointerEvent, TargetedWheelEvent } from 'preact'
-import { useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks'
+import { useLayoutEffect, useMemo, useRef } from 'preact/hooks'
 import { useCore } from '../../core-context'
-import { useLayer } from '../../kit/canvas'
+import { useLayer, usePalette } from '../../kit/canvas'
 import { useLatest, usePointerGesture } from '../../kit/gesture'
 import { useLaidOutSize } from '../../kit/laid-out'
 import { type Point, pointOf, turnOf, withCtrl } from '../../kit/pointer'
 import { useScreenScale } from '../../kit/screen-scale'
-import { usePianoRollWindow } from '../../parts/piano-roll-window'
 import { useCanvasPlayhead } from '../../parts/playhead'
 import { type Cursor, cursorAt, cursorOf, draggedClips, draggedTo, type Edge, Grab, grabAt } from './drag'
-import { drawClips, drawFrame, drawGrid, type Palette, paletteOf } from './draw'
+import { drawClips, drawFrame, drawGrid, paletteOf } from './draw'
 import {
   clipAt,
   clipsAlong,
@@ -62,11 +61,15 @@ type Dragging = Data.TaggedEnum.Value<Gesture, 'Dragging'>
 /**
  * The arrangement's body: the project's tracks, their heads down the left, and their clips, drawn on canvases, the grid,
  * the clips, the bars' numbers over them and the playhead, each drawn again only when what it shows changes. It fills
- * its window, which follows the playhead.
+ * the middle, and follows the playhead.
  */
 export const Arrangement = () => {
-  const { registry, session, ops } = useCore()
-  const roll = usePianoRollWindow()
+  const {
+    registry,
+    session,
+    ops,
+    view: { open: openClip, clip: openAtom, arrangementScroll }
+  } = useCore()
   const tracksAtom = session.project.trackIds
   const shownAtom = useMemo(
     () =>
@@ -89,18 +92,17 @@ export const Arrangement = () => {
     [session, tracksAtom]
   )
   const shown = useAtomValue(shownAtom)
+  const open = useAtomValue(openAtom)
   const tracks = useAtomValue(tracksAtom).length
   const box = useRef<HTMLDivElement>(null)
   const grid = useRef<HTMLCanvasElement>(null)
   const clipsLayer = useRef<HTMLCanvasElement>(null)
   const frame = useRef<HTMLCanvasElement>(null)
   const over = useRef<HTMLCanvasElement>(null)
-  const palette = useRef(Option.none<Palette>())
-  const size = useLaidOutSize(box, (laid) => {
-    palette.current = Option.some(paletteOf(laid))
-  })
-  const [down, setDown] = useState(0)
-  const [across, setAcross] = useState(0)
+  const palette = usePalette(box, paletteOf)
+  const size = useLaidOutSize(box)
+  const [down, setDown] = useAtom(arrangementScroll.down)
+  const [across, setAcross] = useAtom(arrangementScroll.across)
   const scale = useScreenScale()
   const pointer = useLatest(Option.none<Point>())
   /** What an edge let go writes: its end's length, or its start, length and offset together. */
@@ -156,10 +158,11 @@ export const Arrangement = () => {
   })
   useLayer(grid, drawn, (g, { view, palette }) => drawGrid(g, view, palette), [viewKey])
   useLayer(frame, drawn, (g, { view, palette }) => drawFrame(g, view, palette), [viewKey])
-  useLayer(clipsLayer, drawn, (g, { view, palette }) => drawClips(g, view, palette, drawing), [
+  useLayer(clipsLayer, drawn, (g, { view, palette }) => drawClips(g, view, palette, drawing, open), [
     viewKey,
     shown,
-    gesture.shown
+    gesture.shown,
+    open
   ])
   const playhead = useCanvasPlayhead({
     place: Option.some,
@@ -244,7 +247,7 @@ export const Arrangement = () => {
     Option.map(view, (now) => {
       const point = pointOf(event)
       Option.match(clipAt(registry.get(shownAtom), now, point), {
-        onSome: ({ id }) => roll.show(id),
+        onSome: ({ id }) => openClip(id),
         onNone: () =>
           Option.map(
             Option.flatMap(startAt(now, point), ({ place, tick }) =>
@@ -252,7 +255,7 @@ export const Arrangement = () => {
                 ops.addClip({ track, tick: Tick(tick) })
               )
             ),
-            roll.show
+            openClip
           )
       })
     })

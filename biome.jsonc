@@ -80,10 +80,6 @@
                       "react-dom/**",
                       "@effect/atom-react",
                       "@effect/atom-react/**",
-                      "dockview-react",
-                      "dockview-react/**",
-                      "dockview-core",
-                      "dockview-core/**",
                       "@effect/platform-browser",
                       "@effect/platform-browser/**",
                       "y-indexeddb",
@@ -150,11 +146,7 @@
                       "react-dom",
                       "react-dom/**",
                       "@effect/atom-react",
-                      "@effect/atom-react/**",
-                      "dockview-react",
-                      "dockview-react/**",
-                      "dockview-core",
-                      "dockview-core/**"
+                      "@effect/atom-react/**"
                     ],
                     "message": "Imports go one way: app → ui → services, browser → services. The browser's layers serve the services, not the interface."
                   }

@@ -6,18 +6,12 @@ import { TestClock } from 'effect/testing'
 import { expect } from 'vitest'
 import * as Y from 'yjs'
 import { inTimeOrNone, openInTimeOrNone, storageTimeout } from '../../src/services/in-time'
-import { Page } from '../../src/services/page'
 import type { Saving } from '../../src/services/session'
-import { forgetView, ViewStores, viewStoreFor, viewStoreOf } from '../../src/services/view-store'
+import { forgetView, type View, ViewStores, viewStoreFor, viewStoreOf } from '../../src/services/view-store'
 
 class Refused extends Data.TaggedError('Refused') {}
 
 const memory = Effect.provide(Effect.service(KeyValueStore.KeyValueStore), KeyValueStore.layerMemory)
-
-/** A page of the test's own, which the store hears go. */
-const page = new EventTarget()
-
-const onPage = Effect.provideService(Page, page)
 
 it.effect('what answers in time is kept', () =>
   Effect.gen(function* () {
@@ -26,7 +20,7 @@ it.effect('what answers in time is kept', () =>
   })
 )
 
-it.effect('a store the browser refuses, or that dies opening, costs the layout and not the page', () =>
+it.effect('a store the browser refuses, or that dies opening, costs the view and not the page', () =>
   Effect.gen(function* () {
     expect(yield* inTimeOrNone(Effect.fail(new Refused()), 'Refused')).toEqual(Option.none())
     expect(yield* inTimeOrNone(Effect.die(new Error('No IndexedDB')), 'Died')).toEqual(Option.none())
@@ -85,72 +79,73 @@ it.effect(
 
 const project = Id('project')
 
-/** What `store` keeps for the project under the key, as written. */
-const keptAs = (store: KeyValueStore.KeyValueStore, key: string) =>
-  Effect.map(store.get(`${key}:${project}`), (saved) =>
+/** What `store` keeps for the project, as written. */
+const kept = (store: KeyValueStore.KeyValueStore) =>
+  Effect.map(store.get(`layout:${project}`), (saved) =>
     Option.map(Option.fromUndefinedOr(saved), (json) => JSON.parse(json))
   )
 
-/** The layout `store` keeps for the project, as written. */
-const kept = (store: KeyValueStore.KeyValueStore) => keptAs(store, 'layout')
+const mixer: View = { centre: 'mixer', below: Option.some({ _tag: 'Track', track: Id('kick') }) }
 
-it.effect('a layout that only moved is written once the moves stop; one that opened or closed a window, at once', () =>
+const notes: View = { centre: 'arrangement', below: Option.some({ _tag: 'Notes', clip: Id('clip') }) }
+
+it.effect('a view is written as it is asked to be, the latest last, and read again as the page opens', () =>
   Effect.gen(function* () {
     const store = yield* memory
     const view = yield* viewStoreOf(store, project, () => true)
-    yield* view.saveLayout(() => ({ moved: 1 }), { now: false })
-    yield* view.saveLayout(() => ({ moved: 2 }), { now: false })
-    yield* TestClock.adjust(Duration.millis(299))
-    expect(yield* kept(store)).toEqual(Option.none())
-    yield* TestClock.adjust(Duration.millis(1))
-    expect(yield* kept(store)).toEqual(Option.some({ version: 1, layout: JSON.stringify({ moved: 2 }) }))
-    yield* view.saveLayout(() => ({ closed: 'mixer' }), { now: true })
+    expect(view.saved).toEqual(Option.none())
+    yield* view.save(mixer)
+    yield* view.save(notes)
     yield* Effect.yieldNow
-    expect(yield* kept(store)).toEqual(Option.some({ version: 1, layout: JSON.stringify({ closed: 'mixer' }) }))
-  }).pipe(onPage)
+    expect(yield* kept(store)).toEqual(
+      Option.some({ version: 2, centre: 'arrangement', below: { _tag: 'Notes', clip: 'clip' } })
+    )
+    expect((yield* viewStoreOf(store, project, () => true)).saved).toEqual(Option.some(notes))
+  })
 )
 
-it.effect('the page going away writes the layout still waiting', () =>
-  Effect.gen(function* () {
-    const store = yield* memory
-    const view = yield* viewStoreOf(store, project, () => true)
-    yield* view.saveLayout(() => ({ moved: 3 }), { now: false })
-    page.dispatchEvent(new Event('pagehide'))
-    yield* Effect.yieldNow
-    expect(yield* kept(store)).toEqual(Option.some({ version: 1, layout: JSON.stringify({ moved: 3 }) }))
-    expect(Option.getOrThrow((yield* viewStoreOf(store, project, () => true)).layout)).toEqual({ moved: 3 })
-  }).pipe(onPage)
-)
-
-it.effect('a store that never answers holds the page five seconds, and then the layout is none', () =>
+it.effect('a store that never answers holds the page five seconds, and then the view is none', () =>
   Effect.gen(function* () {
     const store = yield* memory
     const hung = KeyValueStore.make({ ...store, get: () => Effect.never })
     const opening = yield* Effect.forkChild(viewStoreOf(hung, project, () => true))
     yield* TestClock.adjust(storageTimeout)
     const view = yield* Fiber.join(opening)
-    expect(view.layout).toEqual(Option.none())
-  }).pipe(onPage)
+    expect(view.saved).toEqual(Option.none())
+  })
 )
 
-it.effect("an unsaved project's layout isn't kept: its ID is the page's alone", () =>
+it.effect.each([
+  ['of another version, as the windows were', { version: 1, layout: '{}' }],
+  ['with what the middle has not', { version: 2, centre: 'track', below: null }],
+  ['with a track of no ID', { version: 2, centre: 'arrangement', below: { _tag: 'Track', track: '' } }],
+  ['with a shown of no kind', { version: 2, centre: 'arrangement', below: { track: 'kick' } }]
+])('a saved view %s is left for the first one', ([, saved]) =>
+  Effect.gen(function* () {
+    const store = yield* memory
+    yield* store.set(`layout:${project}`, JSON.stringify(saved))
+    expect((yield* viewStoreOf(store, project, () => true)).saved).toEqual(Option.none())
+  })
+)
+
+it.effect("an unsaved project's view isn't kept: its ID is the page's alone", () =>
   Effect.gen(function* () {
     const store = yield* memory
     const doc = new Y.Doc()
     const id = newId()
     createProject(doc, newWriter('test'), id)
     const unsaved = yield* viewStoreFor(Option.some(store), doc, () => 'missing')
-    yield* unsaved.saveLayout(() => ({ closed: 'mixer' }), { now: true })
+    yield* unsaved.save(mixer)
     yield* Effect.yieldNow
     expect(yield* store.size).toBe(0)
     const saved = yield* viewStoreFor(Option.some(store), doc, () => 'saved')
-    yield* saved.saveLayout(() => ({ closed: 'mixer' }), { now: true })
+    yield* saved.save(mixer)
     yield* Effect.yieldNow
     expect(yield* store.has(`layout:${id}`)).toBe(true)
-  }).pipe(onPage)
+  })
 )
 
-it.effect("a project whose saving the browser refused keeps its layout; a deleted one's is written no more", () =>
+it.effect("a project whose saving the browser refused keeps its view; a deleted one's is written no more", () =>
   Effect.gen(function* () {
     const store = yield* memory
     const doc = new Y.Doc()
@@ -159,40 +154,33 @@ it.effect("a project whose saving the browser refused keeps its layout; a delete
     const saving = { now: 'saved' as Saving }
     const view = yield* viewStoreFor(Option.some(store), doc, () => saving.now)
     saving.now = 'refused'
-    yield* view.saveLayout(() => ({ closed: 'mixer' }), { now: true })
+    yield* view.save(mixer)
     yield* Effect.yieldNow
     expect(yield* store.has(`layout:${id}`)).toBe(true)
     yield* store.remove(`layout:${id}`)
-    yield* view.saveLayout(() => ({ moved: 1 }), { now: false })
     saving.now = 'erased-elsewhere'
-    yield* TestClock.adjust(Duration.millis(300))
-    yield* view.saveLayout(() => ({ closed: 'mixer' }), { now: true })
-    yield* Effect.yieldNow
-    page.dispatchEvent(new Event('pagehide'))
+    yield* view.save(notes)
     yield* Effect.yieldNow
     expect(yield* store.size).toBe(0)
-  }).pipe(onPage)
+  })
 )
 
-it.effect(
-  "a deleted project's layout is forgotten; the others' stay, and a store that doesn't open costs nothing",
-  () =>
-    Effect.gen(function* () {
-      const store = yield* memory
-      const [deleted, kept] = [newId(), newId()]
-      const key = (id: Id) => `layout:${id}`
-      yield* Effect.forEach([deleted, kept], (id) => store.set(key(id), '{}'))
-      yield* forgetView(deleted).pipe(Effect.provideService(ViewStores, { open: Effect.succeedSome(store) }))
-      expect(yield* store.has(key(deleted))).toBe(false)
-      expect(yield* store.has(key(kept))).toBe(true)
-      yield* forgetView(kept).pipe(Effect.provideService(ViewStores, { open: Effect.succeedNone }))
-      // A store that refuses costs nothing but the layout left.
-      const refusing = KeyValueStore.make({
-        ...store,
-        remove: (key) =>
-          Effect.fail(new KeyValueStore.KeyValueStoreError({ message: 'Refused', method: 'remove', key }))
-      })
-      yield* forgetView(kept).pipe(Effect.provideService(ViewStores, { open: Effect.succeedSome(refusing) }))
-      expect(yield* store.has(key(kept))).toBe(true)
+it.effect("a deleted project's view is forgotten; the others' stay, and a store that doesn't open costs nothing", () =>
+  Effect.gen(function* () {
+    const store = yield* memory
+    const [deleted, kept] = [newId(), newId()]
+    const key = (id: Id) => `layout:${id}`
+    yield* Effect.forEach([deleted, kept], (id) => store.set(key(id), '{}'))
+    yield* forgetView(deleted).pipe(Effect.provideService(ViewStores, { open: Effect.succeedSome(store) }))
+    expect(yield* store.has(key(deleted))).toBe(false)
+    expect(yield* store.has(key(kept))).toBe(true)
+    yield* forgetView(kept).pipe(Effect.provideService(ViewStores, { open: Effect.succeedNone }))
+    // A store that refuses costs nothing but the view left.
+    const refusing = KeyValueStore.make({
+      ...store,
+      remove: (key) => Effect.fail(new KeyValueStore.KeyValueStoreError({ message: 'Refused', method: 'remove', key }))
     })
+    yield* forgetView(kept).pipe(Effect.provideService(ViewStores, { open: Effect.succeedSome(refusing) }))
+    expect(yield* store.has(key(kept))).toBe(true)
+  })
 )

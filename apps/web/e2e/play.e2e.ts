@@ -7,33 +7,43 @@ import {
   newClip,
   newProject,
   panAll,
+  listening,
   pressPlay,
   putNote,
-  test,
-  toggleWindow
+  showCentre,
+  test
 } from './page'
 
 const anySide: Heard = { silent: [], sounding: [0, 1] }
 
-/** Plays until the master's meters are as `sides` asks, and stops: the Mixer opened for them, and closed again. */
+/** Plays until the master's meters are as `sides` asks, and stops: heard in the Mixer, then the Arrangement again. */
 const plays = async (page: Page, sides: Heard = anySide) => {
-  await toggleWindow(page, 'Mixer')
+  await listening(page)
   await pressPlay(page, true)
   await heardOn(page, sides)
   await pressPlay(page, false)
   await expect(page.locator('.transport').getByRole('status')).toHaveText('')
-  await toggleWindow(page, 'Mixer')
+  await showCentre(page, 'Arrange')
   await expect(page.locator('.strip--master')).toHaveCount(0)
 }
 
-test('a new project opens empty: the Arrangement alone, + under no track', async ({ page }) => {
+test('a new project opens empty: + under no track in the Arrangement, nothing in the panel under it', async ({
+  page
+}) => {
   await newProject(page)
-  await expect(page.locator('.dock-tab__title')).toHaveText(['Arrangement'])
   await expect(page.locator('.track-head__name')).toHaveCount(0)
-  // Whole, at the tests' 1280 by 720, as wide as the desk.
-  const window = page.getByRole('region', { name: 'Arrangement', exact: true }).first()
-  await expect(window).toBeInViewport({ ratio: 1 })
-  expect((await window.boundingBox())?.width).toBeGreaterThan(1200)
+  // Whole, at the tests' 1280 by 720, as wide as the page, the panel whole under it.
+  const arrangement = page.getByRole('region', { name: 'Arrangement', exact: true })
+  await expect(arrangement).toBeInViewport({ ratio: 1 })
+  expect((await arrangement.boundingBox())?.width).toBeGreaterThan(1200)
+  // No Debug in a build for users.
+  await expect(page.locator('.btn--centre')).toHaveText(['Arrange', 'Mix'])
+  const panel = page.getByRole('region', { name: 'Nothing chosen', exact: true })
+  await expect(panel).toBeInViewport({ ratio: 1 })
+  expect((await panel.boundingBox())?.y).toBeGreaterThan(
+    ((await arrangement.boundingBox())?.y ?? 0) + ((await arrangement.boundingBox())?.height ?? 0)
+  )
+  await expect(panel).toHaveText("Click a track's name to see it here, double-click a clip for its notes")
 })
 
 test('a track added with + plays the note put in its clip on its synth', async ({ page }) => {
@@ -72,16 +82,20 @@ test("a clip plays on its track's instrument: moved to another track, it plays t
   await plays(page, { silent: [0], sounding: [1] })
 })
 
-test("a synth's window shows every control whole, opened right of the heads along the top", async ({ page }) => {
+test("a synth's track below shows every control whole, scrolled to in the panel if need be", async ({ page }) => {
   await newProject(page)
   await (await addTrack(page, 'Synth')).click()
-  // The window, named by the track, before the synth's own section in it, named by the plugin: both "Synth" here.
-  const window = page.getByRole('region', { name: 'Synth', exact: true }).first()
-  const controls = window.locator('[role="slider"], [role="radio"]')
+  const panel = page.getByRole('region', { name: 'Synth, track', exact: true })
+  const controls = panel.locator('[role="slider"], [role="radio"]')
   await expect(controls).not.toHaveCount(0)
-  // Not cut off by the window's edge, nor by the page's: none needs scrolling to.
-  await Promise.all((await controls.all()).map((control) => expect(control).toBeInViewport({ ratio: 1 })))
-  // The heads stay in sight beside it.
-  const heads = await page.locator('.track-heads').boundingBox()
-  expect((await window.boundingBox())?.x).toBeGreaterThan((heads?.x ?? 0) + (heads?.width ?? 0))
+  await (await controls.all()).reduce(
+    (before, control) =>
+      before.then(async () => {
+        await control.scrollIntoViewIfNeeded()
+        await expect(control).toBeInViewport({ ratio: 1 })
+      }),
+    Promise.resolve()
+  )
+  // The Arrangement stays whole over it.
+  await expect(page.getByRole('region', { name: 'Arrangement', exact: true })).toBeInViewport({ ratio: 1 })
 })

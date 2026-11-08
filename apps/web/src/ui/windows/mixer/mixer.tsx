@@ -22,7 +22,7 @@ const stripParam = (id: StripParamId) =>
 const volume = stripParam('volume')
 const pan = stripParam('pan')
 
-/** The meters of this window's strips, the master's too, as the engine's board tells them. */
+/** The meters of the mixer's strips, the master's too, as the engine's board tells them. */
 const MeterBoardContext = createContext(meterBoard())
 
 /** One side of what a strip passes on, by its meter's number: its level, and the lamp over it until clicked. */
@@ -171,17 +171,27 @@ const firstDrawn = (left: number) =>
 const endDrawn = (first: number, width: number) =>
   Number.clamp(first + Math.ceil(width / stripStep) + 2, { minimum: first, maximum: insertCount })
 
-/** The inserts besides the master, by their number, scrolled across: drawn again only once another comes into sight. */
+/**
+ * The inserts besides the master, by their number, scrolled across from where the page last left them: drawn again only
+ * once another comes into sight.
+ */
 const InsertRack = () => {
+  const { registry, view } = useCore()
   const rack = useRef<HTMLDivElement>(null)
-  const [first, setFirst] = useState(0)
-  const width = Option.match(
-    useLaidOutSize(rack, () => {}),
-    { onNone: () => 0, onSome: ({ width }) => width }
-  )
+  const [first, setFirst] = useState(() => firstDrawn(registry.get(view.rackScroll)))
+  useLayoutEffect(() => {
+    Option.map(Option.fromNullishOr(rack.current), (shown) => {
+      shown.scrollLeft = registry.get(view.rackScroll)
+    })
+  }, [registry, view])
+  const width = Option.match(useLaidOutSize(rack), { onNone: () => 0, onSome: ({ width }) => width })
   const end = endDrawn(first, width)
+  const onScroll = (left: number) => {
+    registry.set(view.rackScroll, left)
+    setFirst(firstDrawn(left))
+  }
   return (
-    <div class='rack' ref={rack} onScroll={(event) => setFirst(firstDrawn(event.currentTarget.scrollLeft))}>
+    <div class='rack' ref={rack} onScroll={(event) => onScroll(event.currentTarget.scrollLeft)}>
       <div
         class='rack__strips'
         style={{
@@ -198,7 +208,7 @@ const InsertRack = () => {
   )
 }
 
-/** The master, pinned, then the other inserts; the meters' lamps stay lit while the window is open. */
+/** The master, pinned, then the other inserts; the meters' lamps stay lit while the Mixer is in the middle. */
 export const Mixer = () => {
   const board = useMemo(meterBoard, [])
   // Every frame, the strips out of sight too.

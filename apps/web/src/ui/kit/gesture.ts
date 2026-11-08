@@ -51,7 +51,7 @@ export const usePointerGesture = <G extends Held>(letGo: (gesture: G, kept: bool
       Option.map(gesture.latest.current, (now) => finish(now.pointer, true))
       pressedRight.current = event.button === 2
     },
-    /** Starts the press's gesture: the element's own, not the floating window's, which takes Shift and a press. */
+    /** Starts the press's gesture, the element's own: the browser neither selects text for it nor moves the focus. */
     take: (event: TargetedPointerEvent<HTMLElement>, next: G) => {
       event.preventDefault()
       event.currentTarget.setPointerCapture(event.pointerId)

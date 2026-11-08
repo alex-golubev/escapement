@@ -3,6 +3,7 @@ import { keysWidth, stepWidth } from '../src/ui/windows/piano-roll/layout'
 import {
   addTrack,
   drawnAt,
+  heard,
   listening,
   newClip,
   newProject,
@@ -18,28 +19,20 @@ import {
 /** The steps of a bar. */
 const barSteps = 16
 
-const heard = { timeout: 10_000, polling: 'raf' } as const
-
-/** A new project with a synth's track added, and the piano roll open on a new clip of it at the size it opens at. */
+/** A new project with a synth's track added, and a new clip of it, its notes below. */
 const synthRoll = async (page: Page) => {
   await newProject(page)
   await addTrack(page, 'Synth')
   await newClip(page, 0, 0, 'Synth')
-  // A bar of steps beside the keyboard, no more and no less, once the dock has given the window the size it opens at.
-  await expect
-    .poll(async () => (await page.locator('.roll').boundingBox())?.width)
-    .toBe(keysWidth + barSteps * stepWidth)
 }
 
-test('a melody put into the piano roll plays on the synth; erased, it is gone, and Cmd+Z brings it back', async ({
+test('a melody put into the piano roll is erased in part, Cmd+Z brings some back, and what is left plays on the synth', async ({
   page
 }) => {
   await synthRoll(page)
-  const window = page.getByRole('region', { name: 'Piano roll', exact: true }).first()
-  // Whole, at the tests' 1280 by 720, over the Arrangement's lower part, its heads and first tracks in sight.
-  await expect(window).toBeInViewport({ ratio: 1 })
-  const heads = await page.locator('.track-heads').boundingBox()
-  expect((await window.boundingBox())?.x).toBeGreaterThan((heads?.x ?? 0) + (heads?.width ?? 0))
+  // Whole, at the tests' 1280 by 720, under the Arrangement, which stays whole too.
+  await expect(page.getByRole('region', { name: 'Synth, notes', exact: true })).toBeInViewport({ ratio: 1 })
+  await expect(page.getByRole('region', { name: 'Arrangement', exact: true })).toBeInViewport({ ratio: 1 })
   const at = await rollAt(page)
   const clicked = async (step: number, key: number, button: 'left' | 'right' = 'left') => {
     const { x, y } = at(step, key)
@@ -52,11 +45,6 @@ test('a melody put into the piano roll plays on the synth; erased, it is gone, a
   await clicked(6, 64)
   await clicked(8, 67)
   await drawn(8, 67).toBe(true)
-
-  await listening(page)
-  await pressPlay(page, true)
-  await sounds(page)
-  await pressPlay(page, false)
 
   // A drag with the right button along E3 takes both; a right click, G3.
   const from = at(4, 64)
@@ -71,6 +59,12 @@ test('a melody put into the piano roll plays on the synth; erased, it is gone, a
   await drawn(0, 60).toBe(true)
   await page.keyboard.press('ControlOrMeta+z')
   await drawn(8, 67).toBe(true)
+
+  // What is left, C3 and G3, heard in the Mixer.
+  await listening(page)
+  await pressPlay(page, true)
+  await sounds(page)
+  await pressPlay(page, false)
   await expect(page.locator('.transport').getByRole('status')).toHaveText('')
 })
 
@@ -111,7 +105,7 @@ test('a note dragged in the piano roll moves, its right edge stretches it, each 
   await drawn(0, 60).toBe(true)
 })
 
-test('a note dragged past the window into the second bar makes a clip of two bars, which plays whole, round and round', async ({
+test('a note dragged into the second bar makes a clip of two bars, which plays whole, round and round', async ({
   page
 }) => {
   await synthRoll(page)
@@ -121,7 +115,6 @@ test('a note dragged past the window into the second bar makes a clip of two bar
   await page.mouse.click(c5.x, c5.y)
   await page.mouse.click(e5.x, e5.y)
   await expect.poll(() => drawnAt(page, [[1, 0]])).toEqual([false])
-  // Past the window's right edge: the roll holds the pointer.
   const later = at(8 + barSteps, 64)
   await page.mouse.move(e5.x, e5.y)
   await page.mouse.down()
@@ -129,11 +122,11 @@ test('a note dragged past the window into the second bar makes a clip of two bar
   await page.mouse.up()
   // The clip as long as its notes reach now.
   await expect.poll(() => drawnAt(page, [[1, 0]])).toEqual([true])
-  await listening(page)
   await pressPlay(page, true)
-  // Into the second bar, then round from the start.
+  // Into the second bar, then round from the start; heard in the Mixer, in place of the Arrangement.
   await expect.poll(() => playheadAt(page), heard).toBeGreaterThan(1.2)
   await expect.poll(() => playheadAt(page), heard).toBeLessThan(0.4)
+  await listening(page)
   await sounds(page)
   await pressPlay(page, false)
 })
@@ -142,20 +135,8 @@ test('a roll two bars wide shows the second past the pattern until a note goes i
   page
 }) => {
   await synthRoll(page)
-  // Wider by the floating window's right edge.
-  const window = page.getByRole('region', { name: 'Piano roll', exact: true }).first()
-  const edge = await page
-    .locator('.dv-resize-container', { has: window })
-    .locator('.dv-resize-handle-right')
-    .boundingBox()
-  const from = { x: (edge?.x ?? 0) + (edge?.width ?? 0) / 2, y: (edge?.y ?? 0) + (edge?.height ?? 0) / 2 }
-  await page.mouse.move(from.x, from.y)
-  await page.mouse.down()
-  await page.mouse.move(from.x + barSteps * stepWidth + 20, from.y, { steps: 10 })
-  await page.mouse.up()
-  await expect
-    .poll(async () => (await page.locator('.roll').boundingBox())?.width ?? 0)
-    .toBeGreaterThan(keysWidth + (barSteps + 6) * stepWidth)
+  // As wide as the page at 1280: more than two bars.
+  expect((await page.locator('.roll').boundingBox())?.width).toBeGreaterThan(keysWidth + 2 * barSteps * stepWidth)
   const at = await rollAt(page)
   const c5 = at(0, 60)
   await page.mouse.click(c5.x, c5.y)
@@ -179,36 +160,43 @@ test('a roll two bars wide shows the second past the pattern until a note goes i
   await expect.poll(shownPast).toBe(true)
 })
 
-test('a melody of four bars put in a roll a bar wide, scrolled across bar by bar, plays whole, the roll going with the playhead', async ({
+test('a melody of four bars, put as the roll scrolls across, plays whole, the roll going with the playhead', async ({
   page
 }) => {
   await synthRoll(page)
   const at = await rollAt(page)
+  const box = await page.locator('.roll').boundingBox()
   const bar = barSteps * stepWidth
+  /** The key's row at the start of the bar, the roll scrolled as far as a pattern so many bars long lets it. */
+  const atEnd = (bars: number, from: number, key: number) => {
+    const left = Math.max(keysWidth + (bars + 1) * bar - (box?.width ?? 0), 0)
+    return { x: (box?.x ?? 0) + keysWidth + from * bar - left + stepWidth / 2, y: at(0, key).y }
+  }
+  const put = async (bars: number, key: number) => {
+    const { x, y } = atEnd(bars, bars, key)
+    await page.mouse.click(x, y)
+  }
   const c5 = at(0, 60)
   await page.mouse.click(c5.x, c5.y)
-  // A bar on each time, the pattern growing a bar with each note: by Shift and the wheel, then sideways, as a swipe.
+  // A bar on each time, in the bar past the pattern, scrolled to the end as it grows: by Shift and the wheel, then
+  // sideways, as a swipe.
   await page.keyboard.down('Shift')
-  await page.mouse.wheel(0, bar)
+  await page.mouse.wheel(0, 4 * bar)
   await page.keyboard.up('Shift')
-  await page.mouse.click(c5.x, at(0, 62).y)
-  await page.mouse.wheel(bar, 0)
-  await page.mouse.click(c5.x, at(0, 64).y)
-  await page.mouse.wheel(bar, 0)
-  await page.mouse.click(c5.x, at(0, 67).y)
+  await put(1, 62)
+  await page.mouse.wheel(4 * bar, 0)
+  await put(2, 64)
+  await page.mouse.wheel(4 * bar, 0)
+  await put(3, 67)
   const drawnAtKey = (key: number) => expect.poll(() => noteDrawn(page, at(0, key)), heard)
-  await drawnAtKey(67).toBe(true)
-  await drawnAtKey(64).toBe(false)
-  // Back to the first bar, then played: the roll takes each bar's note under the same point in turn.
+  // Back to the first bar, then played: the roll goes to the third bar as the playhead leaves it in sight, and round.
   await page.mouse.wheel(-4 * bar, 0)
   await drawnAtKey(60).toBe(true)
-  await listening(page)
+  await drawnAtKey(64).toBe(false)
   await pressPlay(page, true)
-  await drawnAtKey(62).toBe(true)
   await drawnAtKey(64).toBe(true)
-  await drawnAtKey(67).toBe(true)
-  await drawnAtKey(60).toBe(true)
   await expect.poll(() => playheadAt(page), heard).toBeGreaterThan(3)
+  await drawnAtKey(60).toBe(true)
   await pressPlay(page, false)
 })
 
@@ -216,6 +204,7 @@ test('a key of the piano roll pressed sounds on the synth while held, falls sile
   page
 }) => {
   await synthRoll(page)
+  // The Mixer in the middle, the notes under it.
   await listening(page)
   const at = await rollAt(page)
   const level = () =>

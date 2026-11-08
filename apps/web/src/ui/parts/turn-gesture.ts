@@ -102,8 +102,8 @@ export const useTurnGesture = (target: HoldTarget, value: number, scale: TurnSca
         Boolean.match(event.button === 0 && Option.isNone(turning.current), {
           onFalse: () => {},
           onTrue: () => {
-            // The control's own: a floating window would take a press with Shift for a drag of the whole window. The
-            // press focuses the control, as the browser no longer does.
+            // The control's own: the browser selects no text for it. The press focuses the control, as the browser no
+            // longer does.
             event.preventDefault()
             event.currentTarget.focus()
             event.currentTarget.setPointerCapture(event.pointerId)

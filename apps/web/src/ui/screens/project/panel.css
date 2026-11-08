@@ -1,0 +1,63 @@
+/* Under the middle, as high as a share of the page: a line telling what it shows, then what it shows. */
+.panel {
+  display: flex;
+  flex: 0 0 40%;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  border-radius: var(--r-lg);
+  background: var(--s-strip);
+}
+
+/* As high empty as not, so the panel doesn't jump. */
+.panel__title {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: calc(var(--u) * 2);
+  height: 28px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--line-soft);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.panel__name {
+  overflow: hidden;
+  color: var(--t-hi);
+  font-weight: 600;
+  text-overflow: ellipsis;
+}
+
+.panel__rule {
+  color: var(--line);
+}
+
+.panel__kind {
+  color: var(--t-mid);
+}
+
+/* A swipe across it scrolls it, not the page back. */
+.panel__body {
+  flex: 1;
+  min-height: 0;
+  padding: calc(var(--u) * 2);
+  overflow: auto;
+  overscroll-behavior-x: none;
+}
+
+/* A body that fills the panel, as the piano roll's grid does, has nothing past it to scroll to. */
+.panel__body[data-fills="true"] {
+  overflow: hidden;
+}
+
+.panel__none {
+  display: grid;
+  flex: 1;
+  place-items: center;
+  margin: 0;
+  color: var(--t-mid);
+  font-size: 11px;
+}
