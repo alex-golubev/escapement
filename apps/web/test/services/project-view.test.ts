@@ -156,3 +156,74 @@ it.effect('a change to what is already shown writes nothing; a saved middle this
     expect([registry.get(reopened.centre), reopened.centres]).toEqual(['arrangement', ['arrangement', 'mixer']])
   }).pipe(inRegistry)
 )
+
+it.effect(
+  'the panel folds and unfolds to the share it had; folded by its border, it keeps it; a choice unfolds it',
+  () =>
+    Effect.gen(function* () {
+      const { doc, lead, clip } = twoTracks()
+      const { view } = yield* viewIn(yield* memory, doc)
+      const registry = yield* AtomRegistry.AtomRegistry
+      const panel = () => registry.get(view.panel)
+      expect(panel()).toEqual({ share: 40, folded: false })
+      view.resized(62.5, false)
+      view.fold(true)
+      expect(panel()).toEqual({ share: 62.5, folded: true })
+      view.fold(false)
+      expect(panel()).toEqual({ share: 62.5, folded: false })
+      view.resized(4, true)
+      expect(panel()).toEqual({ share: 62.5, folded: true })
+      view.show(lead)
+      expect(panel()).toEqual({ share: 62.5, folded: false })
+      view.fold(true)
+      view.open(clip)
+      expect(panel()).toEqual({ share: 62.5, folded: false })
+    }).pipe(inRegistry)
+)
+
+it.live('the scroll is written once it stands, the rest at once; opened again, the height and scroll are as left', () =>
+  Effect.gen(function* () {
+    const store = yield* memory
+    const { doc } = twoTracks()
+    const registry = yield* AtomRegistry.AtomRegistry
+    const kept = yield* viewStoreOf(store, Id('project'), () => true)
+    const written: Array<View> = []
+    const watched = {
+      ...kept,
+      save: (view: View) =>
+        Effect.andThen(
+          Effect.sync(() => written.push(view)),
+          kept.save(view)
+        )
+    }
+    yield* Effect.scoped(
+      Effect.gen(function* () {
+        const view = yield* projectViewOf(watched, yield* followProject(doc), centres)
+        Array.from({ length: 3 }, (_, step) => registry.set(view.arrangementScroll.down, (step + 1) * 32))
+        registry.set(view.arrangementScroll.across, 240)
+        registry.set(view.rackScroll, 300)
+        view.fold(true)
+        yield* Effect.yieldNow
+        expect(written.map(({ panel, scroll }) => ({ panel, scroll }))).toEqual([
+          { panel: { share: 40, folded: true }, scroll: { arrangement: { down: 0, across: 0 }, rack: 0 } }
+        ])
+        yield* Effect.sleep('400 millis')
+        expect(written.map(({ scroll }) => scroll)).toEqual([
+          { arrangement: { down: 0, across: 0 }, rack: 0 },
+          { arrangement: { down: 96, across: 240 }, rack: 300 }
+        ])
+      })
+    )
+    const reopened = yield* projectViewOf(
+      yield* viewStoreOf(store, Id('project'), () => true),
+      yield* followProject(doc),
+      centres
+    )
+    expect({
+      panel: registry.get(reopened.panel),
+      down: registry.get(reopened.arrangementScroll.down),
+      across: registry.get(reopened.arrangementScroll.across),
+      rack: registry.get(reopened.rackScroll)
+    }).toEqual({ panel: { share: 40, folded: true }, down: 96, across: 240, rack: 300 })
+  }).pipe(inRegistry)
+)

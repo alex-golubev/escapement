@@ -1,12 +1,48 @@
 import { useAtomValue } from '@effect/atom-react'
 import type { Id } from '@escapement/model'
-import { Option } from 'effect'
+import { Boolean, Option } from 'effect'
 import type { ComponentChildren } from 'preact'
 import { Shown } from '../../../services/view-store'
 import { useCore } from '../../core-context'
+import { ChevronIcon } from '../../kit/icons'
 import { PianoRoll, useNoteLength } from '../../views/piano-roll/piano-roll'
 import { TrackSettings, useTrackName } from '../../views/track/track'
 import './panel.css'
+
+/** The panel: a title line over what it shows, with a button folding it to the line; folded, it shows only the line. */
+const Frame = ({
+  label,
+  title,
+  children
+}: {
+  readonly label: string
+  readonly title: ComponentChildren
+  readonly children: ComponentChildren
+}) => {
+  const { view } = useCore()
+  const { folded } = useAtomValue(view.panel)
+  return (
+    <section class='panel' aria-label={label} data-folded={folded}>
+      <div class='panel__title'>
+        {title}
+        <button
+          type='button'
+          class='btn panel__fold'
+          aria-expanded={!folded}
+          aria-label={Boolean.match(folded, { onTrue: () => 'Unfold the panel', onFalse: () => 'Fold the panel' })}
+          data-hint={Boolean.match(folded, {
+            onTrue: () => 'Unfold the panel to the height it had',
+            onFalse: () => 'Fold the panel to this line, for the middle to have the room'
+          })}
+          onClick={() => view.fold(!folded)}
+        >
+          <ChevronIcon />
+        </button>
+      </div>
+      {Boolean.match(folded, { onTrue: () => null, onFalse: () => children })}
+    </section>
+  )
+}
 
 /** The panel showing a track or its notes, the chosen track's name and which of the two over them. */
 const ShownBelow = ({
@@ -22,18 +58,22 @@ const ShownBelow = ({
 }) => {
   const name = useTrackName(track)
   return (
-    <section class='panel' aria-label={`${name}, ${kind.toLowerCase()}`}>
-      <div class='panel__title'>
-        <span class='panel__name'>{name}</span>
-        <span class='panel__rule' aria-hidden='true'>
-          |
-        </span>
-        <span class='panel__kind'>{kind}</span>
-      </div>
+    <Frame
+      label={`${name}, ${kind.toLowerCase()}`}
+      title={
+        <>
+          <span class='panel__name'>{name}</span>
+          <span class='panel__rule' aria-hidden='true'>
+            |
+          </span>
+          <span class='panel__kind'>{kind}</span>
+        </>
+      }
+    >
       <div class='panel__body' data-fills={fills}>
         {children}
       </div>
-    </section>
+    </Frame>
   )
 }
 
@@ -45,10 +85,9 @@ export const Panel = () => {
   const length = useNoteLength()
   return Option.match(Option.all({ below, track }), {
     onNone: () => (
-      <section class='panel' aria-label='Nothing chosen'>
-        <div class='panel__title' />
+      <Frame label='Nothing chosen' title={null}>
         <p class='panel__none'>Click a track's name to see it here, double-click a clip for its notes</p>
-      </section>
+      </Frame>
     ),
     onSome: ({ below, track }) => {
       const { kind, fills, body } = Shown.match(below, {

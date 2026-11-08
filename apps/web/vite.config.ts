@@ -31,7 +31,15 @@ export default defineConfig({
   build: {
     rolldownOptions: {
       // The Effect hooks mark their React server parts "use client"; the page has no server.
-      checks: { moduleLevelDirective: false }
+      checks: { moduleLevelDirective: false },
+      // The panels' library reads React 19.2's Activity where React has it, for tabs the page hasn't; Preact hasn't it.
+      onLog: (level, log, handler) =>
+        Boolean.match(
+          log.code === 'IMPORT_IS_UNDEFINED' &&
+            log.message.includes('`Activity`') &&
+            (log.id ?? '').includes('/react-resizable-panels/'),
+          { onTrue: () => {}, onFalse: () => handler(level, log) }
+        )
     }
   }
 })

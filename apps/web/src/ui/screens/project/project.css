@@ -9,11 +9,41 @@
   padding: calc(var(--u) * 2);
 }
 
+/* The middle and the panel, each as high as its share, and a border between them to drag. */
 .workspace {
+  min-height: 0;
+}
+
+.workspace__pane {
   display: flex;
   flex-direction: column;
-  gap: calc(var(--u) * 2);
-  min-height: 0;
+}
+
+/* As high as the gap it stands in; a line in it shows where it is when it's pointed at, held or focused by keys. */
+.workspace__border {
+  display: grid;
+  align-items: center;
+  height: calc(var(--u) * 2);
+  outline: none;
+}
+
+.workspace__border::after {
+  content: "";
+  height: 2px;
+  border-radius: 1px;
+}
+
+.workspace__border:hover::after {
+  background: var(--line);
+}
+
+/* Focused by keys alone: a press focuses it too, and shows nothing more. */
+.workspace__border:focus-visible::after {
+  background: var(--focus);
+}
+
+.workspace__border[data-separator="active"]::after {
+  background: var(--t-lo);
 }
 
 /* All the room the panel leaves: the Arrangement fills it, the Mixer's strips scroll down in it if they don't fit. A
