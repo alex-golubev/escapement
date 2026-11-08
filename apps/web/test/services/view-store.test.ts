@@ -7,7 +7,8 @@ import { expect } from 'vitest'
 import * as Y from 'yjs'
 import { inTimeOrNone, openInTimeOrNone, storageTimeout } from '../../src/services/in-time'
 import type { Saving } from '../../src/services/session'
-import { forgetView, type View, ViewStores, viewStoreFor, viewStoreOf } from '../../src/services/view-store'
+import { firstView, forgetView, type View, ViewStores, viewStoreFor, viewStoreOf } from '../../src/services/view-store'
+import { savedView } from '../saved-view'
 
 class Refused extends Data.TaggedError('Refused') {}
 
@@ -85,9 +86,14 @@ const kept = (store: KeyValueStore.KeyValueStore) =>
     Option.map(Option.fromUndefinedOr(saved), (json) => JSON.parse(json))
   )
 
-const mixer: View = { centre: 'mixer', below: Option.some({ _tag: 'Track', track: Id('kick') }) }
+const mixer: View = { ...firstView, centre: 'mixer', below: Option.some({ _tag: 'Track', track: Id('kick') }) }
 
-const notes: View = { centre: 'arrangement', below: Option.some({ _tag: 'Notes', clip: Id('clip') }) }
+const notes: View = {
+  centre: 'arrangement',
+  below: Option.some({ _tag: 'Notes', clip: Id('clip') }),
+  panel: { share: 62.5, folded: true },
+  scroll: { arrangement: { down: 96, across: 240 }, rack: 300 }
+}
 
 it.effect('a view is written as it is asked to be, the latest last, and read again as the page opens', () =>
   Effect.gen(function* () {
@@ -98,7 +104,13 @@ it.effect('a view is written as it is asked to be, the latest last, and read aga
     yield* view.save(notes)
     yield* Effect.yieldNow
     expect(yield* kept(store)).toEqual(
-      Option.some({ version: 2, centre: 'arrangement', below: { _tag: 'Notes', clip: 'clip' } })
+      Option.some({
+        version: 3,
+        centre: 'arrangement',
+        below: { _tag: 'Notes', clip: 'clip' },
+        panel: { share: 62.5, folded: true },
+        scroll: { arrangement: { down: 96, across: 240 }, rack: 300 }
+      })
     )
     expect((yield* viewStoreOf(store, project, () => true)).saved).toEqual(Option.some(notes))
   })
@@ -117,9 +129,12 @@ it.effect('a store that never answers holds the page five seconds, and then the 
 
 it.effect.each([
   ['of another version, as the windows were', { version: 1, layout: '{}' }],
-  ['with what the middle has not', { version: 2, centre: 'track', below: null }],
-  ['with a track of no ID', { version: 2, centre: 'arrangement', below: { _tag: 'Track', track: '' } }],
-  ['with a shown of no kind', { version: 2, centre: 'arrangement', below: { track: 'kick' } }]
+  ['of the version before, with no height or scroll', { version: 2, centre: 'arrangement', below: null }],
+  ['with what the middle has not', savedView({ centre: 'track' })],
+  ['with a track of no ID', savedView({ below: { _tag: 'Track', track: '' } })],
+  ['with a shown of no kind', savedView({ below: { track: 'kick' } })],
+  ['with a share past the whole', savedView({ panel: { share: 140, folded: false } })],
+  ['scrolled before the start', savedView({ scroll: { arrangement: { down: -1, across: 0 }, rack: 0 } })]
 ])('a saved view %s is left for the first one', ([, saved]) =>
   Effect.gen(function* () {
     const store = yield* memory

@@ -21,16 +21,45 @@ export const Shown = Schema.TaggedUnion({ Track: { track: storedId }, Notes: { c
 
 export type Shown = typeof Shown.Type
 
-/** How the project is shown: what the middle shows, and what the panel under it does, if anything. */
-export const View = Schema.Struct({ centre: Centre, below: Schema.OptionFromNullOr(Shown) })
+/** How high the panel is: its share, in percent, of the room it has with the middle, and whether it's folded. */
+export const PanelHeight = Schema.Struct({
+  share: Schema.Finite.check(Schema.isBetween({ minimum: 0, maximum: 100 })),
+  folded: Schema.Boolean
+})
+
+export type PanelHeight = typeof PanelHeight.Type
+
+/** How far a view is scrolled, in pixels. */
+const scrolled = Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0))
+
+/** How far the Arrangement is scrolled down and across, and the mixer's rack across. */
+export const Scroll = Schema.Struct({
+  arrangement: Schema.Struct({ down: scrolled, across: scrolled }),
+  rack: scrolled
+})
+
+export type Scroll = typeof Scroll.Type
+
+/** How the project is shown: what the middle shows, what the panel under it does and how high, and how far scrolled. */
+export const View = Schema.Struct({
+  centre: Centre,
+  below: Schema.OptionFromNullOr(Shown),
+  panel: PanelHeight,
+  scroll: Scroll
+})
 
 export type View = typeof View.Type
 
-/** As a new project is shown: the Arrangement, with nothing under it yet. */
-export const firstView: View = { centre: 'arrangement', below: Option.none() }
+/** As a new project is shown: the Arrangement at its start, with nothing under it yet, in 40% of the room. */
+export const firstView: View = {
+  centre: 'arrangement',
+  below: Option.none(),
+  panel: { share: 40, folded: false },
+  scroll: { arrangement: { down: 0, across: 0 }, rack: 0 }
+}
 
 /** How the page keeps how a project is shown; a version other than this one's is left for the first view. */
-const SavedView = Schema.Struct({ version: Schema.Literal(2), ...View.fields })
+const SavedView = Schema.Struct({ version: Schema.Literal(3), ...View.fields })
 
 /** How this browser shows a project, kept for it alone: not in the project, and not on other devices. */
 export interface ViewStore {
@@ -62,13 +91,16 @@ export const viewStoreOf = Effect.fnUntraced(function* (
     Effect.suspend(() =>
       Option.match(Option.liftPredicate(view, kept), {
         onNone: () => Effect.void,
-        onSome: (keeping) => views.set(key, { version: 2, ...keeping })
+        onSome: (keeping) => views.set(key, { version: 3, ...keeping })
       })
     ).pipe(
       Effect.uninterruptible,
       Effect.catchCause((cause) => Effect.logWarning("The view wasn't saved", cause))
     )
-  const view: ViewStore = { saved: Option.map(saved, ({ centre, below }) => ({ centre, below })), save: write }
+  const view: ViewStore = {
+    saved: Option.map(saved, ({ version: _, ...view }) => view),
+    save: write
+  }
   return view
 })
 

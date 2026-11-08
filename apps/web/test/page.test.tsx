@@ -72,6 +72,7 @@ import {
   trackHeight
 } from '../src/ui/views/arrangement/layout'
 import { savedIn } from './saved-in'
+import { savedView } from './saved-view'
 
 // The debug panel shows it, and happy-dom has none.
 Object.assign(globalThis, { crossOriginIsolated: false })
@@ -1827,7 +1828,7 @@ const viewsWith = (doc: Y.Doc, saved: unknown) => {
 
 test.each<[string, unknown]>([
   ['of another version, as the windows were', { version: 1, layout: '{}' }],
-  ['with what the middle has not', { version: 2, centre: 'track', below: null }],
+  ['with what the middle has not', savedView({ centre: 'track' })],
   ['not a view', 'not a view']
 ])('a saved view %s is left for the first one', (_, saved) => {
   const doc = projectDoc()
@@ -1856,7 +1857,60 @@ test.each<[string, unknown]>([
       }),
     {},
     {},
-    { views: viewsWith(doc, { version: 2, centre: 'arrangement', below: shown }), doc }
+    { views: viewsWith(doc, savedView({ below: shown })), doc }
+  )
+})
+
+/** The panel's arrow, and whether the panel is folded to its title line, with nothing under it. */
+const foldOf = (target: HTMLElement) => {
+  const arrow = Option.getOrThrow(Option.fromNullishOr(target.querySelector<HTMLButtonElement>('.panel__fold')))
+  const folded = arrow.getAttribute('aria-expanded') === 'false'
+  return { arrow, folded, under: target.querySelector('.panel > :not(.panel__title)') !== null }
+}
+
+test("the panel's arrow folds it to its title line and unfolds it; folded, a track's name unfolds it with the track", () =>
+  page(({ grid, target }) =>
+    Effect.gen(function* () {
+      expect(foldOf(target)).toMatchObject({ folded: false, under: true })
+      expect(foldOf(target).arrow.getAttribute('aria-label')).toBe('Fold the panel')
+      foldOf(target).arrow.click()
+      yield* drawn()
+      expect(foldOf(target)).toMatchObject({ folded: true, under: false })
+      expect(foldOf(target).arrow.getAttribute('aria-label')).toBe('Unfold the panel')
+      foldOf(target).arrow.click()
+      yield* drawn()
+      expect(foldOf(target)).toMatchObject({ folded: false, under: true })
+      expect(target.querySelector('.panel')?.textContent).toBe(nothingBelow)
+      foldOf(target).arrow.click()
+      yield* drawn()
+      nameButton(grid, 'Kick').click()
+      yield* drawn(50)
+      expect(foldOf(target)).toMatchObject({ folded: false, under: true })
+      expect(Option.isSome(trackBelow(target, 'Kick'))).toBe(true)
+    })
+  ))
+
+test('opened again, the panel is folded as it was left; a double click on the border unfolds it to 40%', () => {
+  const doc = projectDoc()
+  const views = viewsWith(doc, savedView({ panel: { share: 62.5, folded: true } }))
+  return page(
+    ({ target }) =>
+      Effect.gen(function* () {
+        expect(foldOf(target)).toMatchObject({ folded: true, under: false })
+        const border = Option.getOrThrow(Option.fromNullishOr(target.querySelector('[role="separator"]')))
+        expect(border.getAttribute('data-hint')).toBe(
+          'Drag to make the panel higher or lower, past its least to fold it; double-click for 40% again'
+        )
+        border.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))
+        yield* drawn()
+        expect(foldOf(target)).toMatchObject({ folded: false, under: true })
+        yield* saved
+        const kept = yield* views.get(`layout:${Option.getOrThrow(readProjectId(doc))}`).pipe(Effect.orDie)
+        expect(JSON.parse(kept ?? '{}').panel).toEqual({ share: 40, folded: false })
+      }),
+    {},
+    {},
+    { views, doc }
   )
 })
 
@@ -1892,7 +1946,7 @@ test('a build for users has no Debug button, and shows the Arrangement for a sav
       }),
     {},
     {},
-    { views: viewsWith(doc, { version: 2, centre: 'debug', below: null }), doc }
+    { views: viewsWith(doc, savedView({ centre: 'debug' })), doc }
   ).finally(() => vi.unstubAllEnvs())
 })
 

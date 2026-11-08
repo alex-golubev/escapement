@@ -25,6 +25,7 @@
     "preact": "11.1.0",
     "react": "npm:@preact/compat@18.3.2",
     "react-dom": "npm:@preact/compat@18.3.2",
+    "react-resizable-panels": "4.19.1",
     "scheduler": "0.28.0",
     "y-indexeddb": "9.0.12",
     "y-protocols": "1.0.7",

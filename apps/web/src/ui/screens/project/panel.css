@@ -1,7 +1,7 @@
-/* Under the middle, as high as a share of the page: a line telling what it shows, then what it shows. */
+/* Under the middle, as high as its share: a line telling what it shows, then what it shows. */
 .panel {
   display: flex;
-  flex: 0 0 40%;
+  flex: 1;
   flex-direction: column;
   min-height: 0;
   overflow: hidden;
@@ -15,13 +15,33 @@
   flex: none;
   align-items: center;
   gap: calc(var(--u) * 2);
-  height: 28px;
+  /* All there is of the panel folded: the workspace sets it, as high as the library folds the panel. */
+  height: var(--panel-title);
   padding: 0 12px;
   border-bottom: 1px solid var(--line-soft);
   font-size: 11px;
   letter-spacing: 0.06em;
   text-transform: uppercase;
   white-space: nowrap;
+}
+
+/* Folded, the line is all of it. */
+.panel[data-folded="true"] .panel__title {
+  border-bottom-color: transparent;
+}
+
+/* At the end of the line: pointing down, it folds the panel; turned up, unfolds it. */
+.panel__fold {
+  min-width: 20px;
+  height: 20px;
+  margin-left: auto;
+  padding: 0;
+  border-color: transparent;
+  background: none;
+}
+
+.panel__fold[aria-expanded="false"] svg {
+  transform: rotate(180deg);
 }
 
 .panel__name {

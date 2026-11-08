@@ -60,6 +60,15 @@ export const addTrack = async (page: Page, name: string) => {
   return nameOf(page, name)
 }
 
+/** A new project with synths' tracks, `count` of them: "Synth", then "Synth 2" and on. */
+export const synths = async (page: Page, count: number) => {
+  await newProject(page)
+  await ['Synth', ...Array.from({ length: count - 1 }, (_, i) => `Synth ${i + 2}`)].reduce(
+    (before, name) => before.then(() => addTrack(page, name).then(() => {})),
+    Promise.resolve()
+  )
+}
+
 /** Where on the page the Arrangement has the middle of the track's row in the bar, scrolled to the first of both. */
 export const arrangementAt = async (page: Page) => {
   const box = await page.locator('.arrangement').boundingBox()

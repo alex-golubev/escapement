@@ -1,29 +1,19 @@
 import { expect, type Page } from '@playwright/test'
 import { barWidth, headsWidth } from '../src/ui/views/arrangement/layout'
 import {
-  addTrack,
   arrangementAt,
   drawnAt,
   heard,
   listening,
   newClip,
-  newProject,
   playheadAt,
   pressPlay,
   putNote,
   reload,
   showCentre,
+  synths,
   test
 } from './page'
-
-/** A new project with synths' tracks, `count` of them: "Synth", then "Synth 2" and on. */
-const synths = async (page: Page, count: number) => {
-  await newProject(page)
-  await ['Synth', ...Array.from({ length: count - 1 }, (_, i) => `Synth ${i + 2}`)].reduce(
-    (before, name) => before.then(() => addTrack(page, name).then(() => {})),
-    Promise.resolve()
-  )
-}
 
 test('clips put by a double click, dragged and erased stay after a reload, and Cmd+Z takes each back', async ({
   page

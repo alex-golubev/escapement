@@ -3,10 +3,9 @@ import { useCore } from '../../core-context'
 import { HintLine } from '../../kit/hint-line'
 import { MenuHost } from '../../kit/menu'
 import { FramesContext, useFrameLoop } from '../../parts/frames'
-import { CentreView } from './centre'
 import { useHistoryKeys } from './history'
-import { Panel } from './panel'
 import { TransportBar } from './transport-bar'
+import { Workspace } from './workspace'
 import './project.css'
 
 /** The transport on top, the middle, the panel under it, the hint line at the foot; a control's menu over them. */
@@ -19,10 +18,7 @@ export const App = () => {
       <MenuHost>
         <div class='app'>
           <TransportBar />
-          <main class='workspace'>
-            <CentreView />
-            <Panel />
-          </main>
+          <Workspace />
           <HintLine />
         </div>
       </MenuHost>
