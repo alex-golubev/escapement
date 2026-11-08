@@ -3,7 +3,7 @@ import { barTicks, Id, type Note, stepTicks } from '@escapement/model'
 import { Option } from 'effect'
 import { expect, test } from 'vitest'
 import { followed } from '../../src/ui/parts/follow'
-import { cursorAt, draggedNotes, draggedTo, grabAt } from '../../src/ui/windows/piano-roll/drag'
+import { cursorAt, draggedNotes, draggedTo, grabAt } from '../../src/ui/views/piano-roll/drag'
 import {
   centredOn,
   keyAt,
@@ -19,10 +19,10 @@ import {
   widthOf,
   xOf,
   yOf
-} from '../../src/ui/windows/piano-roll/geometry'
+} from '../../src/ui/views/piano-roll/geometry'
 import { edgeWidth } from '../../src/ui/kit/edge'
-import { keysWidth, rowHeight, rulerHeight, stepWidth } from '../../src/ui/windows/piano-roll/layout'
-import { keyName } from '../../src/ui/windows/piano-roll/draw'
+import { keysWidth, rowHeight, rulerHeight, stepWidth } from '../../src/ui/views/piano-roll/layout'
+import { keyName } from '../../src/ui/views/piano-roll/draw'
 
 /**
  * A bar wide, scrolled so C4's row is the first under the ruler, and C#2's the last: the rows of C#4 and up are above.

@@ -1,5 +1,5 @@
 import { expect, type Page } from '@playwright/test'
-import { barWidth, headsWidth } from '../src/ui/windows/arrangement/layout'
+import { barWidth, headsWidth } from '../src/ui/views/arrangement/layout'
 import {
   addTrack,
   arrangementAt,

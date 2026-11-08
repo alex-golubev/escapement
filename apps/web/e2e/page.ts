@@ -1,6 +1,6 @@
 import { test as base, expect, type Page } from '@playwright/test'
-import { barWidth, headsWidth, rulerHeight, trackHeight } from '../src/ui/windows/arrangement/layout'
-import { keysWidth, rowHeight, rulerHeight as rollRulerHeight, stepWidth } from '../src/ui/windows/piano-roll/layout'
+import { barWidth, headsWidth, rulerHeight, trackHeight } from '../src/ui/views/arrangement/layout'
+import { keysWidth, rowHeight, rulerHeight as rollRulerHeight, stepWidth } from '../src/ui/views/piano-roll/layout'
 
 /** Fails any test the page throws or complains in; checked after a timeout too, so the report says what went wrong. */
 export const test = base.extend<{ complaints: undefined }>({

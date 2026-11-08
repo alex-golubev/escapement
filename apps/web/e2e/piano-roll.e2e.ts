@@ -1,5 +1,5 @@
 import { expect, type Page } from '@playwright/test'
-import { keysWidth, stepWidth } from '../src/ui/windows/piano-roll/layout'
+import { keysWidth, stepWidth } from '../src/ui/views/piano-roll/layout'
 import {
   addTrack,
   drawnAt,

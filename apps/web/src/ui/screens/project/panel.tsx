@@ -4,8 +4,8 @@ import { Option } from 'effect'
 import type { ComponentChildren } from 'preact'
 import { Shown } from '../../../services/view-store'
 import { useCore } from '../../core-context'
-import { PianoRoll, useNoteLength } from '../../windows/piano-roll/piano-roll'
-import { TrackSettings, useTrackName } from '../../windows/track/track'
+import { PianoRoll, useNoteLength } from '../../views/piano-roll/piano-roll'
+import { TrackSettings, useTrackName } from '../../views/track/track'
 import './panel.css'
 
 /** The panel showing a track or its notes, the chosen track's name and which of the two over them. */
