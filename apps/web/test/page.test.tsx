@@ -58,19 +58,19 @@ import { projectViewOf } from '../src/services/project-view'
 import { centresFor, viewStoreFor } from '../src/services/view-store'
 import { type Core, CoreContext } from '../src/ui/core-context'
 import { App } from '../src/ui/screens/project/project'
-import { type View, xOf, yOf } from '../src/ui/windows/piano-roll/geometry'
-import { keysWidth, rowHeight, rulerHeight, stepWidth } from '../src/ui/windows/piano-roll/layout'
+import { type View, xOf, yOf } from '../src/ui/views/piano-roll/geometry'
+import { keysWidth, rowHeight, rulerHeight, stepWidth } from '../src/ui/views/piano-roll/layout'
 import {
   type View as ArrangementView,
   xOf as arrangementXOf,
   yOf as arrangementYOf
-} from '../src/ui/windows/arrangement/geometry'
+} from '../src/ui/views/arrangement/geometry'
 import {
   barWidth,
   headsWidth,
   rulerHeight as arrangementRulerHeight,
   trackHeight
-} from '../src/ui/windows/arrangement/layout'
+} from '../src/ui/views/arrangement/layout'
 import { savedIn } from './saved-in'
 
 // The debug panel shows it, and happy-dom has none.

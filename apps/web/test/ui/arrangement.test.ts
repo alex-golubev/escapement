@@ -3,7 +3,7 @@ import { barTicks, Id } from '@escapement/model'
 import { Option } from 'effect'
 import { expect, test } from 'vitest'
 import { edgeWidth } from '../../src/ui/kit/edge'
-import { cursorAt, cursorOf, draggedClips, draggedTo, Grab, grabAt } from '../../src/ui/windows/arrangement/drag'
+import { cursorAt, cursorOf, draggedClips, draggedTo, Grab, grabAt } from '../../src/ui/views/arrangement/drag'
 import {
   clipAt,
   clipsAlong,
@@ -18,8 +18,8 @@ import {
   type View,
   xOf,
   yOf
-} from '../../src/ui/windows/arrangement/geometry'
-import { barWidth, headsWidth, rulerHeight, trackHeight } from '../../src/ui/windows/arrangement/layout'
+} from '../../src/ui/views/arrangement/geometry'
+import { barWidth, headsWidth, rulerHeight, trackHeight } from '../../src/ui/views/arrangement/layout'
 
 /** The tracks of the arrangement the tests draw. */
 const trackCount = 20

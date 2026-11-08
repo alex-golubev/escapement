@@ -157,7 +157,7 @@
         }
       }
     },
-    // ui/: Preact in layers, screens → windows → parts → kit. Biome takes a rule's options whole from the last override
+    // ui/: Preact in layers, screens → views → parts → kit. Biome takes a rule's options whole from the last override
     // that sets them, so each layer below repeats this ban of all of ui.
     {
       "includes": ["apps/web/src/ui/**"],
@@ -210,14 +210,14 @@
                   {
                     "group": [
                       "**/parts/**",
-                      "**/windows/**",
+                      "**/views/**",
                       "**/screens/**",
                       "**/services/**",
                       "**/core-context",
                       "@escapement/*",
                       "@escapement/*/**"
                     ],
-                    "message": "The kit knows nothing of the project: what knows it is a part, a window or a screen."
+                    "message": "The kit knows nothing of the project: what knows it is a part, a view or a screen."
                   }
                 ]
               }
@@ -226,7 +226,7 @@
         }
       }
     },
-    // parts/: know the project, and serve more than one window or screen.
+    // parts/: know the project, and serve more than one view or screen.
     {
       "includes": ["apps/web/src/ui/parts/**"],
       "linter": {
@@ -248,8 +248,8 @@
                     "message": "Imports go one way: app → ui → services, browser → services. The interface reaches storage and the browser's channels only through services."
                   },
                   {
-                    "group": ["**/windows/**", "**/screens/**"],
-                    "message": "Imports go down: screens → windows → parts → kit."
+                    "group": ["**/views/**", "**/screens/**"],
+                    "message": "Imports go down: screens → views → parts → kit."
                   }
                 ]
               }
@@ -258,10 +258,10 @@
         }
       }
     },
-    // windows/: a folder each, taking nothing from another, by a short path or a long one through windows/; a negation ends
+    // views/: a folder each, taking nothing from another, by a short path or a long one through views/; a negation ends
     // only its own group, as in .gitignore.
     {
-      "includes": ["apps/web/src/ui/windows/**"],
+      "includes": ["apps/web/src/ui/views/**"],
       "linter": {
         "rules": {
           "style": {
@@ -282,15 +282,15 @@
                   },
                   {
                     "group": ["**/screens/**"],
-                    "message": "Imports go down: screens → windows → parts → kit."
+                    "message": "Imports go down: screens → views → parts → kit."
                   },
                   {
-                    "group": ["**/windows/**"],
-                    "message": "A window takes nothing from another: what two windows need goes down to parts or kit."
+                    "group": ["**/views/**"],
+                    "message": "A view takes nothing from another: what two views need goes down to parts or kit."
                   },
                   {
                     "group": ["../*/**", "!../../**"],
-                    "message": "A window takes nothing from another: what two windows need goes down to parts or kit."
+                    "message": "A view takes nothing from another: what two views need goes down to parts or kit."
                   }
                 ]
               }

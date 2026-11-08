@@ -2,9 +2,9 @@ import { useAtomValue } from '@effect/atom-react'
 import type { FunctionComponent } from 'preact'
 import type { Centre } from '../../../services/view-store'
 import { useCore } from '../../core-context'
-import { Arrangement } from '../../windows/arrangement/arrangement'
-import { DebugPanel } from '../../windows/debug-panel/debug-panel'
-import { Mixer } from '../../windows/mixer/mixer'
+import { Arrangement } from '../../views/arrangement/arrangement'
+import { DebugPanel } from '../../views/debug-panel/debug-panel'
+import { Mixer } from '../../views/mixer/mixer'
 
 /** What the middle can show: its name, its button's, and what the button tells of it. */
 interface CentreKind {
