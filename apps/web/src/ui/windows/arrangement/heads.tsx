@@ -9,7 +9,6 @@ import { useContextMenu } from '../../kit/menu'
 import { NameField } from '../../kit/name-field'
 import { neighbourOf } from '../../kit/neighbour'
 import { SmallKnob } from '../../parts/knob'
-import { useTrackWindows } from '../../parts/track-windows'
 import { panThenVolume } from '../../parts/track-strip'
 
 /** The head going with the focus in it, however it goes: the focus to the name beside it, or else to +. */
@@ -30,18 +29,19 @@ const TrackName = ({
   id,
   index,
   name,
+  chosen,
   focusBack,
   rename
 }: {
   readonly id: Id
   readonly index: number
   readonly name: string
+  readonly chosen: boolean
   readonly focusBack: boolean
   readonly rename: () => void
 }) => {
-  const { ops } = useCore()
-  const windows = useTrackWindows()
-  const shown = useAtomValue(windows.isShown(id))
+  const { ops, view } = useCore()
+  const notesBelow = useAtomValue(view.hasNotesBelow(id))
   const button = useRef<HTMLButtonElement>(null)
   useLayoutEffect(() => {
     Boolean.match(focusBack, { onTrue: () => button.current?.focus(), onFalse: () => {} })
@@ -63,15 +63,16 @@ const TrackName = ({
       ref={button}
       type='button'
       class='track-head__name'
-      aria-pressed={shown}
-      data-hint={Boolean.match(shown, {
+      aria-current={chosen}
+      data-hint={`${Boolean.match(chosen, {
         onTrue: () =>
-          `${name}'s window is open: a click closes it. F2 renames ${name}; a right click or Shift+F10, its menu`,
-        onFalse: () =>
-          `Open the window of ${name}, track ${index} of the project; with Alt, beside the one open. F2 renames it; a right click or Shift+F10, its menu`
-      })}
-      // Alt as the click has it, from the mouse or from Enter.
-      onClick={(event) => windows.toggle(id, event.altKey)}
+          Boolean.match(notesBelow, {
+            onTrue: () => `The notes of ${name}'s clip are below: a click shows ${name} in their place`,
+            onFalse: () => `${name} is below, chosen for you only`
+          }),
+        onFalse: () => `Show ${name}, track ${index} of the project, below: chosen for you only`
+      })}. F2 renames it; a right click or Shift+F10, its menu`}
+      onClick={() => view.show(id)}
       onContextMenu={menu.onContextMenu}
       onKeyDown={(event) =>
         Boolean.match(event.key === 'F2', {
@@ -90,8 +91,9 @@ const TrackName = ({
 
 /** Drawn again only as what it reads changes, not as the heads scroll. */
 const TrackHead = memo(function TrackHead({ id, index }: { readonly id: Id; readonly index: number }) {
-  const { registry, session, ops } = useCore()
+  const { registry, session, ops, view } = useCore()
   const track = useAtomValue(session.project.track(id))
+  const chosen = useAtomValue(view.isChosen(id))
   const heard = useAtomValue(session.heard)
   const { solo } = useAtomValue(session.listening)
   const setListening = useAtomSet(session.listening)
@@ -102,7 +104,7 @@ const TrackHead = memo(function TrackHead({ id, index }: { readonly id: Id; read
   return Option.match(track, {
     onNone: () => null,
     onSome: ({ name, mute, strip: values }) => (
-      <div ref={head} class='track-head' data-unheard={!heard.includes(id)}>
+      <div ref={head} class='track-head' data-unheard={!heard.includes(id)} data-chosen={chosen}>
         <span class='track-head__strip'>
           {panThenVolume.map((param) => (
             <SmallKnob
@@ -132,6 +134,7 @@ const TrackHead = memo(function TrackHead({ id, index }: { readonly id: Id; read
               id={id}
               index={index}
               name={name}
+              chosen={chosen}
               focusBack={naming.focusBack}
               rename={() => setNaming({ renaming: true, focusBack: false })}
             />
@@ -173,7 +176,7 @@ const TrackHead = memo(function TrackHead({ id, index }: { readonly id: Id; read
 
 /** Scrolled by the page with the rows, + under the last. */
 export const TrackHeads = ({ top }: { readonly top: number }) => {
-  const { session, ops } = useCore()
+  const { session, ops, view } = useCore()
   const ids = useAtomValue(session.project.trackIds)
   return (
     <div class='track-heads'>
@@ -186,8 +189,8 @@ export const TrackHeads = ({ top }: { readonly top: number }) => {
             type='button'
             class='btn track-add'
             aria-label='Add a track'
-            data-hint='Add a track with a synth to the project, for everyone'
-            onClick={() => ops.addTrack()}
+            data-hint='Add a track with a synth to the project, for everyone, and show it below'
+            onClick={() => Option.map(ops.addTrack(), view.show)}
           >
             +
           </button>

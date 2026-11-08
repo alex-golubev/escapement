@@ -1,7 +1,7 @@
 import { Boolean, Option, Record } from 'effect'
 import type { RefObject } from 'preact'
-import { type Inputs, useLayoutEffect } from 'preact/hooks'
-import type { Size } from './fit'
+import { type Inputs, useLayoutEffect, useRef } from 'preact/hooks'
+import type { Size } from './size'
 
 /** The canvas's context, the canvas as big as `size` in the screen's pixels and cleared; none where none draws. */
 export const cleared = (canvas: HTMLCanvasElement, size: Size) =>
@@ -45,3 +45,12 @@ export const paletteOf =
     const style = getComputedStyle(element)
     return Record.map(tokens, (name) => style.getPropertyValue(name).trim())
   }
+
+/** What `of` reads from the box's style, read before its size is, which draws with it. */
+export const usePalette = <P>(box: RefObject<Element | null>, of: (element: Element) => P) => {
+  const palette = useRef(Option.none<P>())
+  useLayoutEffect(() => {
+    palette.current = Option.map(Option.fromNullishOr(box.current), of)
+  }, [])
+  return palette
+}

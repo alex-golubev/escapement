@@ -1,7 +1,7 @@
 import { expect, type Page } from '@playwright/test'
-import { addTrack, heardOn, nameOf, newClip, newProject, panAll, putNote, test, toggleWindow } from './page'
+import { addTrack, heardOn, listening, nameOf, newClip, newProject, panAll, putNote, test } from './page'
 
-/** The track sent into the mixer strip by its number, typed into its field in the track's window. */
+/** The track sent into the mixer strip by its number, typed into its field below, the track shown there. */
 const sendInto = async (page: Page, track: string, strip: number) => {
   await nameOf(page, track).click()
   const field = page.getByRole('spinbutton', { name: `${track}: mixer strip`, exact: true })
@@ -9,8 +9,6 @@ const sendInto = async (page: Page, track: string, strip: number) => {
   await field.press(String(strip))
   await field.press('Enter')
   await expect(field).toHaveAttribute('aria-valuetext', `strip ${strip}`)
-  await nameOf(page, track).click()
-  await expect(field).toHaveCount(0)
 }
 
 /**
@@ -45,7 +43,7 @@ test('tracks sent into strips of their own sound through them: a strip muted or 
   await putNote(page, 0)
   await sendInto(page, 'Synth', 1)
   await sendInto(page, 'Synth 2', 2)
-  await toggleWindow(page, 'Mixer')
+  await listening(page)
   const play = page.getByRole('button', { name: 'Play', exact: true })
   await play.click()
   await heardOn(page, { silent: [], sounding: [0] })

@@ -1,58 +1,54 @@
-import { type Id, readProjectId } from '@escapement/model'
-import {
-  Boolean,
-  Context,
-  Duration,
-  Effect,
-  FiberHandle,
-  FiberSet,
-  Layer,
-  Option,
-  Ref,
-  Schema,
-  type Scope
-} from 'effect'
+import { type Id, readProjectId, storedId } from '@escapement/model'
+import { Context, Effect, Layer, Option, Schema, type Scope } from 'effect'
 import { KeyValueStore } from 'effect/persistence'
 import { AtomRegistry } from 'effect/reactivity'
 import type * as Y from 'yjs'
 import { inTimeOrNone } from './in-time'
-import { Page } from './page'
 import { ProjectSession, type Saving } from './session'
 
-/** How the page keeps how a project is shown; a version other than this one's is left for the first layout. */
-const SavedView = Schema.Struct({
-  version: Schema.Literal(1),
-  // In JSON of its own: the dock's has fields left undefined, which the store's JSON refuses.
-  /** The windows as the dock writes them: the dock checks them as it reads them. */
-  layout: Schema.fromJsonString(Schema.Unknown)
-})
+/** What the middle of the page shows, in the order of its buttons. */
+export const centres = ['arrangement', 'mixer', 'debug'] as const
 
-/** Sizes and places change on every move of a drag: they are written once the moves stop. */
-export const saveAfter = Duration.millis(300)
+export const Centre = Schema.Literals(centres)
+
+export type Centre = typeof Centre.Type
+
+/** What the middle can show in a build: only one for development has Debug. */
+export const centresFor = (development: boolean) => centres.filter((centre) => development || centre !== 'debug')
+
+/** What the panel under the middle shows: a track, or the notes of a clip. */
+export const Shown = Schema.TaggedUnion({ Track: { track: storedId }, Notes: { clip: storedId } })
+
+export type Shown = typeof Shown.Type
+
+/** How the project is shown: what the middle shows, and what the panel under it does, if anything. */
+export const View = Schema.Struct({ centre: Centre, below: Schema.OptionFromNullOr(Shown) })
+
+export type View = typeof View.Type
+
+/** As a new project is shown: the Arrangement, with nothing under it yet. */
+export const firstView: View = { centre: 'arrangement', below: Option.none() }
+
+/** How the page keeps how a project is shown; a version other than this one's is left for the first view. */
+const SavedView = Schema.Struct({ version: Schema.Literal(2), ...View.fields })
 
 /** How this browser shows a project, kept for it alone: not in the project, and not on other devices. */
 export interface ViewStore {
-  /** The windows' layout saved when the page opened; none if none was, or it can't be read. */
-  readonly layout: Option.Option<unknown>
-  /**
-   * Keeps the layout `read` gives as the write starts: at once, or, if nothing opened or closed, once the moves stop.
-   * The page going away writes what still waits. A failure is logged.
-   */
-  readonly saveLayout: (read: () => unknown, options: { readonly now: boolean }) => Effect.Effect<void>
+  /** The view saved when the page opened; none if none was, or it can't be read. */
+  readonly saved: Option.Option<View>
+  /** Keeps the view; the write, once started, finishes. A failure is logged. */
+  readonly save: (view: View) => Effect.Effect<void>
 }
 
 export const ViewStore = Context.Service<ViewStore>('ViewStore')
 
-/** Nothing kept: the windows open as a new project's each time. */
-const unkept: ViewStore = { layout: Option.none(), saveLayout: () => Effect.void }
+/** Nothing kept: the project is shown as a new one's each time. */
+const unkept: ViewStore = { saved: Option.none(), save: () => Effect.void }
 
-/** Where `store` keeps the project's layout. */
+/** Where `store` keeps the project's view. */
 const layoutKey = (id: Id) => `layout:${id}`
 
-/**
- * The view of the project that `id` names, in `store`, written only while `kept` holds: read as the page opens, and
- * written as asked; the page going away writes what still waits.
- */
+/** The view of the project that `id` names, in `store`, written only while `kept` holds: read as the page opens. */
 export const viewStoreOf = Effect.fnUntraced(function* (
   store: KeyValueStore.KeyValueStore,
   id: Id,
@@ -60,48 +56,26 @@ export const viewStoreOf = Effect.fnUntraced(function* (
 ) {
   const key = layoutKey(id)
   const views = KeyValueStore.toSchemaStore(store, SavedView)
-  const saved = Option.flatten(yield* inTimeOrNone(views.get(key), 'The saved layout was left out'))
-  /** What to write next, read as the write starts. */
-  const waiting = yield* Ref.make(Option.none<() => unknown>())
+  const saved = Option.flatten(yield* inTimeOrNone(views.get(key), 'The saved view was left out'))
   // A write under way finishes: an IndexedDB write interrupted is a write lost.
-  const write = Effect.flatMap(Ref.getAndSet(waiting, Option.none()), (next) =>
-    Option.match(Option.filter(next, kept), {
-      onNone: () => Effect.void,
-      onSome: (read) => Effect.suspend(() => views.set(key, { version: 1, layout: read() }))
-    })
-  ).pipe(
-    Effect.uninterruptible,
-    Effect.catchCause((cause) => Effect.logWarning("The layout wasn't saved", cause))
-  )
-  const saving = yield* FiberHandle.make<void, never>()
-  const runFork = yield* FiberSet.makeRuntime<never>()
-  const writeNow = () => runFork(FiberHandle.run(saving, write))
-  const page = yield* Page
-  yield* Effect.acquireRelease(
-    Effect.sync(() => page.addEventListener('pagehide', writeNow)),
-    () => Effect.sync(() => page.removeEventListener('pagehide', writeNow))
-  )
-  const view: ViewStore = {
-    layout: Option.map(saved, (saved) => saved.layout),
-    // A new one takes the place of one waiting.
-    saveLayout: (read, { now }) =>
-      Ref.set(waiting, Option.some(read)).pipe(
-        Effect.andThen(
-          FiberHandle.run(
-            saving,
-            Effect.delay(write, Boolean.match(now, { onTrue: () => Duration.zero, onFalse: () => saveAfter }))
-          )
-        ),
-        Effect.asVoid
-      )
-  }
+  const write = (view: View) =>
+    Effect.suspend(() =>
+      Option.match(Option.liftPredicate(view, kept), {
+        onNone: () => Effect.void,
+        onSome: (keeping) => views.set(key, { version: 2, ...keeping })
+      })
+    ).pipe(
+      Effect.uninterruptible,
+      Effect.catchCause((cause) => Effect.logWarning("The view wasn't saved", cause))
+    )
+  const view: ViewStore = { saved: Option.map(saved, ({ centre, below }) => ({ centre, below })), save: write }
   return view
 })
 
 /**
  * The view of the project in `doc`, by the project's ID, kept in `store` if there is one and the project is saved as
- * the page opens: an unsaved one's ID is the page's alone, and no page would read its layout again. Once the project is
- * deleted, nothing more is written; one whose saving stopped otherwise keeps its layout, in a store of its own.
+ * the page opens: an unsaved one's ID is the page's alone, and no page would read its view again. Once the project is
+ * deleted, nothing more is written; one whose saving stopped otherwise keeps its view, in a store of its own.
  */
 export const viewStoreFor = (store: Option.Option<KeyValueStore.KeyValueStore>, doc: Y.Doc, saving: () => Saving) =>
   Option.match(
@@ -141,12 +115,12 @@ export const forgetView = (id: Id) =>
         onSome: (store) =>
           store
             .remove(layoutKey(id))
-            .pipe(Effect.catch((error) => Effect.logWarning("The deleted project's layout wasn't forgotten", error)))
+            .pipe(Effect.catch((error) => Effect.logWarning("The deleted project's view wasn't forgotten", error)))
       })
     )
   )
 
-/** The view of the project the page opened: a new project, with an ID of its own, starts with the first layout. */
+/** The view of the project the page opened: a new project, with an ID of its own, starts with the first view. */
 export const viewStoreLayer = Layer.effect(
   ViewStore,
   Effect.gen(function* () {

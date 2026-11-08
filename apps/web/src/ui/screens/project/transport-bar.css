@@ -54,13 +54,13 @@
   background: var(--clip);
 }
 
-/* A window's button: in sight, a lamp lights under its name, in the colour of what is yours alone; a lamp, not a
- * fill, as three lit names side by side would flood the bar. */
-.btn--window {
+/* What the middle shows: a lamp lights under its name, in the colour of what is yours alone; a lamp, not a fill, as
+ * a lit name would flood the bar. */
+.btn--centre {
   position: relative;
 }
 
-.btn--window::after {
+.btn--centre::after {
   content: "";
   position: absolute;
   left: 8px;
@@ -71,11 +71,11 @@
   background: var(--line);
 }
 
-.btn--window[aria-pressed="true"] {
+.btn--centre[aria-pressed="true"] {
   color: var(--t-hi);
 }
 
-.btn--window[aria-pressed="true"]::after {
+.btn--centre[aria-pressed="true"]::after {
   background: var(--local);
   box-shadow: 0 0 6px color-mix(in srgb, var(--local) 55%, transparent);
 }

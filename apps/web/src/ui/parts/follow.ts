@@ -55,14 +55,13 @@ export const followed = (
     (now) => pageOf(lane, now)
   )
 
-/** A window following the playhead: told of its scrolls by hand, it says each frame where it scrolls to, if anywhere. */
+/** A view following the playhead: told of its scrolls by hand, it says each frame where it scrolls to, if anywhere. */
 export interface Follow {
-  /** A scroll by hand, which `moved` the window across or not. */
+  /** A scroll by hand, which `moved` the view across or not. */
   readonly scrolled: (moved: boolean) => void
   /**
-   * Where to scroll to for the tick heard now, if anywhere, as the lane stands in sight: none behind a tab, where the
-   * playhead comes back to be heard as the window does. Not while a button is held on it, which the jump would take a
-   * step or a note from under.
+   * Where to scroll to for the tick heard now, if anywhere, as the lane stands in sight: none before it is laid out.
+   * Not while a button is held on it, which the jump would take a step or a note from under.
    */
   readonly frame: (lane: Option.Option<Lane>, held: boolean, heard: Option.Option<number>) => Option.Option<number>
 }

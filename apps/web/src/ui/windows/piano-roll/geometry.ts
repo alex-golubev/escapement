@@ -8,7 +8,7 @@ import { blackKeyWidth, keysWidth, rowHeight, rulerHeight, stepWidth } from './l
 const keyCount = highestKey - lowestKey + 1
 
 /**
- * The roll as it stands in its window: its size, how far it is scrolled down from the highest key's row, and how far
+ * The roll as it stands in sight: its size, how far it is scrolled down from the highest key's row, and how far
  * right from the first tick.
  */
 export interface View {

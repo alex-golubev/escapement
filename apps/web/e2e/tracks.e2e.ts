@@ -1,5 +1,5 @@
 import { expect, type Locator, type Page } from '@playwright/test'
-import { addTrack, nameOf, newClip, newProject, test } from './page'
+import { addTrack, arrangementAt, below, drawnAt, nameOf, newClip, newProject, test } from './page'
 
 const heads = (page: Page) => page.locator('.track-head__name')
 
@@ -43,8 +43,8 @@ test("a track's menu opens at the pointer in place of the browser's, or under it
   expect(Math.abs((opened?.x ?? 0) - at.x)).toBeLessThanOrEqual(1)
   expect(Math.abs((opened?.y ?? 0) - at.y)).toBeLessThanOrEqual(1)
   await expect(menu.getByRole('menuitem')).toHaveText(['Rename', 'Delete'])
-  // A right click is no click: the track's window stays shut, and the clips under the heads take nothing.
-  await expect(page.getByRole('region', { name: 'Synth', exact: true })).toHaveCount(0)
+  // A right click is no click: the track chosen, the last added, stays so, and the clips under the heads take nothing.
+  await expect(below(page)).toHaveText('Synth 3|Track')
   await page.keyboard.press('Escape')
   await expect(menu).toBeHidden()
   // Nor does it keep what it offered.
@@ -88,7 +88,7 @@ test("a track's menu opens at the pointer in place of the browser's, or under it
   await expect(menu).toBeHidden()
 })
 
-test('a track renamed in place takes the name in its head, its window, its knobs and the piano roll; Esc and undo leave the old', async ({
+test('a track renamed in place takes the name in its head, the panel and its knobs, over its notes too; Esc and undo leave the old', async ({
   page
 }) => {
   await newProject(page)
@@ -104,10 +104,11 @@ test('a track renamed in place takes the name in its head, its window, its knobs
   await page.keyboard.press('Enter')
   const renamed = nameOf(page, 'Lead')
   await expect(renamed).toBeFocused()
-  // The dock's group and the window in it, both named by the track.
-  await expect(page.getByRole('region', { name: 'Lead', exact: true }).first()).toBeVisible()
+  await expect(below(page)).toHaveText('Lead|Track')
   await expect(page.getByRole('slider', { name: 'Lead: pan', exact: true }).first()).toBeVisible()
-  await expect(page.locator('.dock-tab', { hasText: 'Piano roll' }).locator('.dock-tab__sub')).toHaveText('Lead')
+  const clip = (await arrangementAt(page))(0, 0)
+  await page.mouse.dblclick(clip.x, clip.y)
+  await expect(below(page)).toHaveText('Lead|Notes')
 
   await renamed.press('F2')
   await expect(field).toBeFocused()
@@ -117,26 +118,27 @@ test('a track renamed in place takes the name in its head, its window, its knobs
 
   await page.keyboard.press('ControlOrMeta+z')
   await expect(nameOf(page, 'Synth')).toBeVisible()
-  await expect(page.getByRole('region', { name: 'Synth', exact: true }).first()).toBeVisible()
+  await expect(below(page)).toHaveText('Synth|Notes')
 })
 
-test('a track deleted takes its head, its window and its clips, the focus going to the next; undo brings them back', async ({
+test('a track deleted takes its head, its clips and its place in the panel, the focus going to the next; undo brings them back', async ({
   page
 }) => {
   await threeTracks(page)
   await newClip(page, 0, 1, 'Synth 2')
   await nameOf(page, 'Synth 2').click()
-  await expect(page.getByRole('region', { name: 'Synth 2', exact: true }).first()).toBeVisible()
+  await expect(below(page)).toHaveText('Synth 2|Track')
   await chosen(page, 'Synth 2', 'Delete')
   await expect(heads(page)).toHaveText(['Synth', 'Synth 3'])
-  await expect(page.getByRole('region', { name: 'Synth 2', exact: true })).toHaveCount(0)
+  await expect(below(page)).toHaveText('')
   await expect(nameOf(page, 'Synth 3')).toBeFocused()
-  // Its clip gone with it: the piano roll shows none.
-  await expect(page.locator('.dock-tab', { hasText: 'Piano roll' }).locator('.dock-tab__sub')).toHaveText('No clip')
+  // Its clip gone with it.
+  await expect.poll(() => drawnAt(page, [[0, 1]])).toEqual([false])
 
   await page.keyboard.press('ControlOrMeta+z')
   await expect(heads(page)).toHaveText(['Synth', 'Synth 2', 'Synth 3'])
-  await expect(page.locator('.dock-tab', { hasText: 'Piano roll' }).locator('.dock-tab__sub')).toHaveText('Synth 2')
+  await expect(below(page)).toHaveText('Synth 2|Track')
+  await expect.poll(() => drawnAt(page, [[0, 1]])).toEqual([true])
 
   // A head going otherwise, here a track added and taken back, gives the focus on as well.
   await addTrack(page, 'Synth 4')

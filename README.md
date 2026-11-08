@@ -17,7 +17,7 @@ Early development — nothing usable yet.
 
 ## Stack
 
-- UI: TypeScript, Preact, dockview; Effect for orchestration
+- UI: TypeScript, Preact; Effect for orchestration
 - Project model: Yjs, so several people can work on one project
 - Audio engine: Rust compiled to WebAssembly, running in an AudioWorklet over shared memory
 

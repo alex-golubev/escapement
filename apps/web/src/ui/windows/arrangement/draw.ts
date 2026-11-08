@@ -1,13 +1,25 @@
-import { startInRound } from '@escapement/model'
-import { Boolean } from 'effect'
+import { type Id, startInRound } from '@escapement/model'
+import { Boolean, Option } from 'effect'
 import { paletteOf as tokensOf } from '../../kit/canvas'
-import { barsInSight, type Drawn, tickUnder, tracksInSight, type View, wholesFrom, widthOf, xOf, yOf } from './geometry'
+import {
+  barsInSight,
+  type Drawn,
+  type Shown,
+  tickUnder,
+  tracksInSight,
+  type View,
+  wholesFrom,
+  widthOf,
+  xOf,
+  yOf
+} from './geometry'
 import { barWidth, headsWidth, rulerHeight, trackHeight } from './layout'
 
 /** The arrangement's colours and fonts, as its style sheet and the interface's language give them. */
 const tokens = {
   clip: '--shared',
   clipEdge: '--arrangement-clip-edge',
+  open: '--local',
   row: '--arrangement-row',
   rowLine: '--arrangement-row-line',
   barLine: '--arrangement-bar-line',
@@ -78,9 +90,15 @@ const roundsInSight = (view: View, { tick, length, period, offset }: Drawn): Rea
 
 /**
  * Each clip in sight as long as it plays, on its track's row, a line where its pattern starts again, in the order
- * given: the last on top.
+ * given: the last on top. The one whose notes are open is ringed in the colour of what is yours alone.
  */
-export const drawClips = (g: CanvasRenderingContext2D, view: View, palette: Palette, clips: ReadonlyArray<Drawn>) =>
+export const drawClips = (
+  g: CanvasRenderingContext2D,
+  view: View,
+  palette: Palette,
+  clips: ReadonlyArray<Shown>,
+  open: Option.Option<Id>
+) =>
   onGrid(g, view, () => {
     clips
       .filter((clip) => shows(view, clip))
@@ -100,6 +118,16 @@ export const drawClips = (g: CanvasRenderingContext2D, view: View, palette: Pale
         g.stroke()
         g.fillStyle = palette.clipEdge
         roundsInSight(view, clip).forEach((start) => g.fillRect(Math.round(xOf(view, start)), y + 4, 1, height - 8))
+        Boolean.match(Option.contains(open, clip.id), {
+          onTrue: () => {
+            g.strokeStyle = palette.open
+            g.lineWidth = 2
+            g.beginPath()
+            g.roundRect(x + 1, y + 1, width - 2, height - 2, 3)
+            g.stroke()
+          },
+          onFalse: () => {}
+        })
       })
   })
 

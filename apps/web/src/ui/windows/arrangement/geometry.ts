@@ -5,7 +5,7 @@ import type { Lane } from '../../parts/follow'
 import { barWidth, headsWidth, rulerHeight, trackHeight } from './layout'
 
 /**
- * The arrangement as it stands in its window: its size, how far it is scrolled down from the first track's row, and how
+ * The arrangement as it stands in sight: its size, how far it is scrolled down from the first track's row, and how
  * far right from the first tick; and how many tracks it has, a row each from the top.
  */
 export interface View {

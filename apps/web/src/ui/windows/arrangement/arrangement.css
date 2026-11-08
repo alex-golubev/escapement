@@ -1,5 +1,5 @@
-/* The arrangement fills its window, as the piano roll does. Its colours are read by the canvases it draws on: rows as
-   the roll's white keys' rows, lines brighter from a bar's to a fourth bar's, clips in the project's colour. */
+/* The arrangement fills the middle, as the piano roll the panel. Its colours are read by the canvases it draws on: rows
+   as the roll's white keys' rows, lines brighter from a bar's to a fourth bar's, clips in the project's colour. */
 .arrangement {
   --arrangement-row: #12161b;
   --arrangement-row-line: #0b0d10;
@@ -79,7 +79,7 @@
   --knob-d: var(--small-knob);
 }
 
-/* A button that reads as the track's name: it opens the track's window. */
+/* A button that reads as the track's name: it chooses the track. */
 .track-head__name {
   min-width: 0;
   flex: 1;
@@ -115,6 +115,15 @@
   display: flex;
   gap: var(--u);
   flex: none;
+}
+
+/* The track chosen: a stripe down its left, in the colour of what is yours alone. */
+.track-head[data-chosen="true"] {
+  background: var(--s-strip);
+  box-shadow:
+    inset 2px 0 var(--local),
+    inset 0 -1px var(--line),
+    inset -1px 0 var(--line);
 }
 
 /* A track not heard dims what sounds; its name and buttons stay, to be pressed again. */

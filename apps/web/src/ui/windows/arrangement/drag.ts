@@ -3,18 +3,7 @@ import { barTicks } from '@escapement/model'
 import { Array, Data, Number, Option } from 'effect'
 import { onLeftEdge, onRightEdge } from '../../kit/edge'
 import type { Point } from '../../kit/pointer'
-import {
-  clipAt,
-  type Drawn,
-  type Place,
-  rowAt,
-  type Shown,
-  type Span,
-  tickUnder,
-  type View,
-  widthOf,
-  xOf
-} from './geometry'
+import { clipAt, type Place, rowAt, type Shown, type Span, tickUnder, type View, widthOf, xOf } from './geometry'
 import { headsWidth } from './layout'
 
 /** Where on the arrangement a point is, as a track's place and a tick, past the grid too: a drag goes on outside it. */
@@ -144,7 +133,7 @@ export const draggedTo = (grab: Grab, view: View, point: Point): Span => {
 }
 
 /** The clips with the one held as the drag has it, on top. One gone meanwhile shows nowhere. */
-const withHeld = (clips: ReadonlyArray<Shown>, clip: Shown, held: (now: Shown) => Shown): ReadonlyArray<Drawn> =>
+const withHeld = (clips: ReadonlyArray<Shown>, clip: Shown, held: (now: Shown) => Shown): ReadonlyArray<Shown> =>
   Option.match(
     Array.findFirst(clips, ({ id }) => id === clip.id),
     {
@@ -158,7 +147,7 @@ export const draggedClips = (
   clips: ReadonlyArray<Shown>,
   grab: Grab,
   { place, tick, length, offset }: Span
-): ReadonlyArray<Drawn> =>
+): ReadonlyArray<Shown> =>
   Grab.$match(grab, {
     Move: ({ clip }) => withHeld(clips, clip, (now) => ({ ...now, place, tick })),
     Resize: ({ clip }) => withHeld(clips, clip, (now) => ({ ...now, tick, length, offset }))

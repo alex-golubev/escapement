@@ -20,7 +20,6 @@
     "@escapement/engine": "workspace:*",
     "@escapement/engine-description": "workspace:*",
     "@escapement/model": "workspace:*",
-    "dockview-react": "8.8.3",
     "effect": "4.1.1",
     "lib0": "0.2.119",
     "preact": "11.1.0",

@@ -1,8 +1,29 @@
-/* The transport on top, the hint line at the foot, the desk with the windows between. */
+/* The transport on top, the hint line at the foot, the middle and the panel between. */
 .app {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
+  /* As wide as the page, whatever is in it: the mixer's strips scroll across inside it. */
+  grid-template-columns: minmax(0, 1fr);
   gap: calc(var(--u) * 2);
   height: 100%;
   padding: calc(var(--u) * 2);
+}
+
+.workspace {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--u) * 2);
+  min-height: 0;
+}
+
+/* All the room the panel leaves: the Arrangement fills it, the Mixer's strips scroll down in it if they don't fit. A
+   swipe across it scrolls it, not the page back. */
+.workspace__centre {
+  flex: 1;
+  min-height: 0;
+  padding: calc(var(--u) * 2);
+  overflow: auto;
+  overscroll-behavior-x: none;
+  border-radius: var(--r-lg);
+  background: var(--s-strip);
 }

@@ -1,26 +1,17 @@
 import { useAtomValue } from '@effect/atom-react'
 import type { MidiKey } from '@escapement/engine-description'
-import {
-  type ArrangementClip,
-  byContent,
-  defaultNote,
-  type Id,
-  type NewNote,
-  patternEnd,
-  startInRound
-} from '@escapement/model'
+import { type ArrangementClip, defaultNote, type Id, type NewNote, patternEnd, startInRound } from '@escapement/model'
 import { Array, Boolean, Data, Equal, Option } from 'effect'
 import type { TargetedPointerEvent, TargetedWheelEvent } from 'preact'
-import { useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks'
+import { useLayoutEffect, useRef, useState } from 'preact/hooks'
 import { useCore } from '../../core-context'
-import { useLayer } from '../../kit/canvas'
+import { useLayer, usePalette } from '../../kit/canvas'
 import { useLatest, usePointerGesture } from '../../kit/gesture'
 import { useLaidOutSize } from '../../kit/laid-out'
 import { type Point, pointOf, turnOf, withCtrl } from '../../kit/pointer'
 import { useScreenScale } from '../../kit/screen-scale'
-import { usePianoRollWindow } from '../../parts/piano-roll-window'
 import { useCanvasPlayhead } from '../../parts/playhead'
-import { drawGrid, drawKeyboard, drawNotes, type Palette, paletteOf } from './draw'
+import { drawGrid, drawKeyboard, drawNotes, paletteOf } from './draw'
 import { type Cursor, cursorAt, cursorOf, draggedNotes, draggedTo, Grab, grabAt } from './drag'
 import {
   centredOn,
@@ -35,24 +26,6 @@ import {
 } from './geometry'
 import { keysWidth, rowHeight, rulerHeight, stepWidth } from './layout'
 import './piano-roll.css'
-
-/** The name of the track whose clip the piano roll shows, beside its title. */
-export const PianoRollName = () => {
-  const { session } = useCore()
-  const { clip } = usePianoRollWindow()
-  const name = useMemo(
-    () =>
-      byContent((get) =>
-        Option.flatMap(get(clip), (id) =>
-          Option.flatMap(get(session.project.clip(id)), ({ track }) =>
-            Option.map(get(session.project.track(track)), ({ name }) => name)
-          )
-        )
-      ),
-    [clip, session]
-  )
-  return Option.getOrElse(useAtomValue(name), () => 'No clip')
-}
 
 /** Where in its pattern the clip plays at the arrangement's tick; none outside the clip. */
 const inClip =
@@ -109,7 +82,7 @@ const soundOf = Gesture.$match({
 
 /**
  * The clip's notes on a grid of keys and steps, drawn on canvases: the grid, the notes, and the playhead over them where
- * the arrangement plays the clip, each drawn again only when what it shows changes. It fills its window. Its keys and
+ * the arrangement plays the clip, each drawn again only when what it shows changes. It fills the panel. Its keys and
  * its notes held play the clip's track's instrument.
  */
 const Roll = ({ clip, length }: { readonly clip: ArrangementClip; readonly length: { current: number } }) => {
@@ -126,12 +99,9 @@ const Roll = ({ clip, length }: { readonly clip: ArrangementClip; readonly lengt
   const pressCount = useRef(0)
   const notesLayer = useRef<HTMLCanvasElement>(null)
   const over = useRef<HTMLCanvasElement>(null)
-  const palette = useRef(Option.none<Palette>())
-  const size = useLaidOutSize(box, (laid) => {
-    palette.current = Option.some(paletteOf(laid))
-  })
-  // Until scrolled, centred on the notes it opened with for the height it has: one behind a tab has none until it
-  // comes forward.
+  const palette = usePalette(box, paletteOf)
+  const size = useLaidOutSize(box)
+  // Until scrolled, centred on the notes it opened with for the height it has.
   const [opening] = useState(() => registry.get(notesAtom))
   const [scrolled, setScrolled] = useState(Option.none<number>())
   // Across from the first bar; the playhead takes it along.
@@ -155,7 +125,7 @@ const Roll = ({ clip, length }: { readonly clip: ArrangementClip; readonly lengt
   const end = patternEnd(drawing)
   const reach = Option.match(gesture.shown, { onNone: () => end, onSome: ({ reached }) => Math.max(reached, end) })
   const left = Option.match(size, { onNone: () => across, onSome: ({ width }) => scrolledAcross(width, reach, across) })
-  // Kept where it stands, as a shorter pattern or a wider window takes it back: a longer pattern later moves no bars.
+  // Kept where it stands, as a shorter pattern or a wider roll takes it back: a longer pattern later moves no bars.
   useLayoutEffect(() => setAcross(left), [left, across])
   const view = Option.map(
     size,
@@ -361,25 +331,14 @@ const Roll = ({ clip, length }: { readonly clip: ArrangementClip; readonly lengt
   )
 }
 
-/** The clip as the arrangement plays it, if it is there. */
-const ShownClip = ({ clip, length }: { readonly clip: Id; readonly length: { current: number } }) => {
+/** The length of the note last touched, carried over from one clip to the next by whatever holds it. */
+export const useNoteLength = () => useRef(defaultNote.length)
+
+/** The piano roll: the notes of the clip, as the arrangement plays it, if it is there. */
+export const PianoRoll = ({ clip, length }: { readonly clip: Id; readonly length: { current: number } }) => {
   const { session } = useCore()
   return Option.match(useAtomValue(session.project.arrangementClip(clip)), {
     onNone: () => null,
-    onSome: (found) => <Roll clip={found} length={length} />
-  })
-}
-
-/**
- * The piano roll's body: the notes of the clip it shows. The length of the note last touched carries over from one clip
- * to the next.
- */
-export const PianoRoll = () => {
-  const { clip } = usePianoRollWindow()
-  const shown = useAtomValue(clip)
-  const length = useRef(defaultNote.length)
-  return Option.match(shown, {
-    onNone: () => <p class='roll-none'>No clip: a double click on a clip in the Arrangement opens it here</p>,
-    onSome: (id) => <ShownClip key={id} clip={id} length={length} />
+    onSome: (found) => <Roll key={clip} clip={found} length={length} />
   })
 }

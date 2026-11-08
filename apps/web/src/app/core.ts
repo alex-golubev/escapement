@@ -15,7 +15,8 @@ import { leavingLayer } from '../services/leaving'
 import { ProjectSession, projectSessionLayer } from '../services/session'
 import { TabSync, tabSyncLayer } from '../services/tab-sync'
 import { Turns, turnsLayer } from '../services/turns'
-import { keptViewsLayer, ViewStore, viewStoreLayer } from '../services/view-store'
+import { ProjectView, projectViewLayer } from '../services/project-view'
+import { keptViewsLayer, viewStoreLayer } from '../services/view-store'
 
 /**
  * As the Effect hooks make their own: an atom a component reads while it draws lives on until the component subscribes
@@ -30,8 +31,8 @@ export const pageLoggerLayer = Logger.layer([Logger.withLeveledConsole(Logger.fo
  * The page's Effect core: the project it opened, its operations, the engine, the page's other tabs, how this browser
  * shows the project, and asking before the page goes with it unsaved, as long as it is open.
  */
-export const coreLayer = Layer.mergeAll(turnsLayer, engineHostLayer, tabSyncLayer, viewStoreLayer, leavingLayer).pipe(
-  Layer.provideMerge(domainOpsLayer),
+export const coreLayer = Layer.mergeAll(turnsLayer, engineHostLayer, tabSyncLayer, projectViewLayer, leavingLayer).pipe(
+  Layer.provideMerge(Layer.mergeAll(domainOpsLayer, viewStoreLayer)),
   // Built together: the engine's module compiles while the project, and the store of its view, load.
   Layer.provideMerge(
     Layer.mergeAll(engineModuleLayer, projectSessionLayer, keptViewsLayer, audioOutputLayer, pageReopenLayer)
@@ -59,5 +60,5 @@ export const coreServices = {
   turns: Turns,
   host: EngineHost,
   tabs: TabSync,
-  view: ViewStore
+  view: ProjectView
 }

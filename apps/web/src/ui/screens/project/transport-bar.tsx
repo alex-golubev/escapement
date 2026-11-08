@@ -4,7 +4,7 @@ import { EngineState, type GaveUp, type Transport } from '../../../services/engi
 import type { Saving } from '../../../services/session'
 import { useCore } from '../../core-context'
 import { ToProjects } from '../../parts/to-projects'
-import { WindowButtons } from './desk'
+import { CentreButtons } from './centre'
 import { HistoryButtons } from './history'
 import { TempoField } from './tempo-field'
 import './transport-bar.css'
@@ -141,7 +141,7 @@ const Status = () => {
   )
 }
 
-/** The list of projects, Play, undo and redo, the tempo, the windows' buttons; on the right, what is wrong, if anything. */
+/** Projects, Play, undo and redo, the tempo, what the middle shows; on the right, what is wrong, if anything. */
 export const TransportBar = () => (
   <div class='transport'>
     <ToProjects />
@@ -158,7 +158,7 @@ export const TransportBar = () => (
     </div>
     <span class='transport__rule' />
     <div class='transport__group'>
-      <WindowButtons />
+      <CentreButtons />
     </div>
     <Status />
   </div>

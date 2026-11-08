@@ -12,6 +12,6 @@ export const viewStoresLayer = Layer.succeed(ViewStores, {
         BrowserKeyValueStore.layerIndexedDb({ database: 'escapement-view' }).pipe(Layer.provide(IndexedDb.layerWindow)),
         scope
       ).pipe(Effect.map((built) => Context.get(built, KeyValueStore.KeyValueStore))),
-    "The layouts' store didn't open: the windows aren't kept"
+    "The views' store didn't open: how projects are shown isn't kept"
   )
 })

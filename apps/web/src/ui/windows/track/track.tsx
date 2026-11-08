@@ -1,6 +1,6 @@
 import { useAtomValue } from '@effect/atom-react'
-import { HoldTarget, type Id, type Track } from '@escapement/model'
-import { Option } from 'effect'
+import { HoldTarget, type Id } from '@escapement/model'
+import { Boolean, Option } from 'effect'
 import { Atom } from 'effect/reactivity'
 import { useMemo } from 'preact/hooks'
 import { useCore } from '../../core-context'
@@ -11,9 +11,8 @@ import { Knob } from '../../parts/knob'
 import './track.css'
 
 /**
- * A track's window: its pan and volume, the same as in its head, and the mixer strip it goes into, then its
- * instrument's own controls, if it has any, under the instrument's name, a group to a row. Of a track no longer there,
- * nothing: its window closes.
+ * A track below: its pan and volume, the same as in its head, and the mixer strip it goes into, then what plays it, its
+ * controls under its name, a group to a row. Of a track no longer there, nothing.
  */
 export const TrackSettings = ({ track }: { readonly track: Id }) => {
   const { session } = useCore()
@@ -37,47 +36,41 @@ export const TrackSettings = ({ track }: { readonly track: Id }) => {
             <span class='cap'>Strip</span>
           </span>
         </div>
-        {Option.match(
-          // A sampler has none: its track's volume sets how loud.
-          Option.filter(instrument, ({ plugin }) => plugin.params.length > 0),
-          {
-            onNone: () => null,
-            onSome: (played) => (
-              <section class='track-settings__instrument' aria-label={played.plugin.label}>
-                <span class='cap'>{played.plugin.label}</span>
-                <div class='track-settings__controls' style={gridOf(played.plugin)}>
-                  <InstanceControls
-                    owner={`${name} ${played.plugin.label.toLowerCase()}`}
-                    instance={played}
-                    targetOf={(param) => HoldTarget.TrackParam({ track, param })}
-                  />
-                </div>
-              </section>
-            )
-          }
-        )}
+        {Option.match(instrument, {
+          onNone: () => null,
+          onSome: (played) => (
+            <section class='track-settings__instrument' aria-label={played.plugin.label}>
+              <span class='cap'>{played.plugin.label}</span>
+              {Boolean.match(played.plugin.params.length > 0, {
+                onTrue: () => (
+                  <div class='track-settings__controls' style={gridOf(played.plugin)}>
+                    <InstanceControls
+                      owner={`${name} ${played.plugin.label.toLowerCase()}`}
+                      instance={played}
+                      targetOf={(param) => HoldTarget.TrackParam({ track, param })}
+                    />
+                  </div>
+                ),
+                // A sampler has none: its track's volume sets how loud.
+                onFalse: () => null
+              })}
+            </section>
+          )
+        })}
       </div>
     )
   })
 }
 
-/** What of the track a window's title shows, read alone: the rest of the track changes it not. */
-const useOfTrack = (track: Id, read: (found: Track) => string) => {
+/** The track's name, over the panel that shows it, read alone: the rest of the track changes it not. None once gone. */
+export const useTrackName = (track: Id) => {
   const { session } = useCore()
   const atom = useMemo(
-    () => Atom.map(session.project.track(track), (found) => Option.match(found, { onNone: () => '', onSome: read })),
-    [session, track, read]
+    () =>
+      Atom.map(session.project.track(track), (found) =>
+        Option.match(found, { onNone: () => '', onSome: ({ name }) => name })
+      ),
+    [session, track]
   )
   return useAtomValue(atom)
 }
-
-const nameOf = ({ name }: Track) => name
-
-const instrumentOf = ({ instrument }: Track) =>
-  Option.match(instrument, { onNone: () => '', onSome: ({ plugin }) => plugin.label })
-
-/** The track's name, for its window's title and the piano roll's; none once it is gone. */
-export const useTrackName = (track: Id) => useOfTrack(track, nameOf)
-
-/** What plays the track, beside its window's title. */
-export const useInstrumentName = (track: Id) => useOfTrack(track, instrumentOf)
