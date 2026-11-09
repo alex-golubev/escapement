@@ -8,13 +8,14 @@ import { heardTick, useFrame } from './frames'
 
 /**
  * A view drawn on canvases as its playhead goes along: its size, its lane, where a tick is across it, as its own
- * geometry has it, and how high its ruler is.
+ * geometry has it, how high its ruler is, and the playhead's mark on it.
  */
 export interface Laid {
   readonly size: Size
   readonly lane: Lane
   readonly xOf: (tick: number) => number
   readonly ruler: number
+  readonly mark: number
 }
 
 /** The playhead's colours, as a view's palette names them: its line down the view, and its mark on the ruler. */
@@ -26,7 +27,7 @@ export interface Colours {
 /** A line down the view at the tick heard, and a mark over it on the ruler; none while it is scrolled out of sight. */
 export const drawPlayhead = (
   g: CanvasRenderingContext2D,
-  { size, lane, xOf, ruler }: Laid,
+  { size, lane, xOf, ruler, mark }: Laid,
   { playhead, rulerText }: Colours,
   tick: Option.Option<number>
 ) =>
@@ -38,8 +39,8 @@ export const drawPlayhead = (
       g.fillRect(x, ruler, 1, size.height - ruler)
       g.fillStyle = rulerText
       g.beginPath()
-      g.moveTo(x - 4, ruler - 6)
-      g.lineTo(x + 5, ruler - 6)
+      g.moveTo(x - mark + 1, ruler - mark - 1)
+      g.lineTo(x + mark, ruler - mark - 1)
       g.lineTo(x + 0.5, ruler - 1)
       g.fill()
     }

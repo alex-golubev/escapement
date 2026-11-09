@@ -39,9 +39,9 @@ export interface ProjectView {
   readonly fold: (folded: boolean) => void
   /** The panel as its border left it: as high as `share`, or folded, keeping the share it had to unfold to. */
   readonly resized: (share: number, folded: boolean) => void
-  /** How far the Arrangement is scrolled, in pixels: kept as the middle shows another, written once it stands. */
+  /** How far the Arrangement is scrolled, in tracks and bars: kept as the middle shows another, written once it stands. */
   readonly arrangementScroll: { readonly down: Atom.Writable<number>; readonly across: Atom.Writable<number> }
-  /** How far the mixer's rack is scrolled across, in pixels: kept as the Arrangement's is. */
+  /** How far the mixer's rack is scrolled across, in strips: kept as the Arrangement's is. */
   readonly rackScroll: Atom.Writable<number>
 }
 

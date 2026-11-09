@@ -25,7 +25,7 @@
 /* A mixer strip: a column of controls of one width, `--strip-w`; the rack gives its strips theirs, with their gap. */
 .strip {
   --strip-gap: calc(var(--u) * 2);
-  --name-h: 22px;
+  --name-h: 1.375rem;
 
   display: flex;
   flex-direction: column;
@@ -40,17 +40,17 @@
 }
 
 .strip--master {
-  --strip-w: 92px;
+  --strip-w: 5.75rem;
   /* As far down as the tracks' strips, the rack's room above them. */
   margin-top: var(--rack-room);
-  background: linear-gradient(180deg, #232a34, #1b2027);
+  background: var(--s-raise);
   box-shadow: 0 0 0 1px var(--line);
 }
 
-/* The track chosen: a stripe across its top, in the colour of what is yours alone, as its head has down its left. */
+/* The track chosen: a light stripe across its top, as its head has down its left. */
 .strip[data-chosen="true"] {
   box-shadow:
-    inset 0 2px var(--local),
+    inset 0 0.125rem var(--t-mid),
     0 0 0 1px var(--line);
 }
 
@@ -60,23 +60,23 @@
   align-items: center;
   justify-content: center;
   height: calc(var(--name-h) + var(--strip-gap) + var(--toggle));
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--shared);
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--t-hi);
 }
 
 .strip__name {
   width: 100%;
   height: var(--name-h);
-  padding: 3px 4px;
+  padding: 0.1875rem 0.25rem;
   overflow: hidden;
   border: 0;
   border-radius: var(--r-sm);
   background: none;
   color: inherit;
   font: inherit;
-  font-size: 11px;
-  font-weight: 600;
+  font-size: 0.75rem;
+  font-weight: 500;
   text-align: center;
   white-space: nowrap;
   text-overflow: ellipsis;
@@ -121,7 +121,7 @@
 
 .strip__meters {
   display: flex;
-  gap: 3px;
+  gap: 0.1875rem;
 }
 
 .strip__meter {
@@ -133,9 +133,9 @@
 
 .meter {
   position: relative;
-  width: 9px;
+  width: 0.5625rem;
   flex: 1;
-  border-radius: 2px;
+  border-radius: 0.125rem;
   background: var(--s-sunk);
   box-shadow: inset 0 0 0 1px var(--line-soft);
   overflow: hidden;
@@ -149,17 +149,17 @@
   right: 0;
   bottom: 0;
   height: calc(var(--level) * 100%);
-  background: linear-gradient(to top, var(--signal) 0%, var(--signal) 62%, var(--shared) 84%, var(--clip) 96%);
+  background: linear-gradient(to top, var(--meter-low) 0%, var(--meter-low) 62%, var(--meter-mid) 84%, var(--clip) 96%);
   /* Over the whole meter's height, not the fill's: a quiet signal doesn't turn red. */
   background-size: 100% calc(100% / max(var(--level), 0.01));
   background-position: bottom;
   /* Segments are a mask over one fill: the colour runs on whatever their count. */
-  mask: repeating-linear-gradient(to top, #000 0 3px, transparent 3px 4px);
+  mask: repeating-linear-gradient(to top, #000 0 0.1875rem, transparent 0.1875rem 0.25rem);
 }
 
 .meter-clip {
-  width: 9px;
-  height: 5px;
+  width: 0.5625rem;
+  height: 0.3125rem;
   flex: none;
   padding: 0;
   border: 0;
@@ -170,5 +170,5 @@
 
 .meter-clip[data-lit="true"] {
   background: var(--clip);
-  box-shadow: 0 0 6px color-mix(in srgb, var(--clip) 60%, transparent);
+  box-shadow: 0 0 0.375rem color-mix(in srgb, var(--clip) 60%, transparent);
 }

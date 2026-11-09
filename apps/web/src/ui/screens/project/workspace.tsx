@@ -16,11 +16,11 @@ import { useCore } from '../../core-context'
 import { CentreView } from './centre'
 import { Panel } from './panel'
 
-/** The least the middle and the panel unfolded are high, in pixels. */
-const least = 120
+/** The least the middle and the panel unfolded are high. */
+const least = '7.5rem'
 
-/** How high the panel's title line is, in pixels: all there is of the panel folded. */
-const titleHeight = 28
+/** How high the panel's title line is: all there is of the panel folded. */
+const titleHeight = '1.75rem'
 
 const centre = 'centre'
 
@@ -57,7 +57,7 @@ export const Workspace = () => {
       })
     )
   return (
-    <main class='workspace' style={{ '--panel-title': `${titleHeight}px` }}>
+    <main class='workspace' style={{ '--panel-title': titleHeight }}>
       <Group
         orientation='vertical'
         defaultLayout={{ [centre]: 100 - opened, [below]: opened }}

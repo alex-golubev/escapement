@@ -1,6 +1,6 @@
 import { test as base, expect, type Page } from '@playwright/test'
-import { barWidth, headsWidth, rulerHeight, trackHeight } from '../src/ui/views/arrangement/layout'
-import { keysWidth, rowHeight, rulerHeight as rollRulerHeight, stepWidth } from '../src/ui/views/piano-roll/layout'
+import { layoutOf as arrangementLayoutOf } from '../src/ui/views/arrangement/layout'
+import { layoutOf as rollLayoutOf } from '../src/ui/views/piano-roll/layout'
 
 /** Fails any test the page throws or complains in; checked after a timeout too, so the report says what went wrong. */
 export const test = base.extend<{ complaints: undefined }>({
@@ -17,6 +17,16 @@ export const test = base.extend<{ complaints: undefined }>({
     { auto: true }
   ]
 })
+
+/** The page's rem, in CSS pixels: it grows with the window, and the Arrangement and the roll are laid out by it. */
+export const remOf = (page: Page) =>
+  page.evaluate(() => Number.parseFloat(getComputedStyle(document.documentElement).fontSize))
+
+/** The Arrangement's sizes, as the page lays it out. */
+export const arrangementLayout = async (page: Page) => arrangementLayoutOf(await remOf(page))
+
+/** The piano roll's sizes, as the page lays it out. */
+export const rollLayout = async (page: Page) => rollLayoutOf(await remOf(page))
 
 /** A new project, opened: the Arrangement with + alone in it, the panel under it. */
 export const newProject = async (page: Page) => {
@@ -72,6 +82,7 @@ export const synths = async (page: Page, count: number) => {
 /** Where on the page the Arrangement has the middle of the track's row in the bar, scrolled to the first of both. */
 export const arrangementAt = async (page: Page) => {
   const box = await page.locator('.arrangement').boundingBox()
+  const { headsWidth, barWidth, rulerHeight, trackHeight } = await arrangementLayout(page)
   return (bar: number, place: number) => ({
     x: (box?.x ?? 0) + headsWidth + (bar + 0.5) * barWidth,
     y: (box?.y ?? 0) + rulerHeight + (place + 0.5) * trackHeight
@@ -124,9 +135,10 @@ export const newClip = async (page: Page, bar: number, place: number, track: str
  */
 export const rollAt = async (page: Page) => {
   const box = await page.locator('.roll').boundingBox()
+  const { keysWidth, stepWidth, rowHeight, rulerHeight } = await rollLayout(page)
   const left = box?.x ?? 0
   const top = box?.y ?? 0
-  const middle = top + rollRulerHeight + ((box?.height ?? 0) - rollRulerHeight) / 2
+  const middle = top + rulerHeight + ((box?.height ?? 0) - rulerHeight) / 2
   return (step: number, key: number) => ({
     x: left + keysWidth + (step + 0.5) * stepWidth,
     y: middle - (key - 60) * rowHeight
@@ -142,7 +154,7 @@ export const putNote = async (page: Page, step: number, key = 60) => {
 
 /** What the middle shows turned to by its button on the transport bar: Arrange, Mix or Debug. */
 export const showCentre = async (page: Page, name: string) => {
-  const button = page.locator('.btn--centre', { hasText: name })
+  const button = page.getByRole('button', { name, exact: true })
   await button.click()
   await expect(button).toHaveAttribute('aria-pressed', 'true')
 }
@@ -215,8 +227,9 @@ export const drawnAt = async (page: Page, places: ReadonlyArray<readonly [bar: n
  * Where the Arrangement draws its playhead, in bars from the first bar in sight, a little under the ruler; below 0
  * while it draws none.
  */
-export const playheadAt = (page: Page) =>
-  page.evaluate(
+export const playheadAt = async (page: Page) => {
+  const { headsWidth, barWidth, rulerHeight } = await arrangementLayout(page)
+  return page.evaluate(
     ([heads, bar, ruler]) => {
       const canvas = document.querySelectorAll<HTMLCanvasElement>('.arrangement canvas')[3]
       const scale = canvas.width / canvas.getBoundingClientRect().width
@@ -232,6 +245,7 @@ export const playheadAt = (page: Page) =>
     },
     [headsWidth, barWidth, rulerHeight] as const
   )
+}
 
 /** The Mixer in the middle, for its meters; the panel under it stays as it was. */
 export const listening = async (page: Page) => {

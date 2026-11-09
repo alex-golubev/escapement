@@ -3,12 +3,15 @@ import type { MidiKey } from '@escapement/engine-description'
 import { type ArrangementClip, defaultNote, type Id, type NewNote, patternEnd, startInRound } from '@escapement/model'
 import { Array, Boolean, Data, Equal, Option } from 'effect'
 import type { TargetedPointerEvent, TargetedWheelEvent } from 'preact'
-import { useLayoutEffect, useRef, useState } from 'preact/hooks'
+import { useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks'
 import { useCore } from '../../core-context'
 import { useLayer, usePalette } from '../../kit/canvas'
+import { useFontLoads } from '../../kit/font-loads'
 import { useLatest, usePointerGesture } from '../../kit/gesture'
 import { useLaidOutSize } from '../../kit/laid-out'
 import { type Point, pointOf, turnOf, withCtrl } from '../../kit/pointer'
+import { useRem } from '../../kit/rem'
+import { onPoints } from '../../kit/pixels'
 import { useScreenScale } from '../../kit/screen-scale'
 import { useCanvasPlayhead } from '../../parts/playhead'
 import { drawGrid, drawKeyboard, drawNotes, paletteOf } from './draw'
@@ -19,12 +22,12 @@ import {
   laneOf,
   keyPlayedAt,
   notesAlong,
-  scrolledAcross,
-  scrolledTo,
+  rowsDown,
+  stepsAcross,
   type View,
   xOf
 } from './geometry'
-import { keysWidth, rowHeight, rulerHeight, stepWidth } from './layout'
+import { layoutOf } from './layout'
 import './piano-roll.css'
 
 /** Where in its pattern the clip plays at the arrangement's tick; none outside the clip. */
@@ -101,12 +104,15 @@ const Roll = ({ clip, length }: { readonly clip: ArrangementClip; readonly lengt
   const over = useRef<HTMLCanvasElement>(null)
   const palette = usePalette(box, paletteOf)
   const size = useLaidOutSize(box)
-  // Until scrolled, centred on the notes it opened with for the height it has.
+  // Until scrolled, centred on the notes it opened with for the height it has; in rows, so a page grown shows the same.
   const [opening] = useState(() => registry.get(notesAtom))
   const [scrolled, setScrolled] = useState(Option.none<number>())
-  // Across from the first bar; the playhead takes it along.
+  // Across from the first bar, in steps; the playhead takes it along.
   const [across, setAcross] = useState(0)
   const scale = useScreenScale()
+  const rem = useRem()
+  const fonts = useFontLoads()
+  const layout = useMemo(() => layoutOf(rem), [rem])
   const pointer = useLatest(Option.none<Point>())
   // A drag kept writes where it left the note, one the browser cancelled nothing.
   const gestures = usePointerGesture<Gesture>((now, kept) =>
@@ -124,24 +130,33 @@ const Roll = ({ clip, length }: { readonly clip: ArrangementClip; readonly lengt
   // As the notes drawn would make it: a drag into the next bar shows it in the pattern before it is let go.
   const end = patternEnd(drawing)
   const reach = Option.match(gesture.shown, { onNone: () => end, onSome: ({ reached }) => Math.max(reached, end) })
-  const left = Option.match(size, { onNone: () => across, onSome: ({ width }) => scrolledAcross(width, reach, across) })
+  const steps = Option.match(size, {
+    onNone: () => across,
+    onSome: ({ width }) => stepsAcross(layout, width, reach, across)
+  })
   // Kept where it stands, as a shorter pattern or a wider roll takes it back: a longer pattern later moves no bars.
-  useLayoutEffect(() => setAcross(left), [left, across])
+  useLayoutEffect(() => setAcross(steps), [steps, across])
   const view = Option.map(
     size,
     (laid): View => ({
+      ...layout,
       ...laid,
-      top: scrolledTo(
-        laid.height,
-        Option.getOrElse(scrolled, () => centredOn(opening, laid.height))
+      // On the screen's points, as the Arrangement's.
+      top: onPoints(
+        rowsDown(
+          layout,
+          laid.height,
+          Option.getOrElse(scrolled, () => centredOn(layout, opening, laid.height))
+        ) * layout.rowHeight,
+        scale
       ),
-      left
+      left: onPoints(steps * layout.stepWidth, scale)
     })
   )
   const drawn = Option.all({ view, palette: palette.current })
   const viewKey = Option.match(view, {
     onNone: () => '',
-    onSome: ({ width, height, top, left }) => `${width}:${height}:${top}:${left}:${scale}`
+    onSome: ({ width, height, top, left }) => `${width}:${height}:${top}:${left}:${scale}:${rem}:${fonts}`
   })
   const sound = Option.flatMap(gesture.shown, (now) => Option.map(soundOf(now), (heard) => ({ ...heard, id: now.id })))
   const pressed = Option.map(sound, ({ key }) => key)
@@ -174,11 +189,12 @@ const Roll = ({ clip, length }: { readonly clip: ArrangementClip; readonly lengt
       size: view,
       lane: laneOf(view),
       xOf: (tick: number) => xOf(view, tick),
-      ruler: rulerHeight
+      ruler: view.rulerHeight,
+      mark: view.mark
     })),
     colours: palette.current,
     held: () => Option.isSome(gesture.latest.current),
-    scrollTo: setAcross
+    scrollTo: (left) => setAcross(left / layout.stepWidth)
   })
   /** What a drag writes once let go: a note put, or one moved or stretched, if it was; a press alone writes nothing. */
   const write = ({ grab, place }: Dragging) =>
@@ -285,16 +301,18 @@ const Roll = ({ clip, length }: { readonly clip: ArrangementClip; readonly lengt
       event.preventDefault()
       const turn = turnOf(
         event,
-        { across: stepWidth, down: rowHeight },
-        { across: now.width - keysWidth, down: now.height }
+        { across: now.stepWidth, down: now.rowHeight },
+        { across: now.width - now.keysWidth, down: now.height }
       )
+      const rowsTo = rowsDown(now, now.height, (now.top + turn.down) / now.rowHeight)
+      const stepsTo = stepsAcross(now, now.width, reach, (now.left + turn.across) / now.stepWidth)
       const next = {
         ...now,
-        top: scrolledTo(now.height, now.top + turn.down),
-        left: scrolledAcross(now.width, reach, now.left + turn.across)
+        top: onPoints(rowsTo * now.rowHeight, scale),
+        left: onPoints(stepsTo * now.stepWidth, scale)
       }
-      setScrolled(Option.some(next.top))
-      setAcross(next.left)
+      setScrolled(Option.some(rowsTo))
+      setAcross(stepsTo)
       playhead.scrolled(next.left !== now.left)
       // The note dragged stays under the pointer as the rows and the bars go by, and the key played is the one under it.
       Option.map(gesture.latest.current, (now) => holdUnder(now, next))

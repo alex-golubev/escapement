@@ -17,9 +17,9 @@
   gap: calc(var(--u) * 2);
   /* All there is of the panel folded: the workspace sets it, as high as the library folds the panel. */
   height: var(--panel-title);
-  padding: 0 12px;
+  padding: 0 0.75rem;
   border-bottom: 1px solid var(--line-soft);
-  font-size: 11px;
+  font-size: 0.75rem;
   letter-spacing: 0.06em;
   text-transform: uppercase;
   white-space: nowrap;
@@ -32,8 +32,8 @@
 
 /* At the end of the line: pointing down, it folds the panel; turned up, unfolds it. */
 .panel__fold {
-  min-width: 20px;
-  height: 20px;
+  min-width: 1.25rem;
+  height: 1.25rem;
   margin-left: auto;
   padding: 0;
   border-color: transparent;
@@ -79,5 +79,5 @@
   place-items: center;
   margin: 0;
   color: var(--t-mid);
-  font-size: 11px;
+  font-size: 0.6875rem;
 }

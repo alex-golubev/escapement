@@ -3,9 +3,12 @@ import type { RefObject } from 'preact'
 import { type Inputs, useLayoutEffect, useRef } from 'preact/hooks'
 import type { Size } from './size'
 
-/** The canvas's context, the canvas as big as `size` in the screen's pixels and cleared; none where none draws. */
+/** The canvas's context, the canvas as big as `size` on the page and in the screen's pixels, cleared; none where none draws. */
 export const cleared = (canvas: HTMLCanvasElement, size: Size) =>
   Option.map(Option.fromNullishOr(canvas.getContext('2d')), (g) => {
+    // As big as it is drawn for, in whole pixels, not as its box: a box a fraction of a pixel off would blur it.
+    canvas.style.width = `${size.width}px`
+    canvas.style.height = `${size.height}px`
     const scale = devicePixelRatio
     const width = Math.round(size.width * scale)
     const height = Math.round(size.height * scale)

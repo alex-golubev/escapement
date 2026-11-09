@@ -6,14 +6,18 @@ import type { TargetedMouseEvent, TargetedPointerEvent, TargetedWheelEvent } fro
 import { useLayoutEffect, useMemo, useRef } from 'preact/hooks'
 import { useCore } from '../../core-context'
 import { useLayer, usePalette } from '../../kit/canvas'
+import { useFontLoads } from '../../kit/font-loads'
 import { useLatest, usePointerGesture } from '../../kit/gesture'
 import { useLaidOutSize } from '../../kit/laid-out'
 import { type Point, pointOf, turnOf, withCtrl } from '../../kit/pointer'
+import { useRem } from '../../kit/rem'
+import { onPoints } from '../../kit/pixels'
 import { useScreenScale } from '../../kit/screen-scale'
 import { useCanvasPlayhead } from '../../parts/playhead'
 import { type Cursor, cursorAt, cursorOf, draggedClips, draggedTo, type Edge, Grab, grabAt } from './drag'
 import { drawClips, drawFrame, drawGrid, paletteOf } from './draw'
 import {
+  barsAcross,
   clipAt,
   clipsAlong,
   endOf,
@@ -21,22 +25,21 @@ import {
   laneOf,
   type Shown,
   type Span,
-  scrolledAcross,
-  scrolledTo,
   startAt,
+  tracksDown,
   type View,
   xOf
 } from './geometry'
 import { TrackHeads } from './heads'
-import { barWidth, headsWidth, rulerHeight, trackHeight } from './layout'
+import { type Layout, layoutOf } from './layout'
 import './arrangement.css'
 
 /** The sizes the style sheet lays the heads out by, as the canvases have them. */
-const sizes = {
+const sizesOf = ({ headsWidth, trackHeight, rulerHeight }: Layout) => ({
   '--heads-w': `${headsWidth}px`,
   '--track-h': `${trackHeight}px`,
   '--ruler-h': `${rulerHeight}px`
-}
+})
 
 /**
  * What a pointer does from press to release, in an action of the undo history: erases all it passes over, as one step,
@@ -101,9 +104,13 @@ export const Arrangement = () => {
   const over = useRef<HTMLCanvasElement>(null)
   const palette = usePalette(box, paletteOf)
   const size = useLaidOutSize(box)
+  // In tracks and bars, so the same ones stand in sight at any size of the page.
   const [down, setDown] = useAtom(arrangementScroll.down)
   const [across, setAcross] = useAtom(arrangementScroll.across)
   const scale = useScreenScale()
+  const rem = useRem()
+  const fonts = useFontLoads()
+  const layout = useMemo(() => layoutOf(rem), [rem])
   const pointer = useLatest(Option.none<Point>())
   /** What an edge let go writes: its end's length, or its start, length and offset together. */
   const edgeWrites: Record<Edge, (clip: Shown, span: Span) => boolean> = {
@@ -141,23 +148,27 @@ export const Arrangement = () => {
   })
   const end = endOf(drawing)
   const reach = Option.match(gesture.shown, { onNone: () => end, onSome: ({ reached }) => Math.max(reached, end) })
-  const left = scrolledAcross(reach, across)
+  const bars = barsAcross(reach, across)
   // Kept where it stands, as clips taken away take it back: clips put later move no bars.
-  useLayoutEffect(() => setAcross(left), [left, across])
-  const top = Option.getOrElse(
-    Option.map(size, ({ height }) => scrolledTo(height, tracks, down)),
+  useLayoutEffect(() => setAcross(bars), [bars, across])
+  const rows = Option.getOrElse(
+    Option.map(size, ({ height }) => tracksDown(layout, height, tracks, down)),
     () => down
   )
   // Kept where it stands, as tracks taken away take it back: tracks put later move no rows.
-  useLayoutEffect(() => setDown(top), [top, down])
-  const view = Option.map(size, (laid): View => ({ ...laid, top, left, tracks }))
+  useLayoutEffect(() => setDown(rows), [rows, down])
+  // Scrolled to the screen's points: a trackpad's fractions of a pixel, or a page grown, would blur every line.
+  const top = onPoints(rows * layout.trackHeight, scale)
+  const left = onPoints(bars * layout.barWidth, scale)
+  const view = Option.map(size, (laid): View => ({ ...layout, ...laid, top, left, tracks }))
   const drawn = Option.all({ view, palette: palette.current })
   const viewKey = Option.match(view, {
     onNone: () => '',
-    onSome: ({ width, height, top, left, tracks }) => `${width}:${height}:${top}:${left}:${tracks}:${scale}`
+    onSome: ({ width, height, top, left, tracks }) => `${width}:${height}:${top}:${left}:${tracks}:${scale}:${rem}`
   })
   useLayer(grid, drawn, (g, { view, palette }) => drawGrid(g, view, palette), [viewKey])
-  useLayer(frame, drawn, (g, { view, palette }) => drawFrame(g, view, palette), [viewKey])
+  // The bars' numbers are its only text, drawn again as the font comes.
+  useLayer(frame, drawn, (g, { view, palette }) => drawFrame(g, view, palette), [viewKey, fonts])
   useLayer(clipsLayer, drawn, (g, { view, palette }) => drawClips(g, view, palette, drawing, open), [
     viewKey,
     shown,
@@ -171,11 +182,12 @@ export const Arrangement = () => {
       size: view,
       lane: laneOf(view),
       xOf: (tick: number) => xOf(view, tick),
-      ruler: rulerHeight
+      ruler: view.rulerHeight,
+      mark: view.mark
     })),
     colours: palette.current,
     held: () => Option.isSome(gesture.latest.current),
-    scrollTo: setAcross
+    scrollTo: (left) => setAcross(left / layout.barWidth)
   })
   /** Erases the clips on the way, as the document has them now: a drag can outrun what is drawn. */
   const eraseAlong = (from: Point, to: Point) =>
@@ -264,16 +276,18 @@ export const Arrangement = () => {
       event.preventDefault()
       const turn = turnOf(
         event,
-        { across: barWidth, down: trackHeight },
-        { across: now.width - headsWidth, down: now.height - rulerHeight }
+        { across: now.barWidth, down: now.trackHeight },
+        { across: now.width - now.headsWidth, down: now.height - now.rulerHeight }
       )
+      const rowsTo = tracksDown(now, now.height, now.tracks, (now.top + turn.down) / now.trackHeight)
+      const barsTo = barsAcross(reach, (now.left + turn.across) / now.barWidth)
       const next = {
         ...now,
-        top: scrolledTo(now.height, now.tracks, now.top + turn.down),
-        left: scrolledAcross(reach, now.left + turn.across)
+        top: onPoints(rowsTo * now.trackHeight, scale),
+        left: onPoints(barsTo * now.barWidth, scale)
       }
-      setDown(next.top)
-      setAcross(next.left)
+      setDown(rowsTo)
+      setAcross(barsTo)
       playhead.scrolled(next.left !== now.left)
       // The clip dragged stays under the pointer as the tracks and the bars go by.
       Option.map(gesture.latest.current, (now) => holdUnder(now, next))
@@ -293,7 +307,7 @@ export const Arrangement = () => {
     <div
       ref={box}
       class='arrangement'
-      style={sizes}
+      style={sizesOf(layout)}
       data-hint="The project's tracks and their clips, for everyone: a double click on a track's row puts a new clip there and opens it in the piano roll, a double click on a clip opens it; a drag moves a clip, to another track too, which plays it; a drag of either edge makes it shorter or longer, its notes going round again; a right click erases one, a drag with it all it passes over. Cmd+Z or Ctrl+Z takes it back. The wheel goes through the tracks; Shift and the wheel, or a swipe sideways, through the bars"
       onWheel={onWheel}
     >

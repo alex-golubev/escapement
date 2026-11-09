@@ -59,23 +59,30 @@ import { centresFor, viewStoreFor } from '../src/services/view-store'
 import { type Core, CoreContext } from '../src/ui/core-context'
 import { App } from '../src/ui/screens/project/project'
 import { type View, xOf, yOf } from '../src/ui/views/piano-roll/geometry'
-import { keysWidth, rowHeight, rulerHeight, stepWidth } from '../src/ui/views/piano-roll/layout'
+import { layoutOf } from '../src/ui/views/piano-roll/layout'
 import {
   type View as ArrangementView,
   xOf as arrangementXOf,
   yOf as arrangementYOf
 } from '../src/ui/views/arrangement/geometry'
-import {
-  barWidth,
-  headsWidth,
-  rulerHeight as arrangementRulerHeight,
-  trackHeight
-} from '../src/ui/views/arrangement/layout'
+import { layoutOf as arrangementLayoutOf } from '../src/ui/views/arrangement/layout'
 import { savedIn } from './saved-in'
 import { savedView } from './saved-view'
 
+/** The roll's and the Arrangement's sizes at the rem happy-dom gives, 16 px. */
+const rollLayout = layoutOf(16)
+
+const { keysWidth, rowHeight, rulerHeight, stepWidth } = rollLayout
+
+const arrangementLayout = arrangementLayoutOf(16)
+
+const { barWidth, headsWidth, rulerHeight: arrangementRulerHeight, trackHeight } = arrangementLayout
+
 // The debug panel shows it, and happy-dom has none.
 Object.assign(globalThis, { crossOriginIsolated: false })
+
+// The Arrangement and the roll draw again as fonts load, and happy-dom has no font set: its fonts are all there.
+Object.assign(document, { fonts: Object.assign(new EventTarget(), { ready: Promise.resolve() }) })
 
 /** Another client. */
 const elsewhere = newWriter('elsewhere')
@@ -312,7 +319,7 @@ const pressed = (button: HTMLButtonElement) => button.getAttribute('aria-pressed
 const centreButton = (target: HTMLElement, name: string) =>
   Option.getOrThrow(
     Option.fromNullishOr(
-      Array.from(target.querySelectorAll<HTMLButtonElement>('.btn--centre')).find(
+      Array.from(target.querySelectorAll<HTMLButtonElement>('.btn--chosen')).find(
         (button) => button.textContent === name
       )
     )
@@ -919,10 +926,7 @@ test("pan and volume stand before a track's name in its head, turn its strip and
       expect(head?.querySelector('[role="spinbutton"]')).toBeNull()
       // A new track's volume, 5.2 dB down.
       expect(volume.getAttribute('aria-valuetext')).toBe('−5.2 dB')
-      // Pan fills from the middle, where its zero stands.
       expect(pan.getAttribute('aria-valuetext')).toBe('center')
-      expect((pan as HTMLElement).style.getPropertyValue('--zero')).toBe('0.5')
-      expect((volume as HTMLElement).style.getPropertyValue('--zero')).toBe('0')
       // From -1 to 1 over 200 pixels.
       pointer(pan, 'pointerdown', 100)
       pointer(pan, 'pointermove', 80)
@@ -1263,13 +1267,15 @@ test('the tempo is dragged in whole BPM, steps with the keys and goes back to 12
       const field = Option.getOrThrow(
         Option.fromNullishOr(target.querySelector('[role="spinbutton"][aria-label="Tempo"]'))
       )
+      /** The number the field shows, after its name. */
+      const shown = () => field.querySelector('.field__value')?.textContent
       pointer(field, 'pointerdown', 100)
       pointer(field, 'pointermove', 70)
       yield* drawn()
-      expect(field.textContent).toBe('130')
+      expect(shown()).toBe('130')
       pointer(field, 'pointermove', 40, { shiftKey: true })
       yield* drawn()
-      expect(field.textContent).toBe('131')
+      expect(shown()).toBe('131')
       pointer(field, 'pointerup', 40)
       expect(readProject(doc).value.tempo).toBe(131)
       key(field, 'ArrowDown')
@@ -1538,7 +1544,7 @@ test("the debug panel's level is the louder side's peak in decibels", () =>
 /** The buttons of what the middle shows, by name, and whether each is lit. */
 const centreButtons = (target: HTMLElement) =>
   Array.from(
-    target.querySelectorAll('.btn--centre'),
+    target.querySelectorAll('.btn--chosen'),
     (button) => [button.textContent, button.getAttribute('aria-pressed') === 'true'] as const
   )
 
@@ -2119,7 +2125,7 @@ const rollIn = (target: HTMLElement) =>
       roll.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY: -(10 ** 6), deltaMode: 0 }))
     ).toBe(false)
     yield* drawn()
-    const view: View = { width: 0, height: 0, top: 0, left: 0 }
+    const view: View = { ...rollLayout, width: 0, height: 0, top: 0, left: 0 }
     /** A press, a move or a release in the middle of the key's row at the step, with this button. */
     const at = (
       type: string,
@@ -2598,7 +2604,7 @@ test('a press on a key of the piano roll wakes the sound and plays it while held
         expect(woken.count).toBe(1)
         at('pointerup', -1, 60, { button: 2, buttons: 0 })
         // Right of C#3, the halves of its row are D3's above and C3's below, as drawn.
-        const view: View = { width: 0, height: 0, top: 0, left: 0 }
+        const view: View = { ...rollLayout, width: 0, height: 0, top: 0, left: 0 }
         const beside = (part: number) => ({ x: keysWidth - 4, y: yOf(view, 61) + part * rowHeight })
         atPoint('pointerdown', beside(0.25))
         yield* drawn()
@@ -2942,7 +2948,7 @@ test('no notes are below until a double click on a clip shows its notes there', 
 /** The Arrangement, scrolled to its first track and bar, and presses on it by bar and track's place. */
 const arrangementIn = (target: HTMLElement) => {
   const arrangement = Option.getOrThrow(Option.fromNullishOr(target.querySelector<HTMLElement>('.arrangement__lanes')))
-  const view: ArrangementView = { width: 0, height: 0, top: 0, left: 0, tracks: 0 }
+  const view: ArrangementView = { ...arrangementLayout, width: 0, height: 0, top: 0, left: 0, tracks: 0 }
   /** A press, a move or a release in the middle of the track's row in the bar, with this button. */
   const at = (
     type: string,

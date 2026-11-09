@@ -20,6 +20,7 @@
     "@escapement/engine": "workspace:*",
     "@escapement/engine-description": "workspace:*",
     "@escapement/model": "workspace:*",
+    "@fontsource-variable/jetbrains-mono": "5.3.0",
     "effect": "4.1.1",
     "lib0": "0.2.119",
     "preact": "11.1.0",

@@ -39,13 +39,22 @@ test('a new project opens empty: + under no track in the Arrangement, nothing in
   await expect(arrangement).toBeInViewport({ ratio: 1 })
   expect((await arrangement.boundingBox())?.width).toBeGreaterThan(1200)
   // No Debug in a build for users.
-  await expect(page.locator('.btn--centre')).toHaveText(['Arrange', 'Mix'])
+  await expect(page.locator('.btn--chosen')).toHaveText(['Arrange', 'Mix'])
   const panel = page.getByRole('region', { name: 'Nothing chosen', exact: true })
   await expect(panel).toBeInViewport({ ratio: 1 })
   expect((await panel.boundingBox())?.y).toBeGreaterThan(
     ((await arrangement.boundingBox())?.y ?? 0) + ((await arrangement.boundingBox())?.height ?? 0)
   )
   await expect(panel).toHaveText("Click a track's name to see it here, double-click a clip for its notes")
+  // The transport on one line above, the hint line under, both whole.
+  const transport = page.locator('.transport')
+  await expect(transport).toBeInViewport({ ratio: 1 })
+  const middleOf = async (name: string) => {
+    const box = await page.getByRole('button', { name, exact: true }).boundingBox()
+    return (box?.y ?? 0) + (box?.height ?? 0) / 2
+  }
+  expect(Math.abs((await middleOf('Mix')) - (await middleOf('Play')))).toBeLessThanOrEqual(1)
+  await expect(page.locator('.hint')).toBeInViewport({ ratio: 1 })
 })
 
 test('a track added with + plays the note put in its clip on its synth', async ({ page }) => {

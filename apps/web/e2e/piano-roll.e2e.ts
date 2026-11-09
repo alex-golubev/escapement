@@ -1,5 +1,4 @@
 import { expect, type Page } from '@playwright/test'
-import { keysWidth, stepWidth } from '../src/ui/views/piano-roll/layout'
 import {
   addTrack,
   drawnAt,
@@ -12,6 +11,7 @@ import {
   playheadAt,
   pressPlay,
   rollAt,
+  rollLayout,
   sounds,
   test
 } from './page'
@@ -88,6 +88,7 @@ test('a note dragged in the piano roll moves, its right edge stretches it, each 
   await page.mouse.up()
 
   // By the last pixels of its step, two steps longer.
+  const { stepWidth } = await rollLayout(page)
   const edge = { x: e5.x + stepWidth / 2 - 2, y: e5.y }
   await page.mouse.move(edge.x, edge.y)
   await expect(page.locator('.roll')).toHaveAttribute('data-grab', 'stretch')
@@ -135,6 +136,7 @@ test('a roll two bars wide shows the second past the pattern until a note goes i
   page
 }) => {
   await synthRoll(page)
+  const { keysWidth, stepWidth } = await rollLayout(page)
   // As wide as the page at 1280: more than two bars.
   expect((await page.locator('.roll').boundingBox())?.width).toBeGreaterThan(keysWidth + 2 * barSteps * stepWidth)
   const at = await rollAt(page)
@@ -166,6 +168,7 @@ test('a melody of four bars, put as the roll scrolls across, plays whole, the ro
   await synthRoll(page)
   const at = await rollAt(page)
   const box = await page.locator('.roll').boundingBox()
+  const { keysWidth, stepWidth } = await rollLayout(page)
   const bar = barSteps * stepWidth
   /** The key's row at the start of the bar, the roll scrolled as far as a pattern so many bars long lets it. */
   const atEnd = (bars: number, from: number, key: number) => {

@@ -1,0 +1,8 @@
+// The interface grows with the window by its rem: a size in px would stay put. A 1px line stays one pixel.
+language css
+
+CssRegularDimension() as $size where {
+  $size <: r"(?i)-?[0-9.]+px",
+  not $size <: r"(?i)-?1px",
+  register_diagnostic(span=$size, message="Give sizes in rem, so they grow with the window; px only for a 1px line.", severity="error")
+}

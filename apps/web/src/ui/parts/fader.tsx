@@ -1,12 +1,13 @@
 import { type AnyParam, gainOf, paramPosition } from '@escapement/engine-description'
 import type { HoldTarget } from '@escapement/model'
+import { pixelsOf } from '../kit/pixels'
+import { useRem } from '../kit/rem'
 import { useParamTurn } from './knob'
 import './fader.css'
 
-// Its sizes, which its styles take from here: the cap's travel is the drag from end to end.
-const faderHeight = 168
-const capHeight = 22
-const travelPixels = faderHeight - capHeight
+// Its sizes in rems, which its styles take from here: the cap's travel is the drag from end to end.
+const faderHeight = 10.5
+const capHeight = 1.375
 
 /** Where the scale marks a volume, in decibels; none for silence. */
 const marks: ReadonlyArray<{ readonly decibels: number; readonly text: string }> = [
@@ -59,9 +60,12 @@ export const Fader = ({
   readonly target: HoldTarget
   readonly marks: FaderMarks
 }) => {
-  const { turned, text, hint } = useParamTurn(owner, param, value, target, travelPixels)
+  const rem = useRem()
+  const height = pixelsOf(rem, faderHeight)
+  const cap = pixelsOf(rem, capHeight)
+  const { turned, text, hint } = useParamTurn(owner, param, value, target, height - cap)
   return (
-    <span class='fader-with-scale' style={{ '--fader-h': `${faderHeight}px`, '--cap-h': `${capHeight}px` }}>
+    <span class='fader-with-scale' style={{ '--fader-h': `${height}px`, '--cap-h': `${cap}px` }}>
       <span
         class='fader'
         role='slider'

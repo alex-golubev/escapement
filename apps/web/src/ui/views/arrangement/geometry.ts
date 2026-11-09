@@ -2,13 +2,13 @@ import { barTicks, type Id } from '@escapement/model'
 import { Array, Number, Option, Order } from 'effect'
 import type { Point } from '../../kit/pointer'
 import type { Lane } from '../../parts/follow'
-import { barWidth, headsWidth, rulerHeight, trackHeight } from './layout'
+import type { Layout } from './layout'
 
 /**
- * The arrangement as it stands in sight: its size, how far it is scrolled down from the first track's row, and how
+ * The arrangement as it stands in sight: its sizes, how far it is scrolled down from the first track's row, and how
  * far right from the first tick; and how many tracks it has, a row each from the top.
  */
-export interface View {
+export interface View extends Layout {
   readonly width: number
   readonly height: number
   readonly top: number
@@ -41,32 +41,36 @@ export interface Shown extends Drawn {
 }
 
 /** How wide so many ticks are. */
-export const widthOf = (ticks: number) => (ticks / barTicks) * barWidth
+export const widthOf = ({ barWidth }: Layout, ticks: number) => (ticks / barTicks) * barWidth
 
 /** The arrangement's time across its window, right of the heads, as the playhead goes along it. */
-export const laneOf = (view: View): Lane => ({ left: view.left, width: view.width - headsWidth, xOf: widthOf })
+export const laneOf = (view: View): Lane => ({
+  left: view.left,
+  width: view.width - view.headsWidth,
+  xOf: (ticks) => widthOf(view, ticks)
+})
 
 /** Where the tick is across the arrangement. */
-export const xOf = (view: View, tick: number) => headsWidth + widthOf(tick) - view.left
+export const xOf = (view: View, tick: number) => view.headsWidth + widthOf(view, tick) - view.left
 
 /** Where the track's row starts down the arrangement. */
-export const yOf = (view: View, place: number) => rulerHeight + place * trackHeight - view.top
+export const yOf = (view: View, place: number) => view.rulerHeight + place * view.trackHeight - view.top
 
 /** The tick a column at `x` would be, were there ticks left of the arrangement's. */
-export const tickUnder = (view: View, x: number) => ((x - headsWidth + view.left) / barWidth) * barTicks
+export const tickUnder = (view: View, x: number) => ((x - view.headsWidth + view.left) / view.barWidth) * barTicks
 
 /** The place of the track a row at `y` would be, were there tracks above and below the arrangement's. */
-export const rowAt = (view: View, y: number) => Math.floor((y - rulerHeight + view.top) / trackHeight)
+export const rowAt = (view: View, y: number) => Math.floor((y - view.rulerHeight + view.top) / view.trackHeight)
 
 /**
- * As far as `top` can scroll for an arrangement this high with so many tracks: no further down than the row under the
+ * As far as an arrangement this high with so many tracks scrolls down, in tracks: no further than the row under the
  * last one's, where + adds another.
  */
-export const scrolledTo = (height: number, tracks: number, top: number) =>
-  Number.clamp(top, { minimum: 0, maximum: Math.max((tracks + 1) * trackHeight - (height - rulerHeight), 0) })
+export const tracksDown = ({ trackHeight, rulerHeight }: Layout, height: number, tracks: number, down: number) =>
+  Number.clamp(down, { minimum: 0, maximum: Math.max(tracks + 1 - (height - rulerHeight) / trackHeight, 0) })
 
-/** As far as `left` can scroll: until the end of the last clip, at `end`, stands at the tracks' heads. */
-export const scrolledAcross = (end: number, left: number) => Number.clamp(left, { minimum: 0, maximum: widthOf(end) })
+/** As far as it scrolls across, in bars: until the end of the last clip, at `end`, stands at the tracks' heads. */
+export const barsAcross = (end: number, across: number) => Number.clamp(across, { minimum: 0, maximum: end / barTicks })
 
 /**
  * In the order drawn, the last on top: one that starts later over one before it, and of two that start together the
@@ -90,7 +94,7 @@ export const endOf = (clips: ReadonlyArray<Drawn>) =>
 
 /** Whether the point is on the grid, right of the heads and under the ruler, on a track's row. */
 const onGrid = (view: View, { x, y }: Point) =>
-  x >= headsWidth && y >= rulerHeight && x < view.width && y < view.height && rowAt(view, y) < view.tracks
+  x >= view.headsWidth && y >= view.rulerHeight && x < view.width && y < view.height && rowAt(view, y) < view.tracks
 
 /** Of the clips under the point, the one drawn last, as it is on top; none off the grid, where none is seen. */
 export const clipAt = (clips: ReadonlyArray<Shown>, view: View, point: Point): Option.Option<Shown> =>
@@ -139,10 +143,13 @@ export const wholesFrom = (first: number, last: number): ReadonlyArray<number> =
 /** The places of the tracks whose rows are at least partly in sight, first to last. */
 export const tracksInSight = (view: View): ReadonlyArray<number> =>
   wholesFrom(
-    Math.max(Math.floor(view.top / trackHeight), 0),
-    Math.min(Math.ceil((view.top + view.height - rulerHeight) / trackHeight), view.tracks) - 1
+    Math.max(Math.floor(view.top / view.trackHeight), 0),
+    Math.min(Math.ceil((view.top + view.height - view.rulerHeight) / view.trackHeight), view.tracks) - 1
   )
 
 /** The bars at least partly in sight, by number from 0. */
 export const barsInSight = (view: View): ReadonlyArray<number> =>
-  wholesFrom(Math.floor(view.left / barWidth), Math.floor((view.left + view.width - headsWidth) / barWidth))
+  wholesFrom(
+    Math.floor(view.left / view.barWidth),
+    Math.floor((view.left + view.width - view.headsWidth) / view.barWidth)
+  )

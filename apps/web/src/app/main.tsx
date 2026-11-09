@@ -1,4 +1,5 @@
-// First, so a component's own rules come after the language's.
+// First, so a component's own rules come after the language's; the font before the language that names it.
+import '@fontsource-variable/jetbrains-mono'
 import './theme.css'
 import { RegistryContext } from '@effect/atom-react'
 import { IndexedDb } from '@effect/platform-browser'

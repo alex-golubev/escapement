@@ -92,7 +92,7 @@ const notes: View = {
   centre: 'arrangement',
   below: Option.some({ _tag: 'Notes', clip: Id('clip') }),
   panel: { share: 62.5, folded: true },
-  scroll: { arrangement: { down: 96, across: 240 }, rack: 300 }
+  scroll: { arrangement: { down: 1.5, across: 3.75 }, rack: 3.75 }
 }
 
 it.effect('a view is written as it is asked to be, the latest last, and read again as the page opens', () =>
@@ -105,11 +105,11 @@ it.effect('a view is written as it is asked to be, the latest last, and read aga
     yield* Effect.yieldNow
     expect(yield* kept(store)).toEqual(
       Option.some({
-        version: 3,
+        version: 4,
         centre: 'arrangement',
         below: { _tag: 'Notes', clip: 'clip' },
         panel: { share: 62.5, folded: true },
-        scroll: { arrangement: { down: 96, across: 240 }, rack: 300 }
+        scroll: { arrangement: { down: 1.5, across: 3.75 }, rack: 3.75 }
       })
     )
     expect((yield* viewStoreOf(store, project, () => true)).saved).toEqual(Option.some(notes))
@@ -129,7 +129,8 @@ it.effect('a store that never answers holds the page five seconds, and then the 
 
 it.effect.each([
   ['of another version, as the windows were', { version: 1, layout: '{}' }],
-  ['of the version before, with no height or scroll', { version: 2, centre: 'arrangement', below: null }],
+  ['with no height or scroll, as version 2 was', { version: 2, centre: 'arrangement', below: null }],
+  ['of the version before, scrolled in pixels', savedView({ version: 3 })],
   ['with what the middle has not', savedView({ centre: 'track' })],
   ['with a track of no ID', savedView({ below: { _tag: 'Track', track: '' } })],
   ['with a shown of no kind', savedView({ below: { track: 'kick' } })],

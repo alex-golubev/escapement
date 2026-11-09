@@ -3,47 +3,48 @@ import { barTicks, defaultNote, type NewNote, type Note, stepTicks } from '@esca
 import { Array, Boolean, Number, Option } from 'effect'
 import type { Point } from '../../kit/pointer'
 import type { Lane } from '../../parts/follow'
-import { blackKeyWidth, keysWidth, rowHeight, rulerHeight, stepWidth } from './layout'
+import type { Layout } from './layout'
 
 const keyCount = highestKey - lowestKey + 1
 
 /**
- * The roll as it stands in sight: its size, how far it is scrolled down from the highest key's row, and how far
+ * The roll as it stands in sight: its sizes, how far it is scrolled down from the highest key's row, and how far
  * right from the first tick.
  */
-export interface View {
+export interface View extends Layout {
   readonly width: number
   readonly height: number
   readonly top: number
   readonly left: number
 }
 
-/** As far as `top` can scroll for a roll this high: no further down than the lowest key's row. */
-export const scrolledTo = (height: number, top: number) =>
-  Math.min(Math.max(top, 0), Math.max(keyCount * rowHeight - (height - rulerHeight), 0))
+/** As far as a roll this high scrolls down, in rows from the highest key's: no further than the lowest key's. */
+export const rowsDown = ({ rowHeight, rulerHeight }: Layout, height: number, down: number) =>
+  Math.min(Math.max(down, 0), Math.max(keyCount - (height - rulerHeight) / rowHeight, 0))
 
 /** How wide so many ticks are on the grid. */
-export const widthOf = (ticks: number) => (ticks / stepTicks) * stepWidth
+export const widthOf = ({ stepWidth }: Layout, ticks: number) => (ticks / stepTicks) * stepWidth
 
-/** As far as `left` can scroll for a roll this wide: no further right than the end of the bar after the pattern's `end`. */
-export const scrolledAcross = (width: number, end: number, left: number) =>
-  Math.min(Math.max(left, 0), Math.max(keysWidth + widthOf(end + barTicks) - width, 0))
+/** As far as a roll this wide scrolls across, in steps: no further than the end of the bar after the pattern's `end`. */
+export const stepsAcross = ({ keysWidth, stepWidth }: Layout, width: number, end: number, across: number) =>
+  Math.min(Math.max(across, 0), Math.max((end + barTicks) / stepTicks - (width - keysWidth) / stepWidth, 0))
 
 /** Where the key's row starts down the roll. */
-export const yOf = (view: View, key: number) => rulerHeight + (highestKey - key) * rowHeight - view.top
+export const yOf = (view: View, key: number) => view.rulerHeight + (highestKey - key) * view.rowHeight - view.top
 
 /** Where the tick is along the roll. */
-export const xOf = (view: View, tick: number) => keysWidth + widthOf(tick) - view.left
+export const xOf = (view: View, tick: number) => view.keysWidth + widthOf(view, tick) - view.left
 
 /** The key a row at `y` would be, were there keys above and below the roll's. */
-export const rowAt = (view: View, y: number) => highestKey - Math.floor((y - rulerHeight + view.top) / rowHeight)
+export const rowAt = (view: View, y: number) =>
+  highestKey - Math.floor((y - view.rulerHeight + view.top) / view.rowHeight)
 
 /** The tick a column at `x` would be, were there ticks left of the roll's. */
-export const tickUnder = (view: View, x: number) => ((x - keysWidth + view.left) / stepWidth) * stepTicks
+export const tickUnder = (view: View, x: number) => ((x - view.keysWidth + view.left) / view.stepWidth) * stepTicks
 
 /** The key whose row is at `y`; none over the ruler. */
 export const keyAt = (view: View, y: number): Option.Option<MidiKey> =>
-  Option.liftPredicate(y, (y) => y >= rulerHeight).pipe(
+  Option.liftPredicate(y, (y) => y >= view.rulerHeight).pipe(
     Option.map((y) => rowAt(view, y)),
     Option.filter((key) => key >= lowestKey && key <= highestKey),
     Option.map(MidiKey)
@@ -54,16 +55,16 @@ export const isBlack = (key: number) => [1, 3, 6, 8, 10].includes(key % 12)
 
 /** The key drawn at the point in the key's row: right of a black key, the white one above or below it, by its half. */
 const drawnKeyAt = (view: View, { x, y }: Point, key: MidiKey): MidiKey =>
-  Boolean.match(isBlack(key) && x >= blackKeyWidth, {
+  Boolean.match(isBlack(key) && x >= view.blackKeyWidth, {
     onTrue: () =>
-      MidiKey(key + Boolean.match(y < yOf(view, key) + rowHeight / 2, { onTrue: () => 1, onFalse: () => -1 })),
+      MidiKey(key + Boolean.match(y < yOf(view, key) + view.rowHeight / 2, { onTrue: () => 1, onFalse: () => -1 })),
     onFalse: () => key
   })
 
 /** The key drawn on the keyboard at the point; none right of it or over the ruler. */
 export const keyboardKeyAt = (view: View, point: Point): Option.Option<MidiKey> =>
   Option.flatMap(
-    Option.liftPredicate(point, ({ x }) => x < keysWidth),
+    Option.liftPredicate(point, ({ x }) => x < view.keysWidth),
     (point) => Option.map(keyAt(view, point.y), (key) => drawnKeyAt(view, point, key))
   )
 
@@ -79,13 +80,13 @@ export const keyPlayedAt = (view: View, point: Point): MidiKey => {
       maximum: Option.getOrElse(Array.head(keys), () => highestKey)
     })
   )
-  return Boolean.match(point.x < keysWidth, { onTrue: () => drawnKeyAt(view, point, row), onFalse: () => row })
+  return Boolean.match(point.x < view.keysWidth, { onTrue: () => drawnKeyAt(view, point, row), onFalse: () => row })
 }
 
 /** The tick at `x`; none over the keyboard. */
 export const tickAt = (view: View, x: number): Option.Option<number> =>
   Option.map(
-    Option.liftPredicate(x, (x) => x >= keysWidth),
+    Option.liftPredicate(x, (x) => x >= view.keysWidth),
     (x) => tickUnder(view, x)
   )
 
@@ -127,8 +128,8 @@ export const notesAlong = (notes: ReadonlyArray<Note>, view: View, from: Point, 
   )
 }
 
-/** Scrolled so the notes stand in the middle of a roll this high, or middle C without them. */
-export const centredOn = (notes: ReadonlyArray<Note>, height: number) => {
+/** Scrolled down so the notes stand in the middle of a roll this high, or middle C without them; in rows. */
+export const centredOn = (layout: Layout, notes: ReadonlyArray<Note>, height: number) => {
   const middle = Array.match(
     notes.map(({ key }) => key),
     {
@@ -136,15 +137,19 @@ export const centredOn = (notes: ReadonlyArray<Note>, height: number) => {
       onNonEmpty: (keys) => (Math.min(...keys) + Math.max(...keys)) / 2
     }
   )
-  return scrolledTo(height, (highestKey - middle + 0.5) * rowHeight - (height - rulerHeight) / 2)
+  return rowsDown(layout, height, highestKey - middle + 0.5 - (height - layout.rulerHeight) / 2 / layout.rowHeight)
 }
 
 /** The keys whose rows are at least partly in sight, highest first. */
 export const keysInSight = (view: View): ReadonlyArray<number> => {
-  const first = highestKey - Math.floor(view.top / rowHeight)
-  const last = highestKey - (Math.ceil((view.top + view.height - rulerHeight) / rowHeight) - 1)
+  const first = highestKey - Math.floor(view.top / view.rowHeight)
+  const last = highestKey - (Math.ceil((view.top + view.height - view.rulerHeight) / view.rowHeight) - 1)
   return Array.range(Math.max(last, lowestKey), Math.min(first, highestKey)).toReversed()
 }
 
 /** The grid as the pattern's time across the roll: right of the keyboard, to the roll's right edge. */
-export const laneOf = (view: View): Lane => ({ left: view.left, width: view.width - keysWidth, xOf: widthOf })
+export const laneOf = (view: View): Lane => ({
+  left: view.left,
+  width: view.width - view.keysWidth,
+  xOf: (ticks) => widthOf(view, ticks)
+})

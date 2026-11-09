@@ -36,7 +36,7 @@ const ChoiceButton = ({
   return (
     <button
       type='button'
-      class='toggle toggle--shared choice'
+      class='toggle choice'
       role='radio'
       aria-checked={chosen}
       aria-label={choice.label}

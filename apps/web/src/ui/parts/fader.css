@@ -2,14 +2,14 @@
 .fader-with-scale {
   display: flex;
   align-items: flex-start;
-  gap: 2px;
+  gap: 0.125rem;
 }
 
 /* `--v` is the position, from 0 at the bottom to 1 at the top. */
 .fader {
   --v: 0;
   position: relative;
-  width: 30px;
+  width: 1.875rem;
   height: var(--fader-h);
   flex: none;
   cursor: ns-resize;
@@ -23,13 +23,13 @@
 
 .fader__track {
   position: absolute;
-  left: calc(50% - 3px);
+  left: calc(50% - 0.1875rem);
   top: 0;
   bottom: 0;
-  width: 6px;
-  border-radius: 3px;
+  width: 0.375rem;
+  border-radius: 0.1875rem;
   background: var(--s-sunk);
-  box-shadow: inset 0 1px 2px rgb(0 0 0 / 0.6);
+  box-shadow: inset 0 1px 0.125rem rgb(0 0 0 / 0.6);
 }
 
 /* What the cap's middle passes over, not the whole height: at either end the cap would stick out past the track. */
@@ -43,11 +43,11 @@
 
 .fader__fill {
   position: absolute;
-  left: calc(50% - 2px);
-  width: 4px;
+  left: calc(50% - 0.125rem);
+  width: 0.25rem;
   bottom: 0;
   height: calc(var(--v) * 100%);
-  border-radius: 2px;
+  border-radius: 0.125rem;
   background: var(--value);
 }
 
@@ -58,39 +58,39 @@
   bottom: calc(var(--v) * 100%);
   height: var(--cap-h);
   transform: translateY(50%);
-  border-radius: var(--r-sm);
-  background: linear-gradient(180deg, #39414d, #232a33);
-  border: 1px solid #10141a;
-  box-shadow: 0 2px 4px rgb(0 0 0 / 0.55);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: linear-gradient(180deg, #2a2f3a, #15181f);
+  box-shadow:
+    0 1px 0.1875rem rgb(0 0 0 / 0.6),
+    inset 0 1px 0 rgb(255 255 255 / 0.08);
 }
 
-/* A notch in the cap's middle, for the eye to set it by. */
+/* A mark across the cap's middle, light as a knob's, for the eye to set it by. */
 .fader__cap::after {
   content: "";
   position: absolute;
-  left: 4px;
-  right: 4px;
-  top: calc(50% - 1px);
-  height: 2px;
-  border-radius: 1px;
-  background: #0d1116;
-  box-shadow: 0 1px 0 rgb(255 255 255 / 0.06);
+  left: 0.25rem;
+  right: 0.25rem;
+  top: calc(50% - 0.0625rem);
+  height: 0.125rem;
+  background: var(--t-hi);
 }
 
 .fader:hover .fader__cap {
-  background: linear-gradient(180deg, #424b58, #29313b);
+  border-color: var(--t-lo);
 }
 
 .fader-scale {
   position: relative;
-  width: 22px;
+  width: 1.375rem;
   height: var(--fader-h);
   flex: none;
 }
 
 /* Bare, the marks alone. */
 .fader-scale[data-numbered="false"] {
-  width: 3px;
+  width: 0.1875rem;
 }
 
 .fader-scale__inner {
@@ -109,8 +109,8 @@
   transform: translateY(50%);
   display: flex;
   align-items: center;
-  gap: 2px;
-  font-size: 8px;
+  gap: 0.125rem;
+  font-size: 0.5625rem;
   line-height: 1;
   color: var(--t-lo);
   white-space: nowrap;
@@ -118,7 +118,7 @@
 
 .fader-scale__tick::before {
   content: "";
-  width: 3px;
+  width: 0.1875rem;
   height: 1px;
   background: var(--line);
 }
