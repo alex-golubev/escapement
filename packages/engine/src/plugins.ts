@@ -10,7 +10,6 @@ import {
   type StripValues,
   strip
 } from '@escapement/engine-description'
-import { Option } from 'effect'
 import { Command } from './commands'
 import { DeviceEdit } from './device-edits'
 import type { NodeHandle } from './handles'
@@ -65,11 +64,8 @@ export const createNode = <P extends Plugin>(
     strip: stripValues(stripped)
   })
 
-export const createInsert = (
-  node: NodeHandle,
-  stripped: StripValues = defaultStrip,
-  meter: Option.Option<number> = Option.none()
-) => DeviceEdit.CreateInsert({ node, strip: stripValues(stripped), meter })
+export const createInsert = (node: NodeHandle, stripped: StripValues = defaultStrip, metered = false) =>
+  DeviceEdit.CreateInsert({ node, strip: stripValues(stripped), metered })
 
 export const setParam = <P extends Plugin>(plugin: P, node: NodeHandle, id: ParamId<P>, value: number) =>
   Command.SetParam({ node, param: paramNumber(plugin, id), value })

@@ -8,12 +8,10 @@ export type HoldTarget = Data.TaggedEnum<{
   TrackParam: { readonly track: Id; readonly param: ParamId<Plugin> }
   /** A parameter of the track's strip: its volume or pan. */
   TrackStrip: { readonly track: Id; readonly param: StripParamId }
-  /** A parameter of a plugin on the master insert. */
+  /** A parameter of a plugin on the master. */
   SlotParam: { readonly slot: Id; readonly param: ParamId<Plugin> }
-  /** A parameter of an insert's strip, the master's too: its volume or pan. */
-  InsertStrip: { readonly insert: Id; readonly param: StripParamId }
-  /** The insert the track goes into, by its number: 0 the master. */
-  TrackInsert: { readonly track: Id }
+  /** A parameter of the master's strip: its volume or pan. */
+  MasterStrip: { readonly param: StripParamId }
   Tempo: {}
 }>
 
@@ -60,8 +58,7 @@ const heldTarget = Schema.TaggedUnion({
   TrackParam: { track: storedId, param },
   TrackStrip: { track: storedId, param: stripParam },
   SlotParam: { slot: storedId, param },
-  InsertStrip: { insert: storedId, param: stripParam },
-  TrackInsert: { track: storedId },
+  MasterStrip: { param: stripParam },
   Tempo: {}
 })
 const hold = Schema.decodeUnknownOption(Schema.Struct({ target: heldTarget, value: Schema.Finite }))
@@ -71,8 +68,7 @@ const targetOf = (target: typeof heldTarget.Type): HoldTarget =>
     TrackParam: ({ track, param }) => HoldTarget.TrackParam({ track, param }),
     TrackStrip: ({ track, param }) => HoldTarget.TrackStrip({ track, param }),
     SlotParam: ({ slot, param }) => HoldTarget.SlotParam({ slot, param }),
-    InsertStrip: ({ insert, param }) => HoldTarget.InsertStrip({ insert, param }),
-    TrackInsert: ({ track }) => HoldTarget.TrackInsert({ track }),
+    MasterStrip: ({ param }) => HoldTarget.MasterStrip({ param }),
     Tempo: () => HoldTarget.Tempo()
   })
 

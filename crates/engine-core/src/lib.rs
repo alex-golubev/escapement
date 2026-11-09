@@ -31,7 +31,7 @@ use handoff::{Arrival, AudioEnd, Edit, Parcel};
 use notes::page_note;
 use schema::Rejection;
 use sequencer::{Arrangement, Held, Patterns, Sequencer};
-use telemetry::{BlockMeter, MeterOvers, Telemetry};
+use telemetry::{BlockMeter, Telemetry};
 use transport::Transport;
 
 pub use engine_plugins::{BLOCK_FRAMES, CHANNELS};
@@ -58,7 +58,6 @@ pub fn new(sample_rate: f32) -> (Builder, Engine) {
         events: EventOutput::default(),
         output: [[0.0; BLOCK_FRAMES]; CHANNELS],
         meter: BlockMeter::new(sample_rate),
-        meter_overs: MeterOvers::default(),
         telemetry: Telemetry::default(),
     };
     (Builder::new(sample_rate, build), engine)
@@ -80,7 +79,6 @@ pub struct Engine {
     output: [[f32; BLOCK_FRAMES]; CHANNELS],
     /// The output's.
     meter: BlockMeter,
-    meter_overs: MeterOvers,
     telemetry: Telemetry,
 }
 
@@ -141,9 +139,7 @@ impl Engine {
         telemetry.peaks = self.meter.levels();
         self.meter.count_overs(&mut telemetry.overs);
         telemetry.meters_used = 0;
-        let meter_overs = &mut self.meter_overs;
-        self.graph
-            .each_meter(|node| meter_overs.report(node, telemetry));
+        self.graph.each_meter(|meter| meter.report(telemetry));
     }
 
     pub fn telemetry(&self) -> &Telemetry {
@@ -345,7 +341,6 @@ mod tests {
     use crate::schema::{AfterBatch, CommandKind};
     use crate::sequencer::NOTE_BUDGET;
     use crate::strip::{PAN_NUMBER, VOLUME_NUMBER};
-    use crate::telemetry::METERS;
     use crate::testing::{BAR, FRAMES_PER_TICK, SAMPLE_RATE};
     use crate::transport::TICKS_PER_QUARTER;
 
@@ -630,15 +625,15 @@ mod tests {
     }
 
     #[test]
-    fn an_insert_s_meter_measures_what_it_passes_on_under_its_number() {
-        const LEFT: u32 = 3;
+    fn an_insert_s_meter_measures_what_it_passes_on_under_its_node_s_handle() {
+        const LEFT: u32 = 1 << 16 | 3;
         const HALF: u32 = 4;
         const UNMETERED: u32 = 5;
         let mut rig = Rig::empty();
         rig.send(
             &[
-                Spec::MeteredInsert(LEFT, &[(PAN_NUMBER, -1.0)], 7),
-                Spec::MeteredInsert(HALF, &[(VOLUME_NUMBER, 0.5)], 2),
+                Spec::MeteredInsert(LEFT, &[(PAN_NUMBER, -1.0)]),
+                Spec::MeteredInsert(HALF, &[(VOLUME_NUMBER, 0.5)]),
                 Spec::CreateInsert(UNMETERED, &[]),
                 tone_node(TONE, &[]),
                 connect(TONE, LEFT),
@@ -652,11 +647,11 @@ mod tests {
         let alone = at_volume(DEFAULT_VOLUME);
         let telemetry = rig.engine.telemetry();
         let mut records = telemetry.meters[..telemetry.meters_used as usize].to_vec();
-        records.sort_by_key(|record| record.meter);
+        records.sort_by_key(|record| record.node);
         let [half, left] = records[..] else {
             panic!("records {records:?}")
         };
-        assert_eq!((half.meter, left.meter), (2, 7));
+        assert_eq!((half.node, left.node), (HALF, LEFT));
         // After the strip: half as loud, or all on the left, louder there as the pan keeps the power.
         assert!(
             half.peaks
@@ -671,58 +666,8 @@ mod tests {
         rig.engine.process(BLOCK_FRAMES);
         let telemetry = rig.engine.telemetry();
         assert_eq!(telemetry.meters_used, 1);
-        assert_eq!(telemetry.meters[0].meter, 2);
+        assert_eq!(telemetry.meters[0].node, HALF);
         assert_eq!(events(&mut rig.engine), []);
-    }
-
-    #[test]
-    fn a_meter_numbered_past_the_meters_makes_no_insert() {
-        let mut rig = Rig::empty();
-        let last = METERS as u32;
-        rig.send(
-            &[
-                Spec::MeteredInsert(3, &[], 0),
-                Spec::MeteredInsert(4, &[], last + 1),
-                Spec::MeteredInsert(5, &[], last),
-            ],
-            &[],
-        );
-        rig.engine.process(BLOCK_FRAMES);
-        assert_eq!(
-            events(&mut rig.engine),
-            [
-                edit_rejected(0, 1, Rejection::InvalidValue),
-                edit_rejected(0, 1, Rejection::InvalidValue),
-            ]
-        );
-        let telemetry = rig.engine.telemetry();
-        assert_eq!(telemetry.meters_used, 1);
-        assert_eq!(telemetry.meters[0].meter, last);
-    }
-
-    #[test]
-    fn no_two_live_nodes_have_one_meter() {
-        let mut rig = Rig::empty();
-        rig.send(
-            &[
-                Spec::MeteredInsert(3, &[], 4),
-                Spec::MeteredInsert(5, &[], 4),
-            ],
-            &[],
-        );
-        rig.engine.process(BLOCK_FRAMES);
-        assert_eq!(
-            events(&mut rig.engine),
-            [edit_rejected(0, 1, Rejection::MeterTaken)]
-        );
-        // Gone, it leaves its number free, as a reset leaves every one.
-        rig.send(&[Spec::DestroyNode(3), Spec::MeteredInsert(5, &[], 4)], &[]);
-        rig.send(&[Spec::Reset(2), Spec::MeteredInsert(6, &[], 4)], &[]);
-        rig.engine.process(BLOCK_FRAMES);
-        assert_eq!(events(&mut rig.engine), []);
-        let telemetry = rig.engine.telemetry();
-        assert_eq!(telemetry.meters_used, 1);
-        assert_eq!(telemetry.meters[0].meter, 4);
     }
 
     #[test]

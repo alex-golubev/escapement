@@ -3,7 +3,7 @@
 
 mod record;
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashSet};
 use std::mem;
 
 use flatbuffers::Vector;
@@ -18,7 +18,6 @@ use crate::notes::note_velocity;
 use crate::pool::SamplePool;
 use crate::schema::{self, DeviceEdit, Rejection};
 use crate::sequencer::{Arrangement, Clip, Note, Pattern, Patterns};
-use crate::telemetry::NodeMeter;
 use record::{Record, Removal};
 
 /// A new engine's tables of cells and of places for removed nodes, and of patterns; they double as needed.
@@ -77,8 +76,6 @@ pub struct Builder {
     handoff: BuildEnd,
     record: Record,
     heard: Heard,
-    /// The meter's number of each live node that has one: no two have one number.
-    meters: HashMap<NodeHandle, u32>,
     /// Not part of a session: a reset leaves it.
     samples: SamplePool,
 }
@@ -105,7 +102,6 @@ impl Builder {
             handoff,
             record: Record::new(FIRST_CELLS, FIRST_PLACES),
             heard: Heard::new(),
-            meters: HashMap::new(),
             samples: SamplePool::new(sample_rate),
         }
     }
@@ -251,21 +247,8 @@ impl Builder {
             }
             DeviceEdit::CreateInsert => {
                 let create = edit.edit_as_create_insert().ok_or(Rejection::Malformed)?;
-                let meter = create
-                    .meter()
-                    .map(|number| {
-                        NodeMeter::new(number, self.sample_rate).ok_or(Rejection::InvalidValue)
-                    })
-                    .transpose()?;
-                let number = meter.as_ref().map(NodeMeter::number);
-                if number.is_some_and(|number| self.meters.values().any(|&taken| taken == number)) {
-                    return Err(Rejection::MeterTaken);
-                }
                 let handle = self.free_handle(create.node())?;
-                if let Some(number) = number {
-                    self.meters.insert(handle, number);
-                }
-                let mut node = Node::insert(self.sample_rate, handle, meter);
+                let mut node = Node::insert(self.sample_rate, handle, create.metered());
                 let refused = set_each(create.strip(), |param, value| {
                     node.set_strip_param(param, value)
                 });
@@ -432,7 +415,6 @@ impl Builder {
         handle: NodeHandle,
     ) -> Result<(), Rejection> {
         let Removal { cell, place } = self.record.remove(handle, batch)?;
-        self.meters.remove(&handle);
         let heard = &mut self.heard;
         heard.unchecked |= heard
             .patterns
@@ -504,8 +486,8 @@ pub(crate) mod tests {
         SetClips(&'a [Placed]),
         /// The node and its strip's initial values.
         CreateInsert(u32, &'a [(u32, f32)]),
-        /// The node, its strip's initial values and its meter's number.
-        MeteredInsert(u32, &'a [(u32, f32)], u32),
+        /// The node and its strip's initial values, with a meter.
+        MeteredInsert(u32, &'a [(u32, f32)]),
         Disconnect {
             from: u32,
             to: u32,
@@ -659,19 +641,19 @@ pub(crate) mod tests {
                     &CreateInsertArgs {
                         node,
                         strip,
-                        meter: None,
+                        metered: false,
                     },
                 );
                 (DeviceEdit::CreateInsert, create.as_union_value())
             }
-            Spec::MeteredInsert(node, strip, meter) => {
+            Spec::MeteredInsert(node, strip) => {
                 let strip = Some(param_values(fbb, strip));
                 let create = CreateInsert::create(
                     fbb,
                     &CreateInsertArgs {
                         node,
                         strip,
-                        meter: Some(meter),
+                        metered: true,
                     },
                 );
                 (DeviceEdit::CreateInsert, create.as_union_value())

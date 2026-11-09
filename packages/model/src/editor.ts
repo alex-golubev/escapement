@@ -18,12 +18,10 @@ import {
   type NewNote,
   renameTrack,
   resizeClip,
-  setInsertMute,
-  setInsertStrip,
   setMasterParam,
+  setMasterStrip,
   setMute,
   setTempo,
-  setTrackInsert,
   setTrackParam,
   setTrackStrip,
   stretchNote,
@@ -45,9 +43,7 @@ export interface Editor {
   readonly setTrackParam: (track: Id, param: ParamId<Plugin>, value: number) => boolean
   readonly setTrackStrip: (track: Id, param: StripParamId, value: number) => boolean
   readonly setMasterParam: (slot: Id, param: ParamId<Plugin>, value: number) => boolean
-  readonly setTrackInsert: (track: Id, insert: Id) => boolean
-  readonly setInsertStrip: (insert: Id, param: StripParamId, value: number) => boolean
-  readonly setInsertMute: (insert: Id, mute: boolean) => boolean
+  readonly setMasterStrip: (param: StripParamId, value: number) => boolean
   readonly setTempo: (bpm: number) => boolean
   /** The new track's ID, a synth's unless another instrument is given; none if the document holds no project. */
   readonly addTrack: (instrument?: NewInstrument) => Option.Option<Id>
@@ -123,9 +119,7 @@ export const editorOf = Effect.fnUntraced(function* (doc: Y.Doc, by: Writer) {
     setTrackParam: step(setTrackParam),
     setTrackStrip: step(setTrackStrip),
     setMasterParam: step(setMasterParam),
-    setTrackInsert: step(setTrackInsert),
-    setInsertStrip: step(setInsertStrip),
-    setInsertMute: step(setInsertMute),
+    setMasterStrip: step(setMasterStrip),
     setTempo: step(setTempo),
     addTrack: step(addTrack),
     renameTrack: step(renameTrack),

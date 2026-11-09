@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { RegistryContext } from '@effect/atom-react'
-import { EngineStartError, ProcessorError, type Telemetry } from '@escapement/engine'
+import { EngineStartError, NodeHandle, ProcessorError, type Telemetry } from '@escapement/engine'
 import { MidiKey, type ParamId, paramPosition, paramValue, plugins, Sha256, Tick } from '@escapement/engine-description'
 import {
   addClip,
@@ -133,6 +133,8 @@ interface Page {
   readonly button: (label: string) => HTMLButtonElement
   /** The components drawn while the page opened. */
   readonly opened: ReadonlyArray<string>
+  /** Sets an atom the page reads, as the engine would. */
+  readonly set: <A>(atom: Atom.Writable<A>, value: A) => void
 }
 
 /** Past Preact's render and the frames due by then: a timer, after the immediates happy-dom runs frames on. */
@@ -289,6 +291,7 @@ const page = (
           return { nodes: [...nodes], components: drawnComponents.list }
         }).pipe(Effect.scoped),
       opened,
+      set: (atom, value) => registry.set(atom, value),
       button: (label) =>
         Option.getOrThrowWith(
           Option.fromNullishOr(target.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`)),
@@ -581,8 +584,9 @@ test('M writes the mute and fades the head; S solos for this client only and wri
       expect(pressed(button('Kick: mute'))).toBe(true)
       expect(unheard('Kick')).toBe(true)
       expect(updates.count).toBe(1)
+      // Its own buttons draw it, not the head, nor the other track's buttons.
       const { components } = yield* changed(() => button('Snare: solo').click())
-      expect(components).toContain('TrackHead')
+      expect(components).toEqual(['TrackToggles'])
       expect(pressed(button('Snare: solo'))).toBe(true)
       expect(unheard('Kick')).toBe(true)
       expect(updates.count).toBe(1)
@@ -776,7 +780,7 @@ test('a knob pressed while another tab turns it goes from where it plays at the 
       expect(kickAt(doc)).toBeCloseTo(0.62, 9)
       elsewhere(holding(noHolds, volume, 999))
       yield* drawn()
-      expect(knob.getAttribute('aria-valuenow')).toBe('1')
+      expect(knob.getAttribute('aria-valuenow')).toBe(String(trackVolume.max))
       elsewhere(holding(noHolds, volume, -5))
       yield* drawn()
       expect(knob.getAttribute('aria-valuenow')).toBe('0')
@@ -792,7 +796,7 @@ test('a drag past the end turns back at once, and a second pointer on the knob i
       pointer(knob, 'pointermove', 0)
       pointer(knob, 'pointermove', 500, { pointerId: 2 })
       yield* drawn()
-      expect(knob.getAttribute('aria-valuenow')).toBe('1')
+      expect(knob.getAttribute('aria-valuenow')).toBe(String(trackVolume.max))
       pointer(knob, 'pointermove', 20)
       yield* drawn()
       expect(knobAt(knob)).toBeCloseTo(0.9, 9)
@@ -893,7 +897,7 @@ test('keys turn a knob, a key held down as one turn written once, and a double c
       expect(kickAt(doc)).toBeCloseTo(0.73, 9)
       key(knob, 'End')
       keyUp(knob)
-      expect(kickVolume(doc)).toBe(1)
+      expect(kickVolume(doc)).toBe(trackVolume.max)
       key(knob, 'Home')
       keyUp(knob)
       expect(kickVolume(doc)).toBe(0)
@@ -958,188 +962,267 @@ test("pan and volume stand before a track's name in its head, turn its strip and
     })
   ))
 
-/** The mixer strip the Kick goes into. */
-const kickInsert = (doc: Y.Doc) => readProject(doc).value.tracks[0].insert
+/** A strip of the mixer and the gap after it, across. */
+const rackStep = 80
 
-test("a track's mixer strip, below, is dragged, typed and kept with Enter or a click elsewhere, the master on a double click", () =>
-  page(({ doc, grid, target }) =>
-    Effect.gen(function* () {
-      nameButton(grid, 'Kick').click()
-      yield* drawn(50)
-      const field = Option.getOrThrow(
-        Option.fromNullishOr(target.querySelector<HTMLElement>('[role="spinbutton"][aria-label="Kick: mixer strip"]'))
-      )
-      expect(field.textContent).toBe('—')
-      expect(field.getAttribute('aria-valuetext')).toBe('the master')
-      // 4 pixels a strip: held while dragged, written once let go.
-      pointer(field, 'pointerdown', 100)
-      pointer(field, 'pointermove', 92)
-      yield* drawn()
-      expect(field.textContent).toBe('2')
-      expect(kickInsert(doc)).toBe('master')
-      pointer(field, 'pointerup', 92)
-      yield* drawn()
-      expect(kickInsert(doc)).toBe('2')
-      expect(field.getAttribute('aria-valuetext')).toBe('strip 2')
-      key(field, '1')
-      key(field, '2')
-      yield* drawn()
-      expect(field.textContent).toBe('12')
-      expect(field.dataset.typing).toBe('true')
-      expect(kickInsert(doc)).toBe('2')
-      key(field, 'Enter')
-      yield* drawn()
-      expect(kickInsert(doc)).toBe('12')
-      expect(field.dataset.typing).toBe('false')
-      // Esc leaves it as it was; a number past the last strip is refused, a digit too many with it, not cut off.
-      key(field, '9')
-      key(field, 'Escape')
-      yield* drawn()
-      expect(field.textContent).toBe('12')
-      ;['7', '7', '7', 'Enter'].forEach((typed) => key(field, typed))
-      ;['1', '2', '3', '4', '5'].forEach((typed) => key(field, typed))
-      yield* drawn()
-      expect(field.textContent).toBe('1234')
-      key(field, 'Enter')
-      yield* drawn()
-      expect(kickInsert(doc)).toBe('12')
-      // While a number is typed, the arrows don't turn it and Cmd+Z undoes nothing; a shortcut with a digit isn't typed.
-      key(field, '5')
-      // Drawn, as between two keys a person presses.
-      yield* drawn()
-      key(field, 'ArrowUp')
-      press(field, { key: 'z', metaKey: true })
-      press(field, { key: '1', metaKey: true })
-      yield* drawn()
-      expect(field.textContent).toBe('5')
-      expect(field.getAttribute('aria-valuetext')).toBe('typing 5')
-      expect(kickInsert(doc)).toBe('12')
-      key(field, 'Escape')
-      key(field, '3')
-      key(field, 'Backspace')
-      key(field, '4')
-      field.dispatchEvent(new FocusEvent('focusout', { bubbles: true }))
-      yield* drawn()
-      expect(kickInsert(doc)).toBe('4')
-      field.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))
-      yield* drawn()
-      expect(kickInsert(doc)).toBe('master')
-      press(document.body, { key: 'z', metaKey: true })
-      yield* drawn()
-      expect(kickInsert(doc)).toBe('4')
-      press(document.body, { key: 'z', metaKey: true })
-      press(document.body, { key: 'z', metaKey: true })
-      press(document.body, { key: 'z', metaKey: true })
-      yield* drawn()
-      expect(kickInsert(doc)).toBe('master')
-    })
-  ))
+/** A strip of the mixer by its output's name, as its meters' lamps have it: `Kick output`, `Master output`. */
+const stripOf = (target: HTMLElement, output: string) =>
+  Option.getOrThrow(
+    Option.fromNullishOr(target.querySelector(`button[aria-label="${output}: clip, left"]`)?.closest('.strip'))
+  )
 
-/** The insert of this number as the document has it; at its defaults if the document holds nothing of it. */
-const insertIn = (doc: Y.Doc, id: string) =>
-  Option.fromUndefinedOr(readProject(doc).value.inserts.find((insert) => insert.id === id))
-
-test("the mixer's strips: a fader turns an insert's volume, M mutes it, and the master's fader turns its own", () =>
+test("the mixer has a strip for each track, in their order, then the master's: a strip's fader is its track's volume, M and S are its head's, and its name shows it below", () =>
   page(({ doc, target }) =>
     Effect.gen(function* () {
       yield* pressCentre(target, 'Mix')
-      const fader = (label: string) =>
-        Option.getOrThrow(Option.fromNullishOr(target.querySelector(`[role="slider"][aria-label="${label}"]`)))
-      const first = fader('Strip 1: volume')
-      expect(first.getAttribute('aria-valuetext')).toBe('0.0 dB')
-      // Its travel, 146 pixels, from end to end.
-      pointer(first, 'pointerdown', 200)
-      pointer(first, 'pointermove', 346)
+      const control = (strip: Element, label: string) =>
+        Option.getOrThrow(Option.fromNullishOr(strip.querySelector<HTMLElement>(`[aria-label="${label}"]`)))
+      expect(Array.from(target.querySelectorAll('.mixer .strip'), (strip) => strip.textContent?.slice(0, 5))).toEqual([
+        'KickM',
+        'Snare',
+        'Maste'
+      ])
+      const kick = stripOf(target, 'Kick output')
+      const fader = control(kick, 'Kick: volume')
+      expect(fader.getAttribute('aria-valuetext')).toBe('−5.2 dB')
+      key(fader, 'End')
+      keyUp(fader)
       yield* drawn()
-      expect(first.getAttribute('aria-valuetext')).toBe('−∞ dB')
-      expect(insertIn(doc, '1')).toEqual(Option.none())
-      pointer(first, 'pointerup', 346)
+      expect(kickVolume(doc)).toBe(trackVolume.max)
+      expect(fader.getAttribute('aria-valuetext')).toBe('+5.6 dB')
+      // Shown below, with the volume the fader turned.
+      kick.querySelector<HTMLButtonElement>('.strip__name')?.click()
       yield* drawn()
-      expect(Option.map(insertIn(doc, '1'), ({ strip }) => strip.volume)).toEqual(Option.some(0))
-      const mute = Option.getOrThrow(
-        Option.fromNullishOr(target.querySelector<HTMLButtonElement>('button[aria-label="Strip 1: mute"]'))
-      )
-      mute.click()
+      expect(below(target)).toBe('Kick|Track')
+      expect(kick.getAttribute('data-chosen')).toBe('true')
+      const panel = Option.getOrThrow(Option.fromNullishOr(target.querySelector<HTMLElement>('.panel')))
+      expect(control(panel, 'Volume').getAttribute('aria-valuetext')).toBe('+5.6 dB')
+      control(kick, 'Kick: mute').click()
       yield* drawn()
-      expect(Option.map(insertIn(doc, '1'), ({ mute }) => mute)).toEqual(Option.some(true))
-      expect(mute.closest('.strip')?.getAttribute('data-muted')).toBe('true')
-      mute.click()
+      expect(readProject(doc).value.tracks[0].mute).toBe(true)
+      expect(kick.getAttribute('data-unheard')).toBe('true')
+      control(kick, 'Kick: mute').click()
+      control(stripOf(target, 'Snare output'), 'Snare: solo').click()
       yield* drawn()
-      expect(Option.map(insertIn(doc, '1'), ({ mute }) => mute)).toEqual(Option.some(false))
-      const master = fader('Master: volume')
+      expect(readProject(doc).value.tracks[0].mute).toBe(false)
+      expect(kick.getAttribute('data-unheard')).toBe('true')
+      expect(stripOf(target, 'Snare output').getAttribute('data-unheard')).toBe('false')
+      const master = control(stripOf(target, 'Master output'), 'Master: volume')
       key(master, 'End')
       keyUp(master)
       yield* drawn()
       expect(master.getAttribute('aria-valuetext')).toBe('+5.6 dB')
-      expect(readProject(doc).value.master.strip.volume).toBeCloseTo(1.905, 3)
+      expect(readProject(doc).value.master.strip.volume).toBe(trackVolume.max)
+      // A track gone takes its strip with it.
+      deleteTrack(doc, elsewhere, readProject(doc).value.tracks[0].id)
+      yield* drawn()
+      expect(target.querySelector('button[aria-label="Kick output: clip, left"]')).toBeNull()
     })
   ))
 
-test("a strip's meters draw its record on the board, found by its number; its lamp latches, out of sight too", () =>
-  page(({ target, frame }) =>
+test("a strip's S draws its own buttons and the strips it changes the hearing of, no other", () =>
+  page(({ target, button, changed }) =>
     Effect.gen(function* () {
       yield* pressCentre(target, 'Mix')
-      /** The strip's meters, by the lamp over the left one. */
-      const stripOf = (output: string) =>
-        Option.getOrThrow(
-          Option.fromNullishOr(target.querySelector(`button[aria-label="${output}: clip, left"]`)?.closest('.strip'))
-        )
+      // The Snare goes unheard, its strip drawn anew; the Kick's, heard before and after, only its buttons.
+      const { components } = yield* changed(() => button('Kick: solo').click())
+      const snareStrip = ['TrackStrip', 'TrackToggles', 'StripControls', 'Knob', 'Dial', 'Fader', 'M', 'Scale']
+      expect([...components].sort()).toEqual([...snareStrip, 'Meter', 'Meter', 'TrackToggles'].sort())
+      expect(stripOf(target, 'Snare output').getAttribute('data-unheard')).toBe('true')
+    })
+  ))
+
+test("tracks of one name have their heads and strips named apart, by their places; the master's strip is the master's", () =>
+  page(({ doc, target }) =>
+    Effect.gen(function* () {
+      const [, snare] = readProject(doc).value.tracks.map(({ id }) => id)
+      renameTrack(doc, elsewhere, snare, 'Master')
+      yield* drawn()
+      const groups = (within: string) =>
+        Array.from(target.querySelectorAll(`${within} [role="group"]`), (group) => group.getAttribute('aria-label'))
+      expect(groups('.track-heads')).toEqual(['Track 1: Kick', 'Track 2: Master'])
+      renameTrack(doc, elsewhere, snare, 'Kick')
+      yield* pressCentre(target, 'Mix')
+      expect(groups('.mixer')).toEqual(['Track 1: Kick', 'Track 2: Kick', 'Master'])
+    })
+  ))
+
+test("the focus in a head going with its track goes to the next one's name, the last one's to +", () =>
+  page(({ doc, button }) =>
+    Effect.gen(function* () {
+      const [kick, snare] = readProject(doc).value.tracks.map(({ id }) => id)
+      button('Kick: mute').focus()
+      deleteTrack(doc, elsewhere, kick)
+      yield* drawn()
+      expect(document.activeElement?.className).toBe('track-head__name')
+      expect(document.activeElement?.textContent).toBe('Snare')
+      button('Snare: solo').focus()
+      deleteTrack(doc, elsewhere, snare)
+      yield* drawn()
+      expect(document.activeElement?.classList.contains('track-add')).toBe(true)
+    })
+  ))
+
+test("the focus in a strip going with its track goes to the next one's name, the last one's to the master", () =>
+  page(({ doc, target, button }) =>
+    Effect.gen(function* () {
+      yield* pressCentre(target, 'Mix')
+      const [kick, snare] = readProject(doc).value.tracks.map(({ id }) => id)
+      Option.getOrThrow(
+        Option.fromNullishOr(target.querySelector<HTMLElement>('[role="slider"][aria-label="Kick: volume"]'))
+      ).focus()
+      deleteTrack(doc, elsewhere, kick)
+      yield* drawn()
+      expect(document.activeElement?.className).toBe('strip__name')
+      expect(document.activeElement?.textContent).toBe('Snare')
+      button('Snare: mute').focus()
+      deleteTrack(doc, elsewhere, snare)
+      yield* drawn()
+      expect(document.activeElement?.getAttribute('aria-label')).toBe('Pan')
+      expect(document.activeElement?.closest('.strip--master')).not.toBeNull()
+    })
+  ))
+
+test("a track's strip draws the meter of its fader, found by the node's handle; a lamp latches and stays its track's, and a node made anew lights it only for what it counted", () =>
+  page(({ doc, target, frame }) =>
+    Effect.gen(function* () {
+      yield* pressCentre(target, 'Mix')
+      const [kick, snare] = readProject(doc).value.tracks.map(({ id }) => id)
       const levels = (output: string) =>
-        Array.from(stripOf(output).querySelectorAll<HTMLElement>('.meter__fill'), (fill) =>
+        Array.from(stripOf(target, output).querySelectorAll<HTMLElement>('.meter__fill'), (fill) =>
           fill.style.getPropertyValue('--level')
         )
       const lit = (output: string) =>
-        Array.from(stripOf(output).querySelectorAll('.meter-clip'), (lamp) => lamp.getAttribute('data-lit'))
+        Array.from(stripOf(target, output).querySelectorAll('.meter-clip'), (lamp) => lamp.getAttribute('data-lit'))
       const putOut = (output: string) =>
-        Array.from(stripOf(output).querySelectorAll<HTMLButtonElement>('.meter-clip'), (lamp) => lamp.click())
+        Array.from(stripOf(target, output).querySelectorAll<HTMLButtonElement>('.meter-clip'), (lamp) => lamp.click())
+      const owners = {
+        current: new Map([
+          [NodeHandle(2), kick],
+          [NodeHandle(4), snare]
+        ])
+      }
       const seen = (telemetry: Telemetry | undefined) =>
         Effect.sync(() => {
-          frame.current = { engine: 1, telemetry, heard: undefined, stats: undefined }
+          frame.current = { engine: 1, telemetry, meters: owners.current, heard: undefined, stats: undefined }
         }).pipe(Effect.andThen(drawn(50)))
       const shown = (meters: Telemetry['meters']) => seen(boardWith([0, 0], [0, 0], meters))
-      const two = (overs: readonly [number, number], peaks: readonly [number, number] = [0.1, 0.5]) => ({
-        meter: 2,
+      const reading = (
+        node: number,
+        overs: readonly [number, number],
+        peaks: readonly [number, number] = [0.1, 0.5]
+      ) => ({
+        node: NodeHandle(node),
         peaks,
         overs
       })
-      const one = { meter: 1, peaks: [1, 1], overs: [0, 0] } as const
-      const rack = Option.getOrThrow(Option.fromNullishOr(target.querySelector<HTMLElement>('.rack')))
-      const scrolledTo = (left: number) =>
-        Effect.sync(() => {
-          rack.scrollLeft = left
-          rack.dispatchEvent(new Event('scroll'))
-        }).pipe(Effect.andThen(drawn()))
-      yield* shown([two([0, 4])])
-      expect(levels('Strip 2 output')).toEqual(['0.667', '0.900'])
-      expect(levels('Strip 1 output')).toEqual(['0.000', '0.000'])
+      yield* shown([reading(4, [0, 4])])
+      expect(levels('Snare output')).toEqual(['0.667', '0.900'])
+      expect(levels('Kick output')).toEqual(['0.000', '0.000'])
       expect(levels('Master output')).toEqual(['0.000', '0.000'])
-      // Second on the board now: still its own.
-      yield* shown([one, two([0, 5], [0, 0.5])])
-      expect(levels('Strip 2 output')).toEqual(['0.000', '0.900'])
-      expect(levels('Strip 1 output')).toEqual(['1.000', '1.000'])
-      expect(lit('Strip 2 output')).toEqual([null, 'true'])
-      expect(lit('Strip 1 output')).toEqual([null, null])
-      putOut('Strip 2 output')
+      // Second on the board now: still its own. A node the compiler names no one's shows nowhere.
+      yield* shown([reading(2, [0, 0], [1, 1]), reading(4, [0, 5], [0, 0.5]), reading(9, [3, 3], [1, 1])])
+      expect(levels('Snare output')).toEqual(['0.000', '0.900'])
+      expect(levels('Kick output')).toEqual(['1.000', '1.000'])
+      expect(lit('Snare output')).toEqual([null, 'true'])
+      expect(lit('Kick output')).toEqual([null, null])
+      putOut('Snare output')
       yield* drawn()
-      expect(lit('Strip 2 output')).toEqual([null, null])
+      expect(lit('Snare output')).toEqual([null, null])
       // A board that couldn't be read leaves the meters as they were, and the count as it was seen.
       yield* seen(undefined)
-      expect(levels('Strip 2 output')).toEqual(['0.000', '0.900'])
-      yield* shown([two([0, 6])])
-      expect(lit('Strip 2 output')).toEqual([null, 'true'])
-      // Out of sight, its lamp stays lit, and lights on a count that moves meanwhile.
-      putOut('Strip 2 output')
-      yield* scrolledTo(80 * 20)
-      expect(target.querySelector('button[aria-label="Strip 2 output: clip, left"]')).toBeNull()
-      yield* shown([two([7, 6])])
-      yield* scrolledTo(0)
-      expect(lit('Strip 2 output')).toEqual(['true', null])
-      // Off the board, as a muted strip's, it shows nothing.
+      expect(levels('Snare output')).toEqual(['0.000', '0.900'])
+      yield* shown([reading(4, [0, 6])])
+      expect(lit('Snare output')).toEqual([null, 'true'])
+      // The Snare's fader made anew counts from 0 again: no news.
+      putOut('Snare output')
+      owners.current = new Map([
+        [NodeHandle(2), kick],
+        [NodeHandle((1 << 16) | 4), snare]
+      ])
+      yield* shown([reading((1 << 16) | 4, [0, 0])])
+      expect(lit('Snare output')).toEqual([null, null])
+      // One made anew that went over before the page first saw it: news all the same.
+      owners.current = new Map([
+        [NodeHandle(2), kick],
+        [NodeHandle((2 << 16) | 4), snare]
+      ])
+      yield* shown([reading((2 << 16) | 4, [1, 0])])
+      expect(lit('Snare output')).toEqual(['true', null])
+      putOut('Snare output')
+      owners.current = new Map([
+        [NodeHandle(2), kick],
+        [NodeHandle((1 << 16) | 4), snare]
+      ])
+      // The Kick's lamp lit, the Kick goes: the Snare's stays out.
+      yield* shown([reading(2, [1, 0]), reading((1 << 16) | 4, [0, 0])])
+      yield* shown([reading(2, [2, 0]), reading((1 << 16) | 4, [0, 0])])
+      expect(lit('Kick output')).toEqual(['true', null])
+      deleteTrack(doc, elsewhere, kick)
+      owners.current = new Map([[NodeHandle((1 << 16) | 4), snare]])
+      yield* shown([reading((1 << 16) | 4, [0, 0])])
+      expect(lit('Snare output')).toEqual([null, null])
+      // Off the board, it shows nothing.
       yield* shown([])
-      expect(levels('Strip 2 output')).toEqual(['0.000', '0.000'])
-      expect(lit('Strip 2 output')).toEqual(['true', null])
+      expect(levels('Snare output')).toEqual(['0.000', '0.000'])
     })
   ))
+
+test('the rack draws only the strips in sight and one more each side, the focus going with a strip scrolled out; one scrolled back shows the lamp that latched meanwhile, frames or none', () => {
+  const doc = manyTracksDoc(30)
+  const engine = Atom.make<EngineState>(EngineState.Ready())
+  return page(
+    ({ target, frame, button, set }) =>
+      Effect.gen(function* () {
+        yield* pressCentre(target, 'Mix')
+        const kick = readProject(doc).value.tracks[0].id
+        const rack = Option.getOrThrow(Option.fromNullishOr(target.querySelector<HTMLElement>('.rack')))
+        const names = () => Array.from(rack.querySelectorAll('.strip__name'), (name) => name.textContent)
+        const scrolledTo = (left: number) =>
+          Effect.sync(() => {
+            rack.scrollLeft = left
+            rack.dispatchEvent(new Event('scroll'))
+          }).pipe(Effect.andThen(drawn(50)))
+        const shown = (peaks: readonly [number, number], overs: readonly [number, number]) =>
+          Effect.sync(() => {
+            frame.current = {
+              engine: 1,
+              telemetry: boardWith([0, 0], [0, 0], [{ node: NodeHandle(2), peaks, overs }]),
+              meters: new Map([[NodeHandle(2), kick]]),
+              heard: undefined,
+              stats: undefined
+            }
+          }).pipe(Effect.andThen(drawn(50)))
+        const kickMeters = () => ({
+          levels: Array.from(stripOf(target, 'Kick output').querySelectorAll<HTMLElement>('.meter__fill'), (fill) =>
+            fill.style.getPropertyValue('--level')
+          ),
+          lit: Array.from(stripOf(target, 'Kick output').querySelectorAll('.meter-clip'), (lamp) =>
+            lamp.getAttribute('data-lit')
+          )
+        })
+        yield* shown([0.1, 0.5], [0, 0])
+        // Half a strip in, five across: the first six in sight, the seventh beside them.
+        yield* scrolledTo(rackStep / 2)
+        expect(names()).toEqual(['Kick', 'Snare', 'Synth', 'Synth 2', 'Synth 3', 'Synth 4', 'Synth 5'])
+        // Twenty strips on: the 21st to the 26th in sight, the 20th and the 27th beside them; the focus goes with Kick's.
+        button('Kick: mute').focus()
+        yield* scrolledTo(20 * rackStep + rackStep / 2)
+        expect(document.activeElement).toBe(document.body)
+        expect(names()).toEqual(Array.from({ length: 8 }, (_, i) => `Synth ${18 + i}`))
+        expect(target.querySelector('button[aria-label="Kick output: clip, left"]')).toBeNull()
+        yield* shown([1, 1], [0, 3])
+        // The engine stops answering: no frame comes, and nothing draws the meters but the strip itself.
+        set(engine, EngineState.Hung({ error: new AudioThreadHung({ message: 'Silent' }) }))
+        yield* drawn(50)
+        yield* scrolledTo(0)
+        expect(kickMeters()).toEqual({ levels: ['', ''], lit: [null, 'true'] })
+      }),
+    { state: engine },
+    {},
+    { doc }
+  )
+})
 
 test("the master's fader has its scale's numbers, the strips' the marks alone", () =>
   page(({ target }) =>
@@ -1149,41 +1232,23 @@ test("the master's fader has its scale's numbers, the strips' the marks alone", 
         master: scale.closest('.strip--master') !== null,
         text: scale.textContent
       }))
-      expect(scales[0]).toEqual({ master: true, text: '+50−5−10−20−30−∞' })
-      expect(scales.slice(1).every(({ master, text }) => !master && text === '')).toBe(true)
-      expect(scales.length).toBeGreaterThan(2)
-    })
-  ))
-
-test('the mixer draws the strips in sight as its rack scrolls', () =>
-  page(({ target }) =>
-    Effect.gen(function* () {
-      yield* pressCentre(target, 'Mix')
-      const numbers = () =>
-        Array.from(target.querySelectorAll('.rack .strip__index'), (index) => Number(index.textContent))
-      const rack = Option.getOrThrow(Option.fromNullishOr(target.querySelector<HTMLElement>('.rack')))
-      expect(numbers()[0]).toBe(1)
-      rack.scrollLeft = 80 * 20
-      rack.dispatchEvent(new Event('scroll'))
-      yield* drawn()
-      expect(numbers()[0]).toBe(20)
-      expect(numbers()).not.toContain(1)
+      expect(scales.at(-1)).toEqual({ master: true, text: '+50−5−10−20−30−∞' })
+      expect(scales.slice(0, -1)).toEqual(drums.map(() => ({ master: false, text: '' })))
     })
   ))
 
 test("the Arrangement and the mixer's rack stay where they were scrolled as the middle shows the other and back", () => {
-  const doc = manyTracksDoc(4)
+  // Strips enough to scroll 1600 pixels across.
+  const doc = manyTracksDoc(30)
   addClip(doc, elsewhere, { track: readProject(doc).value.tracks[3].id, tick: Tick(23 * barTicks) })
   return page(
     ({ target }) =>
       Effect.gen(function* () {
-        const numbers = () =>
-          Array.from(target.querySelectorAll('.rack .strip__index'), (index) => Number(index.textContent))
         const rack = () => Option.getOrThrow(Option.fromNullishOr(target.querySelector<HTMLElement>('.rack')))
         arrangementIn(target).wheel({ deltaX: 10 * barWidth, deltaMode: 0 })
         yield* drawn()
         yield* pressCentre(target, 'Mix')
-        rack().scrollLeft = 80 * 20
+        rack().scrollLeft = 20 * rackStep
         rack().dispatchEvent(new Event('scroll'))
         yield* drawn()
         yield* pressCentre(target, 'Arrange')
@@ -1191,7 +1256,8 @@ test("the Arrangement and the mixer's rack stay where they were scrolled as the 
         yield* drawn()
         expect(clipsOf(doc).find((clip) => clip.track === trackAt(doc, 0))?.bar).toBe(10)
         yield* pressCentre(target, 'Mix')
-        expect([numbers()[0], rack().scrollLeft]).toEqual([20, 80 * 20])
+        expect(rack().scrollLeft).toBe(20 * rackStep)
+        expect(rack().querySelector('.strip__name')?.textContent).toBe(trackAt(doc, 19))
       }),
     {},
     {},
@@ -1420,7 +1486,13 @@ const boardShown = (
   overs: readonly [number, number]
 ) =>
   Effect.sync(() => {
-    frame.current = { engine, telemetry: boardWith(peaks, overs), heard: undefined, stats: undefined }
+    frame.current = {
+      engine,
+      telemetry: boardWith(peaks, overs),
+      meters: new Map(),
+      heard: undefined,
+      stats: undefined
+    }
   }).pipe(Effect.andThen(drawn(50)))
 
 test("the meters draw the master's peaks in decibels, and a lamp lights when its side's count of overs moves, until it is clicked", () =>
@@ -2025,18 +2097,21 @@ const arrangementSize = {
   clientWidth: headsWidth + 8 * barWidth,
   clientHeight: arrangementRulerHeight + 10 * trackHeight
 }
-Object.entries(rollSize).forEach(([name, size]) => {
+// The mixer's rack, five strips across.
+const rackSize = { clientWidth: 5 * rackStep, clientHeight: 400 }
+const laidOut = [
+  ['roll', rollSize],
+  ['arrangement', arrangementSize],
+  ['rack', rackSize]
+] as const
+Object.keys(rollSize).forEach((name) => {
   const laid = Object.getOwnPropertyDescriptor(Element.prototype, name)
   Object.defineProperty(HTMLElement.prototype, name, {
     configurable: true,
     get(this: HTMLElement) {
-      return Boolean.match(this.classList.contains('roll'), {
-        onTrue: () => size,
-        onFalse: () =>
-          Boolean.match(this.classList.contains('arrangement'), {
-            onTrue: () => arrangementSize[name as keyof typeof arrangementSize],
-            onFalse: () => laid?.get?.call(this) ?? 0
-          })
+      return Option.match(Option.fromUndefinedOr(laidOut.find(([box]) => this.classList.contains(box))), {
+        onNone: () => laid?.get?.call(this) ?? 0,
+        onSome: ([, size]) => size[name as keyof typeof size]
       })
     }
   })
@@ -2305,6 +2380,7 @@ const heardAt = (frame: { current: Frame | undefined }, bars: Option.Option<numb
   frame.current = {
     engine: 1,
     telemetry: undefined,
+    meters: new Map(),
     heard: Option.getOrUndefined(Option.map(bars, (bars) => ({ tick: bars * barTicks, loop: 16 * barTicks }))),
     stats: undefined
   }
@@ -3373,6 +3449,7 @@ test('the Arrangement gone on to the playhead shows it in the frame it goes in, 
         frame.current = {
           engine: 1,
           telemetry: undefined,
+          meters: new Map(),
           heard: { tick: 17.25 * barTicks, loop: 16 * barTicks },
           stats: undefined
         }

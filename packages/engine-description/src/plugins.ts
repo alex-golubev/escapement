@@ -81,13 +81,16 @@ export interface AnyParam extends Knob {
 }
 
 /** As a multiplier of the sound: 0 dB leaves it as it is. */
-const gainOf = (decibels: number) => 10 ** (decibels / 20)
+export const gainOf = (decibels: number) => 10 ** (decibels / 20)
 
-/** Where a new track's volume knob stands: this far up, 5.2 dB below the top, with room to go louder. */
+/** A new track's volume: 5.2 dB down, so that several sound together with room to spare. */
+export const newTrackVolume = gainOf(-5.2)
+
+/** On a volume knob from silence to 0 dB, how far up a new track's volume stands. */
 export const newTrackPosition = 0.78
 
-/** So a volume knob is 5.2 dB down where a new track's stands, and silent at the bottom. */
-const volumeExponent = Math.log(gainOf(-5.2)) / Math.log(newTrackPosition)
+/** So a volume knob up to 0 dB is at a new track's volume where `newTrackPosition` says, and silent at the bottom. */
+const volumeExponent = Math.log(newTrackVolume) / Math.log(newTrackPosition)
 
 /** So half way up a time knob is a sixteenth of its range: from 0 to 10 s, 0.625 s. */
 const timeExponent = 4

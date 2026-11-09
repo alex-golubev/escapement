@@ -17,15 +17,12 @@ import {
   noAuditions,
   newListening,
   type Auditions,
-  insertOfNumber,
   readProject,
   resizeClip,
-  setInsertMute,
-  setInsertStrip,
   setMasterParam,
+  setMasterStrip,
   setMute,
   setTempo,
-  setTrackInsert,
   setTrackParam,
   setTrackStrip,
   barTicks,
@@ -67,8 +64,6 @@ const synthShapes = plugins.synth.params.filter(({ choices }) => choices !== nul
 const synthKnobs = plugins.synth.params.filter(({ choices }) => choices === null)
 const oscillator = between(0, synthShapes.length - 1)
 const synthKnob = between(0, synthKnobs.length - 1)
-/** An insert by its number, 0 the master: a few, so tracks share some. */
-const insert = between(0, 3)
 
 /**
  * What other clients and this one may do to a project, some of it with nothing in the page that does it yet, how this
@@ -100,11 +95,8 @@ const DocumentEdit = Schema.Union([
   }),
   Schema.TaggedStruct('DeleteClip', { clip: which, remove: Schema.Boolean }),
   Schema.TaggedStruct('SetMute', { track: which, mute: Schema.Boolean }),
-  Schema.TaggedStruct('SetInsert', { track: which, insert }),
-  Schema.TaggedStruct('SetInsertStrip', { insert, param: stripParam, position: tenths }),
-  Schema.TaggedStruct('SetInsertMute', { insert, mute: Schema.Boolean }),
-  Schema.TaggedStruct('HoldInsert', { track: which, insert }),
-  Schema.TaggedStruct('HoldInsertStrip', { insert, param: stripParam, position: tenths }),
+  Schema.TaggedStruct('SetMasterStrip', { param: stripParam, position: tenths }),
+  Schema.TaggedStruct('HoldMasterStrip', { param: stripParam, position: tenths }),
   Schema.TaggedStruct('ToggleSolo', { track: which }),
   Schema.TaggedStruct('HoldShape', { track: which, oscillator, shape }),
   Schema.TaggedStruct('HoldSynthKnob', { track: which, knob: synthKnob, position: tenths }),
@@ -189,7 +181,7 @@ const newDocument = () => {
     notesOf(doc, 'p1').set('n1', noteOf(0))
     notesOf(doc, 'p1').set('n2', noteOf(2))
     notesOf(doc, 'p2').set('n3', noteOf(5))
-    doc.getMap('mixer/master').set('slots', mapOf({ s1: slotOf(50, 10) }))
+    doc.getMap('master').set('slots', mapOf({ s1: slotOf(50, 10) }))
   })
   const made = { count: 2 }
   const nextId = (prefix: string) => {
@@ -203,7 +195,7 @@ const newDocument = () => {
 const mapIn = (map: Y.Map<unknown>, ...keys: ReadonlyArray<string>) =>
   keys.reduce((inner, key) => inner.get(key) as Y.Map<unknown>, map)
 
-const slots = (doc: Y.Doc) => mapIn(doc.getMap('mixer/master'), 'slots')
+const slots = (doc: Y.Doc) => mapIn(doc.getMap('master'), 'slots')
 
 /** Each track marked deleted, by ID. */
 const deletedTracks = (doc: Y.Doc) =>
@@ -331,23 +323,12 @@ const applied = (
     DeleteClip: (edit) => Option.map(clip(edit.clip), (id) => gone(doc.getMap('clips'), id, edit.remove)),
     SetMute: (edit) => Option.map(track(edit.track), (id) => setMute(doc, by, id, edit.mute)),
     ToggleSolo: (edit) => Option.map(track(edit.track), local.solo),
-    SetInsert: (edit) =>
-      Option.map(Option.all([track(edit.track), insertOfNumber(edit.insert)]), ([id, into]) =>
-        setTrackInsert(doc, by, id, into)
-      ),
-    SetInsertStrip: (edit) =>
-      Option.map(insertOfNumber(edit.insert), (id) =>
-        setInsertStrip(doc, by, id, strip[edit.param].id, paramValue(strip[edit.param], edit.position / 10))
-      ),
-    SetInsertMute: (edit) => Option.map(insertOfNumber(edit.insert), (id) => setInsertMute(doc, by, id, edit.mute)),
-    HoldInsert: (edit) =>
-      Option.map(track(edit.track), (id) => local.hold(HoldTarget.TrackInsert({ track: id }), edit.insert)),
-    HoldInsertStrip: (edit) =>
-      Option.map(insertOfNumber(edit.insert), (id) =>
-        local.hold(
-          HoldTarget.InsertStrip({ insert: id, param: strip[edit.param].id }),
-          paramValue(strip[edit.param], edit.position / 10)
-        )
+    SetMasterStrip: (edit) =>
+      setMasterStrip(doc, by, strip[edit.param].id, paramValue(strip[edit.param], edit.position / 10)),
+    HoldMasterStrip: (edit) =>
+      local.hold(
+        HoldTarget.MasterStrip({ param: strip[edit.param].id }),
+        paramValue(strip[edit.param], edit.position / 10)
       ),
     HoldShape: (edit) =>
       Option.map(track(edit.track), (id) =>
@@ -391,7 +372,7 @@ const played = (engine: TestEngine, bpm: number, play: (playing: boolean) => voi
   return heard
 }
 
-/** The order the insert sums tracks in differs, and so do the last bits of the sum. */
+/** The order the master sums tracks in differs, and so do the last bits of the sum. */
 const tolerance = 1e-6
 
 const sameSound = (a: Float32Array, b: Float32Array) =>

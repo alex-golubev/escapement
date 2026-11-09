@@ -8,7 +8,6 @@ import { encodeCommand } from '../src/commands'
 import { DeviceEdit, encodeBatch } from '../src/device-edits'
 import { handleOf, NodeHandle, PatternHandle } from '../src/handles'
 import * as Wire from '../src/schema/engine'
-import { meterCount } from '../src/protocol'
 import { transactionWriter, type Written } from '../src/transactions'
 import { batchOf, filter, marker, setVolume, tone } from './harness'
 
@@ -114,11 +113,7 @@ const decoders: { readonly [K in SchemaEdit]: (edit: Wire.Edit) => DeviceEdit } 
   CreateInsert: (edit) => {
     const create = edit.edit(new Wire.CreateInsert()) as Wire.CreateInsert
     const strip = valuesOf(create.stripLength(), (i) => create.strip(i))
-    return DeviceEdit.CreateInsert({
-      node: NodeHandle(create.node()),
-      strip,
-      meter: Option.fromNullishOr(create.meter())
-    })
+    return DeviceEdit.CreateInsert({ node: NodeHandle(create.node()), strip, metered: create.metered() })
   },
   Disconnect: (edit) => {
     const disconnect = edit.edit(new Wire.Disconnect()) as Wire.Disconnect
@@ -188,10 +183,8 @@ test('a batch reads back as its edits, in order, in a buffer of its own', () => 
       ]
     }),
     DeviceEdit.SetClips({ clips: [] }),
-    DeviceEdit.CreateInsert({ node: handleOf(3, 4), strip: [{ param: 1, value: 0.5 }], meter: Option.none() }),
-    // The last meter, and one past it, which only the engine refuses.
-    DeviceEdit.CreateInsert({ node: handleOf(1, 5), strip: [], meter: Option.some(meterCount) }),
-    DeviceEdit.CreateInsert({ node: handleOf(1, 6), strip: [], meter: Option.some(0xffff_ffff) }),
+    DeviceEdit.CreateInsert({ node: handleOf(3, 4), strip: [{ param: 1, value: 0.5 }], metered: false }),
+    DeviceEdit.CreateInsert({ node: handleOf(1, 5), strip: [], metered: true }),
     DeviceEdit.Disconnect({ from: tone, to: handleOf(3, 4) }),
     DeviceEdit.LetGoOfNotes({ node: tone }),
     DeviceEdit.PanicBuild({ code: 7 }),

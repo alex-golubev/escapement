@@ -11,7 +11,7 @@ export const blockFrames = 128
 
 export const channelCount = 2
 
-/** Meters the engine keeps for nodes beside the master's, numbered from 1; the board holds a record for each. */
+/** The meters of nodes beside the master's the board has room for: past them, a node's meter isn't reported. */
 export const meterCount = 500
 
 /** Device edits for the build thread; its marker in the command ring carries the same number. */

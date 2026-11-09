@@ -45,7 +45,7 @@ export interface MetaFields {
   readonly bpm: number
 }
 
-/** A plugin and its state: a track's instrument or an insert's slot. Each parameter merges on its own. */
+/** A plugin and its state: a track's instrument or a slot of the master's. Each parameter merges on its own. */
 export interface PluginFields {
   readonly plugin: { readonly id: number; readonly version: number }
   /** By parameter ID; one left out is at its default. */
@@ -62,8 +62,6 @@ export interface TrackFields extends Partial<StripValues> {
   readonly deleted: boolean
   readonly mute: boolean
   readonly instrument: Stored<PluginFields>
-  /** The mixer's insert it goes into, by ID; none, the master. */
-  readonly insert?: Id
 }
 
 /** One value: a note changes as a whole. */
@@ -101,18 +99,17 @@ export interface SlotFields extends PluginFields {
 }
 
 /** Its strip's parameters by ID, each a key of its own; one left out is at its default. */
-export interface InsertFields extends Partial<StripValues> {
-  /** The master has none. */
-  readonly mute?: boolean
-  /** The master's plugins after what it hears; the other inserts have none yet. */
+export interface MasterFields extends Partial<StripValues> {
+  /** Its plugins after what it hears. */
   readonly slots: Stored<Record<string, Stored<SlotFields>>>
 }
 
-/** The project's top-level maps: a document holds one project. */
+/** The project's top-level maps: one project a document. The master is built in, so clients share its map. */
 export const projectMaps = (doc: Y.Doc) => ({
   meta: stored<MetaFields>(doc.getMap('meta')),
   tracks: stored<Record<string, Stored<TrackFields>>>(doc.getMap('tracks')),
-  clips: stored<Record<string, Stored<ClipFields>>>(doc.getMap('clips'))
+  clips: stored<Record<string, Stored<ClipFields>>>(doc.getMap('clips')),
+  master: stored<MasterFields>(doc.getMap('master'))
 })
 
 export type ProjectMaps = ReturnType<typeof projectMaps>
@@ -136,28 +133,3 @@ export const notesPattern = (name: string): Option.Option<Id> =>
  */
 export const patternNotes = (doc: Y.Doc, pattern: Id): Stored<Record<string, NoteFields>> =>
   stored(doc.getMap(notesName(pattern)))
-
-const insertPrefix = 'mixer/'
-
-/** The name of the top-level map of the insert's own. */
-export const insertName = (insert: Id) => `${insertPrefix}${insert}`
-
-/** The insert whose own the top-level map of this name holds, any ID; none for a map of anything else. */
-export const insertNamed = (name: string): Option.Option<Id> =>
-  Option.map(
-    Option.liftPredicate(name, (name) => name.startsWith(insertPrefix) && name.length > insertPrefix.length),
-    (name) => Id(name.slice(insertPrefix.length))
-  )
-
-/**
- * The insert's own, a map of the document's top, as a pattern's notes are: the inserts are built in, so the first two
- * clients to write into one share its map. Taking it writes nothing.
- */
-export const insertMap = (doc: Y.Doc, insert: Id): Stored<InsertFields> => stored(doc.getMap(insertName(insert)))
-
-/**
- * The insert's own, if the document holds a map of it: reading one it doesn't hold makes no map of the top, so a view
- * of many inserts leaves the document's top as it was.
- */
-export const foundInsertMap = (doc: Y.Doc, insert: Id): Option.Option<Stored<InsertFields>> =>
-  Option.map(Option.fromUndefinedOr(doc.share.get(insertName(insert))), () => insertMap(doc, insert))

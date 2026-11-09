@@ -154,7 +154,7 @@ const hosted = (
   )
   // The filter on the master, for Load to turn, as no operation puts an effect anywhere yet.
   doc.transact(() =>
-    doc.getMap('mixer/master').set(
+    doc.getMap('master').set(
       'slots',
       new Y.Map<unknown>([
         [

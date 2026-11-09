@@ -1,35 +1,36 @@
-/* The master pinned at the left, the other inserts scrolling across beside it; every strip as high as the middle, or as
-   its controls need, the middle scrolling down to them. */
+/* The tracks' strips, then the master; too many, they scroll across and the master stays at the right. */
 .mixer {
+  /* Room round the rack's strips for their outlines, which the scroll would cut off. */
+  --rack-room: 1px;
+
   display: flex;
-  align-items: stretch;
+  align-items: flex-start;
   gap: calc(var(--u) * 2);
-  min-height: 100%;
 }
 
+/* As wide as its strips, or as the room left beside the master. */
 .rack {
-  flex: 1;
+  flex: 0 1 auto;
   min-width: 0;
   overflow-x: auto;
   overflow-y: hidden;
   overscroll-behavior-x: none;
 }
 
-/* As wide as all the strips; only those in sight are drawn, after the room of those before them. */
 .rack__strips {
   display: flex;
-  align-items: stretch;
-  height: 100%;
+  padding: var(--rack-room);
 }
 
-/* A mixer strip: a column of controls of one width. */
+/* A mixer strip: a column of controls of one width, `--strip-w`; the rack gives its strips theirs, with their gap. */
 .strip {
-  --strip-w: 76px;
+  --strip-gap: calc(var(--u) * 2);
+  --name-h: 22px;
 
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: calc(var(--u) * 2);
+  gap: var(--strip-gap);
   width: var(--strip-w);
   flex: none;
   padding: var(--u) calc(var(--u) * 1.5) calc(var(--u) * 2);
@@ -40,76 +41,68 @@
 
 .strip--master {
   --strip-w: 92px;
+  /* As far down as the tracks' strips, the rack's room above them. */
+  margin-top: var(--rack-room);
   background: linear-gradient(180deg, #232a34, #1b2027);
   box-shadow: 0 0 0 1px var(--line);
 }
 
-.strip__head {
+/* The track chosen: a stripe across its top, in the colour of what is yours alone, as its head has down its left. */
+.strip[data-chosen="true"] {
+  box-shadow:
+    inset 0 2px var(--local),
+    0 0 0 1px var(--line);
+}
+
+/* As high as a track's name and its buttons together, so the faders line up. */
+.strip__title {
   display: flex;
   align-items: center;
-  gap: 3px;
-  width: 100%;
-}
-
-.strip__index {
-  flex: none;
-  width: 14px;
-  font-size: 9px;
-  color: var(--t-lo);
-  text-align: center;
-}
-
-/* An insert's number fills its head beside M. */
-.strip__index--insert {
-  flex: 1;
-  width: auto;
+  justify-content: center;
+  height: calc(var(--name-h) + var(--strip-gap) + var(--toggle));
   font-size: 11px;
-  color: var(--t-mid);
-}
-
-.strip--master .strip__index {
+  font-weight: 600;
   color: var(--shared);
 }
 
 .strip__name {
-  flex: 1;
+  width: 100%;
+  height: var(--name-h);
   padding: 3px 4px;
   overflow: hidden;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: none;
+  color: inherit;
+  font: inherit;
   font-size: 11px;
   font-weight: 600;
   text-align: center;
   white-space: nowrap;
   text-overflow: ellipsis;
+  cursor: pointer;
 }
 
-.strip__slots {
+.strip__name:hover {
+  background: var(--s-raise);
+}
+
+.strip__buttons {
+  display: flex;
+  gap: var(--u);
+}
+
+.strip__controls {
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  width: 100%;
-}
-
-/* A slot's controls one under another, as the strip's own. */
-.strip :is(.control-group, .control-group__controls) {
-  flex-direction: column;
   align-items: center;
-  align-self: stretch;
   gap: calc(var(--u) * 2);
+  width: 100%;
 }
 
 /* As wide as the strip. */
 .strip .param {
   width: 100%;
-}
-
-/* Down at the strip's bottom, so the faders of strips with more above them line up with the rest. */
-.strip__foot {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: calc(var(--u) * 2);
-  width: 100%;
-  margin-top: auto;
 }
 
 /* The meters as high as the fader beside them, their lamps over them. */
@@ -119,39 +112,9 @@
   gap: var(--u);
 }
 
-/* A muted strip stays readable and in reach, to be switched back: its sound's part fades, not its labels. */
-.strip[data-muted="true"] .strip__foot {
+/* A track not heard dims what sounds; its name and buttons stay, to be pressed again. */
+.strip[data-unheard="true"] .strip__controls {
   opacity: 0.4;
-}
-
-/* ─── Slot ───────────────────────────────────────────────────────────────── */
-
-/* A plugin in the strip's chain; the dot says it plays. */
-.slot {
-  display: flex;
-  align-items: center;
-  gap: var(--u);
-  width: 100%;
-  height: 17px;
-  padding: 0 4px;
-  border-radius: var(--r-sm);
-  background: var(--s-sunk);
-  color: var(--t-mid);
-  font-size: 9px;
-}
-
-.slot__dot {
-  width: 4px;
-  height: 4px;
-  flex: none;
-  border-radius: 50%;
-  background: var(--signal);
-}
-
-.slot__label {
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
 }
 
 /* ─── Meter ──────────────────────────────────────────────────────────────── */

@@ -17,8 +17,7 @@ import {
   moveClip,
   type ProjectAtoms,
   patternEnd,
-  setInsertMute,
-  setInsertStrip,
+  setMasterStrip,
   setMasterParam,
   setTempo,
   setTrackStrip
@@ -204,31 +203,20 @@ describe('the atoms of a project', () => {
     })
   })
 
-  test('follow an insert and the master as their strips change, and an insert another client writes first', () => {
+  test("follow the master as its strip changes, another client's edit too", () => {
     const doc = newProject()
     const other = new Y.Doc()
     sync(doc, other)
     following(doc, (atoms, registry) => {
-      const third = told(registry, atoms.insert(Id('3')))
-      const ninth = told(registry, atoms.insert(Id('9')))
       const masters = told(registry, atoms.master)
-      setInsertStrip(doc, by, Id('3'), 'volume', 0.5)
-      setInsertMute(other, by, Id('9'), true)
+      setMasterStrip(doc, by, 'pan', 0.25)
+      setMasterStrip(other, by, 'volume', 0.5)
       sync(doc, other)
-      setInsertStrip(doc, by, Id('master'), 'pan', 0.25)
-      expect(third.map(({ strip }) => strip.volume)).toEqual([1, 0.5])
-      expect(ninth.map(({ mute }) => mute)).toEqual([false, true])
-      expect(masters.map(({ strip }) => strip.pan)).toEqual([0, 0.25])
-    })
-  })
-
-  test('read an insert the document holds nothing of without making a map of its top for it', () => {
-    const doc = newProject()
-    following(doc, (atoms, registry) => {
-      const shared = doc.share.size
-      expect(told(registry, atoms.insert(Id('77')))).toEqual([{ id: '77', strip: { volume: 1, pan: 0 }, mute: false }])
-      expect(doc.share.size).toBe(shared)
-      expect(doc.share.has('mixer/77')).toBe(false)
+      expect(masters.map(({ strip }) => strip)).toEqual([
+        { volume: 1, pan: 0 },
+        { volume: 1, pan: 0.25 },
+        { volume: 0.5, pan: 0.25 }
+      ])
     })
   })
 

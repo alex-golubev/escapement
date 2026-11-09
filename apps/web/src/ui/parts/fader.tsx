@@ -1,4 +1,4 @@
-import { type AnyParam, paramPosition } from '@escapement/engine-description'
+import { type AnyParam, gainOf, paramPosition } from '@escapement/engine-description'
 import type { HoldTarget } from '@escapement/model'
 import { useParamTurn } from './knob'
 import './fader.css'
@@ -17,8 +17,6 @@ const marks: ReadonlyArray<{ readonly decibels: number; readonly text: string }>
   { decibels: -20, text: '−20' },
   { decibels: -30, text: '−30' }
 ]
-
-const gainOf = (decibels: number) => 10 ** (decibels / 20)
 
 /**
  * Its marks with their decibels, or bare: faders side by side on one line, the numbers of one serve the rest, which

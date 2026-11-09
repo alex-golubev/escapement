@@ -16,11 +16,6 @@ macro_rules! handle {
                 Self(raw)
             }
 
-            #[cfg(test)]
-            pub const fn raw(self) -> u32 {
-                self.0
-            }
-
             pub const fn cell(self) -> u32 {
                 self.0 & MAX_CELL
             }
@@ -42,6 +37,20 @@ handle!(
     /// A pattern's: its cell in the pattern table, apart from the nodes'.
     PatternHandle
 );
+
+impl NodeHandle {
+    /// As the page wrote it: what a record that names the node gives back.
+    pub const fn raw(self) -> u32 {
+        self.0
+    }
+}
+
+impl PatternHandle {
+    #[cfg(test)]
+    pub const fn raw(self) -> u32 {
+        self.0
+    }
+}
 
 #[cfg(test)]
 mod tests {

@@ -20,13 +20,8 @@ import {
   HoldTarget,
   heardOf,
   heldValue,
-  insertCount,
-  insertNumber,
-  insertOfNumber,
-  master,
   playedOf,
   type Id,
-  type Insert,
   type Listening,
   type Master,
   type Note,
@@ -42,19 +37,18 @@ import { Atom } from 'effect/reactivity'
 
 // By their kind, so no document ID can take another's node: a track keyed `master`, or a track and a slot with one ID.
 const trackNode = (id: Id) => `track:${id}`
+/** The end of a track's chain: it plays the track's volume and pan, and has its meter. */
+const trackFaderNode = (id: Id) => `fader:${id}`
 const slotNode = (id: Id) => `slot:${id}`
-/** Where what goes into an insert sums. */
-const insertNode = (id: Id) => `insert:${id}`
-/** The end of an insert's chain, which plays its volume and pan. */
-const faderNode = (id: Id) => `fader:${id}`
-
-/** Where every other insert goes, and every track unless it goes into another. */
-const masterNode = insertNode(master)
+/** Where every track goes, summed. */
+const masterNode = 'master'
+/** The end of the master's chain, which plays its volume and pan: what the engine puts out. */
+const masterFaderNode = 'master-fader'
 
 /** What makes a node itself: when it changes, a new node takes the old one's place. */
 export type NodeKind = Data.TaggedEnum<{
-  /** With the meter of a mixer strip, by its number, if it is one's fader. */
-  Insert: { readonly meter: Option.Option<number> }
+  /** With the meter of what it passes on if it is a track's fader, the track's by ID, for its strip in the mixer. */
+  Insert: { readonly meter: Option.Option<Id> }
   Plugin: { readonly plugin: Plugin; readonly samples: SampleSounds<Plugin> }
 }>
 
@@ -115,9 +109,9 @@ export interface Transport {
 }
 
 /**
- * What the engine plays for a project: a node for each track with an instrument, the master insert and its slots, by
- * the document ID of what they play, and how they join; and whether it plays. A track not heard keeps its node, joined
- * to nothing, and presses no notes.
+ * What the engine plays for a project: for each track with an instrument a node and its fader, the master and its
+ * slots, by the document ID of what they play, and how they join; and whether it plays. A track not heard keeps its
+ * nodes, the instrument joined to nothing, and presses no notes.
  */
 export interface Picture {
   readonly nodes: Readonly<Record<string, NodePicture>>
@@ -172,10 +166,9 @@ interface NodeHeld {
 const heldParam = (target: HoldTarget): Option.Option<readonly [node: string, on: keyof NodeHeld, param: string]> =>
   HoldTarget.$match(target, {
     TrackParam: ({ track, param }) => Option.some([trackNode(track), 'params', param] as const),
-    TrackStrip: ({ track, param }) => Option.some([trackNode(track), 'strip', param] as const),
+    TrackStrip: ({ track, param }) => Option.some([trackFaderNode(track), 'strip', param] as const),
     SlotParam: ({ slot, param }) => Option.some([slotNode(slot), 'params', param] as const),
-    InsertStrip: ({ insert, param }) => Option.some([faderNode(insert), 'strip', param] as const),
-    TrackInsert: () => Option.none(),
+    MasterStrip: ({ param }) => Option.some([masterFaderNode, 'strip', param] as const),
     Tempo: () => Option.none()
   })
 
@@ -208,24 +201,11 @@ const withHeld = <V>(values: V, descriptions: ReadonlyArray<AnyParam>, held: Hel
   ...Object.fromEntries(held.flatMap((entry) => Option.toArray(playable(descriptions, entry))))
 })
 
-/** A node's strip: its values, and the descriptions a value held over them is read by. */
-interface StripOf {
-  readonly values: StripValues
-  readonly params: ReadonlyArray<AnyParam>
-}
-
-/** The engine's own, for a node no track makes, such as a slot of the master's. */
-const engineStrip: StripOf = { values: defaultStrip, params: strip }
-
-/** The node an instance makes, playing the values held for its parameters and its strip's over the document's. */
-const pluginNode = (
-  { plugin, params, samples }: PluginInstance,
-  held: NodeHeld,
-  { values, params: stripParams }: StripOf = engineStrip
-): NodePicture => ({
+/** The node an instance makes, the values held for its parameters over the document's, its strip the engine's. */
+const pluginNode = ({ plugin, params, samples }: PluginInstance, held: NodeHeld): NodePicture => ({
   kind: NodeKind.Plugin({ plugin, samples }),
   params: withHeld(params, plugin.params, held.params),
-  strip: withHeld(values, stripParams, held.strip)
+  strip: defaultStrip
 })
 
 const isSlot = HoldTarget.$is('SlotParam')
@@ -240,48 +220,35 @@ const tempoOf = (tempo: number, holds: Holds) =>
   )
 
 /** A node of the engine's core that passes on the sum of what goes into it, at the volume and pan given. */
-const passing = (values: StripValues, meter = Option.none<number>()): NodePicture => ({
+const passing = (values: StripValues, meter = Option.none<Id>()): NodePicture => ({
   kind: NodeKind.Insert({ meter }),
   params: {},
   strip: values
 })
 
-/**
- * A strip's meter, by its number, of what it passes on: none while it is muted, as nothing does; none for the master,
- * whose meter is the engine's output.
- */
-const meterOf = (id: Id, mute: boolean) => Option.filter(insertNumber(id), (number) => number > 0 && !mute)
-
-/** An insert's nodes and how they join, and its fader's key, which the next one along hears. */
-interface InsertChain {
+/** The master's nodes and how they join. */
+interface MasterChain {
   readonly nodes: Readonly<Record<string, NodePicture>>
   readonly connections: ReadonlyArray<readonly [from: string, to: string]>
-  readonly out: string
 }
 
-/**
- * What goes into an insert sums at its node, goes through its slots in their order, and comes out of its fader at its
- * volume and pan, or those held over them: after its slots, as a mixer's fader is. The fader has the strip's meter.
- */
-const insertChain = (
-  id: Id,
+/** The master's sum, its slots in their order, then its fader, as held over the document's; its meter is the output. */
+const masterChain = (
   values: StripValues,
   faderHeld: NodeHeld,
   slots: ReadonlyArray<Slot>,
-  slotsHeld: Holds,
-  mute: boolean
-): InsertChain => {
-  const chain = [insertNode(id), ...slots.map((slot) => slotNode(slot.id)), faderNode(id)]
+  slotsHeld: Holds
+): MasterChain => {
+  const chain = [masterNode, ...slots.map((slot) => slotNode(slot.id)), masterFaderNode]
   return {
     nodes: {
-      [insertNode(id)]: passing(defaultStrip),
+      [masterNode]: passing(defaultStrip),
       ...Object.fromEntries(
         slots.map((slot) => [slotNode(slot.id), pluginNode(slot, heldOn(slotsHeld, slotNode(slot.id)))])
       ),
-      [faderNode(id)]: passing(withHeld(values, strip, faderHeld.strip), meterOf(id, mute))
+      [masterFaderNode]: passing(withHeld(values, strip, faderHeld.strip))
     },
-    connections: chain.slice(1).map((to, i) => [chain[i], to] as const),
-    out: faderNode(id)
+    connections: chain.slice(1).map((to, i) => [chain[i], to] as const)
   }
 }
 
@@ -310,61 +277,47 @@ const pictureClip = ({ tick, track, length, period, offset, pattern }: PlayedCli
   pattern: patternKey(track, pattern)
 })
 
-/** The insert held for the track, by its number, the nearest there is; none for a value held that isn't a number. */
-const heldInsert = (holds: Holds, track: Id): Option.Option<Id> =>
-  Option.flatMap(Option.filter(heldValue(holds, HoldTarget.TrackInsert({ track })), isFiniteNumber), (number) =>
-    insertOfNumber(nearestIn({ min: 0, max: insertCount, whole: true }, number))
-  )
-
 /**
  * The picture of the project as this client listens to it, holds its controls, plays it and plays notes by hand, from
  * their atoms, which are written in batches (`batchedState`): read by more than one way, a change half of the way would
  * reach the engine as two. What plays is the arrangement. Each part is cut off by content, so turning a track's volume
  * doesn't read a pattern again, and a note changed reads only its own pattern. A track not heard, muted or left out of
- * a solo, presses no notes, by hand neither, and is cut off from its insert, so what it sounds falls silent at once,
- * its notes let go of. Notes played by hand sound only while the arrangement doesn't play. An insert has a node while a
- * track with an instrument goes into it; muted, it doesn't go into the master.
+ * a solo, presses no notes, by hand neither, and its instrument is cut off from its fader, so what it sounds falls
+ * silent at once, its notes let go of, and its meter with it. Notes played by hand sound only while the arrangement
+ * doesn't play.
  */
 export const pictureOf = (
   project: ProjectAtoms,
   { listening, holds, playing, auditions }: Client
 ): Atom.Atom<Picture> => {
   // Each node reads only what is held for it: a turn makes its own node again, and no other.
-  const trackHeld = Atom.family((id: Id) => byContent((get) => heldOn(get(holds), trackNode(id))))
+  const heldAt = Atom.family((node: string) => byContent((get) => heldOn(get(holds), node)))
   const slotsHeld = byContent((get) => get(holds).filter(({ target }) => isSlot(target)))
   const instrumentOf = Atom.family((id: Id) =>
     byContent((get) =>
-      Option.flatMap(get(project.track(id)), ({ instrument, strip: values }) =>
-        Option.map(instrument, (played) => pluginNode(played, get(trackHeld(id)), { values, params: trackStrip }))
+      Option.flatMap(get(project.track(id)), ({ instrument }) =>
+        Option.map(instrument, (played) => pluginNode(played, get(heldAt(trackNode(id)))))
       )
     )
   )
+  const faderOf = Atom.family((id: Id) =>
+    byContent((get) =>
+      Option.map(get(project.track(id)), ({ strip: values }) =>
+        passing(withHeld(values, trackStrip, get(heldAt(trackFaderNode(id))).strip), Option.some(id))
+      )
+    )
+  )
+  /** The tracks with an instrument, each with its instrument's node and its fader's. */
   const tracks = byContent((get) =>
     get(project.trackIds).flatMap((id) =>
-      Option.toArray(Option.map(get(instrumentOf(id)), (node) => [id, node] as const))
-    )
-  )
-  const routeOf = Atom.family((id: Id) =>
-    byContent((get) =>
-      Option.getOrElse(heldInsert(get(holds), id), () =>
-        Option.match(get(project.track(id)), { onNone: () => master, onSome: ({ insert }) => insert })
+      Option.toArray(
+        Option.zipWith(
+          get(instrumentOf(id)),
+          get(faderOf(id)),
+          (instrument, fader) => [id, { instrument, fader }] as const
+        )
       )
     )
-  )
-  /** The insert each track with an instrument goes into. */
-  const routes = byContent((get) => get(tracks).map(([id]) => [id, get(routeOf(id))] as const))
-  const faderHeld = Atom.family((id: Id) => byContent((get) => heldOn(get(holds), faderNode(id))))
-  const insertOf = Atom.family((id: Id) =>
-    byContent((get) => {
-      const { strip: values, mute }: Insert = get(project.insert(id))
-      return { chain: insertChain(id, values, get(faderHeld(id)), [], [], mute), mute }
-    })
-  )
-  /** The inserts besides the master the tracks go into, each once. */
-  const inserts = byContent((get) =>
-    Array.dedupe(get(routes).map(([, insert]) => insert))
-      .filter((insert) => insert !== master)
-      .map((insert) => get(insertOf(insert)))
   )
   const heard = heardOf(project, listening)
   const sounding = byContent((get) => {
@@ -407,33 +360,30 @@ export const pictureOf = (
   )
   const mastering = byContent((get) => {
     const { strip: values, slots }: Master = get(project.master)
-    return insertChain(master, values, get(faderHeld(master)), slots, get(slotsHeld), false)
+    return masterChain(values, get(heldAt(masterFaderNode)), slots, get(slotsHeld))
   })
   const tempo = byContent((get) => tempoOf(get(project.tempo), get(holds)))
   return Atom.readable((get): Picture => {
-    const { nodes, connections, out } = get(mastering)
-    const played = get(tracks)
+    const { nodes, connections } = get(mastering)
+    const tracksPlayed = get(tracks)
     const heardIds = new Set(get(sounding))
-    const heardNodes = get(sounding).map(trackNode)
-    const insertsPlayed = get(inserts)
     return {
       nodes: {
-        ...Object.fromEntries(played.map(([id, node]) => [trackNode(id), node])),
-        ...Object.fromEntries(insertsPlayed.flatMap(({ chain }) => Object.entries(chain.nodes))),
+        ...Object.fromEntries(
+          tracksPlayed.flatMap(([id, { instrument, fader }]) => [
+            [trackNode(id), instrument],
+            [trackFaderNode(id), fader]
+          ])
+        ),
         ...nodes
       },
       connections: [
-        ...get(routes)
-          .filter(([id]) => heardIds.has(id))
-          .map(([id, insert]) => [trackNode(id), insertNode(insert)] as const),
-        ...insertsPlayed.flatMap(({ chain, mute }) => [
-          ...chain.connections,
-          ...Option.toArray(Option.liftPredicate([chain.out, masterNode] as const, () => !mute))
-        ]),
+        ...tracksPlayed.filter(([id]) => heardIds.has(id)).map(([id]) => [trackNode(id), trackFaderNode(id)] as const),
+        ...tracksPlayed.map(([id]) => [trackFaderNode(id), masterNode] as const),
         ...connections
       ],
-      output: Option.some(out),
-      heard: heardNodes,
+      output: Option.some(masterFaderNode),
+      heard: get(sounding).map(trackNode),
       patterns: get(patterns),
       clips: get(clips),
       auditions: get(heardAuditions),

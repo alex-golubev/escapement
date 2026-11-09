@@ -20,7 +20,7 @@ import {
   type Transaction
 } from '@escapement/engine'
 import { paramValue } from '@escapement/engine-description'
-import { HoldTarget, holding, lettingGo } from '@escapement/model'
+import { HoldTarget, holding, type Id, lettingGo } from '@escapement/model'
 import {
   Array,
   Boolean,
@@ -122,6 +122,8 @@ export interface Frame {
   readonly engine: number
   /** None until the engine has played a block. */
   readonly telemetry: Telemetry | undefined
+  /** Whose meter each node in the telemetry has, a track's by ID, by the node's handle. */
+  readonly meters: ReadonlyMap<NodeHandle, Id>
   /**
    * Where the transport is heard now: its tick, between two whole ones as time goes, and the loop it goes round in;
    * none while stopped or before it is heard.
@@ -385,7 +387,11 @@ export const engineHostLayer = Layer.effect(
           frame: () => {
             const telemetry = engine.readTelemetry()
             const heard = Option.getOrUndefined(tickHeard(telemetry, performance.now()))
-            return { engine: number, telemetry, heard, stats }
+            const meters = Option.match(Option.fromUndefinedOr(telemetry), {
+              onNone: () => new Map(),
+              onSome: ({ epoch }) => compiler.meters(epoch)
+            })
+            return { engine: number, telemetry, meters, heard, stats }
           },
           answers: answers(engine),
           breakStream: engine.breakStream

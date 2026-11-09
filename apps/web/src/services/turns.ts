@@ -1,4 +1,4 @@
-import { type Holds, HoldTarget, holding, insertOfNumber, lettingGo } from '@escapement/model'
+import { type Holds, HoldTarget, holding, lettingGo } from '@escapement/model'
 import { Array, Boolean, Context, Effect, Equal, FiberSet, Layer, Option } from 'effect'
 import { type Atom, AtomRegistry } from 'effect/reactivity'
 import { DomainOps } from './domain-ops'
@@ -44,9 +44,7 @@ export const turnsOf = Effect.fnUntraced(function* (ops: DomainOps, holds: Atom.
       TrackParam: ({ track, param }) => ops.setTrackParam(track, param, value),
       TrackStrip: ({ track, param }) => ops.setTrackStrip(track, param, value),
       SlotParam: ({ slot, param }) => ops.setMasterParam(slot, param, value),
-      InsertStrip: ({ insert, param }) => ops.setInsertStrip(insert, param, value),
-      TrackInsert: ({ track }) =>
-        Option.exists(insertOfNumber(Math.round(value)), (insert) => ops.setTrackInsert(track, insert)),
+      MasterStrip: ({ param }) => ops.setMasterStrip(param, value),
       Tempo: () => ops.setTempo(value)
     })
   const releaseTurnOf = (target: HoldTarget) =>

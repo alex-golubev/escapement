@@ -2,6 +2,7 @@
 
 use std::{array, mem};
 
+use crate::handle::NodeHandle;
 use crate::{BLOCK_FRAMES, CHANNELS};
 
 /// The board's layout word by word, mirrored in `packages/engine/src/telemetry.ts`.
@@ -35,7 +36,7 @@ pub struct Telemetry {
     pub overs: [u32; CHANNELS],
     /// How many of `meters` hold a meter now, from the first: the worklet copies only those.
     pub meters_used: u32,
-    /// A record for each node the page gave a meter, in no order: each says whose it is.
+    /// A record for each node the page gave a meter, as many as there is room for, in no order: each says whose it is.
     pub meters: [MeterRecord; METERS],
 }
 
@@ -60,15 +61,14 @@ impl Default for Telemetry {
     }
 }
 
-/// Meters the page can give nodes, numbered from 1, as it numbers its mixer's strips.
+/// The meters the board has room for: past them, a node's meter isn't reported.
 pub const METERS: usize = 500;
 
-/// A node's meter on the board: its number, then its level and its count of blocks over full scale per channel, as
-/// the master's. The count is kept by the number, so a node made anew for it counts on.
+/// A node's meter on the board: its handle, its level, and its blocks over full scale per channel since it was made.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct MeterRecord {
-    pub meter: u32,
+    pub node: u32,
     pub peaks: [f32; CHANNELS],
     pub overs: [u32; CHANNELS],
 }
@@ -149,55 +149,36 @@ impl BlockMeter {
     }
 }
 
-/// A node's meter: of what the node passes on, under the number the page gave it.
+/// A node's meter: of what the node passes on, named by the node's handle.
 pub struct NodeMeter {
-    /// The number's place in [`MeterOvers`], under [`METERS`].
-    index: usize,
+    node: NodeHandle,
     meter: BlockMeter,
+    overs: [u32; CHANNELS],
 }
 
 impl NodeMeter {
-    /// None for a number past 1 to [`METERS`].
-    pub fn new(number: u32, sample_rate: f32) -> Option<Self> {
-        let index = (number as usize)
-            .checked_sub(1)
-            .filter(|&index| index < METERS)?;
-        Some(Self {
-            index,
+    pub(crate) fn new(node: NodeHandle, sample_rate: f32) -> Self {
+        Self {
+            node,
             meter: BlockMeter::new(sample_rate),
-        })
-    }
-
-    pub fn number(&self) -> u32 {
-        self.index as u32 + 1
+            overs: [0; CHANNELS],
+        }
     }
 
     pub fn update(&mut self, block: &[[f32; BLOCK_FRAMES]; CHANNELS], frames: usize) {
         self.meter.update(block, frames);
     }
-}
 
-/// The count of blocks over full scale for each meter's number, wherever on the board its record lands.
-pub struct MeterOvers([[u32; CHANNELS]; METERS]);
-
-impl Default for MeterOvers {
-    fn default() -> Self {
-        Self([[0; CHANNELS]; METERS])
-    }
-}
-
-impl MeterOvers {
-    /// Writes `node`'s record into the board's next place, if there is one left, and counts it in.
-    pub fn report(&mut self, node: &mut NodeMeter, telemetry: &mut Telemetry) {
+    /// Writes its record into the board's next place, if there is one left, and counts it in.
+    pub fn report(&mut self, telemetry: &mut Telemetry) {
         let Some(record) = telemetry.meters.get_mut(telemetry.meters_used as usize) else {
             return;
         };
-        let overs = &mut self.0[node.index];
-        node.meter.count_overs(overs);
+        self.meter.count_overs(&mut self.overs);
         *record = MeterRecord {
-            meter: node.number(),
-            peaks: node.meter.levels(),
-            overs: *overs,
+            node: self.node.raw(),
+            peaks: self.meter.levels(),
+            overs: self.overs,
         };
         telemetry.meters_used += 1;
     }
@@ -265,14 +246,10 @@ mod tests {
     }
 
     /// A block's records: `meters`, in their order.
-    fn report_all(
-        overs: &mut MeterOvers,
-        meters: &mut [&mut NodeMeter],
-        telemetry: &mut Telemetry,
-    ) {
+    fn report_all(meters: &mut [&mut NodeMeter], telemetry: &mut Telemetry) {
         telemetry.meters_used = 0;
         for meter in meters {
-            overs.report(meter, telemetry);
+            meter.report(telemetry);
         }
     }
 
@@ -284,55 +261,57 @@ mod tests {
     }
 
     #[test]
-    fn a_meter_s_count_goes_on_by_its_number_whatever_node_and_record_it_has() {
-        let mut overs = MeterOvers::default();
+    fn a_record_names_its_node_and_counts_from_the_node_s_making() {
         let mut telemetry = Telemetry::default();
-        let meter = |number| NodeMeter::new(number, SAMPLE_RATE).unwrap();
-        let (mut three, mut seven) = (meter(3), meter(7));
+        let meter = |raw| NodeMeter::new(NodeHandle::new(raw), SAMPLE_RATE);
+        let (mut three, mut seven) = (meter(3), meter(1 << 16 | 7));
         three.update(&left_at(0.5), BLOCK_FRAMES);
         seven.update(&left_at(1.5), BLOCK_FRAMES);
         seven.update(&left_at(1.5), BLOCK_FRAMES);
-        report_all(&mut overs, &mut [&mut three, &mut seven], &mut telemetry);
+        report_all(&mut [&mut three, &mut seven], &mut telemetry);
         assert_eq!(telemetry.meters_used, 2);
         assert_eq!(
             telemetry.meters[..2],
             [
                 MeterRecord {
-                    meter: 3,
+                    node: 3,
                     peaks: [0.5, 0.0],
                     overs: [0, 0]
                 },
                 MeterRecord {
-                    meter: 7,
+                    node: 1 << 16 | 7,
                     peaks: [1.5, 0.0],
                     overs: [2, 0]
                 }
             ]
         );
         // Reported again with no block between, it counts nothing twice.
-        report_all(&mut overs, &mut [&mut seven], &mut telemetry);
+        report_all(&mut [&mut seven], &mut telemetry);
         assert_eq!(telemetry.meters[0].overs, [2, 0]);
-        // A node made anew for 7, its record first now: its count goes on.
-        let mut anew = meter(7);
+        // A node made anew in the cell is another node: its count starts again.
+        let mut anew = meter(2 << 16 | 7);
         anew.update(&left_at(1.2), BLOCK_FRAMES);
-        report_all(&mut overs, &mut [&mut anew], &mut telemetry);
+        report_all(&mut [&mut anew], &mut telemetry);
         assert_eq!(telemetry.meters_used, 1);
         assert_eq!(
             telemetry.meters[0],
             MeterRecord {
-                meter: 7,
+                node: 2 << 16 | 7,
                 peaks: [1.2, 0.0],
-                overs: [3, 0]
+                overs: [1, 0]
             }
         );
     }
 
     #[test]
-    fn a_meter_is_numbered_from_1_to_the_last() {
-        let numbers = [0, 1, METERS as u32, METERS as u32 + 1, u32::MAX];
-        let made =
-            numbers.map(|number| NodeMeter::new(number, SAMPLE_RATE).map(|meter| meter.number()));
-        assert_eq!(made, [None, Some(1), Some(METERS as u32), None, None]);
+    fn meters_past_the_board_s_room_are_not_reported() {
+        let mut telemetry = Telemetry::default();
+        let mut meters: Vec<_> = (1..=METERS as u32 + 1)
+            .map(|cell| NodeMeter::new(NodeHandle::new(cell), SAMPLE_RATE))
+            .collect();
+        report_all(&mut meters.iter_mut().collect::<Vec<_>>(), &mut telemetry);
+        assert_eq!(telemetry.meters_used, METERS as u32);
+        assert_eq!(telemetry.meters[METERS - 1].node, METERS as u32);
     }
 
     #[test]

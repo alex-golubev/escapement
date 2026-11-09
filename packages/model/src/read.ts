@@ -1,6 +1,5 @@
 import {
   type AnyParam,
-  defaultStrip,
   defaultTempo,
   highestKey,
   lastTick,
@@ -26,11 +25,7 @@ import { Array, Boolean, Option, Order, Predicate, Schema } from 'effect'
 import type * as Y from 'yjs'
 import {
   get,
-  foundInsertMap,
   idsOf,
-  insertMap,
-  insertName,
-  insertNamed,
   type Key,
   mapAt,
   type NoteFields,
@@ -44,8 +39,7 @@ import {
   type TrackFields
 } from './document'
 import { Id, storedId } from './id'
-import { insertNumber, master } from './mixer'
-import type { Clip, Insert, Master, Note, Pattern, PluginInstance, Project, Slot, Track } from './project'
+import type { Clip, Master, Note, Pattern, PluginInstance, Project, Slot, Track } from './project'
 import { defaultNote } from './time'
 import { trackStrip } from './track-strip'
 
@@ -123,8 +117,6 @@ const valueOr =
 const stringOr = valueOr(string)
 const booleanOr = valueOr(boolean)
 const finiteOr = valueOr(finite)
-/** The ID of an insert there is. */
-const insertOr = valueOr((found) => Option.filter(identifier(found), (id) => Option.isSome(insertNumber(id))))
 
 /** A number past the range reads as the nearest one in it, and a whole one as the nearest whole number. */
 const numberOr = (report: Report, path: Path, found: unknown, range: Range, fallback: number): number => {
@@ -309,8 +301,7 @@ export const readTrack = (
         strip: readStrip(map, trackStrip, report, path),
         instrument: Option.flatMap(mapUnder(report, path, map, 'instrument', 'skipped', true), (instrument) =>
           readInstance(instrument, report, [...path, 'instrument'])
-        ),
-        insert: insertOr(report, [...path, 'insert'], get(map, 'insert'), master)
+        )
       },
       order: stringOr(report, [...path, 'order'], get(map, 'order'), '')
     }
@@ -410,9 +401,8 @@ const readSlot = (
   )
 
 /** Its slots missing or broken, it has none: the sound goes straight out. */
-export const readMaster = (report: Report, doc: Y.Doc): Master => {
-  const map = insertMap(doc, master)
-  const path = [insertName(master)]
+export const readMaster = (report: Report, map: ProjectMaps['master']): Master => {
+  const path = ['master']
   const slots = mapUnder(report, path, map, 'slots', 'default')
   return {
     strip: readStrip(map, strip, report, path),
@@ -423,38 +413,6 @@ export const readMaster = (report: Report, doc: Y.Doc): Master => {
     })
   }
 }
-
-/** One of `mixerInserts`: at its defaults while the document holds nothing of it. */
-export const readInsert = (report: Report, doc: Y.Doc, id: Id): Insert =>
-  Option.match(foundInsertMap(doc, id), {
-    onNone: () => ({ id, strip: defaultStrip, mute: false }),
-    onSome: (map) => {
-      const path = [insertName(id)]
-      return {
-        id,
-        strip: readStrip(map, strip, report, path),
-        mute: booleanOr(report, [...path, 'mute'], get(map, 'mute'), false)
-      }
-    }
-  })
-
-const byNumber = Order.mapInput(Order.Number, ({ number }: { readonly number: number }) => number)
-
-/** The inserts besides the master that the document holds anything of, by their number. */
-const readInserts = (report: Report, doc: Y.Doc): ReadonlyArray<Insert> =>
-  Array.sort(
-    Array.fromIterable(doc.share.keys()).flatMap((name) =>
-      Option.toArray(
-        Option.flatMap(insertNamed(name), (id) =>
-          Option.map(
-            Option.filter(insertNumber(id), (number) => number > 0 && insertMap(doc, id).size > 0),
-            (number) => ({ id, number })
-          )
-        )
-      )
-    ),
-    byNumber
-  ).map(({ id }) => readInsert(report, doc, id))
 
 export const readTempo = (report: Report, meta: ProjectMaps['meta']) =>
   numberOr(report, ['meta', 'bpm'], get(meta, 'bpm'), { min: minTempo, max: maxTempo }, defaultTempo)
@@ -467,7 +425,7 @@ export const readProject = (doc: Y.Doc): Read<Project> => {
   const report: Report = (replacement) => {
     replacements.push(replacement)
   }
-  const { meta, tracks, clips } = projectMaps(doc)
+  const { meta, tracks, clips, master } = projectMaps(doc)
   // Replacements are told in the order of the project's parts.
   const tempo = readTempo(report, meta)
   const tracksRead = inOrder(idsOf(tracks).flatMap((id) => Option.toArray(readTrack(report, tracks, id))))
@@ -484,8 +442,7 @@ export const readProject = (doc: Y.Doc): Read<Project> => {
     tracks: tracksRead,
     clips: clipsRead,
     patterns,
-    master: readMaster(report, doc),
-    inserts: readInserts(report, doc)
+    master: readMaster(report, master)
   }
   return { value, replacements }
 }
