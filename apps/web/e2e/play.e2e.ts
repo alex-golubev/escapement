@@ -2,12 +2,14 @@ import { expect, type Page } from '@playwright/test'
 import {
   addTrack,
   arrangementAt,
+  below,
   type Heard,
   heardOn,
+  listening,
+  nameOf,
   newClip,
   newProject,
   panAll,
-  listening,
   pressPlay,
   putNote,
   showCentre,
@@ -82,20 +84,57 @@ test("a clip plays on its track's instrument: moved to another track, it plays t
   await plays(page, { silent: [0], sounding: [1] })
 })
 
-test("a synth's track below shows every control whole, scrolled to in the panel if need be", async ({ page }) => {
+/** The synth's card below, its track shown there. */
+const synthCard = (page: Page) =>
+  page.getByRole('region', { name: 'Synth, track', exact: true }).getByRole('region', { name: 'Synth', exact: true })
+
+test("a synth's track below shows its card whole, every control in sight, with nothing to scroll", async ({ page }) => {
   await newProject(page)
   await (await addTrack(page, 'Synth')).click()
-  const panel = page.getByRole('region', { name: 'Synth, track', exact: true })
-  const controls = panel.locator('[role="slider"], [role="radio"]')
-  await expect(controls).not.toHaveCount(0)
-  await (await controls.all()).reduce(
-    (before, control) =>
-      before.then(async () => {
-        await control.scrollIntoViewIfNeeded()
-        await expect(control).toBeInViewport({ ratio: 1 })
-      }),
+  // As the window is in the tests, 1280×720, and the panel as a new project has it.
+  const card = synthCard(page)
+  await expect(card).toBeInViewport({ ratio: 1 })
+  await expect(card.getByRole('slider')).toHaveCount(14)
+  await expect(card.getByRole('radiogroup')).toHaveCount(3)
+  await (await card.locator('[role="slider"], [role="radio"]').all()).reduce(
+    (before, control) => before.then(() => expect(control).toBeInViewport({ ratio: 1 })),
     Promise.resolve()
   )
+  const scrolls = await page
+    .locator('.panel__body')
+    .evaluate((body) => [body.scrollWidth - body.clientWidth, body.scrollHeight - body.clientHeight])
+  expect(scrolls).toEqual([0, 0])
   // The Arrangement stays whole over it.
   await expect(page.getByRole('region', { name: 'Arrangement', exact: true })).toBeInViewport({ ratio: 1 })
+})
+
+test("a knob on a synth's card turns its sound: Delay at its longest keeps its short note silent, back at none it sounds", async ({
+  page
+}) => {
+  await newProject(page)
+  // Each track heard on a side of its own.
+  await addTrack(page, 'Synth')
+  await addTrack(page, 'Synth 2')
+  await panAll(page, 'Synth', 'Home', '100% left')
+  await panAll(page, 'Synth 2', 'End', '100% right')
+  await newClip(page, 0, 0, 'Synth')
+  await putNote(page, 0)
+  await newClip(page, 0, 1, 'Synth 2')
+  await putNote(page, 0)
+  await nameOf(page, 'Synth').click()
+  await expect(below(page)).toHaveText('Synth|Track')
+  await listening(page)
+  await pressPlay(page, true)
+  await heardOn(page, { silent: [], sounding: [0] })
+  const delay = synthCard(page)
+    .getByRole('group', { name: 'Envelope', exact: true })
+    .getByRole('slider', { name: 'Delay', exact: true })
+  await delay.focus()
+  await delay.press('End')
+  await expect(delay).toHaveAttribute('aria-valuenow', '10')
+  await heardOn(page, { silent: [0], sounding: [1] })
+  await delay.press('Home')
+  await expect(delay).toHaveAttribute('aria-valuenow', '0')
+  await heardOn(page, { silent: [], sounding: [0] })
+  await pressPlay(page, false)
 })

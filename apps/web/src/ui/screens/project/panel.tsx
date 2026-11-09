@@ -6,7 +6,7 @@ import { Shown } from '../../../services/view-store'
 import { useCore } from '../../core-context'
 import { ChevronIcon } from '../../kit/icons'
 import { PianoRoll, useNoteLength } from '../../views/piano-roll/piano-roll'
-import { TrackSettings, useTrackName } from '../../views/track/track'
+import { TrackChain, useTrackName } from '../../views/track/track'
 import './panel.css'
 
 /** The panel: a title line over what it shows, with a button folding it to the line; folded, it shows only the line. */
@@ -91,7 +91,7 @@ export const Panel = () => {
     ),
     onSome: ({ below, track }) => {
       const { kind, fills, body } = Shown.match(below, {
-        Track: () => ({ kind: 'Track', fills: false, body: <TrackSettings key={track} track={track} /> }),
+        Track: () => ({ kind: 'Track', fills: false, body: <TrackChain key={track} track={track} /> }),
         Notes: ({ clip }) => ({ kind: 'Notes', fills: true, body: <PianoRoll clip={clip} length={length} /> })
       })
       return (

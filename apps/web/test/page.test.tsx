@@ -640,7 +640,7 @@ const key = (target: Element, key: string) => {
 
 const keyUp = (target: Element) => target.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, key: 'ArrowUp' }))
 
-/** The Kick's own volume, which its head and the panel turn. */
+/** The Kick's own volume, which its head and its strip turn. */
 const kickVolume = (doc: Y.Doc) => readProject(doc).value.tracks[0].strip.volume
 
 /** The button of the track's name in its head. */
@@ -660,13 +660,9 @@ const trackBelow = (target: HTMLElement, name: string) =>
     () => below(target) === `${name}|Track`
   )
 
-/** The Kick's volume below: a knob with its name and number, which a drag on the number turns too. */
-const kickKnob = (target: HTMLElement) =>
-  Option.getOrThrow(
-    Option.flatMapNullishOr(trackBelow(target, 'Kick'), (body) =>
-      body.querySelector('[role="slider"][aria-label="Volume"]')
-    )
-  )
+/** The Kick's volume knob, in its head. */
+const kickKnob = (grid: HTMLElement) =>
+  Option.getOrThrow(Option.fromNullishOr(grid.querySelector('[role="slider"][aria-label="Kick: volume"]')))
 
 const trackVolume = Option.getOrThrow(Option.fromNullishOr(trackStrip.find(({ id }) => id === 'volume')))
 
@@ -707,16 +703,16 @@ const counted = (doc: Y.Doc) => {
 }
 
 test('a knob turns as it is dragged, redrawing only itself, and writes the document when let go', () =>
-  knobPage(({ doc, changed, target }) =>
+  knobPage(({ doc, changed, grid }) =>
     Effect.gen(function* () {
-      const knob = kickKnob(target)
+      const knob = kickKnob(grid)
       // 200 pixels the whole way.
       pointer(knob, 'pointerdown', 100)
       // The press focuses the knob.
       yield* drawn()
       const { components } = yield* changed(() => pointer(knob, 'pointermove', 80))
-      // The same volume in its row, and the hint line, which tells the value of the knob with the focus.
-      expect(components).toEqual(['Dial', 'Knob', 'Dial', 'SmallKnob', 'HintLine'])
+      // It and the hint line, which tells the value of the knob with the focus: nothing of the Kick below.
+      expect(components).toEqual(['Dial', 'SmallKnob', 'HintLine'])
       expect(knobAt(knob)).toBeCloseTo(0.9, 9)
       expect(kickAt(doc)).toBeCloseTo(0.8, 9)
       // With Shift, a tenth as far.
@@ -731,13 +727,12 @@ test('a knob turns as it is dragged, redrawing only itself, and writes the docum
   ))
 
 test("a knob another tab turns shows its value as it turns, redrawing only itself; turned here, this page's own", () =>
-  knobPage(({ doc, changed, elsewhere, target }) =>
+  knobPage(({ doc, changed, elsewhere, grid }) =>
     Effect.gen(function* () {
-      const knob = kickKnob(target)
+      const knob = kickKnob(grid)
       const volume = HoldTarget.TrackStrip({ track: readProject(doc).value.tracks[0].id, param: 'volume' })
       const { components } = yield* changed(() => elsewhere(holding(noHolds, volume, at(0.3))))
-      // Below and in its row.
-      expect(components).toEqual(['Dial', 'Knob', 'Dial', 'SmallKnob'])
+      expect(components).toEqual(['Dial', 'SmallKnob'])
       expect(knobAt(knob)).toBeCloseTo(0.3, 9)
       expect(kickAt(doc)).toBeCloseTo(0.8, 9)
       // Turned here from what it shows, by this page's hand over the other's.
@@ -758,9 +753,9 @@ test("a knob another tab turns shows its value as it turns, redrawing only itsel
   ))
 
 test('a knob pressed while another tab turns it goes from where it plays at the first move; a value out of range shows at the end', () =>
-  knobPage(({ doc, elsewhere, target }) =>
+  knobPage(({ doc, elsewhere, grid }) =>
     Effect.gen(function* () {
-      const knob = kickKnob(target)
+      const knob = kickKnob(grid)
       const volume = HoldTarget.TrackStrip({ track: readProject(doc).value.tracks[0].id, param: 'volume' })
       elsewhere(holding(noHolds, volume, at(0.3)))
       yield* drawn()
@@ -788,9 +783,9 @@ test('a knob pressed while another tab turns it goes from where it plays at the 
   ))
 
 test('a drag past the end turns back at once, and a second pointer on the knob is left out', () =>
-  knobPage(({ doc, target }) =>
+  knobPage(({ doc, grid }) =>
     Effect.gen(function* () {
-      const knob = kickKnob(target)
+      const knob = kickKnob(grid)
       pointer(knob, 'pointerdown', 300)
       pointer(knob, 'pointerdown', 300, { pointerId: 2 })
       pointer(knob, 'pointermove', 0)
@@ -808,9 +803,9 @@ test('a drag past the end turns back at once, and a second pointer on the knob i
   ))
 
 test('moves that add up to the bottom land on it: silence, not a rounding error above it', () =>
-  knobPage(({ doc, target }) =>
+  knobPage(({ doc, grid }) =>
     Effect.gen(function* () {
-      const knob = kickKnob(target)
+      const knob = kickKnob(grid)
       // From 80%, ten moves of 16 pixels each: added up in floating point, a hair above 0.
       pointer(knob, 'pointerdown', 0)
       Array.from({ length: 10 }, (_, i) => pointer(knob, 'pointermove', (i + 1) * 16))
@@ -822,9 +817,9 @@ test('moves that add up to the bottom land on it: silence, not a rounding error 
   ))
 
 test('a drag whose release the page never heard ends at the next move without a button down', () =>
-  knobPage(({ doc, holds, target }) =>
+  knobPage(({ doc, holds, grid }) =>
     Effect.gen(function* () {
-      const knob = kickKnob(target)
+      const knob = kickKnob(grid)
       pointer(knob, 'pointerdown', 100)
       pointer(knob, 'pointermove', 80)
       pointer(knob, 'pointermove', 60, { buttons: 0 })
@@ -836,9 +831,9 @@ test('a drag whose release the page never heard ends at the next move without a 
   ))
 
 test('a press that never moves writes nothing, and what another client wrote meanwhile stays', () =>
-  knobPage(({ doc, holds, target }) =>
+  knobPage(({ doc, holds, grid }) =>
     Effect.gen(function* () {
-      const knob = kickKnob(target)
+      const knob = kickKnob(grid)
       pointer(knob, 'pointerdown', 100)
       setTrackStrip(doc, elsewhere, readProject(doc).value.tracks[0].id, 'volume', 0.3)
       pointer(knob, 'pointerup', 100)
@@ -848,9 +843,9 @@ test('a press that never moves writes nothing, and what another client wrote mea
   ))
 
 test('a move sideways is no turn: a value the knob would read back changed is left as it is', () =>
-  knobPage(({ doc, holds, target }) =>
+  knobPage(({ doc, holds, grid }) =>
     Effect.gen(function* () {
-      const knob = kickKnob(target)
+      const knob = kickKnob(grid)
       setTrackStrip(doc, elsewhere, readProject(doc).value.tracks[0].id, 'volume', 0.85)
       yield* drawn()
       const updates = counted(doc)
@@ -864,9 +859,9 @@ test('a move sideways is no turn: a value the knob would read back changed is le
   ))
 
 test('a knob that goes mid-turn, its track deleted elsewhere, lets go', () =>
-  knobPage(({ doc, holds, target }) =>
+  knobPage(({ doc, holds, grid }) =>
     Effect.gen(function* () {
-      const knob = kickKnob(target)
+      const knob = kickKnob(grid)
       pointer(knob, 'pointerdown', 100)
       pointer(knob, 'pointermove', 80)
       expect(holds()).toHaveLength(1)
@@ -879,9 +874,9 @@ test('a knob that goes mid-turn, its track deleted elsewhere, lets go', () =>
   ))
 
 test('keys turn a knob, a key held down as one turn written once, and a double click puts it back', () =>
-  knobPage(({ doc, target }) =>
+  knobPage(({ doc, grid }) =>
     Effect.gen(function* () {
-      const knob = kickKnob(target)
+      const knob = kickKnob(grid)
       const updates = counted(doc)
       key(knob, 'ArrowUp')
       key(knob, 'ArrowUp')
@@ -990,13 +985,10 @@ test("the mixer has a strip for each track, in their order, then the master's: a
       yield* drawn()
       expect(kickVolume(doc)).toBe(trackVolume.max)
       expect(fader.getAttribute('aria-valuetext')).toBe('+5.6 dB')
-      // Shown below, with the volume the fader turned.
       kick.querySelector<HTMLButtonElement>('.strip__name')?.click()
       yield* drawn()
       expect(below(target)).toBe('Kick|Track')
       expect(kick.getAttribute('data-chosen')).toBe('true')
-      const panel = Option.getOrThrow(Option.fromNullishOr(target.querySelector<HTMLElement>('.panel')))
-      expect(control(panel, 'Volume').getAttribute('aria-valuetext')).toBe('+5.6 dB')
       control(kick, 'Kick: mute').click()
       yield* drawn()
       expect(readProject(doc).value.tracks[0].mute).toBe(true)
@@ -1332,9 +1324,9 @@ test('Cmd+Z or Ctrl+Z takes back the edit, with Shift or Ctrl+Y makes it again, 
   ))
 
 test('a turn of a knob is one step from press to release, and meanwhile undo does nothing, its buttons grey', () =>
-  knobPage(({ doc, target, button }) =>
+  knobPage(({ doc, grid, button }) =>
     Effect.gen(function* () {
-      const knob = kickKnob(target)
+      const knob = kickKnob(grid)
       const undo = button('Undo')
       const cell = button('Kick: mute')
       cell.click()
@@ -1364,10 +1356,9 @@ test('a turn of a knob is one step from press to release, and meanwhile undo doe
   ))
 
 test('two knobs turned at once are one step', () =>
-  knobPage(({ doc, grid, target }) =>
+  knobPage(({ doc, grid }) =>
     Effect.gen(function* () {
-      // The Kick's below, the Snare's in its head.
-      const kick = kickKnob(target)
+      const kick = kickKnob(grid)
       const snare = Option.getOrThrow(
         Option.fromNullishOr(grid.querySelector('[role="slider"][aria-label="Snare: volume"]'))
       )
@@ -1609,7 +1600,11 @@ const knobsIn = (element: Element) =>
     knob.getAttribute('aria-valuetext')
   ])
 
-test("a track's name shows it below: its pan and volume and mixer strip, a sampler nothing more", () =>
+/** The devices of the track below, left to right, by their cards' names. */
+const devicesIn = (body: Element) =>
+  Array.from(body.querySelectorAll('.device'), (card) => card.getAttribute('aria-label'))
+
+test("a track's name shows it below: the devices its sound goes through, a sampler's card its name alone", () =>
   page(({ grid, target }) =>
     Effect.gen(function* () {
       nameButton(grid, 'Kick').click()
@@ -1617,12 +1612,10 @@ test("a track's name shows it below: its pan and volume and mixer strip, a sampl
       expect(below(target)).toBe('Kick|Track')
       expect(middle(target)).toBe('Arrangement')
       const kick = Option.getOrThrow(trackBelow(target, 'Kick'))
-      expect(knobsIn(kick)).toEqual([
-        ['Pan', 'center'],
-        ['Volume', '−5.2 dB']
-      ])
-      // A sampler named, with no controls of its own.
-      expect(kick.querySelector('.track-settings__instrument')?.textContent).toBe('Sampler')
+      expect(devicesIn(kick)).toEqual(['Sampler'])
+      // No pan or volume either: the track's head and strip have them.
+      expect(knobsIn(kick)).toEqual([])
+      expect(kick.querySelector('.device')?.textContent).toBe('Sampler')
     })
   ))
 
@@ -1738,8 +1731,8 @@ test("a synth's shape is chosen by a row of its waves, one lit: a click or an ar
     })
   ))
 
-test("a synth's Coarse turns a semitone at a time, by a key or a drag, and its hint names the oscillator", () =>
-  page(({ doc, target, button, grid }) =>
+test("a synth's Coarse turns a semitone at a time, by a key or a drag redrawing only itself, and its hint names the oscillator", () =>
+  page(({ doc, target, button, grid, changed }) =>
     Effect.gen(function* () {
       button('Add a track').click()
       yield* drawn()
@@ -1761,29 +1754,28 @@ test("a synth's Coarse turns a semitone at a time, by a key or a drag, and its h
       knob.dispatchEvent(new PointerEvent('pointerover', { bubbles: true }))
       yield* drawn()
       expect(target.querySelector('.hint')?.textContent).toMatch(/^Synth synth osc 2 coarse −10 st: in the project/)
-      // A little over a semitone up: a whole one, in the knob and the document.
+      // A little over a semitone up: a whole one, in the knob and the document. Of its card, only the knob drawn.
       pointer(knob, 'pointerdown', 100)
-      pointer(knob, 'pointermove', 95)
       yield* drawn()
+      const { components } = yield* changed(() => pointer(knob, 'pointermove', 95))
+      expect(components).toEqual(['Dial', 'Knob', 'HintLine'])
       expect(knob.getAttribute('aria-valuenow')).toBe('-9')
       pointer(knob, 'pointerup', 95)
       expect(lastSynth(doc, 'osc2.coarse')).toBe(-9)
     })
   ))
 
-test("a synth's track below: its own controls under its name, after the track's knobs", () =>
+test("a synth's track below: its card, with an oscillator's controls to a row and the envelope's beside them, each group by its name", () =>
   page(({ grid, target, button }) =>
     Effect.gen(function* () {
       button('Add a track').click()
       yield* drawn()
       nameButton(grid, 'Synth').click()
       yield* drawn(50)
-      // The synth's own controls under its name, after the track's knobs: an oscillator to a row, Osc 2 an octave
-      // down and Osc 3 two, unmixed; then the envelope's, a short note at full level.
       const synth = Option.getOrThrow(trackBelow(target, 'Synth'))
+      expect(devicesIn(synth)).toEqual(['Synth'])
+      // Osc 2 an octave down and Osc 3 two, unmixed; the envelope's stages in order, a short note at full level.
       expect(knobsIn(synth)).toEqual([
-        ['Pan', 'center'],
-        ['Volume', '−5.2 dB'],
         ['Coarse', '0 st'],
         ['Fine', '0 ct'],
         ['Coarse', '−12 st'],
@@ -1799,17 +1791,37 @@ test("a synth's track below: its own controls under its name, after the track's 
         ['Sustain', '100%'],
         ['Release', '100 ms']
       ])
-      expect(synth.querySelector('.track-settings__instrument .cap')?.textContent).toBe('Synth')
-      const rows = Array.from(synth.querySelectorAll('.track-settings__instrument [role="group"]'), (row) => [
-        row.getAttribute('aria-label'),
-        row.querySelector('[role="radiogroup"]')?.getAttribute('aria-label')
+      const groups = Array.from(synth.querySelectorAll('[role="group"]'), (group) => [
+        group.getAttribute('aria-label'),
+        group.querySelector('.cap')?.textContent,
+        group.querySelector('[role="radiogroup"]')?.getAttribute('aria-label')
       ])
-      expect(rows).toEqual([
-        ['Osc 1', 'Shape'],
-        ['Osc 2', 'Shape'],
-        ['Osc 3', 'Shape'],
-        ['Envelope', undefined]
+      expect(groups).toEqual([
+        ['Osc 1', 'Osc 1', 'Shape'],
+        ['Osc 2', 'Osc 2', 'Shape'],
+        ['Osc 3', 'Osc 3', 'Shape'],
+        ['Envelope', 'Envelope', undefined]
       ])
+    })
+  ))
+
+test("a synth's card draws nothing anew as its track's volume is written: it doesn't show it", () =>
+  page(({ grid, button, changed }) =>
+    Effect.gen(function* () {
+      button('Add a track').click()
+      yield* drawn()
+      nameButton(grid, 'Synth').click()
+      yield* drawn(50)
+      const volume = Option.getOrThrow(
+        Option.fromNullishOr(grid.querySelector('[role="slider"][aria-label="Synth: volume"]'))
+      )
+      const { components } = yield* changed(() => {
+        key(volume, 'End')
+        keyUp(volume)
+      })
+      // Its head drawn anew, the card below not.
+      expect(components).toContain('TrackHead')
+      expect(components.filter((name) => ['TrackChain', 'SynthFace', 'Knob', 'Choices'].includes(name))).toEqual([])
     })
   ))
 
@@ -1818,31 +1830,13 @@ test("a track below dims what sounds as the track's head does while it isn't hea
     Effect.gen(function* () {
       nameButton(grid, 'Kick').click()
       yield* drawn(50)
-      const settings = Option.getOrThrow(
-        Option.flatMapNullishOr(trackBelow(target, 'Kick'), (body) => body.querySelector('.track-settings'))
+      const chain = Option.getOrThrow(
+        Option.flatMapNullishOr(trackBelow(target, 'Kick'), (body) => body.querySelector('.chain'))
       )
-      expect(settings.getAttribute('data-unheard')).toBe('false')
+      expect(chain.getAttribute('data-unheard')).toBe('false')
       button('Kick: mute').click()
       yield* drawn()
-      expect(settings.getAttribute('data-unheard')).toBe('true')
-    })
-  ))
-
-test("a track below turns the same pan and volume as the track's head", () =>
-  page(({ doc, grid, target }) =>
-    Effect.gen(function* () {
-      nameButton(grid, 'Kick').click()
-      yield* drawn(50)
-      const pan = Option.getOrThrow(
-        Option.flatMapNullishOr(trackBelow(target, 'Kick'), (body) =>
-          body.querySelector('[role="slider"][aria-label="Pan"]')
-        )
-      )
-      key(pan, 'End')
-      keyUp(pan)
-      yield* drawn()
-      expect(readProject(doc).value.tracks[0].strip.pan).toBe(1)
-      expect(grid.querySelector('[aria-label="Kick: pan"]')?.getAttribute('aria-valuetext')).toBe('100% right')
+      expect(chain.getAttribute('data-unheard')).toBe('true')
     })
   ))
 
@@ -1987,9 +1981,9 @@ test('opened again, the panel is folded as it was left; a double click on the bo
 })
 
 test('a press with Shift on a knob turns it finely', () =>
-  knobPage(({ doc, target }) =>
+  knobPage(({ doc, grid }) =>
     Effect.gen(function* () {
-      const knob = kickKnob(target)
+      const knob = kickKnob(grid)
       pointer(knob, 'pointerdown', 100, { shiftKey: true })
       pointer(knob, 'pointermove', 60, { shiftKey: true })
       pointer(knob, 'pointerup', 60, { shiftKey: true })
