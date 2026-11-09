@@ -2,20 +2,20 @@
    the canvases it draws on: rows a black key's deeper, lines brighter from a step's to a bar's, keys light as on a
    piano. */
 .roll {
-  --roll-white-row: #12161b;
-  --roll-black-row: #0b0d10;
-  --roll-row-line: #171b20;
-  --roll-octave-line: #262b33;
-  --roll-step-line: #1a1e24;
-  --roll-beat-line: #2a3039;
-  --roll-bar-line: #3a414c;
-  --roll-past: rgb(10 12 15 / 0.6);
-  --roll-white-key: #c9ced6;
-  --roll-key-edge: #8a919b;
-  --roll-black-key: #0e1114;
+  --roll-white-row: #13161c;
+  --roll-black-row: #0c0d10;
+  --roll-row-line: #181b22;
+  --roll-octave-line: #262b36;
+  --roll-step-line: #1b1e26;
+  --roll-beat-line: #2b303c;
+  --roll-bar-line: #3b4352;
+  --roll-past: rgb(12 13 16 / 0.6);
+  --roll-white-key: #c7ccd6;
+  --roll-key-edge: #8a909c;
+  --roll-black-key: #13151a;
   --roll-pressed-key: var(--shared);
-  --roll-key-name: #3b424c;
-  --roll-note-edge: #b97a22;
+  --roll-key-name: #3b4352;
+  --roll-note-edge: var(--shared-deep);
 
   position: relative;
   width: 100%;
@@ -30,8 +30,6 @@
 .roll canvas {
   position: absolute;
   inset: 0;
-  width: 100%;
-  height: 100%;
   /* The roll takes the pointer: a canvas holding it would let go of it under the roll's capture. */
   pointer-events: none;
 }

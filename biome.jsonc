@@ -338,6 +338,10 @@
   ],
   "plugins": [
     {
+      "path": "./biome-plugins/rem-sizes.grit",
+      "includes": ["**/apps/web/src/**/*.css"]
+    },
+    {
       "path": "./biome-plugins/control-flow.grit",
       "includes": [
         "**/*.ts",

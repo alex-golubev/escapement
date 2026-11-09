@@ -119,7 +119,11 @@ test('the rack draws only the strips in sight and one more each side; one scroll
   await page.getByRole('button', { name: 'Play', exact: true }).click()
   await stripSounds(page, 'Synth output', [0, 1])
   const rack = page.locator('.rack')
-  const across = await rack.evaluate((shown) => Math.ceil(shown.clientWidth / 80))
+  // A strip and the gap after it, as the page lays them out.
+  const [first, second] = await Promise.all([0, 1].map((i) => page.locator('.rack .strip').nth(i).boundingBox()))
+  const step = (second?.x ?? 0) - (first?.x ?? 0)
+  expect(step).toBeGreaterThan(0)
+  const across = await rack.evaluate((shown, step) => Math.ceil(shown.clientWidth / step), step)
   expect(await page.locator('.rack .strip').count()).toBeLessThanOrEqual(across + 2)
   await rack.evaluate((shown) => {
     shown.scrollLeft = shown.scrollWidth

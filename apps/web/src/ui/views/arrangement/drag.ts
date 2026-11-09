@@ -4,7 +4,6 @@ import { Array, Data, Number, Option } from 'effect'
 import { onLeftEdge, onRightEdge } from '../../kit/edge'
 import type { Point } from '../../kit/pointer'
 import { clipAt, type Place, rowAt, type Shown, type Span, tickUnder, type View, widthOf, xOf } from './geometry'
-import { headsWidth } from './layout'
 
 /** Where on the arrangement a point is, as a track's place and a tick, past the grid too: a drag goes on outside it. */
 interface Spot {
@@ -36,11 +35,11 @@ export type Cursor = 'move' | 'resize' | 'none'
  * start's only in sight, not scrolled under the tracks' heads.
  */
 const edgeAt = (view: View, clip: Shown, x: number): Option.Option<Edge> => {
-  const width = widthOf(clip.length)
+  const width = widthOf(view, clip.length)
   const start = xOf(view, clip.tick)
   return Option.firstSomeOf([
     Option.liftPredicate<Edge>('end', () => onRightEdge(x, xOf(view, clip.tick + clip.length), width)),
-    Option.liftPredicate<Edge>('start', () => start >= headsWidth && onLeftEdge(x, start, width))
+    Option.liftPredicate<Edge>('start', () => start >= view.headsWidth && onLeftEdge(x, start, width))
   ])
 }
 

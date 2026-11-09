@@ -1,11 +1,11 @@
 /* The arrangement fills the middle, as the piano roll the panel. Its colours are read by the canvases it draws on: rows
-   as the roll's white keys' rows, lines brighter from a bar's to a fourth bar's, clips in the project's colour. */
+   as the roll's white keys' rows, lines brighter from a bar's to a fourth bar's, clips in the one colour. */
 .arrangement {
-  --arrangement-row: #12161b;
-  --arrangement-row-line: #0b0d10;
-  --arrangement-bar-line: #1f242b;
-  --arrangement-phrase-line: #3a414c;
-  --arrangement-clip-edge: #b97a22;
+  --arrangement-row: #13161c;
+  --arrangement-row-line: #0c0d10;
+  --arrangement-bar-line: #1f232c;
+  --arrangement-phrase-line: #3b4352;
+  --arrangement-clip-edge: var(--shared-deep);
 
   position: relative;
   width: 100%;
@@ -28,8 +28,6 @@
 .arrangement canvas {
   position: absolute;
   inset: 0;
-  width: 100%;
-  height: 100%;
   /* The lanes take the pointer: a canvas holding it would let go of it under the lanes' capture. */
   pointer-events: none;
 }
@@ -46,7 +44,7 @@
 
 /* Down the left under the ruler, over the canvases' empty column, scrolled with the rows by the page. */
 .track-heads {
-  --small-knob: 22px;
+  --small-knob: 1.375rem;
 
   position: absolute;
   top: var(--ruler-h);
@@ -83,15 +81,15 @@
 .track-head__name {
   min-width: 0;
   flex: 1;
-  padding: 3px 4px;
+  padding: 0.1875rem 0.25rem;
   overflow: hidden;
   border: 0;
   border-radius: var(--r-sm);
   background: none;
   color: inherit;
   font: inherit;
-  font-size: 11px;
-  font-weight: 600;
+  font-size: 0.75rem;
+  font-weight: 500;
   text-align: left;
   white-space: nowrap;
   text-overflow: ellipsis;
@@ -106,9 +104,9 @@
 .track-head__field {
   min-width: 0;
   flex: 1;
-  padding: 2px 3px;
-  font-size: 11px;
-  font-weight: 600;
+  padding: 0.125rem 0.1875rem;
+  font-size: 0.75rem;
+  font-weight: 500;
 }
 
 .track-head__buttons {
@@ -117,11 +115,11 @@
   flex: none;
 }
 
-/* The track chosen: a stripe down its left, in the colour of what is yours alone. */
+/* The track chosen: lighter, a light stripe down its left, with no colour. */
 .track-head[data-chosen="true"] {
   background: var(--s-strip);
   box-shadow:
-    inset 2px 0 var(--local),
+    inset 0.125rem 0 var(--t-mid),
     inset 0 -1px var(--line),
     inset -1px 0 var(--line);
 }
@@ -137,8 +135,8 @@
 }
 
 .track-add {
-  min-width: 22px;
-  height: 22px;
+  min-width: 1.375rem;
+  height: 1.375rem;
   padding: 0;
-  font-size: 14px;
+  font-size: 0.875rem;
 }

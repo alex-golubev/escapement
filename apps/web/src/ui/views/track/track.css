@@ -1,7 +1,7 @@
 /* A track below: the devices its sound goes through, left to right. */
 .chain {
   /* As high as the panel a new project opens with leaves at 1280×720. */
-  --device-h: 196px;
+  --device-h: 12.25rem;
   display: flex;
   align-items: flex-start;
   gap: calc(var(--u) * 2);
@@ -10,14 +10,15 @@
 
 /* A device's card, as high as the others: its name, then its face, the knobs small, so more of them stand in a row. */
 .device {
-  --knob-d: 30px;
+  --knob-d: 1.875rem;
   display: flex;
   flex-direction: column;
   gap: calc(var(--u) * 2.5);
   height: var(--device-h);
   padding: calc(var(--u) * 2) calc(var(--u) * 3.5) calc(var(--u) * 3);
-  border: 1px solid var(--line-soft);
+  border: 1px solid var(--line);
   border-radius: var(--r-md);
+  background: var(--s-raise);
 }
 
 /* A knob's name and number beside it, not under: a row of knobs as high as a knob. */
@@ -25,7 +26,7 @@
   display: grid;
   grid-template-columns: var(--knob-d) auto;
   column-gap: calc(var(--u) * 2);
-  row-gap: 2px;
+  row-gap: 0.125rem;
   align-items: center;
   justify-items: start;
 }
@@ -39,12 +40,10 @@
   grid-row: 1;
 }
 
-/* As wide as its widest number, not its column: the knob's name may be wider. */
-.device .param .field {
+/* Under its name, from the left. */
+.device .param .param__value {
   grid-column: 2;
   grid-row: 2;
-  width: auto;
-  padding: 1px calc(var(--u) * 1);
   text-align: left;
 }
 

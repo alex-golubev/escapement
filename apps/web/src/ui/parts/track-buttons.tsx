@@ -34,7 +34,7 @@ export const TrackToggles = ({
     <>
       <button
         type='button'
-        class='toggle toggle--shared'
+        class='toggle'
         aria-label={`${name}: mute`}
         aria-pressed={mute}
         data-hint={Boolean.match(mute, {
@@ -48,7 +48,7 @@ export const TrackToggles = ({
       </button>
       <button
         type='button'
-        class='toggle toggle--local'
+        class='toggle'
         aria-label={`${name}: solo`}
         aria-pressed={soloed}
         data-hint={Boolean.match(soloed, {

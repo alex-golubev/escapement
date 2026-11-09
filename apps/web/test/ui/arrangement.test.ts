@@ -5,27 +5,33 @@ import { expect, test } from 'vitest'
 import { edgeWidth } from '../../src/ui/kit/edge'
 import { cursorAt, cursorOf, draggedClips, draggedTo, Grab, grabAt } from '../../src/ui/views/arrangement/drag'
 import {
+  barsAcross,
   clipAt,
   clipsAlong,
   endOf,
   inDrawingOrder,
   type Shown,
-  scrolledAcross,
-  scrolledTo,
   startAt,
   barsInSight,
+  tracksDown,
   tracksInSight,
   type View,
   xOf,
   yOf
 } from '../../src/ui/views/arrangement/geometry'
-import { barWidth, headsWidth, rulerHeight, trackHeight } from '../../src/ui/views/arrangement/layout'
+import { layoutOf } from '../../src/ui/views/arrangement/layout'
+
+/** The sizes at a rem of 16 px, the least the window gives. */
+const layout = layoutOf(16)
+
+const { barWidth, headsWidth, rulerHeight, trackHeight } = layout
 
 /** The tracks of the arrangement the tests draw. */
 const trackCount = 20
 
 /** Eight bars wide and ten tracks high, of twenty tracks, scrolled down two tracks and right a bar. */
 const view: View = {
+  ...layout,
   width: headsWidth + 8 * barWidth,
   height: rulerHeight + 10 * trackHeight,
   top: 2 * trackHeight,
@@ -77,20 +83,27 @@ test('a way across the arrangement takes each clip it passes over once', () => {
   ])
 })
 
-test("the arrangement scrolls down to the row under the last track, +'s, and across to the last clip end", () => {
-  expect(scrolledTo(view.height, trackCount, -1)).toBe(0)
-  expect(scrolledTo(view.height, trackCount, 10 ** 9)).toBe((trackCount + 1) * trackHeight - 10 * trackHeight)
+test("the arrangement scrolls down, in tracks, to the row under the last, +'s, and across, in bars, to the last clip end", () => {
+  expect(tracksDown(layout, view.height, trackCount, -1)).toBe(0)
+  expect(tracksDown(layout, view.height, trackCount, 10 ** 9)).toBe(trackCount + 1 - 10)
+  expect(tracksDown(layout, view.height, trackCount, 2.5)).toBe(2.5)
   // Fewer than fill it: none.
-  expect(scrolledTo(view.height, 3, 10 ** 9)).toBe(0)
+  expect(tracksDown(layout, view.height, 3, 10 ** 9)).toBe(0)
+  // As many tracks at any size of the page: the rows, its height and the ruler all grow with its rem.
+  const big = layoutOf(24)
+  expect(tracksDown(big, big.rulerHeight + 10 * big.trackHeight, trackCount, 10 ** 9)).toBe(trackCount + 1 - 10)
   expect(endOf([])).toBe(0)
   expect(endOf([clip('a', 0, 2, 3), clip('b', 1, 4)])).toBe(5 * barTicks)
-  expect(scrolledAcross(5 * barTicks, 10 ** 9)).toBe(5 * barWidth)
-  expect(scrolledAcross(0, 100)).toBe(0)
+  expect(barsAcross(5 * barTicks, 10 ** 9)).toBe(5)
+  expect(barsAcross(5 * barTicks, 2.25)).toBe(2.25)
+  expect(barsAcross(0, 3)).toBe(0)
 })
 
 test('the tracks in sight are those partly under the ruler too, never past the last', () => {
   expect(tracksInSight({ ...view, top: 2.5 * trackHeight })).toEqual([2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12])
-  expect(tracksInSight({ ...view, top: scrolledTo(view.height, trackCount, 10 ** 9) }).at(-1)).toBe(trackCount - 1)
+  expect(
+    tracksInSight({ ...view, top: tracksDown(layout, view.height, trackCount, 10 ** 9) * trackHeight }).at(-1)
+  ).toBe(trackCount - 1)
   expect(tracksInSight({ ...view, top: 0, tracks: 3 })).toEqual([0, 1, 2])
   expect(tracksInSight({ ...view, tracks: 0 })).toEqual([])
 })
@@ -248,4 +261,9 @@ test('a clip that starts later is drawn over one before it, a shorter one over a
 test('nothing is in sight of an arrangement no higher than its ruler, nor narrower than its heads', () => {
   expect(tracksInSight({ ...view, height: rulerHeight - 1 })).toEqual([])
   expect(barsInSight({ ...view, width: headsWidth - barWidth - 1, left: 0 })).toEqual([])
+})
+
+test('the sizes are whole pixels at any rem, so lines stay sharp, and grow with it', () => {
+  expect(Object.values(layoutOf(23.1114)).every(Number.isInteger)).toBe(true)
+  expect(layoutOf(24)).toMatchObject({ trackHeight: 54, barWidth: 96, headsWidth: 294, rulerHeight: 27 })
 })

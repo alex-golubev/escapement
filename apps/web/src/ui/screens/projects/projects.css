@@ -17,12 +17,12 @@
 }
 
 .projects__panel {
-  width: min(100%, 520px);
+  width: min(100%, 32.5rem);
   border-radius: var(--r-md);
   background: var(--s-strip);
   box-shadow:
     0 0 0 1px var(--line-soft),
-    0 10px 30px rgb(0 0 0 / 0.45);
+    0 0.625rem 1.875rem rgb(0 0 0 / 0.45);
   overflow: hidden;
 }
 
@@ -30,18 +30,18 @@
   display: flex;
   align-items: center;
   gap: calc(var(--u) * 2);
-  padding: 8px 8px 8px 12px;
+  padding: 0.5rem 0.5rem 0.5rem 0.75rem;
 }
 
 .projects__title {
   flex: 1;
   margin: 0;
-  font-size: 13px;
+  font-size: 0.8125rem;
   font-weight: 600;
 }
 
 .projects__list {
-  --bin: 30px;
+  --bin: 1.875rem;
   display: grid;
   background: var(--s-sunk);
   border-top: 1px solid var(--line-soft);
@@ -50,8 +50,8 @@
 .projects__row {
   display: flex;
   align-items: center;
-  min-height: 34px;
-  padding-right: 4px;
+  min-height: 2.125rem;
+  padding-right: 0.25rem;
 }
 
 .projects__row + .projects__row {
@@ -68,14 +68,14 @@
   align-items: baseline;
   gap: calc(var(--u) * 4);
   min-width: 0;
-  padding: 9px 8px 9px 12px;
+  padding: 0.5625rem 0.5rem 0.5625rem 0.75rem;
   color: var(--t-hi);
   text-decoration: none;
 }
 
 .projects__open:focus-visible {
-  outline: 2px solid var(--focus);
-  outline-offset: -2px;
+  outline: 0.125rem solid var(--focus);
+  outline-offset: -0.125rem;
 }
 
 /* Out of sight until the row is pointed at or has the focus, but in the order of Tab all the same; always in sight
@@ -109,13 +109,13 @@
 /* Its letters where the name's were. */
 .projects__field {
   flex: 1;
-  margin: -3px 0 -3px -5px;
-  padding: 2px 4px;
+  margin: -0.1875rem 0 -0.1875rem -0.3125rem;
+  padding: 0.125rem 0.25rem;
 }
 
 .projects__row--asking {
   gap: calc(var(--u) * 2);
-  padding-left: 12px;
+  padding-left: 0.75rem;
   background: var(--s-raise);
 }
 
@@ -136,12 +136,12 @@
 
 .projects__opened {
   color: var(--t-lo);
-  font-size: 11px;
+  font-size: 0.6875rem;
 }
 
 .projects__note {
   margin: 0;
-  padding: 12px;
+  padding: 0.75rem;
   border-top: 1px solid var(--line-soft);
   color: var(--t-mid);
 }

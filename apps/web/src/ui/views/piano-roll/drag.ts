@@ -29,7 +29,7 @@ export const Grab = Data.taggedEnum<Grab>()
 export type Cursor = 'move' | 'stretch' | 'none'
 
 const onEdge = (view: View, note: Note, x: number) =>
-  onRightEdge(x, xOf(view, note.tick + note.length), widthOf(note.length))
+  onRightEdge(x, xOf(view, note.tick + note.length), widthOf(view, note.length))
 
 /** The note under the point, and whether by its right edge. */
 const partAt = (notes: ReadonlyArray<Note>, view: View, point: Point) =>

@@ -32,7 +32,7 @@ const playHintOf = (state: EngineState, transport: Transport) =>
     Hung: () => stopped
   })
 
-/** Play wakes the sound the first time, and waits while it wakes; pressed, it plays, lit in the colour of what is yours. */
+/** Play wakes the sound the first time, and waits while it wakes; pressed, it plays, filled while it does. */
 const PlayButton = () => {
   const { host, run } = useCore()
   const state = useAtomValue(host.state)
@@ -40,7 +40,7 @@ const PlayButton = () => {
   return (
     <button
       type='button'
-      class='btn btn--local'
+      class='btn btn--on'
       aria-label='Play'
       aria-pressed={transport === 'playing'}
       data-hint={playHintOf(state, transport)}
@@ -145,19 +145,12 @@ const Status = () => {
 export const TransportBar = () => (
   <div class='transport'>
     <ToProjects />
-    <span class='transport__rule' />
-    <div class='transport__group'>
+    <div class='btn-group'>
       <PlayButton />
       <HistoryButtons />
     </div>
-    <span class='transport__rule' />
-    <div class='transport__group'>
-      <span class='cap'>Tempo</span>
-      <TempoField />
-      <span class='cap'>BPM</span>
-    </div>
-    <span class='transport__rule' />
-    <div class='transport__group'>
+    <TempoField />
+    <div class='btn-group'>
       <CentreButtons />
     </div>
     <Status />

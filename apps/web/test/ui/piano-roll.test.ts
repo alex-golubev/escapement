@@ -11,9 +11,9 @@ import {
   laneOf,
   noteAt,
   notesAlong,
-  scrolledAcross,
-  scrolledTo,
+  rowsDown,
   startAt,
+  stepsAcross,
   tickAt,
   type View,
   widthOf,
@@ -21,16 +21,21 @@ import {
   yOf
 } from '../../src/ui/views/piano-roll/geometry'
 import { edgeWidth } from '../../src/ui/kit/edge'
-import { keysWidth, rowHeight, rulerHeight, stepWidth } from '../../src/ui/views/piano-roll/layout'
+import { layoutOf } from '../../src/ui/views/piano-roll/layout'
 import { keyName } from '../../src/ui/views/piano-roll/draw'
+
+/** The sizes at a rem of 16 px, the least the window gives. */
+const layout = layoutOf(16)
+
+const { keysWidth, rowHeight, rulerHeight, stepWidth } = layout
 
 /**
  * A bar wide, scrolled so C4's row is the first under the ruler, and C#2's the last: the rows of C#4 and up are above.
  */
-const view: View = { width: 560, height: rulerHeight + 24 * rowHeight, top: (127 - 72) * rowHeight, left: 0 }
+const view: View = { ...layout, width: 560, height: rulerHeight + 24 * rowHeight, top: (127 - 72) * rowHeight, left: 0 }
 
 /** A bar on the grid, in pixels. */
-const barWidth = widthOf(barTicks)
+const barWidth = widthOf(layout, barTicks)
 
 const note = (id: string, tick: number, key: number, length: number): Note => ({
   id: Id(id),
@@ -50,7 +55,7 @@ test("keys are named as most DAWs name them, middle C C3, and a row is a key's d
   expect(keyAt(view, rulerHeight + rowHeight)).toEqual(Option.some(71))
   expect(keyAt(view, rulerHeight - 1)).toEqual(Option.none())
   // Past the lowest key's row, scrolled as far down as the roll goes.
-  const bottom = { ...view, top: scrolledTo(view.height, Number.POSITIVE_INFINITY) }
+  const bottom = { ...view, top: rowsDown(layout, view.height, Number.POSITIVE_INFINITY) * rowHeight }
   expect(keyAt(bottom, view.height - 1)).toEqual(Option.some(0))
   expect(keyAt(bottom, view.height + rowHeight)).toEqual(Option.none())
 })
@@ -63,7 +68,7 @@ test("a tick is a step across a column, past the pattern's end too; none over th
 })
 
 /** Scrolled across two bars and a step. */
-const across: View = { ...view, left: widthOf(2 * barTicks + stepTicks) }
+const across: View = { ...view, left: widthOf(layout, 2 * barTicks + stepTicks) }
 
 /** The middle of the key's row at the tick, as the roll scrolled across shows it. */
 const acrossAt = (tick: number, key: number) => ({ x: xOf(across, tick), y: at(tick, key).y })
@@ -84,13 +89,18 @@ test('scrolled across, the grid starts later: a click there puts a note later, a
   expect(cursorAt([later], across, acrossAt(2 * barTicks + 5 * stepTicks, 64))).toBe('move')
 })
 
-test("the roll scrolls across from the first bar to the end of the bar after the pattern's end, none if it is wider", () => {
-  expect(scrolledAcross(keysWidth + barWidth, barTicks, -5)).toBe(0)
-  expect(scrolledAcross(keysWidth + barWidth, barTicks, 10 ** 6)).toBe(barWidth)
-  expect(scrolledAcross(keysWidth + barWidth, 4 * barTicks, 10 ** 6)).toBe(4 * barWidth)
-  expect(scrolledAcross(keysWidth + barWidth, 4 * barTicks, 100)).toBe(100)
-  expect(scrolledAcross(keysWidth + 3 * barWidth, 2 * barTicks, 10 ** 6)).toBe(0)
-  expect(scrolledAcross(keysWidth + 8 * barWidth, 2 * barTicks, 10 ** 6)).toBe(0)
+test("the roll scrolls across, in steps, from the first bar to the end of the bar after the pattern's end, none if it is wider", () => {
+  /** The steps of a bar. */
+  const bar = barTicks / stepTicks
+  expect(stepsAcross(layout, keysWidth + barWidth, barTicks, -5)).toBe(0)
+  expect(stepsAcross(layout, keysWidth + barWidth, barTicks, 10 ** 6)).toBe(bar)
+  expect(stepsAcross(layout, keysWidth + barWidth, 4 * barTicks, 10 ** 6)).toBe(4 * bar)
+  expect(stepsAcross(layout, keysWidth + barWidth, 4 * barTicks, 5.5)).toBe(5.5)
+  expect(stepsAcross(layout, keysWidth + 3 * barWidth, 2 * barTicks, 10 ** 6)).toBe(0)
+  expect(stepsAcross(layout, keysWidth + 8 * barWidth, 2 * barTicks, 10 ** 6)).toBe(0)
+  // As many steps at any size of the page.
+  const big = layoutOf(24)
+  expect(stepsAcross(big, big.keysWidth + 16 * big.stepWidth, 4 * barTicks, 10 ** 6)).toBe(4 * bar)
 })
 
 test('the playhead takes the roll to its bar as it starts to be heard and as it leaves the grid, not as the roll leaves it', () => {
@@ -112,16 +122,18 @@ test('the playhead takes the roll to its bar as it starts to be heard and as it 
 })
 
 test('in a roll narrower than a bar, the playhead is followed from the start of its beat, its step, or itself', () => {
-  const beats = { ...view, width: keysWidth + widthOf(1.5 * ticksPerQuarter) }
+  const beats = { ...view, width: keysWidth + widthOf(layout, 1.5 * ticksPerQuarter) }
   expect(followed(laneOf(beats), Option.some(1.4 * ticksPerQuarter), 1.5 * ticksPerQuarter, false)).toEqual(
-    Option.some(widthOf(ticksPerQuarter))
+    Option.some(widthOf(layout, ticksPerQuarter))
   )
-  const steps = { ...view, width: keysWidth + widthOf(1.5 * stepTicks) }
+  const steps = { ...view, width: keysWidth + widthOf(layout, 1.5 * stepTicks) }
   expect(followed(laneOf(steps), Option.some(stepTicks), 5.5 * stepTicks, false)).toEqual(
-    Option.some(widthOf(5 * stepTicks))
+    Option.some(widthOf(layout, 5 * stepTicks))
   )
   const narrow = { ...view, width: keysWidth + 4 }
-  expect(followed(laneOf(narrow), Option.none(), 5.5 * stepTicks, false)).toEqual(Option.some(widthOf(5.5 * stepTicks)))
+  expect(followed(laneOf(narrow), Option.none(), 5.5 * stepTicks, false)).toEqual(
+    Option.some(widthOf(layout, 5.5 * stepTicks))
+  )
 })
 
 test('a click puts a note from the start of its step, on its row; over the keyboard, none', () => {
@@ -161,13 +173,14 @@ test('past the roll no note is found, nor erased by a drag that goes on past it'
 
 test('the roll opens with the notes in the middle, or middle C without them, and scrolls no further than its keys', () => {
   const height = rulerHeight + 24 * rowHeight
-  const middleOf = (top: number) => Option.getOrThrow(keyAt({ ...view, top }, rulerHeight + 12 * rowHeight))
-  expect(middleOf(centredOn([], height))).toBe(60)
-  expect(middleOf(centredOn([note('a', 0, 48, 1), note('b', 0, 72, 1)], height))).toBe(60)
-  expect(middleOf(centredOn([note('a', 0, 84, 1)], height))).toBe(84)
-  expect(centredOn([note('a', 0, 127, 1)], height)).toBe(0)
-  expect(scrolledTo(height, -5)).toBe(0)
-  expect(scrolledTo(height, 10 ** 6)).toBe(128 * rowHeight - 24 * rowHeight)
+  const middleOf = (rows: number) =>
+    Option.getOrThrow(keyAt({ ...view, top: rows * rowHeight }, rulerHeight + 12 * rowHeight))
+  expect(middleOf(centredOn(layout, [], height))).toBe(60)
+  expect(middleOf(centredOn(layout, [note('a', 0, 48, 1), note('b', 0, 72, 1)], height))).toBe(60)
+  expect(middleOf(centredOn(layout, [note('a', 0, 84, 1)], height))).toBe(84)
+  expect(centredOn(layout, [note('a', 0, 127, 1)], height)).toBe(0)
+  expect(rowsDown(layout, height, -5)).toBe(0)
+  expect(rowsDown(layout, height, 10 ** 6)).toBe(128 - 24)
 })
 
 test('the keys in sight are those whose rows show at least in part, highest first', () => {
@@ -289,4 +302,15 @@ test('a drag shows the notes as the edit let go would make them, the note held o
   ])
   const put = Option.getOrThrow(grabAt([later], view, at(stepTicks * 5, 60), stepTicks))
   expect(draggedNotes([there, later], put, to)).toEqual([later, to])
+})
+
+test('the sizes are whole pixels at any rem, so lines stay sharp, and grow with it', () => {
+  expect(Object.values(layoutOf(23.1114)).every(Number.isInteger)).toBe(true)
+  expect(layoutOf(24)).toMatchObject({
+    rowHeight: 18,
+    stepWidth: 48,
+    keysWidth: 72,
+    blackKeyWidth: 43,
+    rulerHeight: 27
+  })
 })

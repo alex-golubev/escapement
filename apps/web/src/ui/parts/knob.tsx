@@ -40,7 +40,7 @@ export const useParamTurn = (
 const useKnob = (owner: string, param: AnyParam, value: number, target: HoldTarget) =>
   useParamTurn(owner, param, value, target)
 
-/** The dial itself, filled from where the parameter's zero stands: from the start, or from the middle for a pan. */
+/** The dial itself: a cap, its mark turned to the position. */
 const Dial = ({
   label,
   param,
@@ -59,13 +59,11 @@ const Dial = ({
     aria-valuemax={param.max}
     aria-valuenow={turned.value}
     aria-valuetext={text}
-    style={{ '--v': paramPosition(param, turned.value), '--zero': paramPosition(param, 0) }}
+    style={{ '--v': paramPosition(param, turned.value) }}
     data-hint={hint}
     {...turned.pointer}
     {...turned.keys}
   >
-    <span class='knob__arc' />
-    <span class='knob__body' />
     <span class='knob__hand' />
   </span>
 )
@@ -91,7 +89,7 @@ export const Knob = ({
       <Dial label={param.label} param={param} knob={knob} />
       {/* The knob's value as it reads it out; a drag on it turns the knob, the keys stay with the knob. */}
       <span
-        class='field num'
+        class='param__value'
         aria-hidden='true'
         style={{ '--chars': widestText(param) }}
         data-hint={knob.hint}

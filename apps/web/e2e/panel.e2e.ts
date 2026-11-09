@@ -1,5 +1,5 @@
 import { expect, type Page } from '@playwright/test'
-import { reload, showCentre, synths, test } from './page'
+import { arrangementLayout, reload, showCentre, synths, test } from './page'
 
 /** What must stay in sight whatever the panel's height: the page's controls over and under it, and its own. */
 const inSight = ['.transport', '.workspace__border', '.panel__title', '.panel__fold', '.hint']
@@ -73,7 +73,7 @@ const arrangementDown = (page: Page) =>
 
 const rackAcross = (page: Page) => page.locator('.rack').evaluate((rack) => rack.scrollLeft)
 
-/** The scroll this browser keeps for the open project, as written to IndexedDB; none before it is. */
+/** The scroll this browser keeps for the open project, in tracks, bars and strips, as written to IndexedDB. */
 const keptScroll = (page: Page) =>
   page.evaluate(async () => {
     const done = <A>(request: IDBRequest<A>) => {
@@ -89,8 +89,16 @@ const keptScroll = (page: Page) =>
       db.transaction('entries', 'readonly').objectStore('entries').get(key)
     )
     db.close()
-    return JSON.parse(entry?.value ?? '{}').scroll
+    const scroll: { readonly arrangement: { readonly down: number; readonly across: number }; readonly rack: number } =
+      JSON.parse(entry?.value ?? '{"scroll":{"arrangement":{"down":0,"across":0},"rack":0}}').scroll
+    return scroll
   })
+
+/** A strip and the gap after it in the rack, as the page lays them out. */
+const stripStep = async (page: Page) => {
+  const [first, second] = await Promise.all([0, 1].map((i) => page.locator('.rack .strip').nth(i).boundingBox()))
+  return (second?.x ?? 0) - (first?.x ?? 0)
+}
 
 test("the panel's height and fold, and how far the Arrangement and the rack are scrolled, come back with the page", async ({
   page
@@ -112,8 +120,12 @@ test("the panel's height and fold, and how far the Arrangement and the rack are 
   const across = await rackAcross(page)
   await arrow(page).click()
   await expect(arrow(page)).toHaveAttribute('aria-expanded', 'false')
-  // The scroll is written once it stands.
-  await expect.poll(() => keptScroll(page)).toEqual({ arrangement: { down, across: 0 }, rack: across })
+  // The scroll is written once it stands, in tracks and strips.
+  await expect.poll(async () => (await keptScroll(page)).rack).toBeGreaterThan(0)
+  const kept = await keptScroll(page)
+  expect(kept.arrangement.down).toBeCloseTo(down / (await arrangementLayout(page)).trackHeight, 6)
+  expect(kept.arrangement.across).toBe(0)
+  expect(kept.rack).toBeCloseTo(across / (await stripStep(page)), 6)
   await reload(page)
   await expect(page.locator('.strip--master')).toBeVisible()
   await expect.poll(() => rackAcross(page)).toBe(across)

@@ -1,7 +1,7 @@
 import { expect, type Page } from '@playwright/test'
-import { barWidth, headsWidth } from '../src/ui/views/arrangement/layout'
 import {
   arrangementAt,
+  arrangementLayout,
   drawnAt,
   heard,
   listening,
@@ -145,6 +145,7 @@ test("a clip's right edge dragged out to three bars plays its notes in each, and
     )
     .toEqual([true, false])
   // From just inside its end to just inside the third bar's.
+  const { barWidth } = await arrangementLayout(page)
   const edge = (bar: number) => first.x - barWidth / 2 + bar * barWidth - 3
   await page.mouse.move(edge(1), first.y)
   await page.mouse.down()
@@ -189,6 +190,7 @@ test('the playhead runs along the Arrangement, and the Arrangement goes with it 
   await page.keyboard.press('End')
   await expect(tempo).toHaveAttribute('aria-valuenow', '522')
   const box = await page.locator('.arrangement').boundingBox()
+  const { headsWidth, barWidth } = await arrangementLayout(page)
   const inSight = Math.floor(((box?.width ?? 0) - headsWidth) / barWidth)
   // A clip at the start, one in the last bar in sight, and, scrolled as far as it, one in the last bar in sight again.
   await newClip(page, 0, 1, 'Synth 2')

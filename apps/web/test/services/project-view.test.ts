@@ -199,9 +199,9 @@ it.live('the scroll is written once it stands, the rest at once; opened again, t
     yield* Effect.scoped(
       Effect.gen(function* () {
         const view = yield* projectViewOf(watched, yield* followProject(doc), centres)
-        Array.from({ length: 3 }, (_, step) => registry.set(view.arrangementScroll.down, (step + 1) * 32))
-        registry.set(view.arrangementScroll.across, 240)
-        registry.set(view.rackScroll, 300)
+        Array.from({ length: 3 }, (_, step) => registry.set(view.arrangementScroll.down, (step + 1) * 0.5))
+        registry.set(view.arrangementScroll.across, 3.75)
+        registry.set(view.rackScroll, 3.75)
         view.fold(true)
         yield* Effect.yieldNow
         expect(written.map(({ panel, scroll }) => ({ panel, scroll }))).toEqual([
@@ -210,7 +210,7 @@ it.live('the scroll is written once it stands, the rest at once; opened again, t
         yield* Effect.sleep('400 millis')
         expect(written.map(({ scroll }) => scroll)).toEqual([
           { arrangement: { down: 0, across: 0 }, rack: 0 },
-          { arrangement: { down: 96, across: 240 }, rack: 300 }
+          { arrangement: { down: 1.5, across: 3.75 }, rack: 3.75 }
         ])
       })
     )
@@ -224,6 +224,6 @@ it.live('the scroll is written once it stands, the rest at once; opened again, t
       down: registry.get(reopened.arrangementScroll.down),
       across: registry.get(reopened.arrangementScroll.across),
       rack: registry.get(reopened.rackScroll)
-    }).toEqual({ panel: { share: 40, folded: true }, down: 96, across: 240, rack: 300 })
+    }).toEqual({ panel: { share: 40, folded: true }, down: 1.5, across: 3.75, rack: 3.75 })
   }).pipe(inRegistry)
 )

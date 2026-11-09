@@ -8,6 +8,8 @@ import { useContext, useLayoutEffect, useMemo, useRef } from 'preact/hooks'
 import { useCore } from '../../core-context'
 import { useLaidOutSize } from '../../kit/laid-out'
 import { focusPast } from '../../kit/neighbour'
+import { pixelsOf } from '../../kit/pixels'
+import { useRem } from '../../kit/rem'
 import { Fader, type FaderMarks } from '../../parts/fader'
 import { setFlag, setStyleVar, useFrame } from '../../parts/frames'
 import { Knob } from '../../parts/knob'
@@ -169,18 +171,14 @@ const TrackStrip = memo(function TrackStrip({ id, index }: { readonly id: Id; re
   })
 })
 
-// A strip and the gap after it, across: the rack lays its strips out by these, and draws only those in sight.
-const stripWidth = 76
-const stripGap = 4
-const stripStep = stripWidth + stripGap
-
-/** The whole strips scrolled past. */
-const pastOf = (left: number) => Math.floor(left / stripStep)
+// A strip and the gap after it across, in rems: the rack lays its strips out by these, and draws only those in sight.
+const stripWidth = 4.75
+const stripGap = 0.25
 
 /** The strips drawn, of `count`: those in sight across `width`, and at least one more each side, for a scroll or Tab. */
-const drawnOf = (past: number, width: number, count: number) => {
+const drawnOf = (past: number, width: number, count: number, step: number) => {
   const first = Number.clamp(past - 1, { minimum: 0, maximum: count })
-  return { first, end: Number.clamp(past + Math.ceil(width / stripStep) + 2, { minimum: first, maximum: count }) }
+  return { first, end: Number.clamp(past + Math.ceil(width / step) + 2, { minimum: first, maximum: count }) }
 }
 
 /** The tracks' strips in their order, scrolled across from where the page last left them: only those in sight drawn. */
@@ -188,28 +186,37 @@ const TrackRack = () => {
   const { registry, session, view } = useCore()
   const ids = useAtomValue(session.project.trackIds)
   const rack = useRef<HTMLDivElement>(null)
-  // Drawn again as a strip comes into sight or goes, not at each pixel scrolled.
-  const past = useAtomValue(useMemo(() => byContent((get) => pastOf(get(view.rackScroll))), [view]))
-  const width = Option.match(useLaidOutSize(rack), { onNone: () => 0, onSome: ({ width }) => width })
+  const rem = useRem()
+  const width = pixelsOf(rem, stripWidth)
+  const gap = pixelsOf(rem, stripGap)
+  const step = width + gap
+  // The whole strips scrolled past: drawn again as a strip comes into sight or goes, not at each pixel scrolled.
+  const past = useAtomValue(useMemo(() => byContent((get) => Math.floor(get(view.rackScroll))), [view]))
+  const room = Option.match(useLaidOutSize(rack), { onNone: () => 0, onSome: ({ width }) => width })
+  // Scrolled in strips, so a page grown shows the same ones: in pixels again as the strips' size changes.
   useLayoutEffect(() => {
     Option.map(Option.fromNullishOr(rack.current), (shown) => {
-      shown.scrollLeft = registry.get(view.rackScroll)
+      shown.scrollLeft = registry.get(view.rackScroll) * step
     })
-  }, [registry, view])
+  }, [registry, view, step])
   // The browser stops a scroll short of the strips' end, as they go or the rack widens, and tells no one.
   useLayoutEffect(() => {
-    Option.map(Option.fromNullishOr(rack.current), (shown) => registry.set(view.rackScroll, shown.scrollLeft))
-  }, [registry, view, ids.length, width])
-  const { first, end } = drawnOf(past, width, ids.length)
+    Option.map(Option.fromNullishOr(rack.current), (shown) => registry.set(view.rackScroll, shown.scrollLeft / step))
+  }, [registry, view, ids.length, room, step])
+  const { first, end } = drawnOf(past, room, ids.length, step)
   return (
-    <div class='rack' ref={rack} onScroll={(event) => registry.set(view.rackScroll, event.currentTarget.scrollLeft)}>
+    <div
+      class='rack'
+      ref={rack}
+      onScroll={(event) => registry.set(view.rackScroll, event.currentTarget.scrollLeft / step)}
+    >
       <div
         class='rack__strips'
         style={{
-          '--strip-w': `${stripWidth}px`,
-          gap: `${stripGap}px`,
-          width: `calc(${Math.max(ids.length * stripStep - stripGap, 0)}px + 2 * var(--rack-room))`,
-          paddingLeft: `calc(${first * stripStep}px + var(--rack-room))`
+          '--strip-w': `${width}px`,
+          gap: `${gap}px`,
+          width: `calc(${Math.max(ids.length * step - gap, 0)}px + 2 * var(--rack-room))`,
+          paddingLeft: `calc(${first * step}px + var(--rack-room))`
         }}
       >
         {ids.slice(first, end).map((id, i) => (

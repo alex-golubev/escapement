@@ -7,6 +7,8 @@ import {
   type TargetedMouseEvent
 } from 'preact'
 import { useContext, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks'
+import { pixelsOf } from './pixels'
+import { remOf } from './rem'
 import './menu.css'
 
 export interface MenuItem {
@@ -68,33 +70,35 @@ export const useMenuButton = (menu: () => Menu) => {
   }
 }
 
-/** Off the page's edges. */
-const margin = 4
+/** Off the page's edges, in rems: as the menu's widest leaves it. */
+const margin = 0.25
 
-/** Between a control and its menu. */
-const gap = 2
+/** Between a control and its menu, in rems. */
+const gap = 0.125
 
-/** Along one axis: after what it opens from, or, where that runs past `room`, ending before it; off the edges. */
-export const startOf = (after: number, before: number, size: number, room: number) =>
+/** Along one axis: after what it opens from, or, where that runs past `room`, ending before it; `margin` off the edges. */
+export const startOf = (after: number, before: number, size: number, room: number, margin: number) =>
   Number.clamp(Boolean.match(after + size + margin <= room, { onTrue: () => after, onFalse: () => before - size }), {
     minimum: margin,
     maximum: Math.max(margin, room - size - margin)
   })
 
-const fromOf = (place: MenuPlace) =>
+const fromOf = (place: MenuPlace, apart: number) =>
   MenuPlace.$match(place, {
     Pointer: ({ x, y }) => ({ left: x, right: x, top: y, bottom: y }),
     Under: ({ control }) => {
       const { left, right, top, bottom } = control.getBoundingClientRect()
-      return { left, right, top: top - gap, bottom: bottom + gap }
+      return { left, right, top: top - apart, bottom: bottom + apart }
     }
   })
 
 const place = (menu: HTMLElement, at: MenuPlace) => {
-  const from = fromOf(at)
+  const rem = remOf()
+  const from = fromOf(at, pixelsOf(rem, gap))
   const { width, height } = menu.getBoundingClientRect()
-  menu.style.left = `${startOf(from.left, from.right, width, window.innerWidth)}px`
-  menu.style.top = `${startOf(from.bottom, from.top, height, window.innerHeight)}px`
+  const off = pixelsOf(rem, margin)
+  menu.style.left = `${startOf(from.left, from.right, width, window.innerWidth, off)}px`
+  menu.style.top = `${startOf(from.bottom, from.top, height, window.innerHeight, off)}px`
 }
 
 const itemsOf = (menu: HTMLElement) => Array.fromIterable(menu.querySelectorAll<HTMLElement>('[role="menuitem"]'))

@@ -3,7 +3,6 @@ import { barTicks, type NewNote, barSteps, stepTicks } from '@escapement/model'
 import { Array, Boolean, Option } from 'effect'
 import { paletteOf as tokensOf } from '../../kit/canvas'
 import { isBlack, keysInSight, type View, widthOf, xOf, yOf } from './geometry'
-import { blackKeyWidth, keysWidth, rowHeight, rulerHeight, stepWidth } from './layout'
 
 const names = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
 
@@ -31,8 +30,7 @@ const tokens = {
   ruler: '--s-well',
   rulerText: '--t-lo',
   playhead: '--playhead',
-  font: '--font',
-  numbers: '--font-num'
+  font: '--font'
 } as const
 
 export const paletteOf = tokensOf(tokens)
@@ -67,6 +65,7 @@ export const drawKeyboard = (
   palette: Palette,
   pressed: Option.Option<number>
 ) => {
+  const { keysWidth, blackKeyWidth, rowHeight, rulerHeight, corner } = view
   const isPressed = (key: number) => Option.contains(pressed, key)
   /** The key's colour, white or black, or pressed. */
   const colourOf = (key: number, unpressed: string) =>
@@ -91,7 +90,7 @@ export const drawKeyboard = (
         g.fillRect(blackKeyWidth, y + half, keysWidth - 1 - blackKeyWidth, 1)
         g.fillStyle = colourOf(key, palette.blackKey)
         g.beginPath()
-        g.roundRect(0, y + 1, blackKeyWidth, rowHeight - 2, [0, 2, 2, 0])
+        g.roundRect(0, y + 1, blackKeyWidth, rowHeight - 2, [0, corner, corner, 0])
         g.fill()
       },
       onFalse: () => {
@@ -107,10 +106,10 @@ export const drawKeyboard = (
     Boolean.match(key % 12 === 0, {
       onTrue: () => {
         g.fillStyle = palette.keyName
-        g.font = `9px ${palette.numbers}`
+        g.font = `${view.numbers}px ${palette.font}`
         g.textAlign = 'right'
         g.textBaseline = 'middle'
-        g.fillText(keyName(key), keysWidth - 5, y + half + 0.5)
+        g.fillText(keyName(key), keysWidth - view.gap, y + half + 0.5)
       },
       onFalse: () => {}
     })
@@ -122,7 +121,7 @@ export const drawKeyboard = (
 const onGrid = (g: CanvasRenderingContext2D, view: View, draw: () => void) => {
   g.save()
   g.beginPath()
-  g.rect(keysWidth, 0, view.width - keysWidth, view.height)
+  g.rect(view.keysWidth, 0, view.width - view.keysWidth, view.height)
   g.clip()
   draw()
   g.restore()
@@ -130,10 +129,11 @@ const onGrid = (g: CanvasRenderingContext2D, view: View, draw: () => void) => {
 
 /** Marks `every` pixels apart along the grid, by number: from the one at or left of its left edge to the last in sight. */
 const inSightEvery = (view: View, every: number) =>
-  Array.range(Math.floor(view.left / every), Math.floor((view.left + view.width - keysWidth) / every))
+  Array.range(Math.floor(view.left / every), Math.floor((view.left + view.width - view.keysWidth) / every))
 
 /** The rows, the lines between steps, what lies past the pattern's `end`, and the bars' numbers. */
 export const drawGrid = (g: CanvasRenderingContext2D, view: View, palette: Palette, end: number) => {
+  const { keysWidth, rowHeight, rulerHeight, stepWidth } = view
   const right = view.width - keysWidth
   keysInSight(view).forEach((key) => {
     const y = yOf(view, key)
@@ -157,34 +157,32 @@ export const drawGrid = (g: CanvasRenderingContext2D, view: View, palette: Palet
   g.fillStyle = palette.stepLine
   g.fillRect(keysWidth, rulerHeight - 1, right, 1)
   g.fillStyle = palette.rulerText
-  g.font = `9px ${palette.numbers}`
+  g.font = `${view.numbers}px ${palette.font}`
   g.textAlign = 'left'
   g.textBaseline = 'middle'
   // A bar scrolled partly out of sight takes its number under the keyboard with it.
   onGrid(g, view, () =>
     inSightEvery(view, barSteps * stepWidth).forEach((bar) =>
-      g.fillText(String(bar + 1), xOf(view, bar * barTicks) + 4, rulerHeight / 2)
+      g.fillText(String(bar + 1), xOf(view, bar * barTicks) + view.gap, rulerHeight / 2)
     )
   )
 }
 
-/** Wide enough to name its key inside. */
-const namedFrom = 22
-
 /** Whether any of the note is in sight on the grid. */
 const shows = (view: View, note: NewNote) =>
-  xOf(view, note.tick + note.length) > keysWidth &&
+  xOf(view, note.tick + note.length) > view.keysWidth &&
   xOf(view, note.tick) < view.width &&
-  yOf(view, note.key) + rowHeight > rulerHeight &&
+  yOf(view, note.key) + view.rowHeight > view.rulerHeight &&
   yOf(view, note.key) < view.height
 
 /** Each note in sight as long as it is, on its key's row, in the order given: the last on top. */
 export const drawNotes = (g: CanvasRenderingContext2D, view: View, palette: Palette, notes: ReadonlyArray<NewNote>) => {
+  const { keysWidth, rulerHeight, corner } = view
   g.save()
   g.beginPath()
   g.rect(keysWidth, rulerHeight, view.width - keysWidth, view.height - rulerHeight)
   g.clip()
-  g.font = `600 8px ${palette.font}`
+  g.font = `600 ${view.names}px ${palette.font}`
   g.textAlign = 'left'
   g.textBaseline = 'middle'
   notes
@@ -192,21 +190,21 @@ export const drawNotes = (g: CanvasRenderingContext2D, view: View, palette: Pale
     .forEach((note) => {
       const x = xOf(view, note.tick) + 1
       const y = yOf(view, note.key)
-      const width = widthOf(note.length) - 1
-      const height = rowHeight - 1
+      const width = widthOf(view, note.length) - 1
+      const height = view.rowHeight - 1
       g.fillStyle = palette.note
       g.beginPath()
-      g.roundRect(x, y, width, height, 2)
+      g.roundRect(x, y, width, height, corner)
       g.fill()
       g.strokeStyle = palette.noteEdge
       g.lineWidth = 1
       g.beginPath()
-      g.roundRect(x + 0.5, y + 0.5, width - 1, height - 1, 2)
+      g.roundRect(x + 0.5, y + 0.5, width - 1, height - 1, corner)
       g.stroke()
-      Boolean.match(width > namedFrom, {
+      Boolean.match(width > view.namedFrom, {
         onTrue: () => {
           g.fillStyle = palette.noteText
-          g.fillText(keyName(note.key), x + 4, y + height / 2 + 0.5)
+          g.fillText(keyName(note.key), x + view.gap, y + height / 2 + 0.5)
         },
         onFalse: () => {}
       })

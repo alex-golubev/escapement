@@ -41,7 +41,7 @@ export const CentreButtons = () => {
       <button
         key={centre}
         type='button'
-        class='btn btn--centre'
+        class='btn btn--chosen'
         aria-pressed={centre === shown}
         data-hint={`${hint} in the middle: yours alone, as is what is under it`}
         onClick={() => view.turnTo(centre)}

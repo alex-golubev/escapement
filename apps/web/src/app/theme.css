@@ -1,60 +1,65 @@
-/* The interface's language: its tokens and the controls every window uses. */
+/* The interface's language: its tokens and the controls every view uses. */
+
+/* Every size is in rems, and a rem grows with the window: as the browser's own 16px up to 1600×900, half again at most. */
+html {
+  font-size: clamp(100%, min(1vw, 1.7778vh), 150%);
+}
 
 :root {
   color-scheme: dark;
 
   /* Surfaces, from the deepest to the raised: the middle and the panel stand on the page, rows sit in wells. */
-  --s-well: #0a0c0f;
-  --s-sunk: #0e1114;
-  --s-strip: #191d23;
-  --s-raise: #22272f;
+  --s-well: #0c0d10;
+  --s-sunk: #13151a;
+  --s-strip: #181b22;
+  --s-raise: #1f232c;
+  --s-hover: #262b36;
 
-  --line: #2b313a;
-  --line-soft: #21262d;
+  --line: #2b303c;
+  --line-soft: #1f232c;
 
-  --t-hi: #e8ebf0;
-  --t-mid: #98a1ae;
-  --t-lo: #5f6874;
+  /* Names and values; the rest; captions. */
+  --t-hi: #eef1f6;
+  --t-mid: #c7ccd6;
+  --t-lo: #737a89;
 
-  /* The main colour: what is in the project, heard by everyone. A control's value is in the project too. */
-  --shared: #f0a73c;
-  --on-shared: #2a1a04;
+  /* The one colour: what is on, and a value of the sound. */
+  --shared: #e59500;
+  --shared-deep: #9e6700;
+  --on-shared: #0c0d10;
   --value: var(--shared);
 
-  /* An accent: what only you have, such as solo and playback. */
-  --local: #a78bfa;
-  --on-local: #241541;
+  /* A meter's lamps, from a quiet signal to a loud one. */
+  --meter-low: #22c55e;
+  --meter-mid: #eab308;
 
-  /* An accent: the signal's level. */
-  --signal: #3fbf95;
+  /* An alarm, not a colour of the interface. */
+  --clip: #ef4444;
+  --on-clip: #1f0505;
 
-  /* An alarm, not an accent. */
-  --clip: #ff5f57;
-  --on-clip: #2b0806;
-
-  --focus: #dfe4ea;
+  --focus: #eef1f6;
 
   /* The playhead's line across a grid drawn on a canvas: light, no colour of its own. */
-  --playhead: rgb(232 235 240 / 0.55);
+  --playhead: rgb(238 241 246 / 0.55);
 
-  /* The grid: most gaps are fours. */
-  --u: 4px;
+  /* The grid: most gaps are fours of a 16px rem. */
+  --u: 0.25rem;
   /* A toggle's side, M and S's: what lines up with them reads it here. */
-  --toggle: 18px;
+  --toggle: 1.125rem;
 
-  --r-sm: 3px;
-  --r-md: 5px;
-  --r-lg: 8px;
+  --r-sm: 0.125rem;
+  --r-md: 0.25rem;
+  --r-lg: 0.5rem;
 
-  --font: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  /* Numbers are read down a column and compared. */
-  --font-num: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
+  --font: "JetBrains Mono Variable", ui-monospace, Menlo, monospace;
 
-  --knob-d: 40px;
+  --knob-d: 2.5rem;
 }
 
 * {
   box-sizing: border-box;
+  scrollbar-width: thin;
+  scrollbar-color: var(--s-hover) transparent;
 }
 
 html,
@@ -67,7 +72,7 @@ body {
   background: var(--s-well);
   color: var(--t-hi);
   font-family: var(--font);
-  font-size: 12px;
+  font-size: 0.75rem;
   line-height: 1.4;
   -webkit-font-smoothing: antialiased;
 }
@@ -76,23 +81,21 @@ body {
   height: 100%;
 }
 
+/* Numbers are read down a column and compared. */
 .num {
-  font-family: var(--font-num);
   font-variant-numeric: tabular-nums;
-  letter-spacing: -0.02em;
 }
 
 .cap {
-  font-size: 9px;
-  font-weight: 600;
-  letter-spacing: 0.08em;
+  font-size: 0.625rem;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--t-lo);
 }
 
 :where(.btn, .toggle, .field, .knob, .track-head__name, .strip__name):focus-visible {
-  outline: 2px solid var(--focus);
-  outline-offset: 2px;
+  outline: 0.125rem solid var(--focus);
+  outline-offset: 0.125rem;
 }
 
 /* ─── Button ─────────────────────────────────────────────────────────────── */
@@ -100,23 +103,27 @@ body {
 .btn {
   display: inline-grid;
   place-items: center;
-  min-width: 30px;
-  height: 26px;
-  padding: 0 8px;
-  border: 1px solid var(--line-soft);
-  border-radius: var(--r-sm);
-  background: var(--s-raise);
-  color: var(--t-mid);
+  min-width: 1.875rem;
+  height: 1.625rem;
+  padding: 0 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--s-sunk);
+  color: var(--t-lo);
   font-family: var(--font);
-  font-size: 11px;
+  font-size: 0.6875rem;
   /* A link drawn as a button, as the way to the list of projects. */
   text-decoration: none;
   cursor: pointer;
 }
 
-.btn:hover:not(:disabled) {
-  border-color: var(--line);
+.btn:hover:not(:disabled, [aria-pressed="true"]) {
+  background: var(--s-strip);
   color: var(--t-hi);
+}
+
+.btn:active:not(:disabled) {
+  transform: translateY(1px);
 }
 
 .btn:disabled {
@@ -125,8 +132,8 @@ body {
 }
 
 .btn svg {
-  width: 12px;
-  height: 12px;
+  width: 0.75rem;
+  height: 0.75rem;
   fill: none;
   stroke: currentColor;
   stroke-width: 1.6;
@@ -134,30 +141,50 @@ body {
   stroke-linejoin: round;
 }
 
-/* Playback is each one's own: on, it takes the colour of what only you have, as S does. */
-.btn--local[aria-pressed="true"] {
-  background: var(--local);
-  border-color: var(--local);
-  color: var(--on-local);
+/* Buttons of one job in one frame, their own edges gone. */
+.btn-group {
+  display: inline-flex;
+  padding: var(--r-sm);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--s-sunk);
+}
+
+.btn-group .btn {
+  border-color: transparent;
+  border-radius: var(--r-sm);
+  background: none;
+}
+
+/* What is chosen to look at: lighter, with no colour. */
+.btn--chosen[aria-pressed="true"] {
+  background: var(--s-hover);
+  color: var(--t-hi);
+}
+
+/* On: filled with the one colour, as Play while it plays. */
+.btn--on[aria-pressed="true"] {
+  background: var(--shared);
+  color: var(--on-shared);
+}
+
+.btn--on svg {
+  fill: currentColor;
+  stroke: none;
 }
 
 /* What can't be undone, asked for once more. */
 .btn--alarm {
-  background: var(--clip);
   border-color: var(--clip);
+  background: var(--clip);
   color: var(--on-clip);
   font-weight: 600;
 }
 
 .btn--alarm:hover:not(:disabled) {
-  border-color: var(--clip);
+  background: var(--clip);
   color: var(--on-clip);
   filter: brightness(1.1);
-}
-
-.btn--local svg {
-  fill: currentColor;
-  stroke: none;
 }
 
 /* ─── Toggle ─────────────────────────────────────────────────────────────── */
@@ -168,33 +195,29 @@ body {
   height: var(--toggle);
   flex: none;
   padding: 0;
-  border: 1px solid var(--line-soft);
-  border-radius: var(--r-sm);
-  background: var(--s-raise);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--s-sunk);
   color: var(--t-lo);
   font-family: var(--font);
-  font-size: 10px;
+  font-size: 0.625rem;
   font-weight: 700;
   cursor: pointer;
 }
 
-.toggle:hover:not(:disabled) {
-  border-color: var(--line);
-  color: var(--t-mid);
+.toggle:hover:not(:disabled, [aria-pressed="true"], [aria-checked="true"]) {
+  color: var(--t-hi);
 }
 
-/* Filled is on, or chosen; the colour says whose: the project's, everyone sees it. */
-.toggle--shared:is([aria-pressed="true"], [aria-checked="true"]) {
-  background: var(--shared);
+.toggle:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+/* Filled is on, or chosen. */
+.toggle:is([aria-pressed="true"], [aria-checked="true"]) {
   border-color: var(--shared);
+  background: var(--shared);
   color: var(--on-shared);
-}
-
-/* Only yours: the same fill, another colour. */
-.toggle--local[aria-pressed="true"] {
-  background: var(--local);
-  border-color: var(--local);
-  color: var(--on-local);
 }
 
 .toggle:disabled {
@@ -204,25 +227,27 @@ body {
 
 /* ─── Number field ───────────────────────────────────────────────────────── */
 
-/* A knob without its circle: dragged up or down. */
+/* A number in a frame, its name inside it: dragged up or down. */
 .field {
-  display: block;
-  width: 100%;
-  padding: 3px 0;
-  border-radius: var(--r-sm);
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.375rem;
+  padding: 0.25rem 0.625rem;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
   background: var(--s-sunk);
-  box-shadow: inset 0 0 0 1px var(--line-soft);
   color: var(--t-hi);
-  font-family: var(--font-num);
+  font-family: var(--font);
   font-variant-numeric: tabular-nums;
-  font-size: 11px;
-  text-align: center;
+  font-size: 0.75rem;
+  font-weight: 700;
   cursor: ns-resize;
   touch-action: none;
   user-select: none;
 }
 
-.field:hover {
-  color: #fff;
-  box-shadow: inset 0 0 0 1px var(--line);
+.field__name {
+  color: var(--t-lo);
+  font-size: 0.625rem;
+  font-weight: 400;
 }

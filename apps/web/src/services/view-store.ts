@@ -29,10 +29,10 @@ export const PanelHeight = Schema.Struct({
 
 export type PanelHeight = typeof PanelHeight.Type
 
-/** How far a view is scrolled, in pixels. */
+/** How far a view is scrolled, in what it shows, not in pixels: at any size of the page it shows the same. */
 const scrolled = Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0))
 
-/** How far the Arrangement is scrolled down and across, and the mixer's rack across. */
+/** How far the Arrangement is scrolled down, in tracks, and across, in bars; and the mixer's rack across, in strips. */
 export const Scroll = Schema.Struct({
   arrangement: Schema.Struct({ down: scrolled, across: scrolled }),
   rack: scrolled
@@ -59,7 +59,7 @@ export const firstView: View = {
 }
 
 /** How the page keeps how a project is shown; a version other than this one's is left for the first view. */
-const SavedView = Schema.Struct({ version: Schema.Literal(3), ...View.fields })
+const SavedView = Schema.Struct({ version: Schema.Literal(4), ...View.fields })
 
 /** How this browser shows a project, kept for it alone: not in the project, and not on other devices. */
 export interface ViewStore {
@@ -91,7 +91,7 @@ export const viewStoreOf = Effect.fnUntraced(function* (
     Effect.suspend(() =>
       Option.match(Option.liftPredicate(view, kept), {
         onNone: () => Effect.void,
-        onSome: (keeping) => views.set(key, { version: 3, ...keeping })
+        onSome: (keeping) => views.set(key, { version: 4, ...keeping })
       })
     ).pipe(
       Effect.uninterruptible,
