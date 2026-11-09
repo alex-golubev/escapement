@@ -1,58 +1,95 @@
-/* A track below: its pan and volume, then its instrument's controls, each over its number and name. */
-.track-settings {
+/* A track below: the devices its sound goes through, left to right. */
+.chain {
+  /* As high as the panel a new project opens with leaves at 1280×720. */
+  --device-h: 196px;
   display: flex;
-  flex-direction: column;
-  gap: calc(var(--u) * 3);
+  align-items: flex-start;
+  gap: calc(var(--u) * 2);
   width: max-content;
 }
 
-/* Their names in a line at the foot, a field without a knob too. */
-.track-settings__knobs {
-  display: flex;
-  align-items: flex-end;
-  gap: calc(var(--u) * 3);
-}
-
-/*
- * An instrument's groups of controls, one under another, on one grid, so a group's knobs stand under another's: the
- * names in a column as wide as the longest, then a column to a knob, all as wide as the widest a control needs. A row
- * of choices takes as many columns as the page says (`--choice-columns`).
- */
-.track-settings__controls {
-  display: grid;
-  grid-template-columns: max-content repeat(var(--columns), 1fr);
-  gap: calc(var(--u) * 2) calc(var(--u) * 3);
-}
-
-.track-settings .control-group {
-  display: grid;
-  grid-column: 1 / -1;
-  grid-template-columns: subgrid;
-}
-
-.track-settings .control-group__controls {
-  display: grid;
-  grid-column: 2 / -1;
-  grid-template-columns: subgrid;
-}
-
-.track-settings .control-group__controls .param {
-  width: auto;
-}
-
-.track-settings .control-group__controls .choices {
-  grid-column: span var(--choice-columns);
-}
-
-.track-settings__instrument {
+/* A device's card, as high as the others: its name, then its face, the knobs small, so more of them stand in a row. */
+.device {
+  --knob-d: 30px;
   display: flex;
   flex-direction: column;
-  gap: calc(var(--u) * 1.5);
-  padding-top: calc(var(--u) * 3);
-  border-top: 1px solid var(--line-soft);
+  gap: calc(var(--u) * 2.5);
+  height: var(--device-h);
+  padding: calc(var(--u) * 2) calc(var(--u) * 3.5) calc(var(--u) * 3);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-md);
+}
+
+/* A knob's name and number beside it, not under: a row of knobs as high as a knob. */
+.device .param {
+  display: grid;
+  grid-template-columns: var(--knob-d) auto;
+  column-gap: calc(var(--u) * 2);
+  row-gap: 2px;
+  align-items: center;
+  justify-items: start;
+}
+
+.device .param .knob {
+  grid-row: 1 / span 2;
+}
+
+.device .param .cap {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+/* As wide as its widest number, not its column: the knob's name may be wider. */
+.device .param .field {
+  grid-column: 2;
+  grid-row: 2;
+  width: auto;
+  padding: 1px calc(var(--u) * 1);
+  text-align: left;
+}
+
+/* The pictures of the waves, and their hint, name a row of them. */
+.device .choices .cap {
+  display: none;
+}
+
+/* One grid for the whole face, so the oscillators' knobs stand in columns and the envelope's rows are theirs. */
+.synth-face {
+  display: grid;
+  grid-template-columns:
+    [osc-start] repeat(5, max-content) [osc-end] calc(var(--u) * 4)
+    [envelope-start] repeat(3, max-content) [envelope-end];
+  gap: calc(var(--u) * 3) calc(var(--u) * 2.5);
+  align-items: center;
+}
+
+.synth-face__osc {
+  display: grid;
+  grid-column: osc;
+  grid-template-columns: subgrid;
+  align-items: center;
+}
+
+.synth-face__envelope {
+  display: grid;
+  grid-column: envelope;
+  grid-row: 1 / span 3;
+  grid-template: subgrid / subgrid;
+  align-items: center;
+}
+
+/* A group's name on the line of its first controls. */
+.synth-face__name {
+  align-self: start;
+  line-height: var(--knob-d);
+}
+
+/* The envelope's over its three rows, so its knobs take the next two columns. */
+.synth-face__envelope .synth-face__name {
+  grid-row: 1 / span 3;
 }
 
 /* A track not heard dims what sounds, as its head does. */
-.track-settings[data-unheard="true"] :is(.param, .choices) {
+.chain[data-unheard="true"] :is(.param, .choices) {
   opacity: 0.4;
 }

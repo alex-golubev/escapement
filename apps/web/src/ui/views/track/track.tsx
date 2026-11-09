@@ -1,51 +1,60 @@
 import { useAtomValue } from '@effect/atom-react'
-import { HoldTarget, type Id } from '@escapement/model'
-import { Boolean, Option } from 'effect'
+import { byContent, HoldTarget, type Id, type PluginInstance } from '@escapement/model'
+import { Match, Option } from 'effect'
 import { Atom } from 'effect/reactivity'
 import { useMemo } from 'preact/hooks'
 import { useCore } from '../../core-context'
-import { panThenVolume } from '../../parts/track-strip'
-import { gridOf, InstanceControls } from '../../parts/instance-controls'
-import { Knob } from '../../parts/knob'
+import { SynthFace } from './synth-face'
 import './track.css'
 
-/** A track below: its pan and volume, as in its head and strip, then its instrument's controls; gone, nothing. */
-export const TrackSettings = ({ track }: { readonly track: Id }) => {
+/** An instrument's controls on its card: its own face, or none, as a sampler's, whose track's volume sets how loud. */
+const Face = ({
+  owner,
+  track,
+  instrument
+}: {
+  readonly owner: string
+  readonly track: Id
+  readonly instrument: PluginInstance
+}) =>
+  Match.value(instrument).pipe(
+    Match.discriminatorsExhaustive('name')({
+      synth: (synth) => (
+        <SynthFace owner={owner} synth={synth} targetOf={(param) => HoldTarget.TrackParam({ track, param })} />
+      ),
+      sampler: () => null,
+      tone: () => null,
+      filter: () => null
+    })
+  )
+
+/** What of the track its chain shows, read alone: its volume, pan and mute change it not. */
+const useChainOf = (track: Id) => {
+  const { session } = useCore()
+  const atom = useMemo(
+    () =>
+      byContent((get) =>
+        Option.map(get(session.project.track(track)), ({ name, instrument }) => ({ name, instrument }))
+      ),
+    [session, track]
+  )
+  return useAtomValue(atom)
+}
+
+/** A track below: the devices its sound goes through, left to right, each on its card; gone, nothing. */
+export const TrackChain = ({ track }: { readonly track: Id }) => {
   const { session } = useCore()
   const heard = useAtomValue(session.isHeard(track))
-  return Option.match(useAtomValue(session.project.track(track)), {
+  return Option.match(useChainOf(track), {
     onNone: () => null,
-    onSome: ({ name, strip: values, instrument }) => (
-      <div class='track-settings' data-unheard={!heard}>
-        <div class='track-settings__knobs'>
-          {panThenVolume.map((param) => (
-            <Knob
-              key={param.id}
-              owner={name}
-              param={param}
-              value={values[param.id]}
-              target={HoldTarget.TrackStrip({ track, param: param.id })}
-            />
-          ))}
-        </div>
+    onSome: ({ name, instrument }) => (
+      <div class='chain' data-unheard={!heard}>
         {Option.match(instrument, {
           onNone: () => null,
           onSome: (played) => (
-            <section class='track-settings__instrument' aria-label={played.plugin.label}>
-              <span class='cap'>{played.plugin.label}</span>
-              {Boolean.match(played.plugin.params.length > 0, {
-                onTrue: () => (
-                  <div class='track-settings__controls' style={gridOf(played.plugin)}>
-                    <InstanceControls
-                      owner={`${name} ${played.plugin.label.toLowerCase()}`}
-                      instance={played}
-                      targetOf={(param) => HoldTarget.TrackParam({ track, param })}
-                    />
-                  </div>
-                ),
-                // A sampler has none: its track's volume sets how loud.
-                onFalse: () => null
-              })}
+            <section class='device' aria-label={played.plugin.label}>
+              <span class='cap device__name'>{played.plugin.label}</span>
+              <Face owner={`${name} ${played.plugin.label.toLowerCase()}`} track={track} instrument={played} />
             </section>
           )
         })}
