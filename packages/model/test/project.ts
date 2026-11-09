@@ -2,18 +2,8 @@ import { plugins, Sha256, Tick } from '@escapement/engine-description'
 import { Array, Boolean, Option } from 'effect'
 import type { Atom, AtomRegistry } from 'effect/reactivity'
 import * as Y from 'yjs'
-import {
-  addClip,
-  addTrack,
-  createProject,
-  type Id,
-  master,
-  newWriter,
-  type Project,
-  readProject,
-  renameTrack
-} from '../src'
-import { insertMap, notesName } from '../src/document'
+import { addClip, addTrack, createProject, type Id, newWriter, type Project, readProject, renameTrack } from '../src'
+import { notesName, projectMaps } from '../src/document'
 
 /** The drums tests put on tracks, each a sampler playing its sound. */
 export const drums = ['Kick', 'Snare', 'Hat', 'Clap'].map((name, i) => ({ name, sound: Sha256(`${i}a`.repeat(32)) }))
@@ -54,7 +44,7 @@ export const putFilterOnMaster = (doc: Y.Doc) =>
         deleted: false
       })
     )
-    insertMap(doc, master).set('slots', new Y.Map<unknown>([['filter', slot]]))
+    projectMaps(doc).master.set('slots', new Y.Map<unknown>([['filter', slot]]))
   })
 
 /** A new project as tests start from: a track for each drum, in their order, a clip on the first, and the master's filter. */

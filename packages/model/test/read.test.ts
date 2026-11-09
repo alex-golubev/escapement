@@ -170,15 +170,15 @@ test('a number past its range reads as the nearest one in it, a whole one as the
   const { track, clip, slot } = parts(doc)
   const synth = synthOf(doc)
   rawMap(doc, 'tracks', synth.id, 'instrument', 'params').set('osc1.shape', 1.4)
-  rawMap(doc, 'tracks', track.id).set('volume', 2)
+  rawMap(doc, 'tracks', track.id).set('volume', 3)
   rawMap(doc, 'tracks', track.id).set('pan', -3)
-  rawMap(doc, 'mixer/master', 'slots', slot.id, 'params').set('cutoff', 25_000)
+  rawMap(doc, 'master', 'slots', slot.id, 'params').set('cutoff', 25_000)
   rawMap(doc, 'meta').set('bpm', 1000)
   putNote(doc, 'n1', { tick: 240.4, len: 0, key: 9999, vel: -0.5 })
   putNote(doc, 'n2', { tick: 480, len: 240, key: 60.4, vel: 2 })
   const { value, replacements } = readProject(doc)
   expect(Option.getOrThrow(synthOf(doc).instrument).params).toEqual({ ...synthDefaults, 'osc1.shape': 1 })
-  expect(value.tracks[0].strip).toEqual({ volume: 1, pan: -1 })
+  expect(value.tracks[0].strip).toEqual({ volume: volumeTop, pan: -1 })
   expect(value.master.slots[0].params).toEqual({ cutoff: 20_000 })
   expect(value.tempo).toBe(522)
   expect(value.patterns[0].notes).toEqual([
@@ -197,7 +197,7 @@ test('a number past its range reads as the nearest one in it, a whole one as the
     [note('n1', 'vel'), 'nearest'],
     [note('n2', 'key'), 'nearest'],
     [note('n2', 'vel'), 'nearest'],
-    [`mixer/master/slots/${slot.id}/params/cutoff`, 'nearest']
+    [`master/slots/${slot.id}/params/cutoff`, 'nearest']
   ])
 })
 
@@ -408,99 +408,41 @@ test('what a document leaves out reads as its default, quietly: it may be older 
   expect(replacements).toEqual([])
 })
 
-describe('the master insert', () => {
+describe('the master', () => {
   test('its slots missing, has none', () => {
     const doc = newProject()
-    rawMap(doc, 'mixer/master').delete('slots')
+    rawMap(doc, 'master').delete('slots')
     expect(readProject(doc)).toMatchObject({ value: { master: { slots: [] } }, replacements: [] })
   })
 
   test('its slots broken, has none, with a replacement', () => {
     const doc = newProject()
-    rawMap(doc, 'mixer/master').set('slots', 'a list')
+    rawMap(doc, 'master').set('slots', 'a list')
     expect(readProject(doc)).toMatchObject({
       value: { master: { slots: [] } },
-      replacements: [{ path: ['mixer/master', 'slots'], found: 'a list', read: 'default' }]
+      replacements: [{ path: ['master', 'slots'], found: 'a list', read: 'default' }]
     })
   })
 
   test('leaves out a slot whose plugin this build lacks', () => {
     const doc = newProject()
     const { slot } = parts(doc)
-    rawMap(doc, 'mixer/master', 'slots', slot.id).set('plugin', { id: 99, version: 1 })
+    rawMap(doc, 'master', 'slots', slot.id).set('plugin', { id: 99, version: 1 })
     expect(projectOf(doc).master.slots).toEqual([])
     expect(replacementsOf(doc)).toEqual([
-      { path: ['mixer/master', 'slots', slot.id, 'plugin'], found: { id: 99, version: 1 }, read: 'skipped' }
+      { path: ['master', 'slots', slot.id, 'plugin'], found: { id: 99, version: 1 }, read: 'skipped' }
     ])
   })
 
   test("has the engine's strip, at the sound as it is, its values read into range", () => {
     const doc = newProject()
     expect(projectOf(doc).master.strip).toEqual(defaultStrip)
-    rawMap(doc, 'mixer/master').set('volume', 9)
-    rawMap(doc, 'mixer/master').set('pan', 'left')
+    rawMap(doc, 'master').set('volume', 9)
+    rawMap(doc, 'master').set('pan', 'left')
     expect(projectOf(doc).master.strip).toEqual({ volume: volumeTop, pan: 0 })
     expect(replacementsOf(doc)).toEqual([
-      { path: ['mixer/master', 'volume'], found: 9, read: 'nearest' },
-      { path: ['mixer/master', 'pan'], found: 'left', read: 'default' }
+      { path: ['master', 'volume'], found: 9, read: 'nearest' },
+      { path: ['master', 'pan'], found: 'left', read: 'default' }
     ])
-  })
-})
-
-describe('the inserts besides the master', () => {
-  test('are none in a new project, and each the document holds anything of is read, by its number', () => {
-    const doc = newProject()
-    expect(projectOf(doc).inserts).toEqual([])
-    rawMap(doc, 'mixer/12').set('mute', true)
-    rawMap(doc, 'mixer/3').set('volume', 0.5)
-    expect(projectOf(doc).inserts).toEqual([
-      { id: '3', strip: { ...defaultStrip, volume: 0.5 }, mute: false },
-      { id: '12', strip: defaultStrip, mute: true }
-    ])
-  })
-
-  test('only of the built-in ones, and one read without being written is none', () => {
-    const doc = newProject()
-    ;['0', '501', 'master2', 'x'].forEach((id) => rawMap(doc, `mixer/${id}`).set('mute', true))
-    doc.getMap('mixer/7')
-    expect(projectOf(doc).inserts).toEqual([])
-  })
-
-  test("read their values into range, a mute that isn't one as none", () => {
-    const doc = newProject()
-    rawMap(doc, 'mixer/1').set('volume', -2)
-    rawMap(doc, 'mixer/1').set('mute', 'yes')
-    expect(readProject(doc)).toMatchObject({
-      value: { inserts: [{ id: '1', strip: { volume: 0, pan: 0 }, mute: false }] },
-      replacements: [
-        { path: ['mixer/1', 'volume'], found: -2, read: 'nearest' },
-        { path: ['mixer/1', 'mute'], found: 'yes', read: 'default' }
-      ]
-    })
-  })
-})
-
-describe('the insert a track goes into', () => {
-  const insertOf = (doc: Y.Doc) => projectOf(doc).tracks[0].insert
-
-  test('is the master unless it names another', () => {
-    const doc = newProject()
-    const { track } = parts(doc)
-    expect(insertOf(doc)).toBe('master')
-    rawMap(doc, 'tracks', track.id).set('insert', '500')
-    expect(insertOf(doc)).toBe('500')
-    rawMap(doc, 'tracks', track.id).set('insert', 'master')
-    expect(insertOf(doc)).toBe('master')
-    expect(replacementsOf(doc)).toEqual([])
-  })
-
-  test('is the master, with a replacement, for anything but an insert there is', () => {
-    const doc = newProject()
-    const { track } = parts(doc)
-    ;['0', '501', '', 3, null].forEach((found) => {
-      rawMap(doc, 'tracks', track.id).set('insert', found)
-      expect(insertOf(doc)).toBe('master')
-      expect(replacementsOf(doc)).toEqual([{ path: ['tracks', track.id, 'insert'], found, read: 'default' }])
-    })
   })
 })

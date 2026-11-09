@@ -1,38 +1,46 @@
 import { useAtomValue } from '@effect/atom-react'
-import { type StripParamId, strip } from '@escapement/engine-description'
-import { HoldTarget, type Id, insertCount, master, mixerInserts } from '@escapement/model'
-import { Boolean, Number, Option } from 'effect'
+import { type AnyParam, type StripParamId, strip } from '@escapement/engine-description'
+import { byContent, HoldTarget, type Id, trackStrip } from '@escapement/model'
+import { Array, Number, Option } from 'effect'
 import { createContext } from 'preact'
-import { useContext, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks'
-import { useLaidOutSize } from '../../kit/laid-out'
+import { memo } from 'preact/compat'
+import { useContext, useLayoutEffect, useMemo, useRef } from 'preact/hooks'
 import { useCore } from '../../core-context'
+import { useLaidOutSize } from '../../kit/laid-out'
+import { focusPast } from '../../kit/neighbour'
 import { Fader, type FaderMarks } from '../../parts/fader'
 import { setFlag, setStyleVar, useFrame } from '../../parts/frames'
-import { InstanceControls } from '../../parts/instance-controls'
 import { Knob } from '../../parts/knob'
 import { meterPosition } from '../../parts/levels'
-import { masterMeter, meterBoard, type Side } from './meter-board'
+import { choiceHint, TrackToggles, trackGroup } from '../../parts/track-buttons'
+import { type MeterKey, masterMeter, meterBoard, type Side, trackMeter } from './meter-board'
 import './mixer.css'
 
 const sideNames = ['left', 'right'] as const
 
-/** The engine's strip by ID: an insert's volume and pan, the master's too. */
-const stripParam = (id: StripParamId) =>
-  Option.getOrThrow(Option.fromUndefinedOr(strip.find((param) => param.id === id)))
-const volume = stripParam('volume')
-const pan = stripParam('pan')
+/** A strip's volume and pan, by their descriptions: the engine's for the master, a track's for a track. */
+type StripParams = Readonly<Record<StripParamId, AnyParam>>
+
+const paramsOf = (params: ReadonlyArray<AnyParam & { readonly id: StripParamId }>): StripParams => {
+  const of = (id: StripParamId) => Option.getOrThrow(Array.findFirst(params, (param) => param.id === id))
+  return { volume: of('volume'), pan: of('pan') }
+}
+
+const masterParams = paramsOf(strip)
+const trackParams = paramsOf(trackStrip)
 
 /** The meters of the mixer's strips, the master's too, as the engine's board tells them. */
 const MeterBoardContext = createContext(meterBoard())
 
-/** One side of what a strip passes on, by its meter's number: its level, and the lamp over it until clicked. */
-const Meter = ({ output, meter, side }: { readonly output: string; readonly meter: number; readonly side: Side }) => {
+/** One side of what a strip passes on: its level, and the lamp over it until clicked. */
+const Meter = ({ output, meter, side }: { readonly output: string; readonly meter: MeterKey; readonly side: Side }) => {
   const board = useContext(MeterBoardContext)
   const fill = useRef<HTMLSpanElement>(null)
   const lamp = useRef<HTMLButtonElement>(null)
-  // Lit while out of sight, it comes back lit.
+  // Drawn anew, its strip scrolled back, it shows its lamp at once, frames or none.
   useLayoutEffect(() => setFlag(lamp.current, 'data-lit', board.lit(meter, side)), [board, meter, side])
   useFrame((frame) => {
+    // The master's meters are always drawn: the board follows the strips not drawn too, and their lamps latch.
     board.follow(frame)
     setStyleVar(fill.current, '--level', meterPosition(board.level(meter, side)).toFixed(3))
     setFlag(lamp.current, 'data-lit', board.lit(meter, side))
@@ -60,164 +68,166 @@ const Meter = ({ output, meter, side }: { readonly output: string; readonly mete
   )
 }
 
-/** Both sides of what a strip passes on. */
-const Meters = ({ output, meter }: { readonly output: string; readonly meter: number }) => (
-  <span class='strip__meters'>
-    <Meter output={output} meter={meter} side={0} />
-    <Meter output={output} meter={meter} side={1} />
-  </span>
-)
-
-/** The pan knob and the fader of an insert's strip, the master's too, at the strip's foot so the faders line up. */
+/** The pan knob and the fader of a strip, its meters beside the fader. */
 const StripControls = ({
   owner,
-  insert,
+  params,
   values,
+  targetOf,
   marks,
   meter
 }: {
   readonly owner: string
-  readonly insert: Id
+  readonly params: StripParams
   readonly values: { readonly volume: number; readonly pan: number }
+  readonly targetOf: (param: StripParamId) => HoldTarget
   readonly marks: FaderMarks
-  readonly meter: number
+  readonly meter: MeterKey
 }) => (
-  <div class='strip__foot'>
-    <Knob owner={owner} param={pan} value={values.pan} target={HoldTarget.InsertStrip({ insert, param: 'pan' })} />
+  <div class='strip__controls'>
+    <Knob owner={owner} param={params.pan} value={values.pan} target={targetOf('pan')} />
     <span class='strip__level'>
-      <Fader
-        owner={owner}
-        param={volume}
-        value={values.volume}
-        target={HoldTarget.InsertStrip({ insert, param: 'volume' })}
-        marks={marks}
-      />
-      <Meters output={`${owner} output`} meter={meter} />
+      <Fader owner={owner} param={params.volume} value={values.volume} target={targetOf('volume')} marks={marks} />
+      <span class='strip__meters'>
+        <Meter output={`${owner} output`} meter={meter} side={0} />
+        <Meter output={`${owner} output`} meter={meter} side={1} />
+      </span>
     </span>
   </div>
 )
 
-/** The master: its chain of plugins, the knobs of each, its pan and fader, and its output. */
-export const MasterStrip = () => {
+/** The master: its pan, its fader and the engine's output. */
+const MasterStrip = () => {
   const { session } = useCore()
-  const { slots, strip: values } = useAtomValue(session.project.master)
+  const { strip: values } = useAtomValue(session.project.master)
   return (
-    <div class='strip strip--master'>
-      <div class='strip__head'>
-        <span class='strip__index num'>M</span>
-        <span class='strip__name'>Master</span>
-      </div>
-      <div class='strip__slots'>
-        {slots.map(({ id, plugin }) => (
-          <span key={id} class='slot' data-hint={`${plugin.label}, in the master's chain`}>
-            <i class='slot__dot' />
-            <span class='slot__label'>{plugin.label}</span>
-          </span>
-        ))}
-      </div>
-      {slots.map((slot) => (
-        <InstanceControls
-          key={slot.id}
-          owner={`Master ${slot.plugin.label.toLowerCase()}`}
-          instance={slot}
-          targetOf={(param) => HoldTarget.SlotParam({ slot: slot.id, param })}
-        />
-      ))}
-      <StripControls owner='Master' insert={master} values={values} marks='numbered' meter={masterMeter} />
+    <div class='strip strip--master' role='group' aria-label='Master'>
+      <span class='strip__title'>Master</span>
+      <StripControls
+        owner='Master'
+        params={masterParams}
+        values={values}
+        targetOf={(param) => HoldTarget.MasterStrip({ param })}
+        marks='numbered'
+        meter={masterMeter}
+      />
     </div>
   )
 }
 
-/** An insert by its number: M writes its mute, for everyone. */
-const InsertStrip = ({ id, number }: { readonly id: Id; readonly number: number }) => {
-  const { session, registry, ops } = useCore()
-  const { strip: values, mute } = useAtomValue(session.project.insert(id))
-  const owner = `Strip ${number}`
-  return (
-    <div class='strip' data-muted={mute} style={{ '--strip-w': `${stripWidth}px` }}>
-      <div class='strip__head'>
-        <span class='strip__index strip__index--insert num'>{number}</span>
+/** A track's strip: its name, which shows it below, M and S as in its head, its pan, its fader and its meters. */
+const TrackStrip = memo(function TrackStrip({ id, index }: { readonly id: Id; readonly index: number }) {
+  const { registry, session, view } = useCore()
+  const track = useAtomValue(session.project.track(id))
+  const chosen = useAtomValue(view.isChosen(id))
+  const notesBelow = useAtomValue(view.hasNotesBelow(id))
+  const heard = useAtomValue(session.isHeard(id))
+  const box = useRef<HTMLDivElement>(null)
+  // As in a track's head, once the track is gone, the last one's to the master; scrolled out, the strip lets it go.
+  useLayoutEffect(
+    () => () =>
+      Option.map(Option.liftPredicate(registry.get(session.project.track(id)), Option.isNone), () =>
+        focusPast(box.current, '.strip__name', (going) =>
+          going.closest('.mixer')?.querySelector<HTMLElement>('.strip--master [role="slider"]')
+        )
+      ),
+    []
+  )
+  return Option.match(track, {
+    onNone: () => null,
+    onSome: ({ name, mute, strip: values }) => (
+      <div
+        ref={box}
+        class='strip'
+        role='group'
+        aria-label={trackGroup(name, index)}
+        data-unheard={!heard}
+        data-chosen={chosen}
+      >
         <button
           type='button'
-          class='toggle toggle--shared'
-          aria-label={`${owner}: mute`}
-          aria-pressed={mute}
-          data-hint={Boolean.match(mute, {
-            onTrue: () => `${owner} is muted in the project, for everyone`,
-            onFalse: () => `Mute ${owner.toLowerCase()} in the project, for everyone`
-          })}
-          // The document's mute now, which may be ahead of the one drawn.
-          onClick={() => ops.setInsertMute(id, !registry.get(session.project.insert(id)).mute)}
+          class='strip__name'
+          aria-current={chosen}
+          data-hint={choiceHint(name, index, chosen, notesBelow)}
+          onClick={() => view.show(id)}
         >
-          M
+          {name}
         </button>
+        <span class='strip__buttons'>
+          <TrackToggles id={id} name={name} mute={mute} />
+        </span>
+        <StripControls
+          owner={name}
+          params={trackParams}
+          values={values}
+          targetOf={(param) => HoldTarget.TrackStrip({ track: id, param })}
+          marks='bare'
+          meter={trackMeter(id)}
+        />
       </div>
-      <StripControls owner={owner} insert={id} values={values} marks='bare' meter={number} />
-    </div>
-  )
-}
+    )
+  })
+})
 
-// A strip and the gap after it, across, which its styles take from here: the rack lays them out by it, and draws only
-// those in sight.
+// A strip and the gap after it, across: the rack lays its strips out by these, and draws only those in sight.
 const stripWidth = 76
 const stripGap = 4
 const stripStep = stripWidth + stripGap
 
-/** The first strip drawn, scrolled so far: a strip before the first in sight, so a scroll shows no gap before a draw. */
-const firstDrawn = (left: number) =>
-  Number.clamp(Math.floor(left / stripStep) - 1, { minimum: 0, maximum: insertCount })
+/** The whole strips scrolled past. */
+const pastOf = (left: number) => Math.floor(left / stripStep)
 
-/** Past the last strip drawn: those in sight from the first drawn, and a strip more. */
-const endDrawn = (first: number, width: number) =>
-  Number.clamp(first + Math.ceil(width / stripStep) + 2, { minimum: first, maximum: insertCount })
+/** The strips drawn, of `count`: those in sight across `width`, and at least one more each side, for a scroll or Tab. */
+const drawnOf = (past: number, width: number, count: number) => {
+  const first = Number.clamp(past - 1, { minimum: 0, maximum: count })
+  return { first, end: Number.clamp(past + Math.ceil(width / stripStep) + 2, { minimum: first, maximum: count }) }
+}
 
-/**
- * The inserts besides the master, by their number, scrolled across from where the page last left them: drawn again only
- * once another comes into sight.
- */
-const InsertRack = () => {
-  const { registry, view } = useCore()
+/** The tracks' strips in their order, scrolled across from where the page last left them: only those in sight drawn. */
+const TrackRack = () => {
+  const { registry, session, view } = useCore()
+  const ids = useAtomValue(session.project.trackIds)
   const rack = useRef<HTMLDivElement>(null)
-  const [first, setFirst] = useState(() => firstDrawn(registry.get(view.rackScroll)))
+  // Drawn again as a strip comes into sight or goes, not at each pixel scrolled.
+  const past = useAtomValue(useMemo(() => byContent((get) => pastOf(get(view.rackScroll))), [view]))
+  const width = Option.match(useLaidOutSize(rack), { onNone: () => 0, onSome: ({ width }) => width })
   useLayoutEffect(() => {
     Option.map(Option.fromNullishOr(rack.current), (shown) => {
       shown.scrollLeft = registry.get(view.rackScroll)
     })
   }, [registry, view])
-  const width = Option.match(useLaidOutSize(rack), { onNone: () => 0, onSome: ({ width }) => width })
-  const end = endDrawn(first, width)
-  const onScroll = (left: number) => {
-    registry.set(view.rackScroll, left)
-    setFirst(firstDrawn(left))
-  }
+  // The browser stops a scroll short of the strips' end, as they go or the rack widens, and tells no one.
+  useLayoutEffect(() => {
+    Option.map(Option.fromNullishOr(rack.current), (shown) => registry.set(view.rackScroll, shown.scrollLeft))
+  }, [registry, view, ids.length, width])
+  const { first, end } = drawnOf(past, width, ids.length)
   return (
-    <div class='rack' ref={rack} onScroll={(event) => onScroll(event.currentTarget.scrollLeft)}>
+    <div class='rack' ref={rack} onScroll={(event) => registry.set(view.rackScroll, event.currentTarget.scrollLeft)}>
       <div
         class='rack__strips'
         style={{
+          '--strip-w': `${stripWidth}px`,
           gap: `${stripGap}px`,
-          width: `${insertCount * stripStep - stripGap}px`,
-          paddingLeft: `${first * stripStep}px`
+          width: `calc(${Math.max(ids.length * stripStep - stripGap, 0)}px + 2 * var(--rack-room))`,
+          paddingLeft: `calc(${first * stripStep}px + var(--rack-room))`
         }}
       >
-        {mixerInserts.slice(first, end).map((id, i) => (
-          <InsertStrip key={id} id={id} number={first + i + 1} />
+        {ids.slice(first, end).map((id, i) => (
+          <TrackStrip key={id} id={id} index={first + i + 1} />
         ))}
       </div>
     </div>
   )
 }
 
-/** The master, pinned, then the other inserts; the meters' lamps stay lit while the Mixer is in the middle. */
+/** The tracks' strips, then the master, pinned; the meters' lamps stay lit while the Mixer is in the middle. */
 export const Mixer = () => {
   const board = useMemo(meterBoard, [])
-  // Every frame, the strips out of sight too.
-  useFrame(board.follow)
   return (
     <MeterBoardContext.Provider value={board}>
       <div class='mixer'>
+        <TrackRack />
         <MasterStrip />
-        <InsertRack />
       </div>
     </MeterBoardContext.Provider>
   )

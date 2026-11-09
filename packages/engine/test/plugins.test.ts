@@ -1,5 +1,4 @@
 import { type Plugin, plugins, strip } from '@escapement/engine-description'
-import { Option } from 'effect'
 import { expect, test } from 'vitest'
 import { Command } from '../src/commands'
 import { DeviceEdit } from '../src/device-edits'
@@ -59,10 +58,8 @@ test("a strip's parameter is numbered by its place in the strip, and every one g
     { param: 1, value: 0.5 },
     { param: 2, value: 0.25 }
   ]
-  expect(createInsert(node)).toEqual(DeviceEdit.CreateInsert({ node, strip: defaultValues, meter: Option.none() }))
-  expect(createInsert(node, values, Option.some(3))).toEqual(
-    DeviceEdit.CreateInsert({ node, strip: sent, meter: Option.some(3) })
-  )
+  expect(createInsert(node)).toEqual(DeviceEdit.CreateInsert({ node, strip: defaultValues, metered: false }))
+  expect(createInsert(node, values, true)).toEqual(DeviceEdit.CreateInsert({ node, strip: sent, metered: true }))
   expect(createNode(plugins.tone, node, {}, {}, values)).toEqual(
     DeviceEdit.CreateNode({ node, plugin: 1, version: 1, params: [], samples: [], strip: sent })
   )

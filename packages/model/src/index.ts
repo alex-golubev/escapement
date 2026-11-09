@@ -28,12 +28,10 @@ export {
   type NewNote,
   renameTrack,
   resizeClip,
-  setInsertMute,
-  setInsertStrip,
   setMasterParam,
+  setMasterStrip,
   setMute,
   setTempo,
-  setTrackInsert,
   setTrackParam,
   setTrackStrip,
   stretchNote,
@@ -42,11 +40,9 @@ export {
 } from './operations'
 export { type NotePlace, samePlace, withMoved, withPut, withStretched } from './notes'
 export { noAuditions, type Audition, type Auditions } from './audition'
-export { insertCount, insertNumber, insertOfNumber, master, mixerInserts } from './mixer'
 export type {
   ArrangementClip,
   Clip,
-  Insert,
   Master,
   Note,
   Pattern,

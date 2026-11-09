@@ -4,7 +4,6 @@ import {
   createNode,
   DeviceEdit,
   LoopTicks,
-  meterCount,
   NodeHandle,
   PageNote,
   PatternHandle,
@@ -20,6 +19,7 @@ import {
   plugins,
   Sha256,
   type StripValues,
+  strip,
   Tick
 } from '@escapement/engine-description'
 import {
@@ -38,7 +38,6 @@ import {
   type Holds,
   holding,
   Id,
-  insertCount,
   lettingGo,
   moveClip,
   newListening,
@@ -47,12 +46,10 @@ import {
   noHolds,
   readProject,
   resizeClip,
-  setInsertMute,
-  setInsertStrip,
   setMasterParam,
+  setMasterStrip,
   setMute,
   setTempo,
-  setTrackInsert,
   setTrackParam,
   setTrackStrip,
   stepTicks,
@@ -71,9 +68,14 @@ const sounds = ['Kick', 'Snare'].map((name, i) => ({ name, sound: Sha256(`${i}b`
 const [kick, snare] = sounds.map(({ sound }) => sound)
 const other = Sha256('cd'.repeat(32))
 
-/** The handle a cell's first node gets: nodes are made tracks first, then the master: its insert, slots and fader. */
+const volumeTop = Option.getOrThrow(Option.fromUndefinedOr(strip.find(({ id }) => id === 'volume'))).max
+
+/**
+ * The handle a cell's first node gets: nodes are made tracks first, each its instrument then its fader, then the
+ * master: its sum, slots and fader.
+ */
 const cell = (n: number) => NodeHandle(n)
-const [kickNode, snareNode, insert, filter, masterFader] = [1, 2, 3, 4, 5].map(cell)
+const [kickNode, kickFader, snareNode, snareFader, master, filter, masterFader] = [1, 2, 3, 4, 5, 6, 7].map(cell)
 
 /** The handle the pattern of the kick's clip gets, the first one a clip plays. */
 const firstPattern = PatternHandle(1)
@@ -82,9 +84,12 @@ const firstPattern = PatternHandle(1)
 const alone = (pattern: PatternHandle, length = barTicks) =>
   DeviceEdit.SetClips({ clips: [{ tick: Tick(0), length, period: length, offset: 0, pattern }] })
 
-/** A track's sampler, with its strip: as a new track has it, unless given. */
-const sampler = (node: NodeHandle, sound: Sha256, strip: StripValues = defaultTrackStrip) =>
-  createNode(plugins.sampler, node, {}, { sample: sound }, strip)
+/** A track's sampler: its strip is the engine's, as the track's volume and pan are its fader's. */
+const sampler = (node: NodeHandle, sound: Sha256) =>
+  createNode(plugins.sampler, node, {}, { sample: sound }, defaultStrip)
+
+/** A track's fader, metered, with its strip: as a new track has it, unless given. */
+const trackFader = (node: NodeHandle, strip: StripValues = defaultTrackStrip) => createInsert(node, strip, true)
 
 /** A new track's strip with its volume at `volume`. */
 const turnedTo = (volume: number): StripValues => ({ ...defaultTrackStrip, volume })
@@ -155,7 +160,7 @@ const putFilterOnMaster = (doc: Y.Doc) =>
         deleted: false
       })
     )
-    doc.getMap('mixer/master').set('slots', new Y.Map<unknown>([['filter', slot]]))
+    doc.getMap('master').set('slots', new Y.Map<unknown>([['filter', slot]]))
   })
 
 /**
@@ -288,7 +293,7 @@ const setSound = (doc: Y.Doc, track: Id, sound: Sha256) =>
     samples?.set('sample', sound)
   })
 
-const slotMap = (doc: Y.Doc) => doc.getMap('mixer/master').get('slots') as Y.Map<Y.Map<unknown>>
+const slotMap = (doc: Y.Doc) => doc.getMap('master').get('slots') as Y.Map<Y.Map<unknown>>
 
 const addSlot = (doc: Y.Doc, id: string, order: string, cutoff = 1000) =>
   doc.transact(() =>
@@ -306,10 +311,6 @@ const addSlot = (doc: Y.Doc, id: string, order: string, cutoff = 1000) =>
   )
 
 describe('the compiler', () => {
-  it("gives every mixer strip a meter of its own on the engine's board", () => {
-    expect(insertCount).toBeLessThanOrEqual(meterCount)
-  })
-
   it.effect('tells once the sounds it asked for are in', () => {
     const loaded = Deferred.makeUnsafe<void>()
     return compiled(
@@ -342,19 +343,19 @@ describe('the compiler', () => {
           yield* settled(run)
           expect(run.stored).toEqual([kick, snare])
           expect(run.evicted).toEqual([snare])
-          const snareAgain = NodeHandle((1 << 16) | 2)
+          const snareAgain = NodeHandle((1 << 16) | 3)
           expect(changes(run, () => run.setRunning(true))).toEqual([
             {
               edits: [
                 DeviceEdit.DestroyNode({ node: snareNode }),
-                sampler(snareAgain, other, turnedTo(0.3)),
-                DeviceEdit.Connect({ from: snareAgain, to: insert }),
+                sampler(snareAgain, other),
+                DeviceEdit.Connect({ from: snareAgain, to: snareFader }),
                 DeviceEdit.SetPattern({
                   pattern: firstPattern,
                   notes: [{ tick: Tick(0), node: kickNode, key: MidiKey(60), velocity: 1, length: stepTicks }]
                 })
               ],
-              commands: []
+              commands: [setStripParam(snareFader, 'volume', 0.3)]
             }
           ])
           expect(changes(run, () => setTempo(doc, by, 90))).toEqual([
@@ -371,9 +372,9 @@ describe('the compiler', () => {
       compiled((run) =>
         Effect.sync(() => {
           const { doc, slot } = run
-          // A synth, as + adds it, in the next cell: a sampler has no parameter of its own.
+          // A synth, as + adds it, in the next cell, its fader after it: a sampler has no parameter of its own.
           const synth = Option.getOrThrow(addTrack(doc, by))
-          const synthNode = cell(6)
+          const synthNode = cell(8)
           const shape = HoldTarget.TrackParam({ track: synth, param: 'osc1.shape' })
           expect(changes(run, () => run.hold(shape, 1))).toEqual([
             { edits: [], commands: [setParam(plugins.synth, synthNode, 'osc1.shape', 1)] }
@@ -431,36 +432,59 @@ describe('the compiler', () => {
       )
   )
 
-  it.effect("plays a track's strip on its node, a held value over the document's, and makes a node anew with it", () =>
+  it.effect(
+    "plays a track's strip on its fader, a held value over the document's, kept as its instrument is made anew",
+    () =>
+      compiled((run) =>
+        Effect.sync(() => {
+          const { doc, tracks } = run
+          expect(changes(run, () => setTrackStrip(doc, by, tracks[0], 'pan', -0.5))).toEqual([
+            { edits: [], commands: [setStripParam(kickFader, 'pan', -0.5)] }
+          ])
+          const volume = HoldTarget.TrackStrip({ track: tracks[0], param: 'volume' })
+          expect(changes(run, () => run.hold(volume, 0.3))).toEqual([
+            { edits: [], commands: [setStripParam(kickFader, 'volume', 0.3)] }
+          ])
+          expect(changes(run, () => setTrackStrip(doc, by, tracks[0], 'volume', 0.25))).toEqual([])
+          // As the document's would read: in range, and a number.
+          expect(changes(run, () => run.hold(volume, 5))).toEqual([
+            { edits: [], commands: [setStripParam(kickFader, 'volume', volumeTop)] }
+          ])
+          expect(changes(run, () => run.hold(volume, Number.NaN))).toEqual([
+            { edits: [], commands: [setStripParam(kickFader, 'volume', 0.25)] }
+          ])
+          expect(changes(run, () => run.hold(volume))).toEqual([])
+          const kickAgain = NodeHandle((1 << 16) | 1)
+          expect(changes(run, () => setSound(doc, tracks[0], other))).toEqual([
+            {
+              edits: [
+                DeviceEdit.DestroyNode({ node: kickNode }),
+                sampler(kickAgain, other),
+                DeviceEdit.Connect({ from: kickAgain, to: kickFader })
+              ],
+              commands: []
+            }
+          ])
+        })
+      )
+  )
+
+  it.effect("plays the master's strip on its fader, after its slots, a held value over the document's", () =>
     compiled((run) =>
       Effect.sync(() => {
-        const { doc, tracks } = run
-        expect(changes(run, () => setTrackStrip(doc, by, tracks[0], 'pan', -0.5))).toEqual([
-          { edits: [], commands: [setStripParam(kickNode, 'pan', -0.5)] }
+        const { doc } = run
+        expect(changes(run, () => setMasterStrip(doc, by, 'pan', -0.5))).toEqual([
+          { edits: [], commands: [setStripParam(masterFader, 'pan', -0.5)] }
         ])
-        const volume = HoldTarget.TrackStrip({ track: tracks[0], param: 'volume' })
-        expect(changes(run, () => run.hold(volume, 0.3))).toEqual([
-          { edits: [], commands: [setStripParam(kickNode, 'volume', 0.3)] }
+        const fader = HoldTarget.MasterStrip({ param: 'volume' })
+        expect(changes(run, () => run.hold(fader, 0.25))).toEqual([
+          { edits: [], commands: [setStripParam(masterFader, 'volume', 0.25)] }
         ])
-        expect(changes(run, () => setTrackStrip(doc, by, tracks[0], 'volume', 0.25))).toEqual([])
-        // As the document's would read: in range, and a number.
-        expect(changes(run, () => run.hold(volume, 5))).toEqual([
-          { edits: [], commands: [setStripParam(kickNode, 'volume', 1)] }
+        expect(changes(run, () => run.hold(fader, 9))).toEqual([
+          { edits: [], commands: [setStripParam(masterFader, 'volume', volumeTop)] }
         ])
-        expect(changes(run, () => run.hold(volume, Number.NaN))).toEqual([
-          { edits: [], commands: [setStripParam(kickNode, 'volume', 0.25)] }
-        ])
-        expect(changes(run, () => run.hold(volume))).toEqual([])
-        const kickAgain = NodeHandle((1 << 16) | 1)
-        expect(changes(run, () => setSound(doc, tracks[0], other))).toEqual([
-          {
-            edits: [
-              DeviceEdit.DestroyNode({ node: kickNode }),
-              sampler(kickAgain, other, { volume: 0.25, pan: -0.5 }),
-              DeviceEdit.Connect({ from: kickAgain, to: insert })
-            ],
-            commands: []
-          }
+        expect(changes(run, () => run.hold(fader))).toEqual([
+          { edits: [], commands: [setStripParam(masterFader, 'volume', 1)] }
         ])
       })
     )
@@ -476,7 +500,7 @@ describe('the compiler', () => {
         expect(yield* rebuilding(run)).toEqual({ taken: true, sent: [] })
         const [rebuilt] = changes(run, () => run.setRunning(true))
         expect(rebuilt.edits?.[0]).toEqual(DeviceEdit.Reset({ epoch: 1 }))
-        expect(rebuilt.edits).toContainEqual(sampler(NodeHandle((1 << 16) | 1), kick, turnedTo(0.2)))
+        expect(rebuilt.edits).toContainEqual(trackFader(NodeHandle((1 << 16) | 2), turnedTo(0.2)))
         expect(changes(run, () => run.setRunning(true))).toEqual([])
       })
     )
@@ -490,13 +514,17 @@ describe('the compiler', () => {
           {
             edits: [
               sampler(kickNode, kick),
+              trackFader(kickFader),
               sampler(snareNode, snare),
-              createInsert(insert),
+              trackFader(snareFader),
+              createInsert(master),
               createNode(plugins.filter, filter, { cutoff: 20000 }),
               createInsert(masterFader),
-              DeviceEdit.Connect({ from: kickNode, to: insert }),
-              DeviceEdit.Connect({ from: snareNode, to: insert }),
-              DeviceEdit.Connect({ from: insert, to: filter }),
+              DeviceEdit.Connect({ from: kickNode, to: kickFader }),
+              DeviceEdit.Connect({ from: snareNode, to: snareFader }),
+              DeviceEdit.Connect({ from: kickFader, to: master }),
+              DeviceEdit.Connect({ from: snareFader, to: master }),
+              DeviceEdit.Connect({ from: master, to: filter }),
               DeviceEdit.Connect({ from: filter, to: masterFader }),
               DeviceEdit.SetOutput({ node: masterFader }),
               DeviceEdit.SetPattern({ pattern: firstPattern, notes: [] }),
@@ -548,7 +576,7 @@ describe('the compiler', () => {
       Effect.sync(() => {
         const { doc, tracks, clip, slot } = run
         expect(changes(run, () => setTrackStrip(doc, by, tracks[1], 'volume', 0.3))).toEqual([
-          { edits: [], commands: [setStripParam(snareNode, 'volume', 0.3)] }
+          { edits: [], commands: [setStripParam(snareFader, 'volume', 0.3)] }
         ])
         expect(changes(run, () => setMasterParam(doc, by, slot, 'cutoff', 500))).toEqual([
           { edits: [], commands: [setParam(plugins.filter, filter, 'cutoff', 500)] }
@@ -579,8 +607,8 @@ describe('the compiler', () => {
           {
             edits: [
               DeviceEdit.DestroyNode({ node: kickNode }),
-              sampler(kickAgain, snare, turnedTo(0.5)),
-              DeviceEdit.Connect({ from: kickAgain, to: insert }),
+              sampler(kickAgain, snare),
+              DeviceEdit.Connect({ from: kickAgain, to: kickFader }),
               DeviceEdit.SetPattern({
                 pattern: firstPattern,
                 notes: [{ tick: Tick(0), node: kickAgain, key: MidiKey(60), velocity: 1, length: stepTicks }]
@@ -608,13 +636,13 @@ describe('the compiler', () => {
     compiled((run) =>
       Effect.sync(() => {
         const { doc } = run
-        const first = cell(6)
+        const first = cell(8)
         expect(changes(run, () => addSlot(doc, 'first', ' '))).toEqual([
           {
             edits: [
               createNode(plugins.filter, first, { cutoff: 1000 }),
-              DeviceEdit.Disconnect({ from: insert, to: filter }),
-              DeviceEdit.Connect({ from: insert, to: first }),
+              DeviceEdit.Disconnect({ from: master, to: filter }),
+              DeviceEdit.Connect({ from: master, to: first }),
               DeviceEdit.Connect({ from: first, to: filter })
             ],
             commands: []
@@ -623,10 +651,10 @@ describe('the compiler', () => {
         expect(changes(run, () => doc.transact(() => slotMap(doc).get('first')?.set('order', '~')))).toEqual([
           {
             edits: [
-              DeviceEdit.Disconnect({ from: insert, to: first }),
+              DeviceEdit.Disconnect({ from: master, to: first }),
               DeviceEdit.Disconnect({ from: first, to: filter }),
               DeviceEdit.Disconnect({ from: filter, to: masterFader }),
-              DeviceEdit.Connect({ from: insert, to: filter }),
+              DeviceEdit.Connect({ from: master, to: filter }),
               DeviceEdit.Connect({ from: filter, to: first }),
               DeviceEdit.Connect({ from: first, to: masterFader })
             ],
@@ -641,7 +669,7 @@ describe('the compiler', () => {
         ])
         expect(changes(run, () => doc.transact(() => slotMap(doc).delete(run.slot)))).toEqual([
           {
-            edits: [DeviceEdit.DestroyNode({ node: filter }), DeviceEdit.Connect({ from: insert, to: masterFader })],
+            edits: [DeviceEdit.DestroyNode({ node: filter }), DeviceEdit.Connect({ from: master, to: masterFader })],
             commands: []
           }
         ])
@@ -670,10 +698,12 @@ describe('the compiler', () => {
           })
         ])
         const track = doc.getMap('tracks').get(tracks[0]) as Y.Map<unknown>
+        // Its fader goes with it: nothing would go into it.
         expect(changes(run, () => doc.transact(() => track.delete('instrument')))).toEqual([
           {
             edits: [
               DeviceEdit.DestroyNode({ node: kickNode }),
+              DeviceEdit.DestroyNode({ node: kickFader }),
               DeviceEdit.SetPattern({ pattern: firstPattern, notes: [] })
             ],
             commands: []
@@ -867,7 +897,7 @@ describe('the compiler', () => {
         expect(changes(run, () => setTrackStrip(doc, by, tracks[1], 'volume', 0.2))).toEqual([
           {
             edits: [],
-            commands: [setStripParam(kickNode, 'volume', 0.1), setStripParam(snareNode, 'volume', 0.2)]
+            commands: [setStripParam(kickFader, 'volume', 0.1), setStripParam(snareFader, 'volume', 0.2)]
           }
         ])
         run.refuseNext()
@@ -896,15 +926,19 @@ describe('the compiler', () => {
               edits: [
                 DeviceEdit.Reset({ epoch: 1 }),
                 sampler(next(1), kick),
-                sampler(next(2), snare),
-                createInsert(next(3)),
-                createNode(plugins.filter, next(4), { cutoff: 20000 }),
+                trackFader(next(2)),
+                sampler(next(3), snare),
+                trackFader(next(4)),
                 createInsert(next(5)),
-                DeviceEdit.Connect({ from: next(1), to: next(3) }),
-                DeviceEdit.Connect({ from: next(2), to: next(3) }),
+                createNode(plugins.filter, next(6), { cutoff: 20000 }),
+                createInsert(next(7)),
+                DeviceEdit.Connect({ from: next(1), to: next(2) }),
                 DeviceEdit.Connect({ from: next(3), to: next(4) }),
+                DeviceEdit.Connect({ from: next(2), to: next(5) }),
                 DeviceEdit.Connect({ from: next(4), to: next(5) }),
-                DeviceEdit.SetOutput({ node: next(5) }),
+                DeviceEdit.Connect({ from: next(5), to: next(6) }),
+                DeviceEdit.Connect({ from: next(6), to: next(7) }),
+                DeviceEdit.SetOutput({ node: next(7) }),
                 DeviceEdit.SetPattern({
                   pattern: PatternHandle((1 << 16) | 1),
                   notes: [{ tick: Tick(0), node: next(1), key: MidiKey(60), velocity: 1, length: stepTicks }]
@@ -934,7 +968,7 @@ describe('the compiler', () => {
         expect(changes(run, () => setMute(doc, by, tracks[0], true))).toEqual([
           {
             edits: [
-              DeviceEdit.Disconnect({ from: kickNode, to: insert }),
+              DeviceEdit.Disconnect({ from: kickNode, to: kickFader }),
               DeviceEdit.SetPattern({ pattern: firstPattern, notes: [] }),
               DeviceEdit.LetGoOfNotes({ node: kickNode })
             ],
@@ -944,7 +978,7 @@ describe('the compiler', () => {
         expect(changes(run, () => setMute(doc, by, tracks[0], false))).toEqual([
           {
             edits: [
-              DeviceEdit.Connect({ from: kickNode, to: insert }),
+              DeviceEdit.Connect({ from: kickNode, to: kickFader }),
               DeviceEdit.SetPattern({ pattern: firstPattern, notes: [kick] })
             ],
             commands: []
@@ -953,7 +987,7 @@ describe('the compiler', () => {
         // Left out of a solo, the same, and back once the solo ends.
         const out = {
           edits: [
-            DeviceEdit.Disconnect({ from: kickNode, to: insert }),
+            DeviceEdit.Disconnect({ from: kickNode, to: kickFader }),
             DeviceEdit.SetPattern({ pattern: firstPattern, notes: [] }),
             DeviceEdit.LetGoOfNotes({ node: kickNode })
           ],
@@ -961,7 +995,7 @@ describe('the compiler', () => {
         }
         const back = {
           edits: [
-            DeviceEdit.Connect({ from: kickNode, to: insert }),
+            DeviceEdit.Connect({ from: kickNode, to: kickFader }),
             DeviceEdit.SetPattern({ pattern: firstPattern, notes: [kick] })
           ],
           commands: []
@@ -973,8 +1007,8 @@ describe('the compiler', () => {
         expect(changes(run, () => run.solo(tracks[0]))).toEqual([
           {
             edits: [
-              DeviceEdit.Disconnect({ from: snareNode, to: insert }),
-              DeviceEdit.Connect({ from: kickNode, to: insert }),
+              DeviceEdit.Disconnect({ from: snareNode, to: snareFader }),
+              DeviceEdit.Connect({ from: kickNode, to: kickFader }),
               DeviceEdit.SetPattern({ pattern: firstPattern, notes: [kick] }),
               DeviceEdit.LetGoOfNotes({ node: snareNode })
             ],
@@ -984,8 +1018,8 @@ describe('the compiler', () => {
         expect(changes(run, () => run.solo(tracks[0]))).toEqual([
           {
             edits: [
-              DeviceEdit.Disconnect({ from: kickNode, to: insert }),
-              DeviceEdit.Connect({ from: snareNode, to: insert }),
+              DeviceEdit.Disconnect({ from: kickNode, to: kickFader }),
+              DeviceEdit.Connect({ from: snareNode, to: snareFader }),
               DeviceEdit.SetPattern({ pattern: firstPattern, notes: [] }),
               DeviceEdit.LetGoOfNotes({ node: kickNode })
             ],
@@ -995,119 +1029,6 @@ describe('the compiler', () => {
         expect(run.evicted).toEqual([])
       })
     )
-  )
-
-  it.effect("sends tracks into an insert and back, and plays an insert's strip and mute, and the master's", () =>
-    compiled((run) =>
-      Effect.sync(() => {
-        const { doc, tracks } = run
-        // What goes into it sums at its insert, then plays through its fader, the strip's meter numbered as it is.
-        const [third, thirdFader] = [6, 7].map(cell)
-        const into = (from: NodeHandle, to: NodeHandle) => DeviceEdit.Connect({ from, to })
-        const outOf = (from: NodeHandle, to: NodeHandle) => DeviceEdit.Disconnect({ from, to })
-        expect(changes(run, () => setTrackInsert(doc, by, tracks[0], Id('3')))).toEqual([
-          {
-            edits: [
-              createInsert(third, defaultStrip),
-              createInsert(thirdFader, defaultStrip, Option.some(3)),
-              outOf(kickNode, insert),
-              into(kickNode, third),
-              into(third, thirdFader),
-              into(thirdFader, insert)
-            ],
-            commands: []
-          }
-        ])
-        expect(changes(run, () => setTrackInsert(doc, by, tracks[1], Id('3')))).toEqual([
-          { edits: [outOf(snareNode, insert), into(snareNode, third)], commands: [] }
-        ])
-        expect(changes(run, () => setInsertStrip(doc, by, Id('3'), 'volume', 0.5))).toEqual([
-          { edits: [], commands: [setStripParam(thirdFader, 'volume', 0.5)] }
-        ])
-        // Muted, it goes into the master no more, and its fader, made anew, has no meter: nothing of it goes on.
-        const [mutedFader, heardFader] = [1, 2].map((generation) => NodeHandle((generation << 16) | 7))
-        const faderAtHalf = { volume: 0.5, pan: 0 }
-        expect(changes(run, () => setInsertMute(doc, by, Id('3'), true))).toEqual([
-          {
-            edits: [
-              DeviceEdit.DestroyNode({ node: thirdFader }),
-              createInsert(mutedFader, faderAtHalf),
-              into(third, mutedFader)
-            ],
-            commands: []
-          }
-        ])
-        expect(changes(run, () => setInsertMute(doc, by, Id('3'), false))).toEqual([
-          {
-            edits: [
-              DeviceEdit.DestroyNode({ node: mutedFader }),
-              createInsert(heardFader, faderAtHalf, Option.some(3)),
-              into(third, heardFader),
-              into(heardFader, insert)
-            ],
-            commands: []
-          }
-        ])
-        // After its slots: the filter hears the master's sum as it is.
-        expect(changes(run, () => setInsertStrip(doc, by, Id('master'), 'pan', -0.5))).toEqual([
-          { edits: [], commands: [setStripParam(masterFader, 'pan', -0.5)] }
-        ])
-        // Held, the master's fader and the kick's insert play at once, and as the document has them once let go.
-        const fader = HoldTarget.InsertStrip({ insert: Id('master'), param: 'volume' })
-        expect(changes(run, () => run.hold(fader, 0.25))).toEqual([
-          { edits: [], commands: [setStripParam(masterFader, 'volume', 0.25)] }
-        ])
-        expect(changes(run, () => run.hold(fader))).toEqual([
-          { edits: [], commands: [setStripParam(masterFader, 'volume', 1)] }
-        ])
-        const route = HoldTarget.TrackInsert({ track: tracks[0] })
-        expect(changes(run, () => run.hold(route, 0.2))).toEqual([
-          { edits: [outOf(kickNode, third), into(kickNode, insert)], commands: [] }
-        ])
-        expect(changes(run, () => run.hold(route))).toEqual([
-          { edits: [outOf(kickNode, insert), into(kickNode, third)], commands: [] }
-        ])
-        // The last one out of it takes its node with it.
-        expect(changes(run, () => setTrackInsert(doc, by, tracks[0], Id('master')))).toEqual([
-          { edits: [outOf(kickNode, third), into(kickNode, insert)], commands: [] }
-        ])
-        expect(changes(run, () => setTrackInsert(doc, by, tracks[1], Id('master')))).toEqual([
-          {
-            edits: [
-              DeviceEdit.DestroyNode({ node: third }),
-              DeviceEdit.DestroyNode({ node: heardFader }),
-              into(snareNode, insert)
-            ],
-            commands: []
-          }
-        ])
-      })
-    )
-  )
-
-  it.effect(
-    "sends a track left out into its insert once it is heard, and keeps an insert's node while one goes in",
-    () =>
-      compiled((run) =>
-        Effect.sync(() => {
-          const { doc, tracks } = run
-          const [third, thirdFader] = [6, 7].map(cell)
-          setMute(doc, by, tracks[0], true)
-          expect(changes(run, () => setTrackInsert(doc, by, tracks[0], Id('3')))).toEqual([
-            {
-              edits: [
-                createInsert(third, defaultStrip),
-                createInsert(thirdFader, defaultStrip, Option.some(3)),
-                DeviceEdit.Connect({ from: third, to: thirdFader }),
-                DeviceEdit.Connect({ from: thirdFader, to: insert })
-              ],
-              commands: []
-            }
-          ])
-          const [unmuted] = changes(run, () => setMute(doc, by, tracks[0], false))
-          expect(unmuted.edits?.slice(0, 1)).toEqual([DeviceEdit.Connect({ from: kickNode, to: third })])
-        })
-      )
   )
 
   it.effect('solos tracks for this client only, muted in the document or not', () =>
@@ -1122,21 +1043,21 @@ describe('the compiler', () => {
         expect(changes(run, () => run.solo(tracks[1]))).toEqual([
           {
             edits: [
-              DeviceEdit.Disconnect({ from: kickNode, to: insert }),
-              DeviceEdit.Connect({ from: snareNode, to: insert }),
+              DeviceEdit.Disconnect({ from: kickNode, to: kickFader }),
+              DeviceEdit.Connect({ from: snareNode, to: snareFader }),
               DeviceEdit.LetGoOfNotes({ node: kickNode })
             ],
             commands: []
           }
         ])
         expect(changes(run, () => run.solo(tracks[0]))).toEqual([
-          { edits: [DeviceEdit.Connect({ from: kickNode, to: insert })], commands: [] }
+          { edits: [DeviceEdit.Connect({ from: kickNode, to: kickFader })], commands: [] }
         ])
         expect(changes(run, () => setMute(doc, by, tracks[0], true))).toEqual([])
         expect(changes(run, () => run.solo(tracks[1]))).toEqual([
           {
             edits: [
-              DeviceEdit.Disconnect({ from: snareNode, to: insert }),
+              DeviceEdit.Disconnect({ from: snareNode, to: snareFader }),
               DeviceEdit.LetGoOfNotes({ node: snareNode })
             ],
             commands: []
@@ -1181,14 +1102,14 @@ describe('the compiler', () => {
           expect(changes(run, () => setMute(doc, by, tracks[0], true))).toEqual([
             {
               edits: [
-                DeviceEdit.Disconnect({ from: kickNode, to: insert }),
+                DeviceEdit.Disconnect({ from: kickNode, to: kickFader }),
                 DeviceEdit.LetGoOfNotes({ node: kickNode })
               ],
               commands: [off(kickNode, c5)]
             }
           ])
           expect(changes(run, () => setMute(doc, by, tracks[0], false))).toEqual([
-            { edits: [DeviceEdit.Connect({ from: kickNode, to: insert })], commands: [on(kickNode, c5)] }
+            { edits: [DeviceEdit.Connect({ from: kickNode, to: kickFader })], commands: [on(kickNode, c5)] }
           ])
           // A node made anew holds nothing: pressed on it again.
           const kickAgain = NodeHandle((1 << 16) | 1)
@@ -1197,20 +1118,26 @@ describe('the compiler', () => {
               edits: [
                 DeviceEdit.DestroyNode({ node: kickNode }),
                 sampler(kickAgain, snare),
-                DeviceEdit.Connect({ from: kickAgain, to: insert })
+                DeviceEdit.Connect({ from: kickAgain, to: kickFader })
               ],
               commands: [on(kickAgain, c5)]
             }
           ])
           // A new engine is pressed what is held, on its nodes: the kick's cell a generation on again.
-          const snareNext = NodeHandle((1 << 16) | 2)
+          const snareNext = NodeHandle((1 << 16) | 3)
           const {
             sent: [rebuilt]
           } = yield* rebuilding(run)
           expect(rebuilt.commands?.slice(-2)).toEqual([on(snareNext, e5), on(NodeHandle((2 << 16) | 1), c5)])
-          // A track gone takes its notes with its node: nothing to let go of.
+          // A track gone takes its notes with its nodes: nothing to let go of.
           expect(changes(run, () => deleteTrack(doc, by, tracks[1]))).toEqual([
-            { edits: [DeviceEdit.DestroyNode({ node: snareNext })], commands: [] }
+            {
+              edits: [
+                DeviceEdit.DestroyNode({ node: snareNext }),
+                DeviceEdit.DestroyNode({ node: NodeHandle((1 << 16) | 4) })
+              ],
+              commands: []
+            }
           ])
         })
       )
@@ -1229,15 +1156,59 @@ describe('the compiler', () => {
           sent: [rebuilt]
         } = yield* rebuilding(run)
         expect(rebuilt.edits).toContainEqual(sampler(next(1), kick))
-        expect(rebuilt.edits).toContainEqual(DeviceEdit.Connect({ from: next(2), to: next(3) }))
-        expect(rebuilt.edits).not.toContainEqual(DeviceEdit.Connect({ from: next(1), to: next(3) }))
+        expect(rebuilt.edits).toContainEqual(DeviceEdit.Connect({ from: next(3), to: next(4) }))
+        expect(rebuilt.edits).not.toContainEqual(DeviceEdit.Connect({ from: next(1), to: next(2) }))
+        // The fader of a track not heard is still joined to the master: its meter just shows nothing.
+        expect(rebuilt.edits).toContainEqual(DeviceEdit.Connect({ from: next(2), to: next(5) }))
         const patterns = (rebuilt.edits ?? []).filter(DeviceEdit.$is('SetPattern')).map(({ notes }) => notes)
-        expect(patterns).toEqual(expect.arrayContaining([[], [played(next(2), 2)]]))
+        expect(patterns).toEqual(expect.arrayContaining([[], [played(next(3), 2)]]))
         expect(patterns).toHaveLength(2)
       })
     )
   )
-  it.effect('gives a track and a slot keyed master nodes of their own, apart from the master insert', () =>
+  it.effect(
+    "names each track's meter by its fader's handle while the track lasts, in the session the engine was last sent, and the one before",
+    () =>
+      compiled((run) =>
+        Effect.gen(function* () {
+          const { doc, tracks, compiler } = run
+          const both = new Map([
+            [kickFader, tracks[0]],
+            [snareFader, tracks[1]]
+          ])
+          expect(compiler.meters(0)).toEqual(both)
+          // Its instrument made anew and cut off, a track keeps its fader, and so its meter.
+          setSound(doc, tracks[0], other)
+          setMute(doc, by, tracks[0], true)
+          expect(compiler.meters(0)).toBe(compiler.meters(0))
+          expect(compiler.meters(0)).toEqual(both)
+          // Not taken, a change names nothing new until the next one carries it.
+          run.refuseNext()
+          const added = Option.getOrThrow(addTrack(doc, by))
+          expect(compiler.meters(0)).toEqual(both)
+          deleteTrack(doc, by, tracks[1])
+          const before = new Map([
+            [kickFader, tracks[0]],
+            [NodeHandle((1 << 16) | 3), added]
+          ])
+          expect(compiler.meters(0)).toEqual(before)
+          // Until the engine takes the reset, its telemetry names the nodes of the session before.
+          yield* rebuilding(run)
+          expect(compiler.meters(1)).toEqual(
+            new Map([
+              [NodeHandle((1 << 16) | 2), tracks[0]],
+              [NodeHandle((2 << 16) | 4), added]
+            ])
+          )
+          expect(compiler.meters(0)).toEqual(before)
+          yield* rebuilding(run)
+          expect(compiler.meters(0)).toEqual(new Map())
+          expect(compiler.meters(2).size).toBe(2)
+        })
+      )
+  )
+
+  it.effect('gives a track and a slot keyed master nodes of their own, apart from the master', () =>
     compiled((run) =>
       Effect.sync(() => {
         const { doc } = run
@@ -1248,7 +1219,7 @@ describe('the compiler', () => {
             samples: new Y.Map(Object.entries({ sample: kick }))
           })
         )
-        const masterTrack = cell(6)
+        const [masterTrack, itsFader] = [8, 9].map(cell)
         expect(
           changes(run, () =>
             doc.transact(() =>
@@ -1259,11 +1230,16 @@ describe('the compiler', () => {
           )
         ).toEqual([
           {
-            edits: [sampler(masterTrack, kick), DeviceEdit.Connect({ from: masterTrack, to: insert })],
+            edits: [
+              sampler(masterTrack, kick),
+              trackFader(itsFader),
+              DeviceEdit.Connect({ from: masterTrack, to: itsFader }),
+              DeviceEdit.Connect({ from: itsFader, to: master })
+            ],
             commands: []
           }
         ])
-        const slot = cell(7)
+        const slot = cell(10)
         expect(changes(run, () => addSlot(doc, 'master', '~'))).toEqual([
           {
             edits: [

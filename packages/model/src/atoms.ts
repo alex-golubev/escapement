@@ -1,11 +1,10 @@
 import { Array, Effect, Equal, Option, Order } from 'effect'
 import { Atom, AtomRegistry } from 'effect/reactivity'
 import type * as Y from 'yjs'
-import { idsOf, insertMap, insertNamed, notesPattern, projectMaps, type Stored } from './document'
+import { idsOf, notesPattern, projectMaps, type Stored } from './document'
 import { Id } from './id'
-import { insertNumber, master as masterId } from './mixer'
-import type { ArrangementClip, Clip, Insert, Master, Note, Track } from './project'
-import { ignore, inOrder, readClip, readInsert, readMaster, readPatternNotes, readTempo, readTrack } from './read'
+import type { ArrangementClip, Clip, Master, Note, Track } from './project'
+import { ignore, inOrder, readClip, readMaster, readPatternNotes, readTempo, readTrack } from './read'
 import { patternEnd } from './time'
 
 /**
@@ -44,8 +43,6 @@ export interface ProjectAtoms {
   /** One of `arrangementClips`, by ID. */
   readonly arrangementClip: (id: Id) => Atom.Atom<Option.Option<ArrangementClip>>
   readonly master: Atom.Atom<Master>
-  /** One of `mixerInserts`, at its defaults while the document holds nothing of it. */
-  readonly insert: (id: Id) => Atom.Atom<Insert>
 }
 
 const keysOf = <F>(map: Stored<Record<string, F>>) => byContent(() => Array.sort(idsOf(map), Order.String))
@@ -63,9 +60,7 @@ export const followProject = Effect.fnUntraced(function* (doc: Y.Doc) {
   const notesEntry = Atom.family((id: Id) => byContent(() => readPatternNotes(doc, id)))
   const clipKeys = keysOf(maps.clips)
   const clipEntry = Atom.family((id: Id) => byContent(() => readClip(ignore, maps.clips, id)))
-  const masterMap = insertMap(doc, masterId)
-  const master = byContent(() => readMaster(ignore, doc))
-  const insert = Atom.family((id: Id) => byContent(() => readInsert(ignore, doc, id)))
+  const master = byContent(() => readMaster(ignore, maps.master))
   const trackIds = byContent((get) =>
     inOrder(get(trackKeys).flatMap((id) => Option.toArray(get(trackEntry(id))))).map(({ id }) => id)
   )
@@ -93,8 +88,7 @@ export const followProject = Effect.fnUntraced(function* (doc: Y.Doc) {
     clip,
     arrangementClips: byContent((get) => get(clipKeys).flatMap((id) => Option.toArray(get(arrangementClip(id))))),
     arrangementClip,
-    master,
-    insert
+    master
   }
 
   const touched = new Set<Atom.Atom<unknown>>()
@@ -120,20 +114,9 @@ export const followProject = Effect.fnUntraced(function* (doc: Y.Doc) {
       [maps.tracks, entriesTouched(trackKeys, trackEntry)],
       [maps.clips, entriesTouched(clipKeys, clipEntry)],
       // Its slots are maps inside it.
-      [masterMap, () => touched.add(master)]
+      [maps.master, () => touched.add(master)]
     ]
-  /** What a map of the document's top holds by its name: a pattern's notes, or an insert's own but the master's. */
-  const topEntry = (name: string): Option.Option<Atom.Atom<unknown>> =>
-    Option.orElse(Option.map(notesPattern(name), notesEntry), () =>
-      Option.map(
-        Option.filter(insertNamed(name), (id) => Option.exists(insertNumber(id), (number) => number > 0)),
-        insert
-      )
-    )
-  /**
-   * The parts held in maps of the document's top the transaction changed, found by their names, looked for only when
-   * it changed a map of the top itself, as an edit of notes or of an insert does and an edit inside a track doesn't.
-   */
+  /** The patterns whose notes, maps of the top, the transaction changed: looked for only if it changed one such. */
   const topTouched = (transaction: Y.Transaction) =>
     Option.map(
       Option.liftPredicate(Array.fromIterable(transaction.changed.keys()), (types) =>
@@ -142,7 +125,7 @@ export const followProject = Effect.fnUntraced(function* (doc: Y.Doc) {
       () =>
         doc.share.forEach((type, name) =>
           Option.map(
-            Option.filter(topEntry(name), () => transaction.changed.has(type)),
+            Option.filter(Option.map(notesPattern(name), notesEntry), () => transaction.changed.has(type)),
             (entry) => touched.add(entry)
           )
         )

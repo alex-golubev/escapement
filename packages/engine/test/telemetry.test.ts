@@ -6,6 +6,7 @@ import {
   telemetryReader,
   telemetryWriter
 } from '../src/telemetry'
+import { handleOf } from '../src/handles'
 import { meterCount } from '../src/protocol'
 
 const engineWords = (
@@ -23,9 +24,9 @@ const engineWords = (
   words.set([playing, position, loopTicks], 7)
   new Float32Array(words.buffer, 40, 1).set([tempo])
   words.set([streamLost, ...overs, meters.length], 11)
-  meters.forEach(({ meter, peaks, overs }, i) => {
+  meters.forEach(({ node, peaks, overs }, i) => {
     const at = 15 + i * 5
-    words.set([meter], at)
+    words.set([node], at)
     new Float32Array(words.buffer, (at + 1) * 4, 2).set(peaks)
     words.set(overs, at + 3)
   })
@@ -55,11 +56,11 @@ test('the page reads what the worklet wrote', () => {
   })
 })
 
-test('the meters in use reach the page, each under its number, and the worklet copies only those', () => {
+test("the meters in use reach the page, each under its node's handle, and the worklet copies only those", () => {
   const board = createTelemetryBoard()
   const meters = [
-    { meter: 7, peaks: [0.5, 0.25], overs: [3, 0] },
-    { meter: meterCount, peaks: [1.5, 0], overs: [0, 2 ** 32 - 1] }
+    { node: handleOf(0, 7), peaks: [0.5, 0.25], overs: [3, 0] },
+    { node: handleOf(0xffff, 0xffff), peaks: [1.5, 0], overs: [0, 2 ** 32 - 1] }
   ] as const
   const written = engineWords([1, 1, 0, 0, 0], [0.5, 0.5], undefined, undefined, meters)
   // A record past the count, as one left from a node gone.

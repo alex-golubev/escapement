@@ -27,12 +27,10 @@ export interface Track {
   readonly id: Id
   readonly name: string
   readonly mute: boolean
-  /** Its volume and pan, after the instrument. */
+  /** Its volume and pan, after the instrument: its fader in the mixer. */
   readonly strip: StripValues
   /** None when the document has none this build can play: the track is silent. */
   readonly instrument: Option.Option<PluginInstance>
-  /** The mixer's insert it goes into: the master, or one of `mixerInserts`. */
-  readonly insert: Id
 }
 
 export interface Note {
@@ -78,21 +76,12 @@ export interface ArrangementClip extends Clip {
 
 export type Slot = PluginInstance & { readonly id: Id }
 
-/** Where every insert goes, and every track unless it goes into another. */
+/** Where every track goes. */
 export interface Master {
   /** Its volume and pan, after its slots. */
   readonly strip: StripValues
   /** In their order. */
   readonly slots: ReadonlyArray<Slot>
-}
-
-/** One of the mixer's inserts besides the master: it passes on what goes into it. */
-export interface Insert {
-  readonly id: Id
-  /** Its volume and pan. */
-  readonly strip: StripValues
-  /** Not heard: it doesn't go into the master. */
-  readonly mute: boolean
 }
 
 /** What a project is, read from its document: only what isn't deleted. */
@@ -105,6 +94,4 @@ export interface Project {
   /** The clips', each once, by ID. */
   readonly patterns: ReadonlyArray<Pattern>
   readonly master: Master
-  /** Those the document holds anything of, by their number. */
-  readonly inserts: ReadonlyArray<Insert>
 }

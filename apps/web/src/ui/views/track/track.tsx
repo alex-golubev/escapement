@@ -5,21 +5,17 @@ import { Atom } from 'effect/reactivity'
 import { useMemo } from 'preact/hooks'
 import { useCore } from '../../core-context'
 import { panThenVolume } from '../../parts/track-strip'
-import { InsertField } from '../../parts/insert-field'
 import { gridOf, InstanceControls } from '../../parts/instance-controls'
 import { Knob } from '../../parts/knob'
 import './track.css'
 
-/**
- * A track below: its pan and volume, the same as in its head, and the mixer strip it goes into, then what plays it, its
- * controls under its name, a group to a row. Of a track no longer there, nothing.
- */
+/** A track below: its pan and volume, as in its head and strip, then its instrument's controls; gone, nothing. */
 export const TrackSettings = ({ track }: { readonly track: Id }) => {
   const { session } = useCore()
-  const heard = useAtomValue(session.heard).includes(track)
+  const heard = useAtomValue(session.isHeard(track))
   return Option.match(useAtomValue(session.project.track(track)), {
     onNone: () => null,
-    onSome: ({ name, strip: values, instrument, insert }) => (
+    onSome: ({ name, strip: values, instrument }) => (
       <div class='track-settings' data-unheard={!heard}>
         <div class='track-settings__knobs'>
           {panThenVolume.map((param) => (
@@ -31,10 +27,6 @@ export const TrackSettings = ({ track }: { readonly track: Id }) => {
               target={HoldTarget.TrackStrip({ track, param: param.id })}
             />
           ))}
-          <span class='param'>
-            <InsertField track={track} owner={name} insert={insert} />
-            <span class='cap'>Strip</span>
-          </span>
         </div>
         {Option.match(instrument, {
           onNone: () => null,

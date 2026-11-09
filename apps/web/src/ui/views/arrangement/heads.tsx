@@ -1,5 +1,5 @@
-import { useAtomSet, useAtomValue } from '@effect/atom-react'
-import { HoldTarget, type Id, toggledSolo } from '@escapement/model'
+import { useAtomValue } from '@effect/atom-react'
+import { HoldTarget, type Id } from '@escapement/model'
 import { Boolean, Option } from 'effect'
 import { memo } from 'preact/compat'
 import { useLayoutEffect, useRef, useState } from 'preact/hooks'
@@ -7,22 +7,10 @@ import { useCore } from '../../core-context'
 import { PencilIcon, TrashIcon } from '../../kit/icons'
 import { useContextMenu } from '../../kit/menu'
 import { NameField } from '../../kit/name-field'
-import { neighbourOf } from '../../kit/neighbour'
+import { focusPast } from '../../kit/neighbour'
 import { SmallKnob } from '../../parts/knob'
+import { choiceHint, TrackToggles, trackGroup } from '../../parts/track-buttons'
 import { panThenVolume } from '../../parts/track-strip'
-
-/** The head going with the focus in it, however it goes: the focus to the name beside it, or else to +. */
-const focusPast = (head: HTMLElement | null) =>
-  Option.map(
-    Option.filter(Option.fromNullishOr(head), (going) => going.contains(document.activeElement)),
-    (going) =>
-      Option.map(
-        Option.orElse(neighbourOf(going, '.track-head__name'), () =>
-          Option.fromNullishOr(going.parentElement?.querySelector<HTMLElement>('.track-add'))
-        ),
-        (next) => next.focus()
-      )
-  )
 
 /** Drawn again after a key settled the name, it takes the focus back. */
 const TrackName = ({
@@ -64,14 +52,7 @@ const TrackName = ({
       type='button'
       class='track-head__name'
       aria-current={chosen}
-      data-hint={`${Boolean.match(chosen, {
-        onTrue: () =>
-          Boolean.match(notesBelow, {
-            onTrue: () => `The notes of ${name}'s clip are below: a click shows ${name} in their place`,
-            onFalse: () => `${name} is below, chosen for you only`
-          }),
-        onFalse: () => `Show ${name}, track ${index} of the project, below: chosen for you only`
-      })}. F2 renames it; a right click or Shift+F10, its menu`}
+      data-hint={`${choiceHint(name, index, chosen, notesBelow)}. F2 renames it; a right click or Shift+F10, its menu`}
       onClick={() => view.show(id)}
       onContextMenu={menu.onContextMenu}
       onKeyDown={(event) =>
@@ -91,20 +72,31 @@ const TrackName = ({
 
 /** Drawn again only as what it reads changes, not as the heads scroll. */
 const TrackHead = memo(function TrackHead({ id, index }: { readonly id: Id; readonly index: number }) {
-  const { registry, session, ops, view } = useCore()
+  const { session, ops, view } = useCore()
   const track = useAtomValue(session.project.track(id))
   const chosen = useAtomValue(view.isChosen(id))
-  const heard = useAtomValue(session.heard)
-  const { solo } = useAtomValue(session.listening)
-  const setListening = useAtomSet(session.listening)
+  const heard = useAtomValue(session.isHeard(id))
   const [naming, setNaming] = useState({ renaming: false, focusBack: false })
   const head = useRef<HTMLDivElement>(null)
-  // Its DOM is still there as it goes: Preact takes it out after this.
-  useLayoutEffect(() => () => focusPast(head.current), [])
+  // Its DOM is still there as it goes: Preact takes it out after this. The last one's focus goes to +.
+  useLayoutEffect(
+    () => () =>
+      focusPast(head.current, '.track-head__name', (going) =>
+        going.parentElement?.querySelector<HTMLElement>('.track-add')
+      ),
+    []
+  )
   return Option.match(track, {
     onNone: () => null,
     onSome: ({ name, mute, strip: values }) => (
-      <div ref={head} class='track-head' data-unheard={!heard.includes(id)} data-chosen={chosen}>
+      <div
+        ref={head}
+        class='track-head'
+        role='group'
+        aria-label={trackGroup(name, index)}
+        data-unheard={!heard}
+        data-chosen={chosen}
+      >
         <span class='track-head__strip'>
           {panThenVolume.map((param) => (
             <SmallKnob
@@ -141,33 +133,7 @@ const TrackHead = memo(function TrackHead({ id, index }: { readonly id: Id; read
           )
         })}
         <span class='track-head__buttons'>
-          <button
-            type='button'
-            class='toggle toggle--shared'
-            aria-label={`${name}: mute`}
-            aria-pressed={mute}
-            data-hint={Boolean.match(mute, {
-              onTrue: () => `${name} is muted in the project, for everyone`,
-              onFalse: () => `Mute ${name} in the project, for everyone`
-            })}
-            // The document's mute now, which may be ahead of the one drawn.
-            onClick={() => Option.map(registry.get(session.project.track(id)), (now) => ops.setMute(id, !now.mute))}
-          >
-            M
-          </button>
-          <button
-            type='button'
-            class='toggle toggle--local'
-            aria-label={`${name}: solo`}
-            aria-pressed={solo.includes(id)}
-            data-hint={Boolean.match(solo.includes(id), {
-              onTrue: () => `${name} is soloed for you only; the other tabs hear the whole arrangement`,
-              onFalse: () => `Solo ${name} for you only; the other tabs won't hear the change`
-            })}
-            onClick={() => setListening((state) => toggledSolo(state, id))}
-          >
-            S
-          </button>
+          <TrackToggles id={id} name={name} mute={mute} />
         </span>
       </div>
     )

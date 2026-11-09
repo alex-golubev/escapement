@@ -52,19 +52,21 @@ test("another client's holds are read as it sent them, as targets this client co
   expect(heldValue(read, HoldTarget.TrackParam({ track: Id('kick'), param: 'volume' }))).toEqual(Option.some(0.5))
 })
 
-test("another client's holds of the mixer are read as it sent them", () => {
-  const fader = HoldTarget.InsertStrip({ insert: Id('3'), param: 'volume' })
-  const route = HoldTarget.TrackInsert({ track: Id('kick') })
-  const read = readHolds(JSON.parse(JSON.stringify(holding(holding(noHolds, fader, 1.5), route, 3))))
+test("another client's holds of the master's strip are read as it sent them", () => {
+  const fader = HoldTarget.MasterStrip({ param: 'volume' })
+  const pan = HoldTarget.MasterStrip({ param: 'pan' })
+  const read = readHolds(JSON.parse(JSON.stringify(holding(holding(noHolds, fader, 1.5), pan, -0.5))))
   expect(read).toEqual([
     { target: fader, value: 1.5 },
-    { target: route, value: 3 }
+    { target: pan, value: -0.5 }
   ])
   expect(
     readHolds([
-      { target: { _tag: 'InsertStrip', insert: '3', param: 'cutoff' }, value: 1 },
-      { target: { _tag: 'InsertStrip', insert: '', param: 'pan' }, value: 1 },
-      { target: { _tag: 'TrackInsert' }, value: 2 }
+      { target: { _tag: 'MasterStrip', param: 'cutoff' }, value: 1 },
+      { target: { _tag: 'MasterStrip' }, value: 1 },
+      // Of an older version, whose mixer had numbered strips.
+      { target: { _tag: 'InsertStrip', insert: '3', param: 'volume' }, value: 1 },
+      { target: { _tag: 'TrackInsert', track: 'kick' }, value: 2 }
     ])
   ).toEqual([])
 })

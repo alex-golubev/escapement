@@ -71,10 +71,10 @@ impl Node {
         Self::with(handle, Kind::Plugin(slot), sample_rate)
     }
 
-    /// A mixer insert, with a meter if the page gave it one. Allocates, so only on the build thread.
-    pub(crate) fn insert(sample_rate: f32, handle: NodeHandle, meter: Option<NodeMeter>) -> Self {
+    /// A mixer insert, with a meter if the page asked for one. Allocates, so only on the build thread.
+    pub(crate) fn insert(sample_rate: f32, handle: NodeHandle, metered: bool) -> Self {
         Self {
-            meter,
+            meter: metered.then(|| NodeMeter::new(handle, sample_rate)),
             ..Self::with(handle, Kind::Insert, sample_rate)
         }
     }
@@ -395,7 +395,7 @@ pub(crate) mod tests {
 
     #[test]
     fn an_insert_passes_on_what_it_hears() {
-        let mut insert = Node::insert(SAMPLE_RATE, HANDLE, None);
+        let mut insert = Node::insert(SAMPLE_RATE, HANDLE, false);
         let left: [f32; BLOCK_FRAMES] = array::from_fn(|i| i as f32 / 128.0);
         let right: [f32; BLOCK_FRAMES] = array::from_fn(|i| -(i as f32) / 64.0);
         insert.process(&[left, right], BLOCK_FRAMES);
@@ -407,7 +407,7 @@ pub(crate) mod tests {
 
     #[test]
     fn an_insert_takes_no_parameter_or_sound_and_lets_notes_pass_unheard() {
-        let mut insert = Node::insert(SAMPLE_RATE, HANDLE, None);
+        let mut insert = Node::insert(SAMPLE_RATE, HANDLE, false);
         assert_eq!(insert.set_param(1, 0.5), Err(Rejection::UnknownTarget));
         let sound =
             || -> Arc<Sample> { unreachable!("an insert has no sample to take a sound for") };

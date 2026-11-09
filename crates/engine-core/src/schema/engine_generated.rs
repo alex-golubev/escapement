@@ -277,13 +277,13 @@ pub const ENUM_MIN_REJECTION: u8 = 0;
     since = "2.0.0",
     note = "Use associated constants instead. This will no longer be generated in 2021."
 )]
-pub const ENUM_MAX_REJECTION: u8 = 14;
+pub const ENUM_MAX_REJECTION: u8 = 13;
 #[deprecated(
     since = "2.0.0",
     note = "Use associated constants instead. This will no longer be generated in 2021."
 )]
 #[allow(non_camel_case_types)]
-pub const ENUM_VALUES_REJECTION: [Rejection; 15] = [
+pub const ENUM_VALUES_REJECTION: [Rejection; 14] = [
     Rejection::Malformed,
     Rejection::UnknownCommand,
     Rejection::UnknownTarget,
@@ -298,7 +298,6 @@ pub const ENUM_VALUES_REJECTION: [Rejection; 15] = [
     Rejection::WrongSampleRate,
     Rejection::TooManyNotes,
     Rejection::NotConnected,
-    Rejection::MeterTaken,
 ];
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
@@ -334,11 +333,9 @@ impl Rejection {
     pub const TooManyNotes: Self = Self(12);
     /// The node doesn't hear the other.
     pub const NotConnected: Self = Self(13);
-    /// A live node has the meter's number.
-    pub const MeterTaken: Self = Self(14);
 
     pub const ENUM_MIN: u8 = 0;
-    pub const ENUM_MAX: u8 = 14;
+    pub const ENUM_MAX: u8 = 13;
     pub const ENUM_VALUES: &'static [Self] = &[
         Self::Malformed,
         Self::UnknownCommand,
@@ -354,7 +351,6 @@ impl Rejection {
         Self::WrongSampleRate,
         Self::TooManyNotes,
         Self::NotConnected,
-        Self::MeterTaken,
     ];
     /// Returns the variant's name or "" if unknown.
     pub fn variant_name(self) -> Option<&'static str> {
@@ -373,7 +369,6 @@ impl Rejection {
             Self::WrongSampleRate => Some("WrongSampleRate"),
             Self::TooManyNotes => Some("TooManyNotes"),
             Self::NotConnected => Some("NotConnected"),
-            Self::MeterTaken => Some("MeterTaken"),
             _ => None,
         }
     }
@@ -3543,7 +3538,7 @@ impl<'a> ::flatbuffers::Follow<'a> for CreateInsert<'a> {
 impl<'a> CreateInsert<'a> {
     pub const VT_NODE: ::flatbuffers::VOffsetT = 4;
     pub const VT_STRIP: ::flatbuffers::VOffsetT = 6;
-    pub const VT_METER: ::flatbuffers::VOffsetT = 8;
+    pub const VT_METERED: ::flatbuffers::VOffsetT = 8;
 
     #[inline]
     pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
@@ -3560,13 +3555,11 @@ impl<'a> CreateInsert<'a> {
         args: &'args CreateInsertArgs<'args>,
     ) -> ::flatbuffers::WIPOffset<CreateInsert<'bldr>> {
         let mut builder = CreateInsertBuilder::new(_fbb);
-        if let Some(x) = args.meter {
-            builder.add_meter(x);
-        }
         if let Some(x) = args.strip {
             builder.add_strip(x);
         }
         builder.add_node(args.node);
+        builder.add_metered(args.metered);
         builder.finish()
     }
 
@@ -3595,14 +3588,17 @@ impl<'a> CreateInsert<'a> {
                 )
         }
     }
-    /// The meter of what it passes on, for the page, by its number from 1 to `engine_meters`: the board's record says
-    /// whose it is. None without.
+    /// Measures what it passes on, for the page: the board's record names the node by its handle.
     #[inline]
-    pub fn meter(&self) -> Option<u32> {
+    pub fn metered(&self) -> bool {
         // Safety:
         // Created from valid Table for this object
         // which contains a valid value in this slot
-        unsafe { self._tab.get::<u32>(CreateInsert::VT_METER, None) }
+        unsafe {
+            self._tab
+                .get::<bool>(CreateInsert::VT_METERED, Some(false))
+                .unwrap()
+        }
     }
 }
 
@@ -3619,7 +3615,7 @@ impl ::flatbuffers::Verifiable for CreateInsert<'_> {
                 Self::VT_STRIP,
                 false,
             )?
-            .visit_field::<u32>("meter", Self::VT_METER, false)?
+            .visit_field::<bool>("metered", Self::VT_METERED, false)?
             .finish();
         Ok(())
     }
@@ -3627,7 +3623,7 @@ impl ::flatbuffers::Verifiable for CreateInsert<'_> {
 pub struct CreateInsertArgs<'a> {
     pub node: u32,
     pub strip: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, ParamValue>>>,
-    pub meter: Option<u32>,
+    pub metered: bool,
 }
 impl<'a> Default for CreateInsertArgs<'a> {
     #[inline]
@@ -3635,7 +3631,7 @@ impl<'a> Default for CreateInsertArgs<'a> {
         CreateInsertArgs {
             node: 0,
             strip: None,
-            meter: None,
+            metered: false,
         }
     }
 }
@@ -3658,9 +3654,9 @@ impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> CreateInsertBuilder<'a, 'b, A
             .push_slot_always::<::flatbuffers::WIPOffset<_>>(CreateInsert::VT_STRIP, strip);
     }
     #[inline]
-    pub fn add_meter(&mut self, meter: u32) {
+    pub fn add_metered(&mut self, metered: bool) {
         self.fbb_
-            .push_slot_always::<u32>(CreateInsert::VT_METER, meter);
+            .push_slot::<bool>(CreateInsert::VT_METERED, metered, false);
     }
     #[inline]
     pub fn new(
@@ -3684,7 +3680,7 @@ impl ::core::fmt::Debug for CreateInsert<'_> {
         let mut ds = f.debug_struct("CreateInsert");
         ds.field("node", &self.node());
         ds.field("strip", &self.strip());
-        ds.field("meter", &self.meter());
+        ds.field("metered", &self.metered());
         ds.finish()
     }
 }

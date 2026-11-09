@@ -39,6 +39,8 @@
 
   /* The grid: most gaps are fours. */
   --u: 4px;
+  /* A toggle's side, M and S's: what lines up with them reads it here. */
+  --toggle: 18px;
 
   --r-sm: 3px;
   --r-md: 5px;
@@ -88,7 +90,7 @@ body {
   color: var(--t-lo);
 }
 
-:where(.btn, .toggle, .field, .knob, .track-head__name):focus-visible {
+:where(.btn, .toggle, .field, .knob, .track-head__name, .strip__name):focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: 2px;
 }
@@ -162,8 +164,8 @@ body {
 
 /* One letter: M and S read without learning, and the row stays narrow. */
 .toggle {
-  width: 18px;
-  height: 18px;
+  width: var(--toggle);
+  height: var(--toggle);
   flex: none;
   padding: 0;
   border: 1px solid var(--line-soft);

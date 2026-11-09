@@ -144,18 +144,15 @@ test('every telemetry field reaches the page in its own place', () => {
   expect(telemetry?.peaks[1]).toBeCloseTo(peak, 3)
 })
 
-test("an insert's meter reaches the page under its number, after its strip", () => {
+test("a metered insert's meter reaches the page under its handle, after its strip", () => {
   const engine = startEngine()
-  const insert = handleOf(0, 5)
+  const insert = handleOf(2, 5)
   engine.send({
-    edits: [
-      createInsert(insert, { volume: 0.5, pan: 0 }, Option.some(9)),
-      DeviceEdit.Connect({ from: tone, to: insert })
-    ]
+    edits: [createInsert(insert, { volume: 0.5, pan: 0 }, true), DeviceEdit.Connect({ from: tone, to: insert })]
   })
   const peak = engine.settledPeak()
   const meters = Option.getOrThrow(Option.fromUndefinedOr(engine.readTelemetry())).meters
-  expect(meters.map(({ meter, overs }) => ({ meter, overs }))).toEqual([{ meter: 9, overs: [0, 0] }])
+  expect(meters.map(({ node, overs }) => ({ node, overs }))).toEqual([{ node: insert, overs: [0, 0] }])
   expect(meters[0].peaks[0]).toBeCloseTo(peak / 2, 3)
   expect(meters[0].peaks[1]).toBeCloseTo(peak / 2, 3)
   expect(engine.readEvents()).toEqual([])

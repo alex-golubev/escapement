@@ -7,6 +7,7 @@ import {
   maxTempo,
   minTempo,
   newTrackPosition,
+  newTrackVolume,
   paramPosition,
   plugins,
   strip,
@@ -31,12 +32,10 @@ import {
   moveNote,
   renameTrack,
   resizeClip,
-  setInsertMute,
-  setInsertStrip,
   setMasterParam,
+  setMasterStrip,
   setMute,
   setTempo,
-  setTrackInsert,
   setTrackParam,
   setTrackStrip,
   stretchNote,
@@ -396,16 +395,12 @@ describe("a track's strip", () => {
   const stripOf = (doc: Y.Doc) => projectOf(doc).tracks[0].strip
   const [volume, pan] = trackStrip
 
-  test("is the engine's, but no louder than the sound as it is, and a new track's volume knob stands 5.2 dB down", () => {
-    expect(trackStrip.map(({ id }) => id)).toEqual(strip.map(({ id }) => id))
-    trackStrip.forEach((param, i) => {
-      expect(param.min).toBeGreaterThanOrEqual(strip[i].min)
-      expect(param.max).toBeLessThanOrEqual(strip[i].max)
-    })
-    expect(formatValue(volume, volume.max)).toBe('0.0 dB')
-    expect(pan).toMatchObject({ min: -1, max: 1 })
-    expect(paramPosition(volume, volume.default)).toBeCloseTo(newTrackPosition, 9)
+  test("is the engine's, as a fader in the mixer, and a new track's volume is 5.2 dB down", () => {
+    trackStrip.forEach((param, i) => expect({ ...param, default: strip[i].default }).toEqual(strip[i]))
+    expect(formatValue(volume, volume.max)).toBe('+5.6 dB')
+    expect(volume.default).toBe(newTrackVolume)
     expect(formatValue(volume, volume.default)).toBe('−5.2 dB')
+    expect(paramPosition(volume, volume.default)).toBeLessThan(newTrackPosition)
     expect(pan.default).toBe(0)
   })
 
@@ -458,88 +453,42 @@ test("a master slot's parameter is set into its range; one not there is refused"
   expect(updatesDuring(doc, () => expect(setMasterParam(doc, by, slot.id, 'volume', 0.5)).toBe(false))).toBe(0)
 })
 
-describe('the mixer', () => {
-  const insertOf = (doc: Y.Doc, id: string) =>
-    Option.getOrElse(Option.fromUndefinedOr(projectOf(doc).inserts.find((insert) => insert.id === id)), () => ({
-      id,
-      strip: defaultStrip,
-      mute: false
-    }))
+describe("the master's strip", () => {
   const volumeTop = Option.getOrThrow(Option.fromUndefinedOr(strip.find(({ id }) => id === 'volume'))).max
 
-  test('a track goes into an insert, and back into the master; an insert there is not, or a track, is refused', () => {
+  test("is set into the engine's range, a parameter on its own", () => {
     const doc = newProject()
-    const { track } = parts(doc)
-    const insert = () => projectOf(doc).tracks[0].insert
-    expect(setTrackInsert(doc, by, track.id, Id('3'))).toBe(true)
-    expect(insert()).toBe('3')
-    expect(setTrackInsert(doc, by, track.id, Id('master'))).toBe(true)
-    expect(insert()).toBe('master')
-    const refused = () => {
-      ;['0', '501', 'nowhere'].forEach((id) => expect(setTrackInsert(doc, by, track.id, Id(id))).toBe(false))
-      expect(setTrackInsert(doc, by, Id('nobody'), Id('3'))).toBe(false)
-    }
-    expect(updatesDuring(doc, refused)).toBe(0)
+    expect(setMasterStrip(doc, by, 'volume', 9)).toBe(true)
+    expect(setMasterStrip(doc, by, 'pan', -0.5)).toBe(true)
+    expect(projectOf(doc).master.strip).toEqual({ volume: volumeTop, pan: -0.5 })
     expect(replacementsOf(doc)).toEqual([])
   })
 
-  test('the master goes nowhere new for a track the document holds no insert of', () => {
-    const doc = newProject()
-    const { track } = parts(doc)
-    expect(updatesDuring(doc, () => expect(setTrackInsert(doc, by, track.id, Id('master'))).toBe(true))).toBe(0)
-  })
-
-  test("an insert's strip, the master's too, is set into the engine's range, a parameter on its own", () => {
-    const doc = newProject()
-    expect(setInsertStrip(doc, by, Id('7'), 'volume', 9)).toBe(true)
-    expect(setInsertStrip(doc, by, Id('7'), 'pan', -0.5)).toBe(true)
-    expect(insertOf(doc, '7')).toEqual({ id: '7', strip: { volume: volumeTop, pan: -0.5 }, mute: false })
-    expect(setInsertStrip(doc, by, Id('master'), 'volume', 0.5)).toBe(true)
-    expect(projectOf(doc).master.strip).toEqual({ ...defaultStrip, volume: 0.5 })
-    expect(replacementsOf(doc)).toEqual([])
-  })
-
-  test("an insert's strip is refused if it isn't a number, the insert isn't there, or there is no project", () => {
+  test("is refused if it isn't a number or there is no project", () => {
     const doc = newProject()
     const empty = new Y.Doc()
-    const refused = () => {
-      expect(setInsertStrip(doc, by, Id('7'), 'volume', Number.NaN)).toBe(false)
-      ;['0', '501', 'nowhere'].forEach((id) => expect(setInsertStrip(doc, by, Id(id), 'pan', 0.5)).toBe(false))
-    }
-    expect(updatesDuring(doc, refused)).toBe(0)
-    expect(updatesDuring(empty, () => expect(setInsertStrip(empty, by, Id('7'), 'pan', 0.5)).toBe(false))).toBe(0)
+    expect(updatesDuring(doc, () => expect(setMasterStrip(doc, by, 'volume', Number.NaN)).toBe(false))).toBe(0)
+    expect(updatesDuring(empty, () => expect(setMasterStrip(empty, by, 'pan', 0.5)).toBe(false))).toBe(0)
     expect(createProject(empty, by)).toBe(true)
   })
 
-  test('an insert is muted and unmuted, but not the master', () => {
-    const doc = newProject()
-    expect(setInsertMute(doc, by, Id('500'), true)).toBe(true)
-    expect(insertOf(doc, '500').mute).toBe(true)
-    expect(setInsertMute(doc, by, Id('500'), false)).toBe(true)
-    expect(insertOf(doc, '500').mute).toBe(false)
-    expect(updatesDuring(doc, () => expect(setInsertMute(doc, by, Id('master'), true)).toBe(false))).toBe(0)
-  })
-
-  test('the values an insert reads where the document holds none of it are not written', () => {
+  test('the values it reads where the document holds none are not written', () => {
     const doc = newProject()
     const none = () => {
-      expect(setInsertStrip(doc, by, Id('7'), 'volume', 1)).toBe(true)
-      expect(setInsertStrip(doc, by, Id('master'), 'pan', 0)).toBe(true)
-      expect(setInsertMute(doc, by, Id('7'), false)).toBe(true)
+      expect(setMasterStrip(doc, by, 'volume', 1)).toBe(true)
+      expect(setMasterStrip(doc, by, 'pan', 0)).toBe(true)
     }
     expect(updatesDuring(doc, none)).toBe(0)
-    expect(projectOf(doc).inserts).toEqual([])
   })
 
-  test('two clients writing first into one insert at once keep both, as it is a map of its own', () => {
+  test('two clients writing first into it at once keep both, as it is a map of its own', () => {
     const [first, second] = [newProject(), new Y.Doc()]
     sync(first, second)
-    expect(setInsertStrip(first, by, Id('4'), 'volume', 0.5)).toBe(true)
-    expect(setInsertMute(second, by, Id('4'), true)).toBe(true)
+    expect(setMasterStrip(first, by, 'volume', 0.5)).toBe(true)
+    expect(setMasterStrip(second, by, 'pan', 0.25)).toBe(true)
     sync(first, second)
-    const both = { id: '4', strip: { ...defaultStrip, volume: 0.5 }, mute: true }
-    expect(insertOf(first, '4')).toEqual(both)
-    expect(insertOf(second, '4')).toEqual(both)
+    expect(projectOf(first).master.strip).toEqual({ volume: 0.5, pan: 0.25 })
+    expect(projectOf(second).master.strip).toEqual({ volume: 0.5, pan: 0.25 })
   })
 })
 
@@ -812,8 +761,7 @@ describe('a project created', () => {
       tracks: [],
       clips: [],
       patterns: [],
-      master: { strip: defaultStrip, slots: [] },
-      inserts: []
+      master: { strip: defaultStrip, slots: [] }
     })
     expect(doc.getMap('meta').toJSON()).toEqual({ id, bpm: defaultTempo })
     expect(replacementsOf(doc)).toEqual([])

@@ -95,7 +95,8 @@ const keptScroll = (page: Page) =>
 test("the panel's height and fold, and how far the Arrangement and the rack are scrolled, come back with the page", async ({
   page
 }) => {
-  await synths(page, 12)
+  // More strips than the rack shows at 1280 across.
+  await synths(page, 16)
   await dragBorder(page, 300)
   const { panel } = await laidOut(page)
   const arrangement = await page.locator('.arrangement').boundingBox()

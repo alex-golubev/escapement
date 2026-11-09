@@ -1,7 +1,7 @@
-import type { BuildThreadError, Engine, Rejection, SamplePcm, SampleUnavailable } from '@escapement/engine'
+import type { BuildThreadError, Engine, NodeHandle, Rejection, SamplePcm, SampleUnavailable } from '@escapement/engine'
 import type { Sha256 } from '@escapement/engine-description'
-import type { ProjectAtoms } from '@escapement/model'
-import { Boolean, Data, Deferred, Effect, Fiber, FiberMap, FiberSet, Option } from 'effect'
+import type { Id, ProjectAtoms } from '@escapement/model'
+import { Array, Boolean, Data, Deferred, Effect, Fiber, FiberMap, FiberSet, Option } from 'effect'
 import { type Atom, AtomRegistry } from 'effect/reactivity'
 import { type Built, changeTo, isEmpty, nothingBuilt, rebuildTo } from './changes'
 import { type Client, type Picture, pictureOf, soundsOf } from './picture'
@@ -60,6 +60,8 @@ export interface Compiler {
   readonly failure: Effect.Effect<never, BuildThreadError>
   /** Ends once no sound is on its way in: each asked for so far is in, or shown as not. Fails once building hit a bug. */
   readonly stored: Effect.Effect<void, BuildThreadError>
+  /** Whose meter each node has in the engine's session, a track's by ID, by the handle the telemetry names it by. */
+  readonly meters: (epoch: number) => ReadonlyMap<NodeHandle, Id>
 }
 
 /**
@@ -94,8 +96,16 @@ export const compile = Effect.fnUntraced(function* (
     Deferred.poll(broken),
     Option.getOrElse(() => Effect.void)
   )
-  const state: { built: Built; sent: boolean; rebuild: boolean; sounds: ReadonlyArray<Sha256> } = {
+  const state: {
+    built: Built
+    /** The session before, until the engine takes the reset: its telemetry still names that session's nodes. */
+    before: Pick<Built, 'epoch' | 'meters'>
+    sent: boolean
+    rebuild: boolean
+    sounds: ReadonlyArray<Sha256>
+  } = {
     built: nothingBuilt,
+    before: nothingBuilt,
     sent: false,
     rebuild: false,
     sounds: []
@@ -155,6 +165,10 @@ export const compile = Effect.fnUntraced(function* (
         return Boolean.match(isEmpty(transaction) || engine.send(transaction), {
           onFalse: () => false,
           onTrue: () => {
+            state.before = Boolean.match(built.epoch === state.built.epoch, {
+              onTrue: () => state.before,
+              onFalse: () => state.built
+            })
             state.built = built
             state.sent = true
             state.rebuild = false
@@ -196,7 +210,15 @@ export const compile = Effect.fnUntraced(function* (
     ),
     // The stores' join ends as their scope closes; this one only ever fails.
     failure: Effect.raceFirst(FiberMap.join(stores), Deferred.await(broken)).pipe(Effect.andThen(Effect.never)),
-    stored: Effect.raceFirst(Deferred.await(broken), FiberMap.awaitEmpty(stores)).pipe(Effect.andThen(unbroken))
+    stored: Effect.raceFirst(Deferred.await(broken), FiberMap.awaitEmpty(stores)).pipe(Effect.andThen(unbroken)),
+    meters: (epoch) =>
+      Option.getOrElse(
+        Option.map(
+          Array.findFirst([state.built, state.before], (session) => session.epoch === epoch),
+          ({ meters }) => meters
+        ),
+        () => nothingBuilt.meters
+      )
   }
   return compiler
 })

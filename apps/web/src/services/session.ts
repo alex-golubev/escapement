@@ -51,8 +51,10 @@ export interface ProjectSession {
   readonly played: Atom.Atom<Holds>
   /** The value played for the control over the document's; none while no one turns it. */
   readonly held: (target: HoldTarget) => Atom.Atom<Option.Option<number>>
-  /** The tracks heard now, by the project and this client's listening. */
-  readonly heard: Atom.Atom<ReadonlyArray<Id>>
+  /** Whether the track is heard now, by the project and this client's listening: told as it changes, not as others do. */
+  readonly isHeard: (track: Id) => Atom.Atom<boolean>
+  /** Whether the track is in this client's solo, told as that changes alone. */
+  readonly isSoloed: (track: Id) => Atom.Atom<boolean>
   readonly saving: Atom.Atom<Saving>
   /** Makes the browser refuse a write, so the page's recovery can be checked. */
   readonly breakSaving: Effect.Effect<void>
@@ -75,6 +77,7 @@ export const sessionOf = Effect.fnUntraced(function* (
   // Each press a number of its own, below 2^31 as the engine takes them.
   const presses = { next: 0 }
   const played = byContent((get) => heldOver(get(holds), get(heldElsewhere)))
+  const heard = heardOf(project, listening)
   const saving = Atom.make<Saving>(loaded).pipe(Atom.keepAlive)
   yield* Effect.forkScoped(Effect.flatMap(stopped, (why) => Effect.sync(() => registry.set(saving, why))))
   const session: ProjectSession = {
@@ -93,7 +96,8 @@ export const sessionOf = Effect.fnUntraced(function* (
     heldElsewhere,
     played,
     held: Atom.family((target: HoldTarget) => byContent((get) => heldValue(get(played), target))),
-    heard: heardOf(project, listening),
+    isHeard: Atom.family((track: Id) => byContent((get) => get(heard).includes(track))),
+    isSoloed: Atom.family((track: Id) => byContent((get) => get(listening).solo.includes(track))),
     saving,
     breakSaving
   }

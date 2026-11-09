@@ -1,3 +1,4 @@
+import type { NodeHandle } from './handles'
 import { meterCount } from './protocol'
 
 // Word 0 is a sequence number, odd while the worklet writes; then come the words of `Telemetry` in engine-core, and last
@@ -17,7 +18,7 @@ const streamLost = 12
 const overs = [13, 14] as const
 const metersUsed = 15
 const metersStart = 16
-/** A meter's record: its number, then its peaks and its overs per channel. */
+/** A meter's record: its node's handle, then its peaks and its overs per channel. */
 const meterWords = 5
 
 export const engineTelemetryWords = metersStart - 1 + meterCount * meterWords
@@ -46,16 +47,15 @@ export interface Telemetry {
   readonly streamLost: boolean
   /** Blocks that went over full scale, per channel, wrapping: the count moves however briefly the sound went over. */
   readonly overs: readonly [number, number]
-  /** Of the nodes the page gave a meter, in no order. */
+  /** Of the nodes the page gave a meter, as many as `meterCount`, in no order. */
   readonly meters: ReadonlyArray<MeterReading>
   /** The context's frame the last block started at. */
   readonly frame: number
 }
 
-/** A node's meter, as the master's output: the count goes on by its number, whichever node has it. */
+/** A node's meter, as the master's output: the count is the node's, from its making. */
 export interface MeterReading {
-  /** The number the page gave it, from 1. */
-  readonly meter: number
+  readonly node: NodeHandle
   readonly peaks: readonly [number, number]
   readonly overs: readonly [number, number]
 }
@@ -108,7 +108,8 @@ export const telemetryReader = (board: SharedArrayBuffer) => {
     meters: Array.from({ length: Math.min(Atomics.load(words, metersUsed), meterCount) }, (_, i) => {
       const at = metersStart + i * meterWords
       return {
-        meter: Atomics.load(words, at),
+        // As the page gave it: the worklet loads this too, and Effect's brands aren't for it.
+        node: Atomics.load(words, at) as NodeHandle,
         peaks: [floatAt(at + 1), floatAt(at + 2)],
         overs: [Atomics.load(words, at + 3), Atomics.load(words, at + 4)]
       }

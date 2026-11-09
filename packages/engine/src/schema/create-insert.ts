@@ -48,12 +48,11 @@ export class CreateInsert {
   }
 
   /**
-   * The meter of what it passes on, for the page, by its number from 1 to `engine_meters`: the board's record says
-   * whose it is. None without.
+   * Measures what it passes on, for the page: the board's record names the node by its handle.
    */
-  meter(): number | null {
+  metered(): boolean {
     const offset = this.bb!.__offset(this.bb_pos, 8)
-    return offset ? this.bb!.readUint32(this.bb_pos + offset) : null
+    return offset ? !!this.bb!.readInt8(this.bb_pos + offset) : false
   }
 
   static startCreateInsert(builder: flatbuffers.Builder) {
@@ -72,8 +71,8 @@ export class CreateInsert {
     builder.startVector(8, numElems, 4)
   }
 
-  static addMeter(builder: flatbuffers.Builder, meter: number) {
-    builder.addFieldInt32(2, meter, null)
+  static addMetered(builder: flatbuffers.Builder, metered: boolean) {
+    builder.addFieldInt8(2, +metered, +false)
   }
 
   static endCreateInsert(builder: flatbuffers.Builder): flatbuffers.Offset {
@@ -85,12 +84,12 @@ export class CreateInsert {
     builder: flatbuffers.Builder,
     node: number,
     stripOffset: flatbuffers.Offset,
-    meter: number | null
+    metered: boolean
   ): flatbuffers.Offset {
     CreateInsert.startCreateInsert(builder)
     CreateInsert.addNode(builder, node)
     CreateInsert.addStrip(builder, stripOffset)
-    if (meter !== null) CreateInsert.addMeter(builder, meter)
+    CreateInsert.addMetered(builder, metered)
     return CreateInsert.endCreateInsert(builder)
   }
 }

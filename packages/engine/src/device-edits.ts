@@ -1,5 +1,5 @@
 import type { MidiKey, Sha256, Tick } from '@escapement/engine-description'
-import { Data, Option } from 'effect'
+import { Data } from 'effect'
 import { Builder } from 'flatbuffers'
 import type { NodeHandle, PatternHandle } from './handles'
 import { sha256Bytes } from './hash-bytes'
@@ -28,14 +28,11 @@ interface EditFields {
   readonly Connect: { readonly from: NodeHandle; readonly to: NodeHandle }
   /** The node and its connections fade out; its cell is free at once. */
   readonly DestroyNode: { readonly node: NodeHandle }
-  /**
-   * A mixer insert: a node of the engine's core that passes on the sum of what it hears; with a meter of what it passes
-   * on, by its number from 1 to `meterCount`, if it has one.
-   */
+  /** A node of the engine's core that passes on the sum it hears; metered, the telemetry names its meter by handle. */
   readonly CreateInsert: {
     readonly node: NodeHandle
     readonly strip: InitialValues
-    readonly meter: Option.Option<number>
+    readonly metered: boolean
   }
   /** `to` stops hearing `from`: the connection fades out. */
   readonly Disconnect: { readonly from: NodeHandle; readonly to: NodeHandle }
@@ -121,12 +118,12 @@ const writeEdit = (builder: Builder, edit: DeviceEdit): number =>
     SetOutput: ({ node }) => Wire.SetOutput.createSetOutput(builder, node),
     Connect: ({ from, to }) => Wire.Connect.createConnect(builder, from, to),
     DestroyNode: ({ node }) => Wire.DestroyNode.createDestroyNode(builder, node),
-    CreateInsert: ({ node, strip, meter }) =>
+    CreateInsert: ({ node, strip, metered }) =>
       Wire.CreateInsert.createCreateInsert(
         builder,
         node,
         writeValues(builder, strip, Wire.CreateInsert.startStripVector),
-        Option.getOrNull(meter)
+        metered
       ),
     Disconnect: ({ from, to }) => Wire.Disconnect.createDisconnect(builder, from, to),
     LetGoOfNotes: ({ node }) => Wire.LetGoOfNotes.createLetGoOfNotes(builder, node),

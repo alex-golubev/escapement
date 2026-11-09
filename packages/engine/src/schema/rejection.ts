@@ -71,10 +71,5 @@ export enum Rejection {
   /**
    * The node doesn't hear the other.
    */
-  NotConnected = 13,
-
-  /**
-   * A live node has the meter's number.
-   */
-  MeterTaken = 14
+  NotConnected = 13
 }

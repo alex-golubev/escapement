@@ -48,8 +48,8 @@ test('a turn plays each move at once and writes the document once, its last valu
     })
     const track = readProject(doc).value.tracks[0].id
     const volume = () => readProject(doc).value.tracks[0].strip.volume
-    // The first node made: the track's.
-    const node = NodeHandle(1)
+    // The second node made: the track's fader, after its instrument.
+    const node = NodeHandle(2)
     const from = sent.length
 
     const turn = turns.begin(HoldTarget.TrackStrip({ track, param: 'volume' }), 0.8)

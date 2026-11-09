@@ -125,9 +125,8 @@ table CreateInsert {
   node: uint32;
   /// As in `CreateNode`.
   strip: [ParamValue];
-  /// The meter of what it passes on, for the page, by its number from 1 to `engine_meters`: the board's record says
-  /// whose it is. None without.
-  meter: uint32 = null;
+  /// Measures what it passes on, for the page: the board's record names the node by its handle.
+  metered: bool;
 }
 
 /// `to` stops hearing `from`: the connection fades out.
@@ -245,8 +244,6 @@ enum Rejection : ubyte {
   TooManyNotes,
   /// The node doesn't hear the other.
   NotConnected,
-  /// A live node has the meter's number.
-  MeterTaken,
 }
 
 enum EventKind : ubyte { CommandRejected = 1, CommandStreamLost, EditRejected }

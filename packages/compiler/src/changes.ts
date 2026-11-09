@@ -18,7 +18,8 @@ import {
   type Transaction
 } from '@escapement/engine'
 import { type ParamId, type Plugin, strip } from '@escapement/engine-description'
-import { Equal, Option, Record } from 'effect'
+import type { Id } from '@escapement/model'
+import { Array, Equal, Option, Record } from 'effect'
 import { emptyPicture, NodeKind, type NodePicture, type Picture } from './picture'
 
 /** What the engine took last: the picture and the handles of its nodes and patterns. */
@@ -27,6 +28,8 @@ export interface Built {
   readonly nodeHandles: HandleTable<NodeHandle>
   /** By the picture's keys. */
   readonly nodes: Readonly<Record<string, NodeHandle>>
+  /** Whose meter each node with one has, a track's by ID, by the node's handle: what the telemetry names it by. */
+  readonly meters: ReadonlyMap<NodeHandle, Id>
   readonly patternHandles: HandleTable<PatternHandle>
   /** By the keys of the picture's patterns. */
   readonly patterns: Readonly<Record<string, PatternHandle>>
@@ -38,6 +41,7 @@ export const nothingBuilt: Built = {
   picture: emptyPicture,
   nodeHandles: emptyNodeHandles,
   nodes: {},
+  meters: new Map(),
   patternHandles: emptyPatternHandles,
   patterns: {},
   epoch: 0
@@ -53,7 +57,7 @@ export const isEmpty = ({ edits = [], commands = [] }: Transaction) => edits.len
 
 const makeNode = ({ kind, params, strip: values }: NodePicture, node: NodeHandle): DeviceEdit =>
   NodeKind.$match(kind, {
-    Insert: ({ meter }) => createInsert(node, values, meter),
+    Insert: ({ meter }) => createInsert(node, values, Option.isSome(meter)),
     Plugin: ({ plugin, samples }) => createNode(plugin, node, params, samples, values)
   })
 
@@ -94,6 +98,17 @@ const takeAll = <H extends number>(table: HandleTable<H>, keys: ReadonlyArray<st
   )
 
 const joined = ([from, to]: readonly [NodeHandle, NodeHandle]) => `${from} ${to}`
+
+/** Whose meter each node of the picture with one has, by the node's handle. */
+const metersOf = ({ nodes }: Picture, handles: Readonly<Record<string, NodeHandle>>): ReadonlyMap<NodeHandle, Id> =>
+  new Map(
+    Object.entries(nodes).flatMap(([key, { kind }]) =>
+      NodeKind.$match(kind, {
+        Insert: ({ meter }) => Option.toArray(Option.map(meter, (owner) => [handles[key], owner] as const)),
+        Plugin: () => []
+      })
+    )
+  )
 
 /**
  * The change from what the engine has to `next`. A node whose kind changed is destroyed and made anew in a fresh cell
@@ -219,6 +234,8 @@ export const changeTo = (built: Built, next: Picture): Change => {
       picture: next,
       nodeHandles: taken.table,
       nodes,
+      // Only a node made or gone changes whose meter is where.
+      meters: Array.match([...gone, ...made], { onEmpty: () => built.meters, onNonEmpty: () => metersOf(next, nodes) }),
       patternHandles: takenPatterns.table,
       patterns
     }
@@ -234,6 +251,7 @@ export const rebuildTo = (built: Built, next: Picture): Change => {
       picture: emptyPicture,
       nodeHandles: releaseAll(built.nodeHandles),
       nodes: {},
+      meters: new Map(),
       patternHandles: releaseAll(built.patternHandles),
       patterns: {},
       epoch

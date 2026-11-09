@@ -23,7 +23,6 @@ import {
   type ClipFields,
   get,
   idsOf,
-  insertMap,
   type Key,
   mapAt,
   type NoteFields,
@@ -38,7 +37,6 @@ import {
   type TrackFields
 } from './document'
 import { type Id, newId } from './id'
-import { insertNumber, master } from './mixer'
 import type { Clip, Note } from './project'
 import { samePlace, withMoved, withPut, withStretched } from './notes'
 import { finite, ignore, isDeleted, latestEnd, readClip, readNotes, readPluginName, readTrack } from './read'
@@ -136,14 +134,7 @@ const inTime = (tick: number) => isWhole(tick) && tick >= 0 && tick <= lastTick
 const typedName = (name: string) => Option.liftPredicate(String.trim(name), String.isNonEmpty)
 
 const masterSlot = (doc: Y.Doc, id: Id) =>
-  live(Option.flatMap(mapAt(insertMap(doc, master), 'slots'), (slots) => mapAt(slots, id)))
-
-/** The insert's own, if the document holds a project and the ID names an insert there is. */
-const insertOf = (doc: Y.Doc, insert: Id, pass: (number: number) => boolean = () => true) =>
-  Option.map(
-    Option.filter(Option.filter(insertNumber(insert), pass), () => holdsProject(projectMaps(doc))),
-    () => insertMap(doc, insert)
-  )
+  live(Option.flatMap(mapAt(projectMaps(doc).master, 'slots'), (slots) => mapAt(slots, id)))
 
 /** Where a note starts, how high it is and how long, in whole ticks from 1. */
 export interface NewNote {
@@ -276,7 +267,7 @@ export const setTrackParam = (doc: Y.Doc, by: Writer, track: Id, param: ParamId<
     )
   )
 
-/** A parameter of a plugin on the master insert, such as the filter's cutoff. */
+/** A parameter of a plugin on the master, such as the filter's cutoff. */
 export const setMasterParam = (doc: Y.Doc, by: Writer, slot: Id, param: ParamId<Plugin>, value: number): boolean =>
   transact(doc, by, setParam(doc, masterSlot(doc, slot), param, value))
 
@@ -300,40 +291,18 @@ export const setMute = (doc: Y.Doc, by: Writer, track: Id, mute: boolean): boole
     Option.map(liveTrack(projectMaps(doc), track), (map) => write(map, 'mute', mute, false))
   )
 
-/** The mixer's insert the track goes into: the master, or one of `mixerInserts`. */
-export const setTrackInsert = (doc: Y.Doc, by: Writer, track: Id, insert: Id): boolean =>
+/** A parameter of the master's strip, such as its volume, into the strip's range; refused while there is no project. */
+export const setMasterStrip = (doc: Y.Doc, by: Writer, param: StripParamId, value: number): boolean =>
   transact(
     doc,
     by,
     Option.gen(function* () {
-      yield* insertNumber(insert)
-      const map = yield* liveTrack(projectMaps(doc), track)
-      return write(map, 'insert', insert, master)
-    })
-  )
-
-/** A parameter of the strip of an insert, the master's too, such as its volume, into the strip's range. */
-export const setInsertStrip = (doc: Y.Doc, by: Writer, insert: Id, param: StripParamId, value: number): boolean =>
-  transact(
-    doc,
-    by,
-    Option.gen(function* () {
-      const map = yield* insertOf(doc, insert)
+      const maps = projectMaps(doc)
+      yield* Option.liftPredicate(maps, holdsProject)
       const description = yield* Option.fromUndefinedOr(strip.find(({ id }) => id === param))
       const valid = nearestIn(description, yield* finite(value))
-      return write(map, param, valid, description.default)
+      return write(maps.master, param, valid, description.default)
     })
-  )
-
-/** Of one of `mixerInserts`: the master has none. */
-export const setInsertMute = (doc: Y.Doc, by: Writer, insert: Id, mute: boolean): boolean =>
-  transact(
-    doc,
-    by,
-    Option.map(
-      insertOf(doc, insert, (number) => number > 0),
-      (map) => write(map, 'mute', mute, false)
-    )
   )
 
 /** Without the spaces around it; refused if nothing else is left. Another track may have it too. */
