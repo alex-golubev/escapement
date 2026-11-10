@@ -1,10 +1,10 @@
 import { useAtomValue } from '@effect/atom-react'
 import { HoldTarget, type Id } from '@escapement/model'
 import { Boolean, Option } from 'effect'
+import { Pencil, Trash } from 'lucide-preact'
 import { memo } from 'preact/compat'
 import { useLayoutEffect, useRef, useState } from 'preact/hooks'
 import { useCore } from '../../core-context'
-import { PencilIcon, TrashIcon } from '../../kit/icons'
 import { useContextMenu } from '../../kit/menu'
 import { NameField } from '../../kit/name-field'
 import { focusPast } from '../../kit/neighbour'
@@ -37,10 +37,10 @@ const TrackName = ({
   const menu = useContextMenu(() => ({
     title: name,
     items: [
-      { label: 'Rename', icon: <PencilIcon />, hint: `Rename ${name}, for everyone`, chosen: rename },
+      { label: 'Rename', icon: <Pencil />, hint: `Rename ${name}, for everyone`, chosen: rename },
       {
         label: 'Delete',
-        icon: <TrashIcon />,
+        icon: <Trash />,
         hint: `Delete ${name} and its clips from the project, for everyone; Cmd+Z or Ctrl+Z brings them back`,
         chosen: () => ops.deleteTrack(id)
       }

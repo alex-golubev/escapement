@@ -46,6 +46,8 @@ html {
   --u: 0.25rem;
   /* A toggle's side, M and S's: what lines up with them reads it here. */
   --toggle: 1.125rem;
+  /* A button's height, and an icon's button's side. */
+  --btn: 1.625rem;
 
   --r-sm: 0.125rem;
   --r-md: 0.25rem;
@@ -104,7 +106,7 @@ body {
   display: inline-grid;
   place-items: center;
   min-width: 1.875rem;
-  height: 1.625rem;
+  height: var(--btn);
   padding: 0 0.5rem;
   border: 1px solid var(--line);
   border-radius: var(--r-md);
@@ -131,14 +133,17 @@ body {
   cursor: not-allowed;
 }
 
+/* Lucide's icons: their own stroke, at this size. */
 .btn svg {
-  width: 0.75rem;
-  height: 0.75rem;
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 1.6;
-  stroke-linecap: round;
-  stroke-linejoin: round;
+  width: 0.875rem;
+  height: 0.875rem;
+}
+
+/* An icon alone: a square. */
+.btn--icon {
+  width: var(--btn);
+  min-width: 0;
+  padding: 0;
 }
 
 /* Buttons of one job in one frame, their own edges gone. */
