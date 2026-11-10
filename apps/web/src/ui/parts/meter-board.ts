@@ -1,7 +1,8 @@
 import type { Id } from '@escapement/model'
 import { Boolean, Brand, Option } from 'effect'
-import type { Frame } from '../../../services/engine-host'
-import { type Overs, wentOver } from '../../parts/levels'
+import { createContext } from 'preact'
+import type { Frame } from '../../services/engine-host'
+import { type Overs, wentOver } from './levels'
 
 /** Whose meter it is on the board: a key of its own, not a name shown. */
 export type MeterKey = Brand.Branded<string, 'MeterKey'>
@@ -115,3 +116,6 @@ export const meterBoard = (): MeterBoard => {
     putOut: (owner, side) => void state.lit.delete(lampOf(owner, side))
   }
 }
+
+/** The page's meters, the master's on the transport and the Mixer's strips: one board, its lamps latched for both. */
+export const MeterBoardContext = createContext(meterBoard())

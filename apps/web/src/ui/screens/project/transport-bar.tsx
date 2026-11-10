@@ -9,6 +9,7 @@ import { ToProjectsIcon } from '../../parts/to-projects'
 import { Clock } from './clock'
 import { HistoryButtons } from './history'
 import { DspLoadMeter } from './dsp-load'
+import { MasterMeter } from './master-meter'
 import { TempoField } from './tempo-field'
 import { TransportButtons } from './transport-buttons'
 import './transport-bar.css'
@@ -110,7 +111,7 @@ const TimeSignature = () => {
   )
 }
 
-/** Projects, the transport, undo and redo, where it is heard, the tempo; on the right, the status and the load. */
+/** Projects, the transport, undo and redo, where it is heard, the tempo; on the right, the status, load and level. */
 export const TransportBar = () => (
   <div class='transport'>
     <ToProjectsIcon />
@@ -126,6 +127,7 @@ export const TransportBar = () => (
     <Status />
     <div class='transport__meters'>
       <DspLoadMeter />
+      <MasterMeter />
     </div>
   </div>
 )

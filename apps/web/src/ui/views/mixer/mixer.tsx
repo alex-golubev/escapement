@@ -2,7 +2,6 @@ import { useAtomValue } from '@effect/atom-react'
 import { type AnyParam, type StripParamId, strip } from '@escapement/engine-description'
 import { byContent, HoldTarget, type Id, trackStrip } from '@escapement/model'
 import { Array, Number, Option } from 'effect'
-import { createContext } from 'preact'
 import { memo } from 'preact/compat'
 import { useContext, useLayoutEffect, useMemo, useRef } from 'preact/hooks'
 import { useCore } from '../../core-context'
@@ -15,7 +14,7 @@ import { setFlag, setStyleVar, useFrame } from '../../parts/frames'
 import { Knob } from '../../parts/knob'
 import { meterPosition } from '../../parts/levels'
 import { choiceHint, TrackToggles, trackGroup } from '../../parts/track-buttons'
-import { type MeterKey, masterMeter, meterBoard, type Side, trackMeter } from './meter-board'
+import { type MeterKey, MeterBoardContext, masterMeter, type Side, trackMeter } from '../../parts/meter-board'
 import './mixer.css'
 
 const sideNames = ['left', 'right'] as const
@@ -31,9 +30,6 @@ const paramsOf = (params: ReadonlyArray<AnyParam & { readonly id: StripParamId }
 const masterParams = paramsOf(strip)
 const trackParams = paramsOf(trackStrip)
 
-/** The meters of the mixer's strips, the master's too, as the engine's board tells them. */
-const MeterBoardContext = createContext(meterBoard())
-
 /** One side of what a strip passes on: its level, and the lamp over it until clicked. */
 const Meter = ({ output, meter, side }: { readonly output: string; readonly meter: MeterKey; readonly side: Side }) => {
   const board = useContext(MeterBoardContext)
@@ -42,7 +38,7 @@ const Meter = ({ output, meter, side }: { readonly output: string; readonly mete
   // Drawn anew, its strip scrolled back, it shows its lamp at once, frames or none.
   useLayoutEffect(() => setFlag(lamp.current, 'data-lit', board.lit(meter, side)), [board, meter, side])
   useFrame((frame) => {
-    // The master's meters are always drawn: the board follows the strips not drawn too, and their lamps latch.
+    // Taken in once a frame for every meter, whichever draws first.
     board.follow(frame)
     setStyleVar(fill.current, '--level', meterPosition(board.level(meter, side)).toFixed(3))
     setFlag(lamp.current, 'data-lit', board.lit(meter, side))
@@ -227,15 +223,10 @@ const TrackRack = () => {
   )
 }
 
-/** The tracks' strips, then the master, pinned; the meters' lamps stay lit while the Mixer is in the middle. */
-export const Mixer = () => {
-  const board = useMemo(meterBoard, [])
-  return (
-    <MeterBoardContext.Provider value={board}>
-      <div class='mixer'>
-        <TrackRack />
-        <MasterStrip />
-      </div>
-    </MeterBoardContext.Provider>
-  )
-}
+/** The tracks' strips, then the master, pinned. */
+export const Mixer = () => (
+  <div class='mixer'>
+    <TrackRack />
+    <MasterStrip />
+  </div>
+)

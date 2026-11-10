@@ -120,7 +120,7 @@ test('Play pauses where it plays and plays on from there; To start goes back, pl
   await expect.poll(() => playheadAt(page)).toBeCloseTo(0, 1)
 })
 
-test("DSP load shows the engine's load while the arrangement plays, and switched off, it stays off", async ({
+test("the transport's master lights as the arrangement plays, the Mixer away; DSP load shows while it plays, and switched off stays off", async ({
   page
 }) => {
   // As many cores as measuring needs, whatever the machine the test runs on has.
@@ -133,6 +133,15 @@ test("DSP load shows the engine's load while the arrangement plays, and switched
   const loadShown = load.locator('.dsp-load__value')
   await expect(loadShown).toHaveText('—')
   await pressPlay(page, true)
+  await page.waitForFunction(
+    () => document.querySelectorAll('.master__segment[data-on="true"]').length > 0,
+    undefined,
+    {
+      timeout: 10_000,
+      polling: 'raf'
+    }
+  )
+  await expect(page.locator('.strip--master')).toHaveCount(0)
   // A burst a second, measured to a tenth.
   await expect(loadShown).toHaveText(/^\d+\.\d%$/, { timeout: 5_000 })
   await pressStop(page)
