@@ -32,6 +32,7 @@ import {
   type Written,
   writeInitial
 } from '../src/transactions'
+import { createLoadClock } from '../src/load-clock'
 import { createEngineBlock } from '../src/worklet/engine-block'
 import engineWasm from '../wasm/engine.wasm?inline'
 
@@ -112,7 +113,8 @@ export const startEngine = ({
   const rings = {
     commandRing: createCommandRing(commandRing),
     eventRing: createEventRing(eventRing),
-    telemetryBoard: createTelemetryBoard()
+    telemetryBoard: createTelemetryBoard(),
+    loadClock: createLoadClock()
   }
   const messages = messageWriter(rings.commandRing)
   const write = transactionWriter(messages)
@@ -196,7 +198,9 @@ export const startEngine = ({
     settledPeak,
     readEvents,
     readEventBytes,
-    readTelemetry: telemetryReader(rings.telemetryBoard)
+    readTelemetry: telemetryReader(rings.telemetryBoard),
+    /** The load clock the worklet times its blocks by: the test writes the time a thread would. */
+    loadClock: rings.loadClock
   }
 }
 
@@ -359,6 +363,7 @@ export const pageEngine = Effect.fnUntraced(function* (engine: TestEngine) {
     },
     events: yield* eventStream(engine.eventRing),
     readTelemetry: engine.readTelemetry,
+    loadClock: engine.loadClock,
     failure: Effect.raceAllFirst([
       Deferred.await(audioFailed),
       Deferred.await(buildFailed),

@@ -12,7 +12,7 @@
   },
   "scripts": {
     "build:wasm": "cargo build --release -p engine-wasm --target wasm32-unknown-unknown && mkdir -p wasm && wasm-opt --stack-check -O3 ../../target/wasm32-unknown-unknown/release/engine_wasm.wasm -o wasm/engine.wasm",
-    "typecheck": "tsc -p . && tsc -p src/worklet && tsc -p src/build-thread && tsc -p test",
+    "typecheck": "tsc -p . && tsc -p src/worklet && tsc -p src/build-thread && tsc -p src/clock-thread && tsc -p test",
     "test": "pnpm build:wasm && vitest run"
   },
   "devDependencies": {

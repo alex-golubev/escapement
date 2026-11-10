@@ -6,12 +6,15 @@ import {
   Command,
   compileEngine,
   DeviceEdit,
+  type DspLoad,
+  dspLoadReader,
   type EngineEvent,
   type EngineFailure,
   type EngineLoadError,
   type EngineStartError,
   type Heard,
   heardTickReader,
+  measureLoad,
   NodeHandle,
   noPlace,
   type Place,
@@ -49,6 +52,8 @@ import { Atom, AtomRegistry } from 'effect/reactivity'
 import { AudioOutput, type OutputEngine } from './audio-output'
 import { type BenchmarkSoundLost, benchmarkPlay } from './benchmark-project'
 import { AudioThreadHung, answers, type BuildThreadHung, hangs, startInTime } from './hang-watch'
+import { LoadClocks } from './load-clocks'
+import { Preferences } from './preferences'
 import { PageReopen } from './reopen'
 import { badSample, manifestLines, type SampleLine, type ShowSample, sampleLoading, withStatus } from './samples'
 import { ProjectSession } from './session'
@@ -131,7 +136,15 @@ export interface Frame {
   readonly heard: Heard | undefined
   /** Counts the browser keeps up to date; none where it reports none. */
   readonly stats: PlaybackStats | undefined
+  /** The engine's last burst measured; none until one is. */
+  readonly dspLoad: DspLoad | undefined
 }
+
+/** Whether the DSP load is measured now, or why not: not playing or hidden, switched off, or 4 cores or fewer. */
+export type Measuring = 'on' | 'waiting' | 'off' | 'few-cores'
+
+/** On this many cores or fewer, the clock's busy core would take one from the sound. */
+const fewCores = 4
 
 /** Where Play stands: while the sound wakes, it waits for it. */
 export type Transport = 'stopped' | 'starting' | 'playing'
@@ -193,6 +206,9 @@ export interface EngineHost {
   readonly runLoad: Effect.Effect<void>
   /** Cheap enough for every frame; none without an engine. */
   readonly frame: () => Frame | undefined
+  readonly measuring: Atom.Atom<Measuring>
+  /** Switches measuring the DSP load off, or on again, kept in this browser; nothing on too few cores. */
+  readonly toggleMeasuring: Effect.Effect<void>
 }
 
 export const EngineHost = Context.Service<EngineHost>('EngineHost')
@@ -281,6 +297,8 @@ export const engineHostLayer = Layer.effect(
     const { project, listening, holds, played, auditions } = yield* ProjectSession
     const { module: compiled } = yield* EngineModule
     const { context, startEngine, library } = yield* AudioOutput
+    const clocks = yield* LoadClocks
+    const { measureLoad: measureOn, setMeasureLoad } = yield* Preferences
     const { taken, reopen } = yield* PageReopen
     const loading = yield* sampleLoading
     // A page reopened after a hang starts in place of the engine that hung.
@@ -334,6 +352,45 @@ export const engineHostLayer = Layer.effect(
       () => Effect.sync(() => context.removeEventListener('statechange', followState))
     )
 
+    const measuring = Atom.make(
+      (get): Measuring =>
+        Boolean.match(clocks.cores > fewCores, {
+          onFalse: () => 'few-cores',
+          onTrue: () =>
+            Boolean.match(get(measureOn), {
+              onFalse: () => 'off',
+              onTrue: () =>
+                Boolean.match(get(playing) && get(running) && get(clocks.seen), {
+                  onTrue: () => 'on',
+                  onFalse: () => 'waiting'
+                })
+            })
+        })
+    ).pipe(Atom.keepAlive)
+    /** An engine's load clock: its thread while measuring is on or waits for play, its bursts only while on. */
+    const clockFor = (clock: SharedArrayBuffer, forget: () => void) =>
+      Effect.gen(function* () {
+        const run = yield* FiberHandle.makeRuntime<never, never, void>()
+        const thread = clocks
+          .thread(clock)
+          .pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning("The load clock stopped: the DSP load isn't measured", cause)
+            )
+          )
+        const follow = (now: Measuring) => {
+          measureLoad(clock, now === 'on')
+          Boolean.match(now === 'on', { onTrue: () => {}, onFalse: forget })
+          const kept = now === 'on' || now === 'waiting'
+          // A run of nothing in its place stops the thread; a thread running goes on.
+          run(Boolean.match(kept, { onTrue: () => thread, onFalse: () => Effect.void }), { onlyIfMissing: kept })
+        }
+        yield* Effect.acquireRelease(
+          Effect.sync(() => registry.subscribe(measuring, follow, { immediate: true })),
+          (unsubscribe) => Effect.sync(unsubscribe)
+        )
+      })
+
     /**
      * Since the sound went silent, on the monotonic clock: the first failure while playing that no engine has made good
      * yet, however many failed to start after it.
@@ -380,6 +437,8 @@ export const engineHostLayer = Layer.effect(
         const stores = yield* FiberSet.make<void, BuildThreadError>()
         const bad = badSample(badSampleName, context.sampleRate, show)
         const tickHeard = heardTickReader(context)
+        const dspLoadOf = dspLoadReader(engine.loadClock, context.sampleRate)
+        yield* clockFor(engine.loadClock, dspLoadOf.forget)
         const started: Run = {
           send,
           compiler,
@@ -396,7 +455,8 @@ export const engineHostLayer = Layer.effect(
               onNone: () => new Map(),
               onSome: ({ epoch }) => compiler.meters(epoch)
             })
-            return { engine: number, telemetry, meters, heard, stats }
+            const dspLoad = Option.getOrUndefined(dspLoadOf.read(telemetry, stats?.underrunEvents ?? 0))
+            return { engine: number, telemetry, meters, heard, stats, dspLoad }
           },
           answers: answers(engine),
           breakStream: engine.breakStream
@@ -718,7 +778,12 @@ export const engineHostLayer = Layer.effect(
             })
         })
       ),
-      frame: () => Option.getOrUndefined(Option.map(registry.get(current), ({ frame }) => frame()))
+      frame: () => Option.getOrUndefined(Option.map(registry.get(current), ({ frame }) => frame())),
+      measuring,
+      toggleMeasuring: Effect.suspend(() => setMeasureLoad(!registry.get(measureOn))).pipe(
+        Effect.when(Effect.sync(() => registry.get(measuring) !== 'few-cores')),
+        Effect.asVoid
+      )
     } satisfies EngineHost
   })
 )

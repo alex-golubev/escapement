@@ -8,6 +8,7 @@ import { breakStream, createCommandRing, messageWriter } from './command-ring'
 import { BuildThreadError, type CommandStreamError, EngineLoadError, EngineStartError, ProcessorError } from './errors'
 import { createEventRing, eventStream } from './event-ring'
 import type { EngineEvent } from './events'
+import { createLoadClock } from './load-clock'
 import { createEngineMemory } from './memory'
 import { type Answering, answered } from './ping'
 import {
@@ -59,6 +60,8 @@ export interface Engine {
   readonly events: Stream.Stream<EngineEvent>
   /** Cheap enough for every frame. */
   readonly readTelemetry: () => Telemetry | undefined
+  /** The time the worklet times its blocks by while the page measures their load: `loadClockThread` writes it. */
+  readonly loadClock: SharedArrayBuffer
   /** Fails once either of the engine's threads does, or once it loses its command stream; never succeeds. */
   readonly failure: Effect.Effect<never, EngineFailure>
   /**
@@ -176,8 +179,15 @@ export const startEngine = Effect.fn('startEngine')(function* (context: BaseAudi
     catch: (cause) => new EngineStartError({ cause })
   })
   // Shared memory exists only on cross-origin isolated pages.
-  const [memory, commandRing, eventRing, telemetryBoard] = yield* Effect.try({
-    try: () => [createEngineMemory(), createCommandRing(), createEventRing(), createTelemetryBoard()] as const,
+  const [memory, commandRing, eventRing, telemetryBoard, loadClock] = yield* Effect.try({
+    try: () =>
+      [
+        createEngineMemory(),
+        createCommandRing(),
+        createEventRing(),
+        createTelemetryBoard(),
+        createLoadClock()
+      ] as const,
     catch: (cause) => new EngineStartError({ cause })
   })
   const messages = messageWriter(commandRing)
@@ -190,7 +200,8 @@ export const startEngine = Effect.fn('startEngine')(function* (context: BaseAudi
     engine: buildThread.engine,
     commandRing,
     eventRing,
-    telemetryBoard
+    telemetryBoard,
+    loadClock
   }
   const audioThreadAlive = yield* Ref.make(true)
   const processor = yield* acquireWatched({
@@ -221,6 +232,7 @@ export const startEngine = Effect.fn('startEngine')(function* (context: BaseAudi
     send: transactionSender(write, (batch) => buildThread.worker.postMessage(batch, [batch.bytes.buffer])),
     events: yield* eventStream(eventRing),
     readTelemetry,
+    loadClock,
     failure: Effect.raceAllFirst([processor.failure, buildThread.failure, lostStream(readTelemetry)]),
     storeSample: sounds.store,
     evictSample: sounds.evict,

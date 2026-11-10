@@ -54,6 +54,7 @@ import {
   EngineState,
   type Frame,
   LoadState,
+  type Measuring,
   type Restarts,
   type Transport
 } from '../src/services/engine-host'
@@ -106,6 +107,8 @@ const quietHost = (frame: { current: Frame | undefined }): EngineHost => ({
   awake: Atom.make(false),
   transport: Atom.make<Transport>('stopped'),
   togglePlay: Effect.void,
+  measuring: Atom.make<Measuring>('waiting'),
+  toggleMeasuring: Effect.void,
   stop: Effect.void,
   toStart: Effect.void,
   wake: Effect.void,
@@ -1139,7 +1142,14 @@ test("a track's strip draws the meter of its fader, found by the node's handle; 
       }
       const seen = (telemetry: Telemetry | undefined) =>
         Effect.sync(() => {
-          frame.current = { engine: 1, telemetry, meters: owners.current, heard: undefined, stats: undefined }
+          frame.current = {
+            engine: 1,
+            telemetry,
+            meters: owners.current,
+            heard: undefined,
+            stats: undefined,
+            dspLoad: undefined
+          }
         }).pipe(Effect.andThen(drawn(50)))
       const shown = (meters: Telemetry['meters']) => seen(boardWith([0, 0], [0, 0], meters))
       const reading = (
@@ -1225,7 +1235,8 @@ test('the rack draws only the strips in sight and one more each side, the focus 
               telemetry: boardWith([0, 0], [0, 0], [{ node: NodeHandle(2), peaks, overs }]),
               meters: new Map([[NodeHandle(2), kick]]),
               heard: undefined,
-              stats: undefined
+              stats: undefined,
+              dspLoad: undefined
             }
           }).pipe(Effect.andThen(drawn(50)))
         const kickMeters = () => ({
@@ -1512,7 +1523,8 @@ const boardWith = (
   streamLost: false,
   overs,
   meters,
-  frame: 0
+  frame: 0,
+  load: { burst: 0, busy: 0, blocks: 0, longest: 0 }
 })
 
 /** The frame of `engine` with `peaks` and `overs`, once the page has drawn it. */
@@ -1528,7 +1540,8 @@ const boardShown = (
       telemetry: boardWith(peaks, overs),
       meters: new Map(),
       heard: undefined,
-      stats: undefined
+      stats: undefined,
+      dspLoad: undefined
     }
   }).pipe(Effect.andThen(drawn(50)))
 
@@ -1561,6 +1574,67 @@ test("the meters draw the master's peaks in decibels, and a lamp lights when its
       expect(lit()).toEqual(['true', null])
     })
   ))
+
+test('DSP load shows the last burst to a tenth while measured, red once a block took 90% of its time or the sound broke; a click switches measuring', () => {
+  const measuring = Atom.make<Measuring>('on')
+  const switched = { count: 0 }
+  return page(
+    ({ target, frame, set }) =>
+      Effect.gen(function* () {
+        const meter = Option.getOrThrow(
+          Option.fromNullishOr(target.querySelector<HTMLButtonElement>('[aria-label="DSP load"]'))
+        )
+        const shown = () => [
+          meter.querySelector('.dsp-load__value')?.textContent,
+          meter.hasAttribute('data-alarm'),
+          meter.getAttribute('aria-pressed'),
+          meter.disabled
+        ]
+        const loadShown = (dspLoad: Frame['dspLoad']) =>
+          Effect.sync(() => {
+            frame.current = {
+              engine: 1,
+              telemetry: undefined,
+              meters: new Map(),
+              heard: undefined,
+              stats: undefined,
+              dspLoad
+            }
+          }).pipe(Effect.andThen(drawn(50)))
+        yield* loadShown(undefined)
+        expect(shown()).toEqual(['—', false, 'true', false])
+        yield* loadShown({ share: 0.182, longest: 0.5, broke: false })
+        expect(shown()).toEqual(['18.2%', false, 'true', false])
+        expect(meter.querySelector<HTMLElement>('.dsp-load__fill')?.style.getPropertyValue('--share')).toBe('0.182')
+        yield* loadShown({ share: 0.3, longest: 0.95, broke: false })
+        expect(shown()).toEqual(['30.0%', true, 'true', false])
+        yield* loadShown({ share: 0.3, longest: 0.5, broke: true })
+        expect(shown()).toEqual(['30.0%', true, 'true', false])
+        // Not playing: the burst before is not shown.
+        set(measuring, 'waiting')
+        yield* drawn(50)
+        expect(shown()).toEqual(['—', false, 'true', false])
+        meter.click()
+        yield* drawn()
+        expect(switched.count).toBe(1)
+        set(measuring, 'off')
+        yield* drawn(50)
+        expect(shown()).toEqual(['—', false, 'false', false])
+        set(measuring, 'few-cores')
+        yield* drawn(50)
+        expect(shown()).toEqual(['—', false, 'false', true])
+        expect(meter.dataset.hint).toBe(
+          'DSP load: not measured on 4 cores or fewer, where its clock would take a core from the sound'
+        )
+      }),
+    {
+      measuring,
+      toggleMeasuring: Effect.sync(() => {
+        switched.count++
+      })
+    }
+  )
+})
 
 test("the debug panel's level is the louder side's peak in decibels", () =>
   page(({ target, frame }) =>
@@ -2427,7 +2501,8 @@ const heardAt = (frame: { current: Frame | undefined }, bars: number, playing = 
       tempo: defaultTempo,
       playing
     },
-    stats: undefined
+    stats: undefined,
+    dspLoad: undefined
   }
   return drawn(50)
 }
@@ -3504,7 +3579,8 @@ test('the Arrangement gone on to the playhead shows it in the frame it goes in, 
           telemetry: undefined,
           meters: new Map(),
           heard: { tick: 17.25 * barTicks, loop: 16 * barTicks, tempo: defaultTempo, playing: true },
-          stats: undefined
+          stats: undefined,
+          dspLoad: undefined
         }
         yield* oneFrame
         // Gone on to the bar it is in: a quarter of the bar in.

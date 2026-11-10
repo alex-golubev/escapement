@@ -33,11 +33,19 @@ const engineWords = (
   return words
 }
 
+/** No block timed. */
+const untimed = { burst: 0, busy: 0, blocks: 0, longest: 0 }
+
 test('the page reads what the worklet wrote', () => {
   const board = createTelemetryBoard()
   // Past 32 bits: a day and more at 48 kHz.
   const frame = 2 ** 32 + 5 * 128
-  telemetryWriter(board)(engineWords([42, 3, 2, 7, 1], [0.5, 0.25], [1, 1234, 7680, 128.5, 1], [9, 2 ** 32 - 1]), frame)
+  const load = { burst: 7, busy: 2500, blocks: 37, longest: 410 }
+  telemetryWriter(board)(
+    engineWords([42, 3, 2, 7, 1], [0.5, 0.25], [1, 1234, 7680, 128.5, 1], [9, 2 ** 32 - 1]),
+    frame,
+    load
+  )
   expect(telemetryReader(board)()).toEqual({
     blocks: 42,
     epoch: 3,
@@ -52,7 +60,8 @@ test('the page reads what the worklet wrote', () => {
     streamLost: true,
     overs: [9, 2 ** 32 - 1],
     meters: [],
-    frame
+    frame,
+    load
   })
 })
 
@@ -68,25 +77,25 @@ test("the meters in use reach the page, each under its node's handle, and the wo
   // The board's words past what a write copies keep what they had.
   const words = new Uint32Array(board)
   words.fill(0xdead, 1 + 15 + 2 * 5)
-  telemetryWriter(board)(written, 0)
+  telemetryWriter(board)(written, 0, untimed)
   expect(telemetryReader(board)()?.meters).toEqual(meters)
   expect(words[1 + 15 + 2 * 5]).toBe(0xdead)
   // However many the engine says it has, no more than there are.
   written.set([meterCount + 1], 14)
-  telemetryWriter(board)(written, 0)
+  telemetryWriter(board)(written, 0, untimed)
   expect(telemetryReader(board)()?.meters).toHaveLength(meterCount)
 })
 
 test('a board no block has been written to has nothing to read; one whose count of blocks wrapped round to 0 has', () => {
   const board = createTelemetryBoard()
   expect(telemetryReader(board)()).toBeUndefined()
-  telemetryWriter(board)(engineWords([0, 1, 0, 0, 0], [0, 0]), 2 ** 32 * 128)
+  telemetryWriter(board)(engineWords([0, 1, 0, 0, 0], [0, 0]), 2 ** 32 * 128, untimed)
   expect(telemetryReader(board)()?.blocks).toBe(0)
 })
 
 test('a read that catches the worklet mid-write is not returned', () => {
   const board = createTelemetryBoard()
-  telemetryWriter(board)(engineWords([1, 1, 0, 0, 0], [0.5, 0.5]), 0)
+  telemetryWriter(board)(engineWords([1, 1, 0, 0, 0], [0.5, 0.5]), 0, untimed)
   // Odd: the worklet is mid-write.
   Atomics.add(new Uint32Array(board), 0, 1)
   expect(telemetryReader(board)()).toBeUndefined()

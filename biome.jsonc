@@ -355,6 +355,7 @@
         "!**/packages/engine/src/schema/**",
         "!**/packages/engine/src/worklet/**",
         "!**/packages/engine/src/build-thread/**",
+        "!**/packages/engine/src/clock-thread/**",
         "!**/packages/engine/src/command-ring.ts",
         "!**/packages/engine/src/framing.ts",
         "!**/packages/engine/src/panic-text.ts",

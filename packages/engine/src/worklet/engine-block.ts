@@ -1,11 +1,32 @@
 import { RingBuffer } from 'ringbuf.js'
+import { burstWord, gapsWord, loadClockViews, timeWord } from '../load-clock'
 import { panicTextTaker, withPanicText } from '../panic-text'
 import { blockFrames, channelCount, type EngineProcessorOptions } from '../protocol'
-import { engineTelemetryWords, telemetryWriter } from '../telemetry'
+import { type BlockLoad, engineTelemetryWords, telemetryWriter } from '../telemetry'
 import type { EngineExports } from '../threads'
 
 /** Renders into `channels` the block that starts at the context's `frame`. */
 export type RenderBlock = (channels: ReadonlyArray<Float32Array>, frame: number) => void
+
+/** A block's time in µs, read at its start and end, into its burst's count: a new burst counts afresh. */
+export const tally = (
+  load: { -readonly [Key in keyof BlockLoad]: number },
+  burst: number,
+  started: number,
+  ended: number,
+  gapless: boolean
+) => {
+  const same = Number(burst === load.burst)
+  // The microseconds wrap round every 35 minutes.
+  const between = (ended - started) | 0
+  // Only between two readings of a running clock whose thread wasn't put off: 0 is at rest.
+  const timed = Number(started !== 0 && ended !== 0 && between > 0 && gapless)
+  const took = between * timed
+  load.burst = burst
+  load.busy = load.busy * same + took
+  load.blocks = load.blocks * same + timed
+  load.longest = Math.max(load.longest * same, took)
+}
 
 /**
  * Returns what the worklet runs every block; it allocates nothing. `wasm` must have taken its place already. A trap
@@ -13,11 +34,13 @@ export type RenderBlock = (channels: ReadonlyArray<Float32Array>, frame: number)
  */
 export const createEngineBlock = (
   wasm: EngineExports,
-  { memory, engine, commandRing, eventRing, telemetryBoard }: EngineProcessorOptions
+  { memory, engine, commandRing, eventRing, telemetryBoard, loadClock }: EngineProcessorOptions
 ): RenderBlock => {
   const commands = new RingBuffer(commandRing, Uint8Array)
   const events = new RingBuffer(eventRing, Uint8Array)
   const publishTelemetry = telemetryWriter(telemetryBoard)
+  const clock = loadClockViews(loadClock)
+  const load = { burst: 0, busy: 0, blocks: 0, longest: 0 }
   const inputCapacity = wasm.engine_input_capacity()
   const eventCapacity = wasm.engine_event_capacity()
   // The engine's buffers never move, and shared memory is never detached: these views outlive any growth.
@@ -43,13 +66,19 @@ export const createEngineBlock = (
           `the engine renders ${channelCount} × ${blockFrames}`
       )
     }
+    const burst = Atomics.load(clock, burstWord)
+    const gaps = Atomics.load(clock, gapsWord)
+    const started = Atomics.load(clock, timeWord)
     const waiting = wasm.engine_input_len(engine)
     const received = commands.pop(views.input, inputCapacity - waiting, waiting)
     // Only events that fit are handed out, and the page can only add room meanwhile.
     const eventBytes = wasm.engine_process(engine, blockFrames, received, events.availableWrite())
     for (let c = 0; c < channels.length; c++) channels[c].set(views.output[c])
     if (eventBytes > 0) events.push(views.events, eventBytes)
-    publishTelemetry(views.telemetry, frame)
+    // The time before the gaps: a thread put off counts its gap before its next time.
+    const ended = Atomics.load(clock, timeWord)
+    tally(load, burst, started, ended, Atomics.load(clock, gapsWord) === gaps)
+    publishTelemetry(views.telemetry, frame, load)
   }
   return (channels, frame) => {
     try {
