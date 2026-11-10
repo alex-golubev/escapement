@@ -4,7 +4,7 @@ import { useLayoutEffect, useRef } from 'preact/hooks'
 import { cleared } from '../kit/canvas'
 import type { Size } from '../kit/size'
 import { type Follow, inSight, type Lane, useFollow } from './follow'
-import { heardTick, useFrame } from './frames'
+import { heardOf, useFrame } from './frames'
 
 /**
  * A view drawn on canvases as its playhead goes along: its size, its lane, where a tick is across it, as its own
@@ -24,7 +24,7 @@ export interface Colours {
   readonly rulerText: string
 }
 
-/** A line down the view at the tick heard, and a mark over it on the ruler; none while it is scrolled out of sight. */
+/** A line down the view at the tick heard, playing or stopped, and a mark over it on the ruler; none out of sight. */
 export const drawPlayhead = (
   g: CanvasRenderingContext2D,
   { size, lane, xOf, ruler, mark }: Laid,
@@ -61,11 +61,7 @@ export interface CanvasPlayhead {
   readonly scrollTo: (left: number) => void
 }
 
-/**
- * The playhead over a view drawn on canvases, drawn again as the tick heard or the view changes, not on every
- * frame, and the view following it; the `Follow` given is told of the view's scrolls by hand. A view scrolled
- * to the playhead is drawn anew before the frame shows, and so is the playhead on it, at the tick that frame heard.
- */
+/** The playhead over a canvas view, redrawn as the tick heard or the view changes; the view follows it as it plays. */
 export const useCanvasPlayhead = ({ place, canvas, laid, colours, held, scrollTo }: CanvasPlayhead): Follow => {
   const follow = useFollow()
   const heard = useRef(Option.none<number>())
@@ -84,13 +80,22 @@ export const useCanvasPlayhead = ({ place, canvas, laid, colours, held, scrollTo
     })
   useLayoutEffect(() => void draw())
   useFrame((frame) => {
-    heard.current = Option.flatMap(heardTick(frame), place)
+    const { tick, playing } = heardOf(frame)
+    heard.current = place(tick)
     // The lane in sight: none behind a tab.
     const lane = Option.filter(
       Option.map(laid, ({ lane }) => lane),
       ({ width }) => width > 0
     )
-    Option.map(follow.frame(lane, held(), heard.current), scrollTo)
+    // Followed only as it plays: stopped, it is left where it stands, and Play brings it into sight.
+    Option.map(
+      follow.frame(
+        lane,
+        held(),
+        Option.filter(heard.current, () => playing)
+      ),
+      scrollTo
+    )
     draw()
   })
   return follow

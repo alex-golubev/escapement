@@ -1,4 +1,4 @@
-import { LoopTicks } from '@escapement/engine'
+import { LoopTicks, type Place } from '@escapement/engine'
 import {
   type AnyParam,
   defaultStrip,
@@ -102,10 +102,11 @@ export interface PictureClip {
   readonly pattern: string
 }
 
-/** Whether the clips play, round and round the loop. */
+/** Whether the clips play, round and round the loop, and where this client last put the position. */
 export interface Transport {
   readonly playing: boolean
   readonly loopTicks: LoopTicks
+  readonly place: Place
 }
 
 /**
@@ -131,12 +132,13 @@ export interface Picture {
 
 /**
  * What this client does with the project, its own and never in the document: how it listens, the controls it holds,
- * whether it plays, and the notes it plays by hand.
+ * whether it plays and where it last put the position, and the notes it plays by hand.
  */
 export interface Client {
   readonly listening: Atom.Atom<Listening>
   readonly holds: Atom.Atom<Holds>
   readonly playing: Atom.Atom<boolean>
+  readonly place: Atom.Atom<Place>
   readonly auditions: Atom.Atom<Auditions>
 }
 
@@ -288,7 +290,7 @@ const pictureClip = ({ tick, track, length, period, offset, pattern }: PlayedCli
  */
 export const pictureOf = (
   project: ProjectAtoms,
-  { listening, holds, playing, auditions }: Client
+  { listening, holds, playing, place, auditions }: Client
 ): Atom.Atom<Picture> => {
   // Each node reads only what is held for it: a turn makes its own node again, and no other.
   const heldAt = Atom.family((node: string) => byContent((get) => heldOn(get(holds), node)))
@@ -388,7 +390,7 @@ export const pictureOf = (
       clips: get(clips),
       auditions: get(heardAuditions),
       tempo: Option.some(get(tempo)),
-      transport: Option.some({ playing: get(playing), loopTicks: get(loop) })
+      transport: Option.some({ playing: get(playing), loopTicks: get(loop), place: get(place) })
     }
   })
 }

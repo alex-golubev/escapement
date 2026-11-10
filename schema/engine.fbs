@@ -49,12 +49,22 @@ struct SetTempo {
   bpm: float32;
 }
 
+/// Where the page last put the transport's position: the press that did, told apart from every other by its number.
+struct Place {
+  /// 0 is no press: a new engine stands at the loop's start.
+  press: uint32;
+  /// Ticks from the loop's start; stopped, it stands past the loop's end too, which playing wraps around.
+  tick: uint32;
+}
+
 /// The whole state of the transport, not a press of a button: sent again, it changes nothing.
 struct SetTransport {
-  /// Stopped to playing starts at the beginning; playing to stopped goes back to it.
+  /// Stopped to playing starts where the position stands; playing to stopped leaves it there.
   playing: bool;
-  /// Ticks, 960 to a quarter note, from 1; a position past a new end wraps around.
+  /// Ticks, 960 to a quarter note, from 1; playing, a position past its end wraps around.
   loop_ticks: uint32;
+  /// A press the engine hasn't had yet puts the position at its tick, and playing starts again from there.
+  place: Place;
 }
 
 /// The audio thread panics, so the page's recovery can be checked; the code goes into the panic's message.

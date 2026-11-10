@@ -5,8 +5,11 @@ import {
   DeviceEdit,
   LoopTicks,
   NodeHandle,
+  noPlace,
   PageNote,
   PatternHandle,
+  type Place,
+  PlacePress,
   type Send,
   setParam,
   setStripParam,
@@ -94,8 +97,8 @@ const trackFader = (node: NodeHandle, strip: StripValues = defaultTrackStrip) =>
 /** A new track's strip with its volume at `volume`. */
 const turnedTo = (volume: number): StripValues => ({ ...defaultTrackStrip, volume })
 
-const transport = (playing: boolean, loopTicks = barTicks) =>
-  Command.SetTransport({ playing, loopTicks: LoopTicks(loopTicks) })
+const transport = (playing: boolean, loopTicks = barTicks, place: Place = noPlace) =>
+  Command.SetTransport({ playing, loopTicks: LoopTicks(loopTicks), place })
 
 /** A note a step long on the step given, middle C unless another key is. */
 const step = (n: number, key = 60) => ({ tick: Tick(n * stepTicks), key: MidiKey(key), length: stepTicks })
@@ -136,6 +139,8 @@ interface Run {
   readonly hold: (target: HoldTarget, value?: number) => void
   /** This client plays the arrangement, or stops it. */
   readonly play: (playing: boolean) => void
+  /** This client puts the position. */
+  readonly put: (place: Place) => void
   /** This client plays these notes by hand now. */
   readonly audition: (auditions: Auditions) => void
 }
@@ -204,13 +209,14 @@ const compiled = (
   const running = Atom.make(runsFirst)
   const holds = batchedState<Holds>(noHolds)
   const playing = batchedState(playsFirst)
+  const place = batchedState(noPlace)
   const auditions = batchedState<Auditions>(noAuditions)
   const program = Effect.gen(function* () {
     const registry = yield* AtomRegistry.AtomRegistry
     const atoms = yield* followProject(doc)
     const compiler = yield* compile(
       atoms,
-      { listening, holds, playing, auditions },
+      { listening, holds, playing, place, auditions },
       {
         send,
         storeSample: (hash) => storing.pipe(Effect.andThen(Effect.sync(() => void stored.push(hash)))),
@@ -255,6 +261,7 @@ const compiled = (
           })
         ),
       play: (value) => registry.set(playing, value),
+      put: (value) => registry.set(place, value),
       audition: (value) => registry.set(auditions, value)
     })
   })
@@ -557,6 +564,29 @@ describe('the compiler', () => {
         run.setRunning(false)
         expect(changes(run, () => run.play(true))).toEqual([])
         expect(changes(run, () => run.setRunning(true))).toEqual([{ edits: [], commands: [transport(true)] }])
+      })
+    )
+  )
+
+  it.effect('puts the position as this client asks, with the transport in one command, and only once', () =>
+    compiled((run) =>
+      Effect.sync(() => {
+        run.play(true)
+        const atStart = { press: PlacePress(1), tick: Tick(0) }
+        expect(changes(run, () => run.put(atStart))).toEqual([
+          { edits: [], commands: [transport(true, barTicks, atStart)] }
+        ])
+        // Stopped and put back at once, as Stop does: the engine never plays from the start in between.
+        const again = { press: PlacePress(2), tick: Tick(0) }
+        expect(
+          changes(run, () =>
+            Atom.batch(() => {
+              run.play(false)
+              run.put(again)
+            })
+          )
+        ).toEqual([{ edits: [], commands: [transport(false, barTicks, again)] }])
+        expect(changes(run, () => run.put(again))).toEqual([])
       })
     )
   )

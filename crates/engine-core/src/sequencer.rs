@@ -310,6 +310,7 @@ mod tests {
     use crate::node::tests::{GIVEN, RECORDER};
     use crate::node::{NOTE_ROOM, Node};
     use crate::testing::{BAR, SAMPLE_RATE, SILENCE};
+    use crate::transport::Place;
 
     /// A step long.
     fn note(tick: u32, node: u32, key: u8) -> Note {
@@ -398,7 +399,7 @@ mod tests {
 
     fn playing() -> Transport {
         let mut transport = Transport::new(SAMPLE_RATE);
-        transport.set(true, BAR).unwrap();
+        transport.set(true, BAR, Place::default()).unwrap();
         transport
     }
 
@@ -632,7 +633,7 @@ mod tests {
     fn notes_go_on_from_the_loop_s_start_within_the_block_it_ends_in_and_none_past_its_end_play() {
         let pattern = played(vec![note(0, 1, 60), note(999, 1, 61), note(1000, 1, 62)]);
         let mut transport = Transport::new(SAMPLE_RATE);
-        transport.set(true, 1000).unwrap();
+        transport.set(true, 1000, Place::default()).unwrap();
         let mut graph = graph();
         // To 998.4.
         for _ in 0..195 {
@@ -708,7 +709,7 @@ mod tests {
         let chord: Vec<_> = (0..100).map(|key| note(0, 3, key)).collect();
         let pattern = played(chord);
         let mut transport = Transport::new(SAMPLE_RATE);
-        transport.set(true, 1).unwrap();
+        transport.set(true, 1, Place::default()).unwrap();
         // From the start a block passes 6 ticks at 120, 600 notes; at 522, 23, past the budget.
         assert_eq!(transport.stretches(BLOCK_FRAMES).count(), 6);
         let lost = pattern.hand_out(&mut Held::new(), &transport, &mut graph(), BLOCK_FRAMES);
@@ -739,7 +740,7 @@ mod tests {
     fn a_note_is_let_go_of_at_the_loop_s_end_at_the_latest() {
         let pattern = played(vec![lasting(4, note(6, 1, 60))]);
         let mut transport = Transport::new(SAMPLE_RATE);
-        transport.set(true, 8).unwrap();
+        transport.set(true, 8, Place::default()).unwrap();
         let (mut graph, mut held) = (graph(), Held::new());
         pattern.hand_out(&mut held, &transport, &mut graph, BLOCK_FRAMES);
         transport.advance(BLOCK_FRAMES);
@@ -770,7 +771,7 @@ mod tests {
         given(&mut graph, 1);
         given(&mut graph, 2);
         transport.advance(BLOCK_FRAMES);
-        transport.set(false, BAR).unwrap();
+        transport.set(false, BAR, Place::default()).unwrap();
         pattern.hand_out(&mut held, &transport, &mut graph, BLOCK_FRAMES);
         assert_eq!(given(&mut graph, 1), [off(0, 0)]);
         assert_eq!(given(&mut graph, 2), [off(0, 1)]);
@@ -784,12 +785,27 @@ mod tests {
         pattern.hand_out(&mut held, &transport, &mut graph, BLOCK_FRAMES);
         given(&mut graph, 1);
         transport.advance(BLOCK_FRAMES);
-        // Between blocks, as when a stop and a start come together.
-        transport.set(false, BAR).unwrap();
-        transport.set(true, BAR).unwrap();
+        // Between blocks, as when the page puts the position back at the start.
+        transport
+            .set(true, BAR, Place { press: 1, tick: 0 })
+            .unwrap();
         pattern.hand_out(&mut held, &transport, &mut graph, BLOCK_FRAMES);
         assert_eq!(given(&mut graph, 1), [at(0, 60, 1), off(0, 0)]);
         assert_eq!(held.len(), 1);
+    }
+
+    #[test]
+    fn play_after_a_stop_lets_go_of_the_notes_before_it_and_goes_on_without_pressing_them_again() {
+        let pattern = played(vec![lasting(BAR, note(0, 1, 60))]);
+        let (mut transport, mut graph, mut held) = (playing(), graph(), Held::new());
+        pattern.hand_out(&mut held, &transport, &mut graph, BLOCK_FRAMES);
+        given(&mut graph, 1);
+        transport.advance(BLOCK_FRAMES);
+        transport.set(false, BAR, Place::default()).unwrap();
+        transport.set(true, BAR, Place::default()).unwrap();
+        pattern.hand_out(&mut held, &transport, &mut graph, BLOCK_FRAMES);
+        assert_eq!(given(&mut graph, 1), [off(0, 0)]);
+        assert_eq!(held.len(), 0);
     }
 
     #[test]

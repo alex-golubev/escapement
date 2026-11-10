@@ -47,9 +47,13 @@ mod tests {
                     note.note()
                 ),
                 Command::SetTempo(tempo) => format!("SetTempo {}", tempo.bpm()),
-                Command::SetTransport(state) => {
-                    format!("SetTransport {} {}", state.playing(), state.loop_ticks())
-                }
+                Command::SetTransport(state) => format!(
+                    "SetTransport {} {} {} {}",
+                    state.playing(),
+                    state.loop_ticks(),
+                    state.place().press(),
+                    state.place().tick()
+                ),
                 Command::PanicAudio(panic) => format!("PanicAudio {}", panic.code()),
                 Command::HangAudio(hang) => format!("HangAudio {}", hang.code()),
                 Command::NoteOff(note) => format!("NoteOff {} {}", note.node(), note.note()),
@@ -74,8 +78,8 @@ mod tests {
                 "AfterBatch 7",
                 "NoteOn 1 60 0.75 7",
                 "SetTempo 128.5",
-                "SetTransport true 3840",
-                "SetTransport false 4294967295",
+                "SetTransport true 3840 0 0",
+                "SetTransport false 4294967295 4294967295 1920",
                 "PanicAudio 7",
                 "HangAudio 8",
                 "NoteOff 1 7",

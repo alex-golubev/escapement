@@ -8,6 +8,7 @@ import {
   newClip,
   playheadAt,
   pressPlay,
+  pressStop,
   putNote,
   reload,
   showCentre,
@@ -165,7 +166,7 @@ test("a clip's right edge dragged out to three bars plays its notes in each, and
   const struck = await loudnessPast(page, 0.2, 0.5)
   expect(struck).toBeGreaterThan(0)
   expect(await loudnessPast(page, 2.1, 2.4)).toBeGreaterThan(struck / 4)
-  await pressPlay(page, false)
+  await pressStop(page)
   await reload(page)
   // The Mixer in the middle again, as left; the clips in the Arrangement.
   await expect(page.locator('.strip--master')).toBeVisible()
@@ -225,5 +226,5 @@ test('the playhead runs along the Arrangement, and the Arrangement goes with it 
   const now = await playheadAt(page)
   expect(now).toBeGreaterThanOrEqual(0)
   expect(now).toBeLessThan(inSight / 2)
-  await pressPlay(page, false)
+  await pressStop(page)
 })

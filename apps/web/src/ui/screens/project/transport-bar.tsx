@@ -1,60 +1,18 @@
 import { useAtomValue } from '@effect/atom-react'
+import { ticksPerQuarter } from '@escapement/engine-description'
+import { barTicks } from '@escapement/model'
 import { Array, Boolean, Option } from 'effect'
 import { EngineState, type GaveUp, type Transport } from '../../../services/engine-host'
 import type { Saving } from '../../../services/session'
 import { useCore } from '../../core-context'
-import { ToProjects } from '../../parts/to-projects'
-import { CentreButtons } from './centre'
+import { ToProjectsIcon } from '../../parts/to-projects'
+import { Clock } from './clock'
 import { HistoryButtons } from './history'
 import { TempoField } from './tempo-field'
+import { TransportButtons } from './transport-buttons'
 import './transport-bar.css'
 
-const playIcon = 'M2.5 1.5 10.5 6l-8 4.5Z'
-const stopIcon = 'M2.5 2.5h7v7h-7Z'
-
-const playShape: Record<Transport, string> = { stopped: playIcon, starting: playIcon, playing: stopIcon }
-
-const waiting = 'Play waits while the sound starts'
-const stopped = 'Play: the sound is stopped, as the status on the right says'
-
-const playHint: Record<Transport, string> = {
-  stopped: 'Play: only for you, each tab listens on its own',
-  starting: waiting,
-  playing: 'Stop: only for you; the other tabs play on'
-}
-
-/** What Play does now, or why it can't. */
-const playHintOf = (state: EngineState, transport: Transport) =>
-  EngineState.$match(state, {
-    Starting: () => waiting,
-    Ready: () => playHint[transport],
-    Failed: () => stopped,
-    Hung: () => stopped
-  })
-
-/** Play wakes the sound the first time, and waits while it wakes; pressed, it plays, filled while it does. */
-const PlayButton = () => {
-  const { host, run } = useCore()
-  const state = useAtomValue(host.state)
-  const transport = useAtomValue(host.transport)
-  return (
-    <button
-      type='button'
-      class='btn btn--on'
-      aria-label='Play'
-      aria-pressed={transport === 'playing'}
-      data-hint={playHintOf(state, transport)}
-      disabled={state._tag !== 'Ready' || transport === 'starting'}
-      onClick={() => run(host.togglePlay)}
-    >
-      <svg viewBox='0 0 12 12' aria-hidden='true'>
-        <path d={playShape[transport]} />
-      </svg>
-    </button>
-  )
-}
-
-/** Something the page must tell: a few words on the bar, the whole of it in the hint. */
+/** Something the page must tell: a few words on the bar, cut short if there is no room; all of it in the hint. */
 interface Notice {
   readonly text: string
   readonly hint: string
@@ -73,7 +31,7 @@ const restarting: Notice = {
 const gaveUpNotice: Record<GaveUp, Notice> = {
   load: {
     text: "Sound didn't load — reload the page",
-    hint: "The sound engine's module didn't load",
+    hint: "The sound engine's module didn't load: reload the page",
     alarm: true
   },
   start: {
@@ -83,7 +41,7 @@ const gaveUpNotice: Record<GaveUp, Notice> = {
   },
   often: {
     text: 'Sound stopped — reload the page',
-    hint: 'The sound engine failed three times within a minute, and the page stopped starting new ones',
+    hint: 'The sound engine failed three times within a minute, and the page stopped starting new ones: reload the page',
     alarm: true
   }
 }
@@ -134,24 +92,35 @@ const Status = () => {
     <div class='status' role='status'>
       {notices.map(({ text, hint, alarm }) => (
         <span key={text} class='status__notice' data-alarm={alarm} data-hint={hint}>
-          {text}
+          <span class='status__text'>{text}</span>
         </span>
       ))}
     </div>
   )
 }
 
-/** Projects, Play, undo and redo, the tempo, what the middle shows; on the right, what is wrong, if anything. */
+/** Every bar is as many quarter notes as the model's: read only, until a project has a time signature of its own. */
+const TimeSignature = () => {
+  const signature = `${barTicks / ticksPerQuarter}/4`
+  return (
+    <span class='field field--readout field--quiet' data-hint={`${signature}: every bar, until time signatures come`}>
+      {signature}
+    </span>
+  )
+}
+
+/** Projects, the transport, undo and redo, where it is heard, the tempo; on the right, what is wrong, if anything. */
 export const TransportBar = () => (
   <div class='transport'>
-    <ToProjects />
+    <ToProjectsIcon />
+    <TransportButtons />
     <div class='btn-group'>
-      <PlayButton />
       <HistoryButtons />
     </div>
-    <TempoField />
-    <div class='btn-group'>
-      <CentreButtons />
+    <Clock />
+    <div class='transport__metre'>
+      <TempoField />
+      <TimeSignature />
     </div>
     <Status />
   </div>

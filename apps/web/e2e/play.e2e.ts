@@ -1,16 +1,19 @@
-import { expect, type Page } from '@playwright/test'
+import { expect, type Locator, type Page } from '@playwright/test'
 import {
   addTrack,
   arrangementAt,
   below,
   type Heard,
+  heard,
   heardOn,
   listening,
   nameOf,
   newClip,
   newProject,
   panAll,
+  playheadAt,
   pressPlay,
+  pressStop,
   putNote,
   showCentre,
   test
@@ -23,7 +26,7 @@ const plays = async (page: Page, sides: Heard = anySide) => {
   await listening(page)
   await pressPlay(page, true)
   await heardOn(page, sides)
-  await pressPlay(page, false)
+  await pressStop(page)
   await expect(page.locator('.transport').getByRole('status')).toHaveText('')
   await showCentre(page, 'Arrange')
   await expect(page.locator('.strip--master')).toHaveCount(0)
@@ -46,15 +49,74 @@ test('a new project opens empty: + under no track in the Arrangement, nothing in
     ((await arrangement.boundingBox())?.y ?? 0) + ((await arrangement.boundingBox())?.height ?? 0)
   )
   await expect(panel).toHaveText("Click a track's name to see it here, double-click a clip for its notes")
-  // The transport on one line above, the hint line under, both whole.
+  // The transport whole on one line above, nothing of it cut off; the hint line under, Arrange and Mix beside it.
   const transport = page.locator('.transport')
   await expect(transport).toBeInViewport({ ratio: 1 })
-  const middleOf = async (name: string) => {
-    const box = await page.getByRole('button', { name, exact: true }).boundingBox()
+  expect(await transport.evaluate((bar) => bar.scrollWidth <= bar.clientWidth)).toBe(true)
+  const middleOf = async (target: Locator) => {
+    const box = await target.boundingBox()
     return (box?.y ?? 0) + (box?.height ?? 0) / 2
   }
-  expect(Math.abs((await middleOf('Mix')) - (await middleOf('Play')))).toBeLessThanOrEqual(1)
+  const line = await middleOf(page.getByRole('button', { name: 'Play', exact: true }))
+  const middles = await Promise.all((await transport.locator(':scope > *').all()).map(middleOf))
+  expect(middles.every((middle) => Math.abs(middle - line) <= 1)).toBe(true)
   await expect(page.locator('.hint')).toBeInViewport({ ratio: 1 })
+  const [hint, mix] = await Promise.all(
+    [page.locator('.hint'), page.getByRole('button', { name: 'Mix', exact: true })].map(middleOf)
+  )
+  expect(Math.abs(hint - mix)).toBeLessThanOrEqual(1)
+})
+
+/** The bar counter and the time as shown, and the counter's ticks from the start. */
+const clockOf = async (page: Page) => {
+  const position = (await page.getByRole('timer', { name: 'Position', exact: true }).textContent()) ?? ''
+  const time = (await page.getByRole('timer', { name: 'Time', exact: true }).textContent()) ?? ''
+  const [bar = 0, beat = 0, tick = 0] = position.replace('BAR', '').split('.').map(Number)
+  return { shown: `${position} ${time}`, ticks: (bar - 1) * 3840 + (beat - 1) * 960 + tick }
+}
+
+/** The clock once it stands, read the same a fifth of a second apart: a stop is heard a little after the press. */
+const standing = async (page: Page) => {
+  const read = { last: await clockOf(page) }
+  await expect
+    .poll(async () => {
+      const before = read.last.shown
+      await page.waitForTimeout(200)
+      read.last = await clockOf(page)
+      return read.last.shown === before
+    })
+    .toBe(true)
+  return read.last
+}
+
+test('Play pauses where it plays and plays on from there; To start goes back, playing on; Stop stops at the start', async ({
+  page
+}) => {
+  await newProject(page)
+  await addTrack(page, 'Synth')
+  // Four bars long: at 120, round from its end no sooner than 8 s after the start.
+  await newClip(page, 3, 0, 'Synth')
+  await expect(page.getByRole('button', { name: 'Record', exact: true })).toBeDisabled()
+  const ticks = async () => (await clockOf(page)).ticks
+  await pressPlay(page, true)
+  await expect.poll(ticks, heard).toBeGreaterThan(3840)
+  await pressPlay(page, false)
+  // Standing in the second bar, the playhead with it.
+  const paused = await standing(page)
+  expect(paused.ticks).toBeGreaterThan(3840)
+  expect(paused.ticks).toBeLessThan(2 * 3840)
+  await expect.poll(() => playheadAt(page)).toBeCloseTo(paused.ticks / 3840, 1)
+  // On from there: a beat on, half a second at 120, sooner than from the start.
+  await pressPlay(page, true)
+  await expect.poll(ticks, { timeout: 1_500, intervals: [20] }).toBeGreaterThan(paused.ticks + 960)
+  // Back to the first bar at once, playing on, well before the loop's end would take it there.
+  await page.getByRole('button', { name: 'To start', exact: true }).click()
+  await expect.poll(ticks, { timeout: 1_500, intervals: [20] }).toBeLessThan(3840)
+  await expect(page.getByRole('button', { name: 'Play', exact: true })).toHaveAttribute('aria-pressed', 'true')
+  // Stopped at the start, the playhead there too.
+  await pressStop(page)
+  await expect.poll(async () => (await clockOf(page)).shown).toBe('BAR001.01.000 TIME00:00.000')
+  await expect.poll(() => playheadAt(page)).toBeCloseTo(0, 1)
 })
 
 test('a track added with + plays the note put in its clip on its synth', async ({ page }) => {
@@ -145,5 +207,5 @@ test("a knob on a synth's card turns its sound: Delay at its longest keeps its s
   await delay.press('Home')
   await expect(delay).toHaveAttribute('aria-valuenow', '0')
   await heardOn(page, { silent: [], sounding: [0] })
-  await pressPlay(page, false)
+  await pressStop(page)
 })

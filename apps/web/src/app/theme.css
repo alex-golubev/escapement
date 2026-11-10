@@ -167,15 +167,29 @@ body {
   color: var(--t-hi);
 }
 
+/* The group's main one, as Play: wider, bright, in a frame of its own. */
+.btn-group .btn--main {
+  width: 2.375rem;
+  border-color: var(--line);
+  color: var(--t-hi);
+}
+
 /* On: filled with the one colour, as Play while it plays. */
 .btn--on[aria-pressed="true"] {
+  border-color: var(--shared);
   background: var(--shared);
   color: var(--on-shared);
 }
 
-.btn--on svg {
-  fill: currentColor;
-  stroke: none;
+/* Record's red, as on every recorder, and a smaller circle: dim while there is nothing to record into. */
+.btn--record {
+  width: 1.5rem;
+  color: var(--clip);
+}
+
+.btn--record svg {
+  width: 0.75rem;
+  height: 0.75rem;
 }
 
 /* What can't be undone, asked for once more. */
@@ -235,7 +249,7 @@ body {
 /* A number in a frame, its name inside it: dragged up or down. */
 .field {
   display: inline-flex;
-  align-items: baseline;
+  align-items: center;
   gap: 0.375rem;
   padding: 0.25rem 0.625rem;
   border: 1px solid var(--line);
@@ -246,6 +260,7 @@ body {
   font-variant-numeric: tabular-nums;
   font-size: 0.75rem;
   font-weight: 700;
+  line-height: 1rem;
   cursor: ns-resize;
   touch-action: none;
   user-select: none;
@@ -254,5 +269,29 @@ body {
 .field__name {
   color: var(--t-lo);
   font-size: 0.625rem;
+  font-weight: 400;
+}
+
+/* A number read, not dragged, in a field's frame: its parts and dots apart. */
+.field--readout {
+  gap: var(--u);
+  padding: 0.25rem 0.75rem;
+  cursor: default;
+}
+
+/* The dots between a number's parts, and its finest part: dim. */
+.field__dot {
+  color: var(--line);
+  font-weight: 400;
+}
+
+.field__fine {
+  color: var(--t-lo);
+}
+
+/* Told once, not read off as it goes. */
+.field--quiet {
+  padding: 0.25rem 0.5rem;
+  color: var(--t-lo);
   font-weight: 400;
 }

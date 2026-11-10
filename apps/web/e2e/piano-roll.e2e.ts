@@ -10,6 +10,7 @@ import {
   pixelAt,
   playheadAt,
   pressPlay,
+  pressStop,
   rollAt,
   rollLayout,
   sounds,
@@ -64,7 +65,7 @@ test('a melody put into the piano roll is erased in part, Cmd+Z brings some back
   await listening(page)
   await pressPlay(page, true)
   await sounds(page)
-  await pressPlay(page, false)
+  await pressStop(page)
   await expect(page.locator('.transport').getByRole('status')).toHaveText('')
 })
 
@@ -129,7 +130,7 @@ test('a note dragged into the second bar makes a clip of two bars, which plays w
   await expect.poll(() => playheadAt(page), heard).toBeLessThan(0.4)
   await listening(page)
   await sounds(page)
-  await pressPlay(page, false)
+  await pressStop(page)
 })
 
 test('a roll two bars wide shows the second past the pattern until a note goes into it, already while it is held', async ({
@@ -200,7 +201,7 @@ test('a melody of four bars, put as the roll scrolls across, plays whole, the ro
   await drawnAtKey(64).toBe(true)
   await expect.poll(() => playheadAt(page), heard).toBeGreaterThan(3)
   await drawnAtKey(60).toBe(true)
-  await pressPlay(page, false)
+  await pressStop(page)
 })
 
 test('a key of the piano roll pressed sounds on the synth while held, falls silent once let go of, and puts no note', async ({

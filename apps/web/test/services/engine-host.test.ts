@@ -336,6 +336,59 @@ const playsFromTheStart = (engine: Started) => {
 /** About a bar at the slice's tempo: the kick on its first step sounds once in it. */
 const bar = Math.ceil((2.1 * sampleRate) / 128)
 
+/** The board after the engine takes what the page sent and plays a block. */
+const board = (engine: Started) => {
+  engine.settle()
+  engine.blocks(1)
+  return engine.engine.readTelemetry()
+}
+
+test('Play pressed while it plays pauses it where it is, and pressed again plays on from there', () =>
+  hosting((hosting) =>
+    Effect.gen(function* () {
+      const { host, registry } = hosting
+      const first = yield* playing(hosting)
+      first.blocks(100)
+      yield* host.togglePlay
+      expect(registry.get(host.transport)).toBe('stopped')
+      const paused = board(first)
+      expect(paused).toMatchObject({ playing: false })
+      expect(paused?.position).toBeGreaterThan(stepTicks)
+      first.blocks(100)
+      expect(first.engine.readTelemetry()).toMatchObject({ playing: false, position: paused?.position })
+      yield* host.togglePlay
+      expect(registry.get(host.transport)).toBe('playing')
+      expect(board(first)).toMatchObject({ playing: true, position: paused?.position })
+    })
+  ))
+
+test('To start takes it back to the start, playing on if it plays; Stop stops it there at once', () =>
+  hosting((hosting) =>
+    Effect.gen(function* () {
+      const { host, registry } = hosting
+      const first = yield* playing(hosting)
+      first.blocks(100)
+      yield* host.toStart
+      expect(registry.get(host.transport)).toBe('playing')
+      playsFromTheStart(first)
+      first.blocks(100)
+      yield* host.stop
+      expect(registry.get(host.transport)).toBe('stopped')
+      expect(board(first)).toMatchObject({ playing: false, position: 0 })
+      // Stopped, To start leaves it there; paused, it takes it back too.
+      yield* host.toStart
+      expect(board(first)).toMatchObject({ playing: false, position: 0 })
+      yield* host.togglePlay
+      playsFromTheStart(first)
+      first.blocks(100)
+      yield* host.togglePlay
+      yield* host.toStart
+      expect(board(first)).toMatchObject({ playing: false, position: 0 })
+      yield* host.togglePlay
+      playsFromTheStart(first)
+    })
+  ))
+
 test("another tab's hold plays over the document, as this page's own does, until it lets go", () =>
   hosting((hosting) =>
     Effect.gen(function* () {

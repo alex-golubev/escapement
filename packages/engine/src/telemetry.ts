@@ -37,7 +37,7 @@ export interface Telemetry {
   /** 1 is full scale. */
   readonly peaks: readonly [number, number]
   readonly playing: boolean
-  /** Whole ticks from the loop's start at the last block's start; 0 while stopped. */
+  /** Whole ticks from the loop's start at the last block's start: where it plays, or where it stands stopped. */
   readonly position: number
   /** The loop's ticks at the last block's start, the length the position goes round in; 0 while stopped. */
   readonly loopTicks: number
@@ -82,7 +82,7 @@ export const telemetryWriter = (board: SharedArrayBuffer) => {
 // A write takes nanoseconds, so a few tries are plenty.
 const readAttempts = 4
 
-/** A consistent snapshot, or undefined if the worklet kept writing through every try. */
+/** The last block's snapshot; undefined before the first, or if the worklet kept writing through every try. */
 export const telemetryReader = (board: SharedArrayBuffer) => {
   const words = new Uint32Array(board)
   // Atomics works on integers only.
@@ -116,7 +116,7 @@ export const telemetryReader = (board: SharedArrayBuffer) => {
     }),
     frame: Atomics.load(words, frame.high) * wordSpan + Atomics.load(words, frame.low)
   })
-  return (): Telemetry | undefined => {
+  const consistent = (): Telemetry | undefined => {
     for (let attempt = 0; attempt < readAttempts; attempt++) {
       const before = Atomics.load(words, sequence)
       if (before % 2 !== 0) continue
@@ -125,4 +125,6 @@ export const telemetryReader = (board: SharedArrayBuffer) => {
     }
     return undefined
   }
+  // No block has a tempo of 0, so the board's zeros before the first are none; the count of blocks wraps round to 0.
+  return (): Telemetry | undefined => [consistent()].find((snapshot) => (snapshot?.tempo ?? 0) > 0)
 }

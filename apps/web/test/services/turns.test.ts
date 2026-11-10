@@ -1,5 +1,5 @@
 import { compile } from '@escapement/compiler'
-import { type Command, NodeHandle, setStripParam, type Transaction } from '@escapement/engine'
+import { type Command, NodeHandle, noPlace, setStripParam, type Transaction } from '@escapement/engine'
 import { plugins, Sha256 } from '@escapement/engine-description'
 import { addTrack, createProject, editorOf, HoldTarget, newWriter, readProject, setTrackStrip } from '@escapement/model'
 import { Cause, Effect, Logger, Option } from 'effect'
@@ -33,7 +33,13 @@ test('a turn plays each move at once and writes the document once, its last valu
     const sent: Array<Transaction> = []
     yield* compile(
       session.project,
-      { listening: session.listening, holds: session.holds, playing: Atom.make(false), auditions: session.auditions },
+      {
+        listening: session.listening,
+        holds: session.holds,
+        playing: Atom.make(false),
+        place: Atom.make(noPlace),
+        auditions: session.auditions
+      },
       {
         send: (transaction) => sent.push(transaction) > 0,
         storeSample: () => Effect.void,

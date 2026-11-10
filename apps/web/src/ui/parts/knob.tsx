@@ -7,15 +7,13 @@ import './knob.css'
 /** A knob goes from its lowest position to its highest over this many pixels. */
 const knobPixels = 200
 
-/**
- * On the parameter's scale, from its lowest position to its highest over `pixels`, a key press a hundredth, or of
- * whole numbers, one.
- */
+/** Lowest to highest over `pixels`, with Shift over ten times as many; a key a hundredth, or of whole numbers, one. */
 const scaleOf = (param: AnyParam, pixels: number): TurnScale => ({
   units: (value) => paramPosition(param, value),
   value: (position) => paramValue(param, position),
   range: { minimum: 0, maximum: 1 },
   pixelsPerUnit: pixels,
+  fine: { pixelsPerUnit: 10 * pixels, value: (position) => paramValue(param, position) },
   step: Boolean.match(param.whole, { onTrue: () => paramPosition(param, param.min + 1), onFalse: () => 0.01 }),
   default: param.default
 })

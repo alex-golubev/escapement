@@ -77,6 +77,13 @@ test("the meters in use reach the page, each under its node's handle, and the wo
   expect(telemetryReader(board)()?.meters).toHaveLength(meterCount)
 })
 
+test('a board no block has been written to has nothing to read; one whose count of blocks wrapped round to 0 has', () => {
+  const board = createTelemetryBoard()
+  expect(telemetryReader(board)()).toBeUndefined()
+  telemetryWriter(board)(engineWords([0, 1, 0, 0, 0], [0, 0]), 2 ** 32 * 128)
+  expect(telemetryReader(board)()?.blocks).toBe(0)
+})
+
 test('a read that catches the worklet mid-write is not returned', () => {
   const board = createTelemetryBoard()
   telemetryWriter(board)(engineWords([1, 1, 0, 0, 0], [0.5, 0.5]), 0)

@@ -1,6 +1,6 @@
 import 'fake-indexeddb/auto'
 import { compile } from '@escapement/compiler'
-import { Command, type Transaction } from '@escapement/engine'
+import { Command, noPlace, type Transaction } from '@escapement/engine'
 import { defaultTempo, plugins, Sha256, Tick } from '@escapement/engine-description'
 import {
   addClip,
@@ -324,6 +324,7 @@ test("a knob turned in one tab plays in another's engine as it turns, never goin
           listening: b.session.listening,
           holds: b.session.played,
           playing: Atom.make(false),
+          place: Atom.make(noPlace),
           auditions: b.session.auditions
         },
         {

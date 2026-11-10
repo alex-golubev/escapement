@@ -22,7 +22,7 @@ pub struct Telemetry {
     pub peaks: [f32; CHANNELS],
     /// 1 while the transport plays, else 0.
     pub playing: u32,
-    /// Whole ticks from the loop's start at the last block's start; 0 while stopped.
+    /// Whole ticks from the loop's start at the last block's start: where it plays, or where it stands stopped.
     pub position: u32,
     /// The loop's ticks at the last block's start, the length the position goes round in; 0 while stopped.
     pub loop_ticks: u32,

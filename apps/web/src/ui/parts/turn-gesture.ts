@@ -6,21 +6,23 @@ import { useEffect, useRef } from 'preact/hooks'
 import type { Turn } from '../../services/turns'
 import { useCore } from '../core-context'
 
-/** How a control turns: in units a drag and a key move it by, kept in their range. */
-export interface TurnScale {
-  readonly units: (value: number) => number
-  readonly value: (units: number) => number
-  readonly range: { readonly minimum: number; readonly maximum: number }
+/** How far a drag moves a control, and where the value lands. */
+interface TurnMove {
   /** Pixels up per unit. */
   readonly pixelsPerUnit: number
-  /** Units per arrow key press. */
+  readonly value: (units: number) => number
+}
+
+/** How a control turns: in units a drag and a key move it by, kept in their range; with Shift, `fine`. */
+export interface TurnScale extends TurnMove {
+  readonly units: (value: number) => number
+  readonly range: { readonly minimum: number; readonly maximum: number }
+  readonly fine: TurnMove
+  /** Units per arrow key press, landing on `fine`'s values: a step keeps what Shift set finer. */
   readonly step: number
   /** Where a double click puts it. */
   readonly default: number
 }
-
-/** With Shift, a tenth as far for the same move. */
-const fine = 0.1
 
 /** Where a key takes the control, in units, from where it stands. */
 type KeyMove = (scale: TurnScale, from: number) => number
@@ -81,11 +83,11 @@ export const useTurnGesture = (target: HoldTarget, value: number, scale: TurnSca
   /** Where a move goes from: until the page's first, what plays, which another tab may be turning meanwhile. */
   const from = (now: Turning) =>
     Boolean.match(now.moved, { onTrue: () => now.units, onFalse: () => scale.units(shown) })
-  const moveTo = (now: Turning, units: number) => {
+  const moveTo = (now: Turning, units: number, { value }: TurnMove = scale) => {
     // Kept in range, so a drag past an end turns back at once, and to a billionth, so moves adding up to an end land on it.
     now.units = Number.clamp(Number.round(units, 9), scale.range)
     now.moved = true
-    now.turn.move(scale.value(now.units))
+    now.turn.move(value(now.units))
   }
   const end = (by: Turner) =>
     Option.match(turnBy(by), {
@@ -124,13 +126,13 @@ export const useTurnGesture = (target: HoldTarget, value: number, scale: TurnSca
                 })
               },
               onFalse: () => {
-                const pixels =
-                  (now.y - event.clientY) * Boolean.match(event.shiftKey, { onTrue: () => fine, onFalse: () => 1 })
+                const pixels = now.y - event.clientY
+                const move = Boolean.match(event.shiftKey, { onTrue: () => scale.fine, onFalse: () => scale })
                 now.y = event.clientY
                 // A move sideways is no turn: a value off the knob's grid would come back from its position changed.
                 Option.map(
                   Option.liftPredicate(pixels, (up) => up !== 0),
-                  (up) => moveTo(now, from(now) + up / scale.pixelsPerUnit)
+                  (up) => moveTo(now, from(now) + up / move.pixelsPerUnit, move)
                 )
               }
             })
@@ -149,7 +151,10 @@ export const useTurnGesture = (target: HoldTarget, value: number, scale: TurnSca
             event.preventDefault()
             const now = Option.getOrElse(turning.current, () => begin('keys'))
             // A drag under way keeps the control.
-            Boolean.match(now.by === 'keys', { onTrue: () => moveTo(now, move(scale, from(now))), onFalse: () => {} })
+            Boolean.match(now.by === 'keys', {
+              onTrue: () => moveTo(now, move(scale, from(now)), scale.fine),
+              onFalse: () => {}
+            })
           }
         }),
       onKeyUp: () => end('keys'),

@@ -32,32 +32,38 @@ export const keepAudible = (
   return Boolean.match(heard > 0, { onTrue: () => all.slice(heard), onFalse: () => all })
 }
 
-/** Where the transport is heard: the tick, and the loop it goes round in. */
+/** Where the transport is heard: its tick, the loop it goes round in, its tempo, and whether it plays. */
 export interface Heard {
+  /** Stopped, where it stands. */
   readonly tick: number
+  /** 0 while stopped. */
   readonly loop: number
+  readonly tempo: number
+  readonly playing: boolean
 }
 
-/**
- * Where the transport is heard at `heardFrame`, from the snapshot heard then at its own tempo, within its own loop. None
- * while what is heard was rendered stopped or before every snapshot.
- */
+/** Heard at `heardFrame`, by the snapshot heard then: playing, counted on in its loop; stopped, where it stands. */
 export const heardTick = (
   snapshots: ReadonlyArray<Snapshot>,
   heardFrame: number,
   sampleRate: number
 ): Option.Option<Heard> =>
-  Option.fromUndefinedOr(snapshots.findLast(({ frame }) => frame <= heardFrame)).pipe(
-    Option.filter(({ playing }) => playing),
-    Option.map(({ tempo, position, loopTicks, frame }) => {
-      const ticksPerFrame = (tempo * ticksPerQuarter) / (60 * sampleRate)
-      return { tick: (position + (heardFrame - frame) * ticksPerFrame) % loopTicks, loop: loopTicks }
+  Option.map(
+    Option.fromUndefinedOr(snapshots.findLast(({ frame }) => frame <= heardFrame)),
+    ({ playing, tempo, position, loopTicks, frame }) => ({
+      tick: Boolean.match(playing, {
+        onTrue: () => (position + ((heardFrame - frame) * tempo * ticksPerQuarter) / (60 * sampleRate)) % loopTicks,
+        onFalse: () => position
+      }),
+      loop: loopTicks,
+      tempo,
+      playing
     })
   )
 
 /**
- * The tick heard now, read on every frame from the latest snapshot, if any: the snapshots it may still need are kept
- * from frame to frame. None until the output starts, and while `heardTick` gives none.
+ * Where the transport is heard now, read on every frame from the latest snapshot, if any: the snapshots it may still
+ * need are kept from frame to frame. None until the output starts, and while `heardTick` gives none.
  */
 export const heardTickReader = (context: Pick<AudioContext, 'getOutputTimestamp' | 'currentTime' | 'sampleRate'>) => {
   const heard: { snapshots: ReadonlyArray<Snapshot> } = { snapshots: [] }

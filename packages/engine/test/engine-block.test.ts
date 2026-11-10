@@ -3,7 +3,7 @@ import { Option } from 'effect'
 import { RingBuffer } from 'ringbuf.js'
 import { expect, test } from 'vitest'
 import { breakStream } from '../src/command-ring'
-import { Command, encodeCommand, LoopTicks, PageNote } from '../src/commands'
+import { Command, encodeCommand, LoopTicks, PageNote, noPlace } from '../src/commands'
 import { DeviceEdit } from '../src/device-edits'
 import { EngineEvent } from '../src/events'
 import { handleOf, NodeHandle, PatternHandle } from '../src/handles'
@@ -77,22 +77,7 @@ test('every telemetry field reaches the page in its own place', () => {
     velocity: 1,
     length: 1
   }))
-  expect(engine.readTelemetry()).toEqual({
-    blocks: 0,
-    epoch: 0,
-    lostEvents: 0,
-    lostNotes: 0,
-    heapCalls: 0,
-    peaks: [0, 0],
-    playing: false,
-    position: 0,
-    loopTicks: 0,
-    tempo: 0,
-    streamLost: false,
-    overs: [0, 0],
-    meters: [],
-    frame: 0
-  })
+  expect(engine.readTelemetry()).toBeUndefined()
   engine.send({
     edits: [
       DeviceEdit.Reset({ epoch: 7 }),
@@ -105,7 +90,7 @@ test('every telemetry field reaches the page in its own place', () => {
       missingNode,
       missingNode,
       Command.SetTempo({ bpm: 96 }),
-      Command.SetTransport({ playing: true, loopTicks: LoopTicks(19_207) })
+      Command.SetTransport({ playing: true, loopTicks: LoopTicks(19_207), place: noPlace })
     ]
   })
   // No command makes the audio thread touch the heap; this does.
@@ -302,7 +287,7 @@ test('the audio thread never touches the heap, from its start on', () => {
     Command.NoteOff({ node: tone, note: PageNote(1) }),
     Command.NoteOff({ node: insert, note: PageNote(2) }),
     Command.SetTempo({ bpm: 140 }),
-    Command.SetTransport({ playing: true, loopTicks: LoopTicks(4) })
+    Command.SetTransport({ playing: true, loopTicks: LoopTicks(4), place: noPlace })
   ]
   roomy.send(live(...commands))
   const edits = [

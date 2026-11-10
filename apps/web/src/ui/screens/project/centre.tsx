@@ -31,7 +31,7 @@ export const CentreView = () => {
   )
 }
 
-/** A button on the transport bar for each thing the middle shows, lit for the one it does. */
+/** A button at the foot for each thing the middle shows, lit for the one it does. */
 export const CentreButtons = () => {
   const { view } = useCore()
   const shown = useAtomValue(view.centre)

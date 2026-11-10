@@ -13,13 +13,16 @@ import {
   type Heard,
   heardTickReader,
   NodeHandle,
+  noPlace,
+  type Place,
+  PlacePress,
   type PlaybackStats,
   playbackStatsOf,
   type Send,
   type Telemetry,
   type Transaction
 } from '@escapement/engine'
-import { paramValue } from '@escapement/engine-description'
+import { paramValue, Tick } from '@escapement/engine-description'
 import { HoldTarget, holding, type Id, lettingGo } from '@escapement/model'
 import {
   Array,
@@ -124,10 +127,7 @@ export interface Frame {
   readonly telemetry: Telemetry | undefined
   /** Whose meter each node in the telemetry has, a track's by ID, by the node's handle. */
   readonly meters: ReadonlyMap<NodeHandle, Id>
-  /**
-   * Where the transport is heard now: its tick, between two whole ones as time goes, and the loop it goes round in;
-   * none while stopped or before it is heard.
-   */
+  /** Where the transport is heard now, playing or standing; none before it is heard. */
   readonly heard: Heard | undefined
   /** Counts the browser keeps up to date; none where it reports none. */
   readonly stats: PlaybackStats | undefined
@@ -150,11 +150,12 @@ export interface EngineHost {
   readonly awake: Atom.Atom<boolean>
   /** Each engine plays the arrangement as this says. */
   readonly transport: Atom.Atom<Transport>
-  /**
-   * Plays the arrangement, waking the sound first if it sleeps; stops it if it plays. It does nothing while the sound wakes,
-   * or while the engine isn't ready.
-   */
+  /** Plays on from where it stands, waking the sound first, or pauses it; nothing while it wakes or isn't ready. */
   readonly togglePlay: Effect.Effect<void>
+  /** Stops it, a Play still waking the sound too, back at its start in one change; nothing while it isn't ready. */
+  readonly stop: Effect.Effect<void>
+  /** Puts the arrangement back at its start, playing on if it plays; nothing while the engine isn't ready. */
+  readonly toStart: Effect.Effect<void>
   /** Wakes the sound if it sleeps, as a note played by hand needs it; nothing while the engine isn't ready. */
   readonly wake: Effect.Effect<void>
   /**
@@ -296,7 +297,14 @@ export const engineHostLayer = Layer.effect(
     )
     const transport = Atom.make<Transport>(playsOn).pipe(Atom.keepAlive)
     const playing = Atom.make((get) => get(transport) === 'playing').pipe(Atom.keepAlive)
-    const stop = Effect.sync(() => registry.set(transport, 'stopped'))
+    /** Stops the arrangement where it is. */
+    const stopped = () => registry.set(transport, 'stopped')
+    const halt = Effect.sync(stopped)
+    /** Where this page last put the position: each put a press of its own, so an engine takes it once. */
+    const place = Atom.make<Place>(noPlace).pipe(Atom.keepAlive)
+    /** The position put at the arrangement's start, by a press after the last, 0 left out as no press. */
+    const backToStart = () =>
+      registry.update(place, ({ press }) => ({ press: PlacePress((press % (2 ** 32 - 1)) + 1), tick: Tick(0) }))
     const samples = Atom.make(manifestLines).pipe(Atom.keepAlive)
     const events = Atom.make<ReadonlyArray<ShownEvent>>([]).pipe(Atom.keepAlive)
     const restarts = Atom.make<Restarts>(
@@ -334,10 +342,7 @@ export const engineHostLayer = Layer.effect(
 
     /** How long since `since` once the engine plays; nothing if the arrangement stops first. */
     const backIn = (engine: OutputEngine, since: bigint) => {
-      const plays = () => {
-        const telemetry = engine.readTelemetry()
-        return telemetry !== undefined && telemetry.blocks > 0 && telemetry.playing
-      }
+      const plays = () => engine.readTelemetry()?.playing === true
       return Effect.void.pipe(
         Effect.repeat({ while: () => !plays() && registry.get(playing), schedule: Schedule.spaced(backEvery) }),
         Effect.andThen(Ref.set(silentSince, Option.none())),
@@ -368,7 +373,7 @@ export const engineHostLayer = Layer.effect(
         const send = warnedSend(engine.send, () => warn(ringFull))
         const compiler = yield* compile(
           project,
-          { listening, holds: played, playing, auditions },
+          { listening, holds: played, playing, place, auditions },
           { send, storeSample: engine.storeSample, evictSample: engine.evictSample, running },
           sounds
         )
@@ -431,7 +436,7 @@ export const engineHostLayer = Layer.effect(
 
     /** Nothing plays the arrangement, and Play can't be pressed. */
     const giveUp = (cause: Cause.Cause<RunFailure>, gaveUp: GaveUp) =>
-      Effect.sync(() => registry.set(state, EngineState.Failed({ cause, gaveUp }))).pipe(Effect.andThen(stop))
+      Effect.sync(() => registry.set(state, EngineState.Failed({ cause, gaveUp }))).pipe(Effect.andThen(halt))
 
     /**
      * The engine let go of its audio thread, and the page reopens in a new process, which the thread doesn't follow;
@@ -446,11 +451,11 @@ export const engineHostLayer = Layer.effect(
         const recent = [...before.filter((at) => now - at < hangWindowMillis), now]
         const restarted = registry.get(restarts).count + 1
         yield* Boolean.match(recent.length >= failureLimit, {
-          onTrue: () => stop,
+          onTrue: () => halt,
           onFalse: () =>
             reopen({ hangs: recent, playing: registry.get(playing), restarts: restarted, hang: error.message }).pipe(
               Effect.catch((cannot) =>
-                Effect.logError("The page couldn't reopen after the hang", cannot).pipe(Effect.andThen(stop))
+                Effect.logError("The page couldn't reopen after the hang", cannot).pipe(Effect.andThen(halt))
               )
             )
         })
@@ -632,12 +637,15 @@ export const engineHostLayer = Layer.effect(
       Effect.andThen(Effect.sync(followState))
     )
 
+    const whenReady = <E>(effect: Effect.Effect<void, E>) =>
+      effect.pipe(Effect.when(Effect.sync(() => EngineState.$is('Ready')(registry.get(state)))), Effect.asVoid)
+
     /** What a press of Play does, by where it stands. */
     const playPress: Record<Transport, Effect.Effect<void>> = {
       stopped: Effect.sync(() => registry.set(transport, 'starting')).pipe(
         Effect.andThen(wake),
         // A context that won't wake leaves the arrangement stopped.
-        Effect.onError(() => stop),
+        Effect.onError(() => halt),
         Effect.andThen(
           Effect.sync(() => registry.set(transport, 'playing')).pipe(
             // Unless a failure stopped it meanwhile.
@@ -648,7 +656,7 @@ export const engineHostLayer = Layer.effect(
       ),
       // The sound wakes already.
       starting: Effect.void,
-      playing: stop
+      playing: halt
     }
 
     return {
@@ -656,12 +664,16 @@ export const engineHostLayer = Layer.effect(
       restarts,
       awake: running,
       transport,
-      // As the button: an engine that isn't ready isn't pressed.
-      togglePlay: Effect.suspend(() => playPress[registry.get(transport)]).pipe(
-        Effect.when(Effect.sync(() => EngineState.$is('Ready')(registry.get(state)))),
-        Effect.asVoid
-      ),
-      wake: wake.pipe(Effect.when(Effect.sync(() => EngineState.$is('Ready')(registry.get(state)))), Effect.asVoid),
+      // As the buttons: an engine that isn't ready isn't pressed.
+      togglePlay: Effect.suspend(() => playPress[registry.get(transport)]).pipe(whenReady),
+      stop: Effect.sync(() =>
+        Atom.batch(() => {
+          stopped()
+          backToStart()
+        })
+      ).pipe(whenReady),
+      toStart: Effect.sync(backToStart).pipe(whenReady),
+      wake: whenReady(wake),
       restart: Effect.suspend(() =>
         Option.match(registry.get(current), {
           onNone: () => start(false),

@@ -1,3 +1,4 @@
+import { noPlace, PlacePress } from '@escapement/engine'
 import { blocks, pageSounds, sampleRate, startEngine, type TestEngine } from '@escapement/engine/testing'
 import { paramValue, plugins, Sha256, strip, Tick, ticksPerQuarter } from '@escapement/engine-description'
 import {
@@ -361,10 +362,11 @@ const applied = (
 // Longer than the engine's fades, a sound's length and the filter's tail.
 const quietBlocks = 40
 
-/** A bar of the arrangement from its start, at the project's tempo, between two quiet stretches; `play` plays it. */
-const played = (engine: TestEngine, bpm: number, play: (playing: boolean) => void) => {
+/** A bar from the start at the project's tempo between quiet stretches: `toStart` puts it there, `play` plays it. */
+const played = (engine: TestEngine, bpm: number, toStart: () => void, play: (playing: boolean) => void) => {
   blocks(engine, quietBlocks)
   const loopFrames = (barTicks * sampleRate * 60) / (bpm * ticksPerQuarter)
+  toStart()
   play(true)
   const heard = blocks(engine, Math.ceil(loopFrames / 128))
   play(false)
@@ -399,6 +401,11 @@ const stepsAsFromNothing = ({ asleep, edits }: Run) =>
     const holds = batchedState<Holds>(noHolds)
     const playing = batchedState(false)
     const play = (value: boolean) => registry.set(playing, value)
+    const place = batchedState(noPlace)
+    const toStart = () => {
+      const { press } = registry.get(place)
+      registry.set(place, { press: PlacePress(press + 1), tick: Tick(0) })
+    }
     const running = Atom.make(true)
     /** Edits the engine sleeps through yet. */
     const sleeping = { edits: 0 }
@@ -410,7 +417,7 @@ const stepsAsFromNothing = ({ asleep, edits }: Run) =>
     const asked = { stores: 0, evicts: 0 }
     const compiler = yield* compile(
       atoms,
-      { listening, holds, playing, auditions: Atom.make<Auditions>(noAuditions) },
+      { listening, holds, playing, place, auditions: Atom.make<Auditions>(noAuditions) },
       {
         send: engine.send,
         storeSample: (hash, load) => {
@@ -463,13 +470,13 @@ const stepsAsFromNothing = ({ asleep, edits }: Run) =>
       heldValue(registry.get(holds), HoldTarget.Tempo()),
       () => readProject(project.doc).value.tempo
     )
-    const stepByStep = played(engine, bpm, play)
+    const stepByStep = played(engine, bpm, toStart, play)
     const before = { ...asked }
     const rebuilt = yield* compiler.rebuild
     yield* sounds.settled
     // A bug building step by step, which the rebuild would hide, fails here.
     yield* compiler.stored
-    const fromNothing = played(engine, bpm, play)
+    const fromNothing = played(engine, bpm, toStart, play)
     return (
       rebuilt &&
       asked.stores === before.stores &&

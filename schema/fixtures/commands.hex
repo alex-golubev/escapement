@@ -11,10 +11,12 @@
 3f070000 00
 # SetTempo {"bpm":128.5}
 05000000 04008000 43
-# SetTransport {"playing":true,"loopTicks":3840}
-09000000 05010000 00000f00 00
-# SetTransport {"playing":false,"loopTicks":4294967295}
-09000000 05000000 00ffffff ff
+# SetTransport {"playing":true,"loopTicks":3840,"place":{"press":0,"tick":0}}
+11000000 05010000 00000f00 00000000
+00000000 00
+# SetTransport {"playing":false,"loopTicks":4294967295,"place":{"press":4294967295,"tick":1920}}
+11000000 05000000 00ffffff ffffffff
+ff800700 00
 # PanicAudio {"code":7}
 05000000 06070000 00
 # HangAudio {"code":8}

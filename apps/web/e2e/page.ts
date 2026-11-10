@@ -162,11 +162,17 @@ export const showCentre = async (page: Page, name: string) => {
 /** For a poll of what moves as the arrangement plays: every 20 ms, as a poll a second lands on a loop's same places. */
 export const heard: Parameters<typeof expect.poll>[1] = { timeout: 10_000, intervals: [20] }
 
-/** Play pressed, to play or to stop. */
+/** Play pressed, to play or to pause. */
 export const pressPlay = async (page: Page, playing: boolean) => {
   const play = page.getByRole('button', { name: 'Play', exact: true })
   await play.click()
   await expect(play).toHaveAttribute('aria-pressed', String(playing))
+}
+
+/** Stop pressed: stopped at the start. */
+export const pressStop = async (page: Page) => {
+  await page.getByRole('button', { name: 'Stop', exact: true }).click()
+  await expect(page.getByRole('button', { name: 'Play', exact: true })).toHaveAttribute('aria-pressed', 'false')
 }
 
 /** The master's meters by their side, 0 left and 1 right: those that must stay silent, and those one of which rises. */
