@@ -1,7 +1,16 @@
 // @vitest-environment happy-dom
 import { RegistryContext } from '@effect/atom-react'
 import { EngineStartError, NodeHandle, ProcessorError, type Telemetry } from '@escapement/engine'
-import { MidiKey, type ParamId, paramPosition, paramValue, plugins, Sha256, Tick } from '@escapement/engine-description'
+import {
+  defaultTempo,
+  MidiKey,
+  type ParamId,
+  paramPosition,
+  paramValue,
+  plugins,
+  Sha256,
+  Tick
+} from '@escapement/engine-description'
 import {
   addClip,
   addNote,
@@ -97,6 +106,8 @@ const quietHost = (frame: { current: Frame | undefined }): EngineHost => ({
   awake: Atom.make(false),
   transport: Atom.make<Transport>('stopped'),
   togglePlay: Effect.void,
+  stop: Effect.void,
+  toStart: Effect.void,
   wake: Effect.void,
   restart: Effect.void,
   rebuild: Effect.void,
@@ -406,9 +417,9 @@ test.each<[string, Partial<EngineHost>]>([
 )
 
 test.each<[Transport, boolean, boolean, string]>([
-  ['stopped', false, false, 'Play: only for you, each tab listens on its own'],
+  ['stopped', false, false, 'Play from where it stands: only for you, each tab listens on its own'],
   ['starting', false, true, 'Play waits while the sound starts'],
-  ['playing', true, false, 'Stop: only for you; the other tabs play on']
+  ['playing', true, false, 'Pause: it stops where it is, only for you; the other tabs play on']
 ])('%s, Play is pressed: %s, disabled: %s, and says "%s"', (transport, lit, disabled, hint) =>
   page(
     ({ button }) =>
@@ -421,6 +432,34 @@ test.each<[Transport, boolean, boolean, string]>([
     { transport: Atom.make(transport) }
   )
 )
+
+test('To start and Stop each do their own to the transport; Record has nothing to record into yet, and says so', () => {
+  const done: Array<string> = []
+  return page(
+    ({ button }) =>
+      Effect.gen(function* () {
+        button('To start').click()
+        button('Stop').click()
+        yield* drawn()
+        expect(done).toEqual(['to start', 'stop'])
+        expect(button('Record').disabled).toBe(true)
+        expect(button('Record').dataset.hint).toBe('Record: not yet, there is nothing to record into')
+      }),
+    { toStart: Effect.sync(() => done.push('to start')), stop: Effect.sync(() => done.push('stop')) }
+  )
+})
+
+test('the bar counter and the time show where the arrangement is heard, playing or stopped, from the start before any frame', () =>
+  page(({ target, frame }) =>
+    Effect.gen(function* () {
+      const shown = (label: string) => target.querySelector(`[role="timer"][aria-label="${label}"]`)?.textContent
+      expect([shown('Position'), shown('Time')]).toEqual(['BAR001.01.000', 'TIME00:00.000'])
+      yield* heardAt(frame, 2.5)
+      expect([shown('Position'), shown('Time')]).toEqual(['BAR003.03.000', 'TIME00:05.000'])
+      yield* heardAt(frame, 0.25, false)
+      expect([shown('Position'), shown('Time')]).toEqual(['BAR001.02.000', 'TIME00:00.500'])
+    })
+  ))
 
 test("Play the sound stopped for can't be pressed, and says why; undo with nothing to undo says so", () =>
   page(
@@ -1261,7 +1300,7 @@ test("the Arrangement and the mixer's rack stay where they were scrolled as the 
   )
 })
 
-test('the tempo is dragged in whole BPM, steps with the keys and goes back to 120 on a double click', () =>
+test('the tempo is dragged in whole BPM, with Shift in hundredths, steps with the keys and goes back to 120 on a double click', () =>
   page(({ doc, target }) =>
     Effect.gen(function* () {
       const field = Option.getOrThrow(
@@ -1272,15 +1311,16 @@ test('the tempo is dragged in whole BPM, steps with the keys and goes back to 12
       pointer(field, 'pointerdown', 100)
       pointer(field, 'pointermove', 70)
       yield* drawn()
-      expect(shown()).toBe('130')
+      expect(shown()).toBe('130.00')
       pointer(field, 'pointermove', 40, { shiftKey: true })
       yield* drawn()
-      expect(shown()).toBe('131')
+      expect(shown()).toBe('130.30')
       pointer(field, 'pointerup', 40)
-      expect(readProject(doc).value.tempo).toBe(131)
+      expect(readProject(doc).value.tempo).toBe(130.3)
+      // A key steps a whole BPM, keeping the hundredths.
       key(field, 'ArrowDown')
       keyUp(field)
-      expect(readProject(doc).value.tempo).toBe(130)
+      expect(readProject(doc).value.tempo).toBe(129.3)
       field.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))
       expect(readProject(doc).value.tempo).toBe(120)
     })
@@ -1572,7 +1612,7 @@ test('the transport bar leads to the list of projects, first on it', () =>
   page(({ target }) =>
     Effect.sync(() => {
       const first = target.querySelector('.transport > *')
-      expect(first?.textContent).toBe('Projects')
+      expect(first?.getAttribute('aria-label')).toBe('Projects')
       expect(first?.getAttribute('href')).toBe(import.meta.env.BASE_URL)
     })
   ))
@@ -2375,13 +2415,18 @@ test('a note dragged in the piano roll stays under the pointer as the wheel scro
 /** A bar of the piano roll, in pixels. */
 const rollBar = barSteps * stepWidth
 
-/** The page's frames heard so many bars into a loop of sixteen of the arrangement, or none heard, as stopped; a few frames on. */
-const heardAt = (frame: { current: Frame | undefined }, bars: Option.Option<number>) => {
+/** The page's frames hearing the arrangement so many bars in, round a loop of sixteen or stopped; a few frames on. */
+const heardAt = (frame: { current: Frame | undefined }, bars: number, playing = true) => {
   frame.current = {
     engine: 1,
     telemetry: undefined,
     meters: new Map(),
-    heard: Option.getOrUndefined(Option.map(bars, (bars) => ({ tick: bars * barTicks, loop: 16 * barTicks }))),
+    heard: {
+      tick: bars * barTicks,
+      loop: Boolean.match(playing, { onTrue: () => 16 * barTicks, onFalse: () => 0 }),
+      tempo: defaultTempo,
+      playing
+    },
     stats: undefined
   }
   return drawn(50)
@@ -2461,7 +2506,7 @@ test("the piano roll scrolls across with a swipe and with Shift and the wheel, u
     })
   ))
 
-test('the piano roll follows the playhead to its bar as it starts to be heard and as it leaves; not once scrolled away, nor while a note is held', () =>
+test('the piano roll follows the playhead to its bar as it starts to be heard out of sight and as it leaves; not once scrolled away, nor while a note is held', () =>
   page(({ doc, target, frame }) =>
     Effect.gen(function* () {
       // Sixteen bars long, in a roll four bars wide.
@@ -2469,71 +2514,74 @@ test('the piano roll follows the playhead to its bar as it starts to be heard an
       yield* drawn()
       /** Where the click put the note of the key. */
       const tickOf = (key: number) => notesByName(doc).find((note) => note.key === key)?.tick
-      // Opened while it plays: on the playhead's bar.
-      yield* heardAt(frame, Option.some(2.5))
+      // Opened while it plays, the playhead in sight: the roll stays at the pattern's start.
+      yield* heardAt(frame, 2.5)
       yield* openKickClip(target)
       const { click, at, wheel } = yield* rollIn(target)
       yield* drawn(50)
       click(0, 60)
       yield* drawn()
-      expect(tickOf(60)).toBe(2 * barTicks)
+      expect(tickOf(60)).toBe(0)
       // Past the right edge of the four bars shown: to the next.
-      yield* heardAt(frame, Option.some(5.9))
-      yield* heardAt(frame, Option.some(6))
+      yield* heardAt(frame, 3.9)
+      yield* heardAt(frame, 4)
       click(0, 61)
       yield* drawn()
-      expect(tickOf(61)).toBe(6 * barTicks)
+      expect(tickOf(61)).toBe(4 * barTicks)
       // Round from the end of the loop to its start.
-      yield* heardAt(frame, Option.some(9.5))
-      yield* heardAt(frame, Option.some(0.25))
+      yield* heardAt(frame, 9.5)
+      yield* heardAt(frame, 0.25)
       click(0, 62)
       yield* drawn()
       expect(tickOf(62)).toBe(0)
       // Scrolled away from it: the roll stays where it was taken, the playhead leaving or coming in sight.
       wheel({ deltaX: 8 * rollBar })
       yield* drawn()
-      yield* heardAt(frame, Option.some(3.9))
-      yield* heardAt(frame, Option.some(4))
+      yield* heardAt(frame, 3.9)
+      yield* heardAt(frame, 4)
       click(0, 63)
       yield* drawn()
       expect(tickOf(63)).toBe(8 * barTicks)
       // In sight again, it leaves while a note is held: no jump under the pointer, nor once let go.
-      yield* heardAt(frame, Option.some(11.9))
+      yield* heardAt(frame, 11.9)
       at('pointerdown', 0, 64)
-      yield* heardAt(frame, Option.some(12))
+      yield* heardAt(frame, 12)
       at('pointerup', 0, 64, { buttons: 0 })
       yield* drawn()
       expect(tickOf(64)).toBe(8 * barTicks)
-      yield* heardAt(frame, Option.some(12.5))
+      yield* heardAt(frame, 12.5)
       click(0, 65)
       yield* drawn()
       expect(tickOf(65)).toBe(8 * barTicks)
       // Scrolled by hand in the frame the playhead leaves, as the scroll takes it out: the hand's, the roll staying.
-      yield* heardAt(frame, Option.some(10.95))
+      yield* heardAt(frame, 10.95)
       wheel({ deltaX: -(rollBar - rollBar / barSteps) })
-      yield* heardAt(frame, Option.some(11.1))
-      yield* heardAt(frame, Option.some(11.2))
+      yield* heardAt(frame, 11.1)
+      yield* heardAt(frame, 11.2)
       click(0, 69)
       yield* drawn()
       expect(tickOf(69)).toBe(7 * barTicks + stepTicks)
       // Back in sight, it leaves by itself as the wheel turns only the rows: the roll goes on with it.
-      yield* heardAt(frame, Option.some(8.5))
-      yield* heardAt(frame, Option.some(11))
+      yield* heardAt(frame, 8.5)
+      yield* heardAt(frame, 11)
       wheel({ deltaY: -rowHeight })
-      yield* heardAt(frame, Option.some(11.1))
+      yield* heardAt(frame, 11.1)
       click(0, 70)
       yield* drawn()
       expect(tickOf(70)).toBe(11 * barTicks)
-      // Stopped, then played again: to the playhead's bar.
-      yield* heardAt(frame, Option.none())
-      yield* heardAt(frame, Option.some(3.5))
+      // Stopped back at the start: the roll stays where it is; played again, to the playhead's bar.
+      yield* heardAt(frame, 0, false)
+      click(0, 71)
+      yield* drawn()
+      expect(tickOf(71)).toBe(11 * barTicks)
+      yield* heardAt(frame, 3.5)
       click(0, 66)
       yield* drawn()
       expect(tickOf(66)).toBe(3 * barTicks)
       // As far as it goes already, short of the playhead's bar, it stays there as the pattern grows.
       wheel({ deltaX: 10 ** 6 })
-      yield* heardAt(frame, Option.none())
-      yield* heardAt(frame, Option.some(14.5))
+      yield* heardAt(frame, 0, false)
+      yield* heardAt(frame, 14.5)
       click(0, 67)
       yield* drawn()
       expect(tickOf(67)).toBe(13 * barTicks)
@@ -2551,10 +2599,10 @@ test("a clip's notes shown again while the arrangement plays go to the playhead,
       noteElsewhere(doc, 'Kick', 16 * barSteps - 1, 40)
       yield* drawn()
       yield* openKickClip(target)
-      yield* heardAt(frame, Option.some(0.5))
+      yield* heardAt(frame, 0.5)
       nameButton(grid, 'Kick').click()
-      yield* heardAt(frame, Option.some(5))
-      yield* heardAt(frame, Option.some(6.5))
+      yield* heardAt(frame, 5)
+      yield* heardAt(frame, 6.5)
       yield* openKickClip(target)
       const { click } = yield* rollIn(target)
       click(0, 60)
@@ -3295,7 +3343,7 @@ test('the Arrangement scrolled down stays where tracks taken away took it back, 
 /** The bar the clip on the track at the place starts at: a double click at the Arrangement's left puts it on the bar shown there. */
 const barOnTrack = (doc: Y.Doc, place: number) => clipsOf(doc).find((clip) => clip.track === trackAt(doc, place))?.bar
 
-test('the Arrangement follows the playhead to its bar as it starts to be heard and as it leaves; not once scrolled away, nor while a clip is held', () => {
+test('the Arrangement follows the playhead to its bar as it starts to be heard out of sight and as it leaves; not once scrolled away, nor while a clip is held', () => {
   // Twenty-four bars long, in an Arrangement eight bars wide and ten tracks high: the last clip on a track below.
   const doc = manyTracksDoc(20)
   addClip(doc, elsewhere, { track: readProject(doc).value.tracks[19].id, tick: Tick(23 * barTicks) })
@@ -3303,7 +3351,7 @@ test('the Arrangement follows the playhead to its bar as it starts to be heard a
     ({ target, frame }) =>
       Effect.gen(function* () {
         const { at, doubleClick, wheel } = arrangementIn(target)
-        const arrangementAt = (bars: Option.Option<number>) => heardAt(frame, bars)
+        const arrangementAt = (bars: number, playing = true) => heardAt(frame, bars, playing)
         /** The bar shown at the Arrangement's left, as a double click there puts a clip on the track at the place. */
         const leftOn = (place: number) =>
           Effect.gen(function* () {
@@ -3311,41 +3359,46 @@ test('the Arrangement follows the playhead to its bar as it starts to be heard a
             yield* drawn()
             return barOnTrack(doc, place)
           })
-        yield* arrangementAt(Option.some(10.5))
+        yield* arrangementAt(10.5)
         expect(yield* leftOn(0)).toBe(10)
         // Past the right edge of the eight bars shown: to the next.
-        yield* arrangementAt(Option.some(17.9))
-        yield* arrangementAt(Option.some(18))
+        yield* arrangementAt(17.9)
+        yield* arrangementAt(18)
         expect(yield* leftOn(1)).toBe(18)
         // Round from the end of the arrangement to its start.
-        yield* arrangementAt(Option.some(23.5))
-        yield* arrangementAt(Option.some(0.25))
+        yield* arrangementAt(23.5)
+        yield* arrangementAt(0.25)
         expect(yield* leftOn(2)).toBe(0)
         // Scrolled away from it: the Arrangement stays where it was taken, the playhead leaving or coming in sight.
         expect(wheel({ deltaY: 8 * barWidth, deltaMode: 0, shiftKey: true })).toBe(false)
-        yield* arrangementAt(Option.some(6.9))
-        yield* arrangementAt(Option.some(7))
+        yield* arrangementAt(6.9)
+        yield* arrangementAt(7)
         expect(yield* leftOn(3)).toBe(8)
         // In sight again, it leaves while a clip is held: no jump under the pointer, nor once let go.
-        yield* arrangementAt(Option.some(15.9))
+        yield* arrangementAt(15.9)
         at('pointerdown', 0, 3)
-        yield* arrangementAt(Option.some(16))
+        yield* arrangementAt(16)
         at('pointerup', 0, 3, { buttons: 0 })
         yield* drawn()
         expect(barOnTrack(doc, 3)).toBe(8)
-        yield* arrangementAt(Option.some(16.5))
+        yield* arrangementAt(16.5)
         expect(yield* leftOn(4)).toBe(8)
         // Scrolled by hand in the frame the playhead leaves, as the scroll takes it out: the hand's, the Arrangement
         // staying.
-        yield* arrangementAt(Option.some(14.45))
+        yield* arrangementAt(14.45)
         expect(wheel({ deltaX: -1.5 * barWidth, deltaMode: 0 })).toBe(false)
-        yield* arrangementAt(Option.some(14.6))
-        yield* arrangementAt(Option.some(14.7))
+        yield* arrangementAt(14.6)
+        yield* arrangementAt(14.7)
         expect(yield* leftOn(5)).toBe(7)
-        // Stopped, then played again: to the playhead's bar.
-        yield* arrangementAt(Option.none())
-        yield* arrangementAt(Option.some(3.5))
-        expect(yield* leftOn(6)).toBe(3)
+        // Stopped back at the start: the Arrangement stays where it is; played again, to the playhead's bar.
+        yield* arrangementAt(0, false)
+        expect(yield* leftOn(6)).toBe(7)
+        yield* arrangementAt(3.5)
+        expect(yield* leftOn(7)).toBe(3)
+        // Paused in sight and played on: it stays.
+        yield* arrangementAt(5.5, false)
+        yield* arrangementAt(5.6)
+        expect(yield* leftOn(8)).toBe(3)
       }),
     {},
     {},
@@ -3445,12 +3498,12 @@ test('the Arrangement gone on to the playhead shows it in the frame it goes in, 
   return page(
     ({ target, frame }) =>
       Effect.gen(function* () {
-        yield* heardAt(frame, Option.some(9.9))
+        yield* heardAt(frame, 9.9)
         frame.current = {
           engine: 1,
           telemetry: undefined,
           meters: new Map(),
-          heard: { tick: 17.25 * barTicks, loop: 16 * barTicks },
+          heard: { tick: 17.25 * barTicks, loop: 16 * barTicks, tempo: defaultTempo, playing: true },
           stats: undefined
         }
         yield* oneFrame

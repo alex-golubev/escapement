@@ -158,6 +158,7 @@ pub(crate) mod tests {
     use super::*;
     use crate::framing::SIZE_PREFIX;
     use crate::framing::tests::message;
+    use crate::schema::Place;
 
     pub fn after_batch(batch: u32) -> Vec<u8> {
         message(CommandKind::AfterBatch.0, &AfterBatch::new(batch).0)
@@ -193,10 +194,15 @@ pub(crate) mod tests {
         message(CommandKind::SetTempo.0, &SetTempo::new(bpm).0)
     }
 
+    /// With no place: the position goes on from where it stands.
     pub fn set_transport(playing: bool, loop_ticks: u32) -> Vec<u8> {
+        placed_transport(playing, loop_ticks, 0, 0)
+    }
+
+    pub fn placed_transport(playing: bool, loop_ticks: u32, press: u32, tick: u32) -> Vec<u8> {
         message(
             CommandKind::SetTransport.0,
-            &SetTransport::new(playing, loop_ticks).0,
+            &SetTransport::new(playing, loop_ticks, &Place::new(press, tick)).0,
         )
     }
 

@@ -1,5 +1,5 @@
 export { type BenchmarkPlay, benchmarkEngine, type BenchmarkResult } from './benchmark'
-export { Command, LoopTicks, PageNote } from './commands'
+export { Command, LoopTicks, noPlace, PageNote, type Place, PlacePress } from './commands'
 export { DeviceEdit } from './device-edits'
 export {
   compileEngine,

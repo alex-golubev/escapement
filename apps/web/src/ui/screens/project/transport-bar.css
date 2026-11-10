@@ -1,24 +1,41 @@
+/* One line: everything keeps its size, and only the status gives way. */
 .transport {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
   gap: calc(var(--u) * 3);
-  padding: 0.375rem 0.5rem;
+  padding: 0.625rem 1rem;
   border-radius: var(--r-md);
   background: var(--s-strip);
   box-shadow: 0 0 0 1px var(--line-soft);
 }
 
+.transport > * {
+  flex: none;
+}
+
+/* The tempo and the bar it counts, close together. */
+.transport__metre {
+  display: flex;
+  gap: var(--u);
+}
+
+/* Read second to the bar: lighter. */
+.time {
+  font-weight: 500;
+}
+
 /* As many digits as the highest tempo's, so the frame doesn't jump. */
-.transport .field__value {
-  min-width: 3ch;
+.tempo .field__value {
+  min-width: 6ch;
   text-align: right;
 }
 
 /* What is wrong, on the right; nothing while all is well. */
-.status {
+.transport > .status {
   display: flex;
+  flex: 0 1 auto;
   gap: calc(var(--u) * 3);
+  min-width: 0;
   margin-left: auto;
   color: var(--t-mid);
   font-size: 0.6875rem;
@@ -28,6 +45,14 @@
   display: flex;
   align-items: center;
   gap: 0.375rem;
+  min-width: 0;
+}
+
+/* Cut short where there is no room: the hint line has all of it. */
+.status__text {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 /* Red is an alarm: something is lost or stopped. */
@@ -37,6 +62,7 @@
 
 .status__notice[data-alarm="true"]::before {
   content: "";
+  flex: none;
   width: 0.375rem;
   height: 0.375rem;
   border-radius: 50%;

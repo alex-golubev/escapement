@@ -1,4 +1,4 @@
-import { lastTick, type MidiKey } from '@escapement/engine-description'
+import { lastTick, type MidiKey, Tick } from '@escapement/engine-description'
 import { Brand, Data } from 'effect'
 import { Builder } from 'flatbuffers'
 import { encodeMessage } from './framing'
@@ -26,6 +26,24 @@ export const LoopTicks = Brand.make<LoopTicks>(
   (ticks) => (Number.isInteger(ticks) && ticks >= 1 && ticks <= lastTick) || `not a loop length in ticks: ${ticks}`
 )
 
+/** Tells a press that puts the transport's position from every other: 0 is none, then 32 bits that wrap around. */
+export type PlacePress = Brand.Branded<number, 'PlacePress'>
+
+/** Throws on anything else: the record holds 32 bits. */
+export const PlacePress = Brand.make<PlacePress>(
+  (press) => (Number.isInteger(press) && press >= 0 && press < 2 ** 32) || `not a press: ${press}`
+)
+
+/** Where the page last put the transport's position: the press that did, and the tick. */
+export interface Place {
+  readonly press: PlacePress
+  /** From the loop's start; stopped, it stands past the loop's end too, which playing wraps around. */
+  readonly tick: Tick
+}
+
+/** No press: a new engine stands at the loop's start. */
+export const noPlace: Place = { press: PlacePress(0), tick: Tick(0) }
+
 /** Names a live note until it is let go of: below 2^31, as the pattern's notes take the rest. */
 export type PageNote = Brand.Branded<number, 'PageNote'>
 
@@ -49,11 +67,8 @@ interface CommandFields {
   readonly NoteOff: { readonly node: NodeHandle; readonly note: PageNote }
   /** From the start of the next block; past `minTempo` to `maxTempo` it is clamped. */
   readonly SetTempo: { readonly bpm: number }
-  /**
-   * The whole state of the transport, not a press of a button: sent again, it changes nothing. Stopped to playing
-   * starts at the beginning, playing to stopped goes back to it; a position past a new loop's end wraps around.
-   */
-  readonly SetTransport: { readonly playing: boolean; readonly loopTicks: LoopTicks }
+  /** The transport's whole state, not a press: the same again changes nothing; only a new place moves the position. */
+  readonly SetTransport: { readonly playing: boolean; readonly loopTicks: LoopTicks; readonly place: Place }
   /** The audio thread panics, so the page's recovery can be checked; the code goes into the panic's message. */
   readonly PanicAudio: { readonly code: number }
   /** The audio thread loops for ever, so the page's recovery can be checked; the code only marks the press. */
@@ -74,7 +89,8 @@ const writeRecord = (builder: Builder, command: Command): void => {
     NoteOn: ({ node, key, velocity, note }) => NoteOn.createNoteOn(builder, node, key, velocity, note),
     NoteOff: ({ node, note }) => NoteOff.createNoteOff(builder, node, note),
     SetTempo: ({ bpm }) => SetTempo.createSetTempo(builder, bpm),
-    SetTransport: ({ playing, loopTicks }) => SetTransport.createSetTransport(builder, playing, loopTicks),
+    SetTransport: ({ playing, loopTicks, place }) =>
+      SetTransport.createSetTransport(builder, playing, loopTicks, place.press, place.tick),
     PanicAudio: ({ code }) => PanicAudio.createPanicAudio(builder, code),
     HangAudio: ({ code }) => HangAudio.createHangAudio(builder, code),
     SetStripParam: ({ node, param, value }) => SetStripParam.createSetStripParam(builder, node, param, value)

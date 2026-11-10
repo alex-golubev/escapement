@@ -1,6 +1,6 @@
-import { MidiKey, plugins } from '@escapement/engine-description'
+import { MidiKey, plugins, Tick } from '@escapement/engine-description'
 import { expect, it } from '@effect/vitest'
-import { Command, encodeCommand, LoopTicks, PageNote } from '../src/commands'
+import { Command, encodeCommand, LoopTicks, noPlace, PageNote, PlacePress } from '../src/commands'
 import { NodeHandle } from '../src/handles'
 import { setParam, setStripParam } from '../src/plugins'
 import { fixtureEntry, fixturePath } from './fixtures'
@@ -13,8 +13,12 @@ const commands = [
   Command.AfterBatch({ batch: 7 }),
   Command.NoteOn({ node: NodeHandle(1), key: MidiKey(60), velocity: 0.75, note: PageNote(7) }),
   Command.SetTempo({ bpm: 128.5 }),
-  Command.SetTransport({ playing: true, loopTicks: LoopTicks(3840) }),
-  Command.SetTransport({ playing: false, loopTicks: LoopTicks(0xffff_ffff) }),
+  Command.SetTransport({ playing: true, loopTicks: LoopTicks(3840), place: noPlace }),
+  Command.SetTransport({
+    playing: false,
+    loopTicks: LoopTicks(0xffff_ffff),
+    place: { press: PlacePress(0xffff_ffff), tick: Tick(1920) }
+  }),
   Command.PanicAudio({ code: 7 }),
   Command.HangAudio({ code: 8 }),
   Command.NoteOff({ node: NodeHandle(1), note: PageNote(7) }),
@@ -42,7 +46,7 @@ it('a loop is a whole number of ticks from 1 that fits 32 bits, so the engine ta
   const notLoops = [0, 2 ** 32, -1, 0.5, Number.NaN, Number.POSITIVE_INFINITY]
   notLoops.forEach((ticks) => expect(() => LoopTicks(ticks)).toThrow('not a loop length in ticks'))
   // @ts-expect-error A plain number isn't a loop length.
-  Command.SetTransport({ playing: true, loopTicks: 3840 })
+  Command.SetTransport({ playing: true, loopTicks: 3840, place: noPlace })
 })
 
 it("a live note is named below 2^31, as the pattern's notes take the rest", () => {

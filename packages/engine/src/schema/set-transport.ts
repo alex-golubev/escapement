@@ -4,6 +4,8 @@
 
 import * as flatbuffers from 'flatbuffers'
 
+import { Place } from './place'
+
 /**
  * The whole state of the transport, not a press of a button: sent again, it changes nothing.
  */
@@ -17,25 +19,41 @@ export class SetTransport {
   }
 
   /**
-   * Stopped to playing starts at the beginning; playing to stopped goes back to it.
+   * Stopped to playing starts where the position stands; playing to stopped leaves it there.
    */
   playing(): boolean {
     return !!this.bb!.readInt8(this.bb_pos)
   }
 
   /**
-   * Ticks, 960 to a quarter note, from 1; a position past a new end wraps around.
+   * Ticks, 960 to a quarter note, from 1; playing, a position past its end wraps around.
    */
   loopTicks(): number {
     return this.bb!.readUint32(this.bb_pos + 4)
   }
 
-  static sizeOf(): number {
-    return 8
+  /**
+   * A press the engine hasn't had yet puts the position at its tick, and playing starts again from there.
+   */
+  place(obj?: Place): Place | null {
+    return (obj || new Place()).__init(this.bb_pos + 8, this.bb!)
   }
 
-  static createSetTransport(builder: flatbuffers.Builder, playing: boolean, loop_ticks: number): flatbuffers.Offset {
+  static sizeOf(): number {
+    return 16
+  }
+
+  static createSetTransport(
+    builder: flatbuffers.Builder,
+    playing: boolean,
+    loop_ticks: number,
+    place_press: number,
+    place_tick: number
+  ): flatbuffers.Offset {
+    builder.prep(4, 16)
     builder.prep(4, 8)
+    builder.writeInt32(place_tick)
+    builder.writeInt32(place_press)
     builder.writeInt32(loop_ticks)
     builder.pad(3)
     builder.writeInt8(Number(Boolean(playing)))

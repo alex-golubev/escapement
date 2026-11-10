@@ -31,9 +31,23 @@ fn step(tempo: f32) -> u64 {
     parts(tempo) * u64::from(TICKS_PER_QUARTER)
 }
 
+/// Where the page last put the position: a press the transport hasn't had puts the position at its tick.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Place {
+    /// 0 is none: a new transport stands at the loop's start.
+    pub press: u32,
+    /// From the loop's start; past its end it wraps around.
+    pub tick: u32,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum State {
-    Stopped,
+    Stopped {
+        /// Whole ticks from the loop's start.
+        ticks: u32,
+        /// Of the next tick, played before it stopped: playing on, nothing is played twice.
+        parts: u64,
+    },
     Playing {
         loop_ticks: NonZeroU32,
         /// Whole ticks from the loop's start.
@@ -139,6 +153,8 @@ pub struct Transport {
     state: State,
     /// Starts of play so far; wraps around.
     plays: u32,
+    /// The press of the last place taken.
+    placed: u32,
 }
 
 impl Transport {
@@ -148,8 +164,9 @@ impl Transport {
             tick: 60 * parts(sample_rate),
             tempo,
             step: step(tempo),
-            state: State::Stopped,
+            state: State::Stopped { ticks: 0, parts: 0 },
             plays: 0,
+            placed: 0,
         }
     }
 
@@ -163,59 +180,63 @@ impl Transport {
         Ok(())
     }
 
-    /// The whole state, so the same one again changes nothing: stopped to playing starts at the beginning, playing to
-    /// stopped goes back to it, and a position past a new loop's end wraps around.
-    pub fn set(&mut self, playing: bool, loop_ticks: u32) -> Result<(), Rejection> {
+    /// The whole state, the same again changing nothing: only a new place moves the position; playing wraps it.
+    pub fn set(&mut self, playing: bool, loop_ticks: u32, place: Place) -> Result<(), Rejection> {
         let loop_ticks = NonZeroU32::new(loop_ticks).ok_or(Rejection::InvalidValue)?;
+        let moved = place.press != self.placed;
+        self.placed = place.press;
+        // None of a place's tick has gone by: it is played.
+        let (ticks, parts) = if moved { (place.tick, 0) } else { self.at() };
+        let wrapped = ticks % loop_ticks;
         self.state = match (playing, self.state) {
-            (false, _) => State::Stopped,
-            (true, State::Stopped) => {
-                self.plays = self.plays.wrapping_add(1);
-                State::Playing {
-                    loop_ticks,
-                    ticks: 0,
-                    parts: 0,
-                    count: 0,
-                    play: self.plays,
-                }
-            }
-            (
-                true,
-                State::Playing {
-                    ticks,
-                    parts,
-                    count,
-                    play,
-                    ..
-                },
-            ) => State::Playing {
+            // Past the loop's end too: a loop shortened for a while doesn't move it.
+            (false, _) => State::Stopped { ticks, parts },
+            (true, State::Playing { count, play, .. }) if !moved => State::Playing {
                 loop_ticks,
-                ticks: ticks % loop_ticks,
+                ticks: wrapped,
                 parts,
                 count,
                 play,
             },
+            (true, _) => {
+                self.plays = self.plays.wrapping_add(1);
+                State::Playing {
+                    loop_ticks,
+                    ticks: wrapped,
+                    parts,
+                    count: 0,
+                    play: self.plays,
+                }
+            }
         };
         Ok(())
+    }
+
+    /// Whole ticks from the loop's start, and the parts of the next.
+    fn at(&self) -> (u32, u64) {
+        match self.state {
+            State::Stopped { ticks, parts } | State::Playing { ticks, parts, .. } => (ticks, parts),
+        }
     }
 
     pub fn tempo(&self) -> f32 {
         self.tempo
     }
 
-    /// In whole ticks from the loop's start, before the next frame; none while stopped.
-    pub fn position(&self) -> Option<u32> {
-        match self.state {
-            State::Stopped => None,
-            State::Playing { ticks, .. } => Some(ticks),
-        }
+    pub fn playing(&self) -> bool {
+        matches!(self.state, State::Playing { .. })
+    }
+
+    /// In whole ticks from the loop's start, before the next frame: where it plays, or where it stands.
+    pub fn position(&self) -> u32 {
+        self.at().0
     }
 
     /// Which start of play this is, each new from stopped to playing: a count from another doesn't belong to it. None
     /// while stopped.
     pub fn play(&self) -> Option<u32> {
         match self.state {
-            State::Stopped => None,
+            State::Stopped { .. } => None,
             State::Playing { play, .. } => Some(play),
         }
     }
@@ -223,7 +244,7 @@ impl Transport {
     /// None while stopped.
     pub fn loop_ticks(&self) -> Option<u32> {
         match self.state {
-            State::Stopped => None,
+            State::Stopped { .. } => None,
             State::Playing { loop_ticks, .. } => Some(loop_ticks.get()),
         }
     }
@@ -246,7 +267,7 @@ impl Transport {
                 loop_ticks: u64::from(loop_ticks.get()),
                 start: count,
             }),
-            State::Stopped => None,
+            State::Stopped { .. } => None,
         };
         iter::from_fn(move || {
             let left = left.as_mut().filter(|left| left.next <= left.last)?;
@@ -282,12 +303,8 @@ impl Transport {
     }
 
     fn block(&self) -> Block {
-        let parts = match self.state {
-            State::Playing { parts, .. } => parts,
-            State::Stopped => 0,
-        };
         Block {
-            parts,
+            parts: self.at().1,
             tick: self.tick,
             step: self.step,
         }
@@ -319,7 +336,7 @@ mod tests {
 
     fn playing(loop_ticks: u32) -> Transport {
         let mut transport = Transport::new(SAMPLE_RATE);
-        transport.set(true, loop_ticks).unwrap();
+        transport.set(true, loop_ticks, Place::default()).unwrap();
         transport
     }
 
@@ -333,10 +350,10 @@ mod tests {
     fn stands_until_told_to_play_and_starts_at_the_beginning() {
         let mut transport = Transport::new(SAMPLE_RATE);
         play_blocks(&mut transport, 10);
-        assert_eq!(transport.position(), None);
-        transport.set(true, BAR).unwrap();
+        assert_eq!((transport.playing(), transport.position()), (false, 0));
+        transport.set(true, BAR, Place::default()).unwrap();
         assert_eq!(transport.state, playing(BAR).state);
-        assert_eq!(transport.position(), Some(0));
+        assert_eq!((transport.playing(), transport.position()), (true, 0));
     }
 
     #[test]
@@ -344,10 +361,10 @@ mod tests {
         let mut transport = playing(BAR);
         play_blocks(&mut transport, 25);
         let ticks = (25 * BLOCK_FRAMES / FRAMES_PER_TICK) as u32;
-        assert_eq!(transport.position(), Some(ticks));
+        assert_eq!(transport.position(), ticks);
         transport.set_tempo(60.0).unwrap();
         play_blocks(&mut transport, 50);
-        assert_eq!(transport.position(), Some(2 * ticks));
+        assert_eq!(transport.position(), 2 * ticks);
     }
 
     #[test]
@@ -364,9 +381,9 @@ mod tests {
         // 100 ticks are 19.53 blocks; 20 are 102.4 ticks.
         let mut transport = playing(100);
         play_blocks(&mut transport, 20);
-        assert_eq!(transport.position(), Some(2));
+        assert_eq!(transport.position(), 2);
         play_blocks(&mut transport, 5);
-        assert_eq!(transport.position(), Some(28));
+        assert_eq!(transport.position(), 28);
     }
 
     #[test]
@@ -374,43 +391,111 @@ mod tests {
         let mut transport = playing(BAR);
         play_blocks(&mut transport, 9);
         let before = transport.state;
-        transport.set(true, BAR).unwrap();
+        transport.set(true, BAR, Place::default()).unwrap();
         transport.set_tempo(120.0).unwrap();
         assert_eq!(transport.state, before);
         play_blocks(&mut transport, 1);
-        assert!(transport.position() > Some(0));
+        assert!(transport.position() > 0);
         assert_ne!(transport.state, before);
     }
 
     #[test]
-    fn stopping_goes_back_to_the_beginning() {
+    fn stopping_leaves_the_position_and_playing_on_passes_no_tick_twice() {
         let mut transport = playing(BAR);
+        // At 46.08: tick 46 went with the block before.
         play_blocks(&mut transport, 9);
-        transport.set(false, BAR).unwrap();
-        assert_eq!(transport.position(), None);
+        let next = passed(&transport, BLOCK_FRAMES)[0].0;
+        assert_eq!(next, 47);
+        transport.set(false, BAR, Place::default()).unwrap();
         play_blocks(&mut transport, 9);
-        transport.set(true, BAR).unwrap();
-        assert_eq!(
-            (
-                transport.position(),
-                transport.run(BLOCK_FRAMES).map(|run| run.first)
-            ),
-            (Some(0), Some(0))
-        );
+        assert_eq!((transport.playing(), transport.position()), (false, 46));
+        assert_eq!(passed(&transport, BLOCK_FRAMES), []);
+        transport.set(true, BAR, Place::default()).unwrap();
+        assert_eq!(passed(&transport, BLOCK_FRAMES)[0].0, next);
         // A start of its own.
         assert_eq!(transport.play(), Some(2));
+    }
+
+    #[test]
+    fn a_place_not_taken_yet_puts_the_position_at_its_tick_which_plays() {
+        let mut transport = Transport::new(SAMPLE_RATE);
+        // Stopped, Play starts there.
+        transport
+            .set(
+                false,
+                BAR,
+                Place {
+                    press: 1,
+                    tick: 100,
+                },
+            )
+            .unwrap();
+        assert_eq!((transport.playing(), transport.position()), (false, 100));
+        transport
+            .set(
+                true,
+                BAR,
+                Place {
+                    press: 1,
+                    tick: 100,
+                },
+            )
+            .unwrap();
+        assert_eq!(passed(&transport, BLOCK_FRAMES)[0], (100, 0));
+        // Playing, it plays anew from there: a start of its own, counted from it.
+        play_blocks(&mut transport, 9);
+        transport
+            .set(true, BAR, Place { press: 2, tick: 7 })
+            .unwrap();
+        assert_eq!(transport.position(), 7);
+        assert_eq!(passed(&transport, BLOCK_FRAMES)[0], (7, 0));
+        assert_eq!(transport.play(), Some(2));
+        assert_eq!(transport.run(BLOCK_FRAMES).map(|run| run.first), Some(0));
+    }
+
+    #[test]
+    fn a_place_taken_is_not_taken_again() {
+        let mut transport = Transport::new(SAMPLE_RATE);
+        let place = Place {
+            press: 5,
+            tick: 100,
+        };
+        transport.set(true, BAR, place).unwrap();
+        play_blocks(&mut transport, 9);
+        let before = transport.state;
+        transport.set(true, BAR, place).unwrap();
+        assert_eq!(transport.state, before);
+        transport.set(false, BAR, place).unwrap();
+        assert_eq!(transport.position(), 146);
+    }
+
+    #[test]
+    fn a_position_past_the_loop_s_end_stands_there_stopped_and_wraps_around_as_it_plays() {
+        let mut transport = Transport::new(SAMPLE_RATE);
+        let place = Place {
+            press: 1,
+            tick: BAR + 5,
+        };
+        transport.set(false, BAR, place).unwrap();
+        assert_eq!(transport.position(), BAR + 5);
+        // A loop shortened and back again leaves it where it stood.
+        transport.set(false, 4, place).unwrap();
+        transport.set(false, BAR, place).unwrap();
+        assert_eq!(transport.position(), BAR + 5);
+        transport.set(true, BAR, place).unwrap();
+        assert_eq!(transport.position(), 5);
     }
 
     #[test]
     fn each_start_of_play_is_a_new_one_and_the_same_state_again_keeps_it() {
         let mut transport = Transport::new(SAMPLE_RATE);
         assert_eq!(transport.play(), None);
-        transport.set(true, BAR).unwrap();
-        transport.set(true, 2).unwrap();
+        transport.set(true, BAR, Place::default()).unwrap();
+        transport.set(true, 2, Place::default()).unwrap();
         assert_eq!(transport.play(), Some(1));
-        transport.set(false, BAR).unwrap();
+        transport.set(false, BAR, Place::default()).unwrap();
         assert_eq!((transport.play(), transport.loop_ticks()), (None, None));
-        transport.set(true, BAR).unwrap();
+        transport.set(true, BAR, Place::default()).unwrap();
         assert_eq!(
             (transport.play(), transport.loop_ticks()),
             (Some(2), Some(BAR))
@@ -421,9 +506,11 @@ mod tests {
     fn a_shorter_loop_wraps_the_position_around() {
         let mut transport = playing(BAR);
         play_blocks(&mut transport, 3200 * FRAMES_PER_TICK / BLOCK_FRAMES);
-        assert_eq!(transport.position(), Some(3200));
-        transport.set(true, TICKS_PER_QUARTER).unwrap();
-        assert_eq!(transport.position(), Some(3200 % TICKS_PER_QUARTER));
+        assert_eq!(transport.position(), 3200);
+        transport
+            .set(true, TICKS_PER_QUARTER, Place::default())
+            .unwrap();
+        assert_eq!(transport.position(), 3200 % TICKS_PER_QUARTER);
     }
 
     #[test]
@@ -431,12 +518,17 @@ mod tests {
         let mut transport = playing(BAR);
         play_blocks(&mut transport, 3);
         let before = transport.state;
-        assert_eq!(transport.set(true, 0), Err(Rejection::InvalidValue));
-        assert_eq!(transport.set(false, 0), Err(Rejection::InvalidValue));
+        // Nor is its place taken.
+        let place = Place { press: 1, tick: 9 };
+        assert_eq!(transport.set(true, 0, place), Err(Rejection::InvalidValue));
+        assert_eq!(transport.set(false, 0, place), Err(Rejection::InvalidValue));
         for bpm in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
             assert_eq!(transport.set_tempo(bpm), Err(Rejection::InvalidValue));
         }
-        assert_eq!((transport.state, transport.tempo()), (before, 120.0));
+        assert_eq!(
+            (transport.state, transport.tempo(), transport.placed),
+            (before, 120.0, 0)
+        );
     }
 
     #[test]
@@ -446,11 +538,7 @@ mod tests {
             transport.set_tempo(bpm).unwrap();
             assert_eq!(transport.tempo(), clamped as f32);
             play_blocks(&mut transport, 60 * SAMPLE_RATE as usize / BLOCK_FRAMES);
-            assert_eq!(
-                transport.position(),
-                Some(clamped * TICKS_PER_QUARTER),
-                "{bpm}"
-            );
+            assert_eq!(transport.position(), clamped * TICKS_PER_QUARTER, "{bpm}");
         }
     }
 
@@ -461,7 +549,7 @@ mod tests {
         for block in 1..=blocks {
             transport.advance(BLOCK_FRAMES);
             let whole = (block * BLOCK_FRAMES / FRAMES_PER_TICK) as u32 % BAR;
-            assert_eq!(transport.position(), Some(whole), "{block}");
+            assert_eq!(transport.position(), whole, "{block}");
         }
     }
 
@@ -477,7 +565,7 @@ mod tests {
             transport.set_tempo(bpm).unwrap();
             transport.advance(BLOCK_FRAMES);
             moved += by;
-            assert_eq!(transport.position(), Some(moved * 8 / 25 % BAR), "{block}");
+            assert_eq!(transport.position(), moved * 8 / 25 % BAR, "{block}");
         }
     }
 
@@ -486,11 +574,11 @@ mod tests {
         let mut transport = playing(BAR);
         for block in 1..=2000 {
             if block % 7 == 0 {
-                transport.set(true, BAR).unwrap();
+                transport.set(true, BAR, Place::default()).unwrap();
             }
             transport.advance(BLOCK_FRAMES);
             let whole = (block * BLOCK_FRAMES / FRAMES_PER_TICK) as u32 % BAR;
-            assert_eq!(transport.position(), Some(whole), "{block}");
+            assert_eq!(transport.position(), whole, "{block}");
         }
     }
 
@@ -502,7 +590,7 @@ mod tests {
             ((MAX_TEMPO as f32).next_down(), 96_000),
         ] {
             let mut transport = Transport::new(sample_rate as f32);
-            transport.set(true, u32::MAX).unwrap();
+            transport.set(true, u32::MAX, Place::default()).unwrap();
             transport.set_tempo(bpm).unwrap();
             // In parts the tempo is exact, and so is frames × tempo × 960 / (60 × rate).
             let tempo = (f64::from(bpm) * PARTS_IN_ONE) as u128;
@@ -510,7 +598,7 @@ mod tests {
                 transport.advance(BLOCK_FRAMES);
                 let exact = block * BLOCK_FRAMES as u128 * tempo * u128::from(TICKS_PER_QUARTER)
                     / (60 * sample_rate * PARTS_IN_ONE as u128);
-                assert_eq!(transport.position(), Some(exact as u32), "{bpm} {block}");
+                assert_eq!(transport.position(), exact as u32, "{bpm} {block}");
             }
         }
     }
@@ -580,7 +668,7 @@ mod tests {
         ] {
             let loop_ticks = 7;
             let mut transport = Transport::new(sample_rate);
-            transport.set(true, loop_ticks).unwrap();
+            transport.set(true, loop_ticks, Place::default()).unwrap();
             let mut next = 0;
             for block in 0..4000 {
                 transport
@@ -607,7 +695,7 @@ mod tests {
             (3_000.0, [MAX_TEMPO as f32, MIN_TEMPO as f32, 333.3, 97.0]),
         ] {
             let mut transport = Transport::new(sample_rate);
-            transport.set(true, 7).unwrap();
+            transport.set(true, 7, Place::default()).unwrap();
             let mut next = 0;
             for block in 0..4000 {
                 transport
@@ -646,23 +734,24 @@ mod tests {
         play_blocks(&mut transport, 195);
         assert_eq!(count(&transport), Some(999));
         transport.advance(BLOCK_FRAMES);
-        assert_eq!(transport.position(), Some(3));
+        assert_eq!(transport.position(), 3);
         assert_eq!(count(&transport), Some(1004));
         // The same state again, or a shorter loop, keeps it.
-        transport.set(true, 1000).unwrap();
-        transport.set(true, 2).unwrap();
+        transport.set(true, 1000, Place::default()).unwrap();
+        transport.set(true, 2, Place::default()).unwrap();
         assert_eq!(count(&transport), Some(1004));
-        transport.set(false, 2).unwrap();
+        transport.set(false, 2, Place::default()).unwrap();
         assert_eq!(count(&transport), None);
-        transport.set(true, 1000).unwrap();
-        assert_eq!(count(&transport), Some(0));
+        // Counted afresh from the tick it stopped in, which went with the block before.
+        transport.set(true, 1000, Place::default()).unwrap();
+        assert_eq!(count(&transport), Some(1));
     }
 
     #[test]
     fn an_hour_of_blocks_passes_every_tick_in_the_frame_it_falls_in() {
         let (sample_rate, bpm) = (44_100, 173.0);
         let mut transport = Transport::new(sample_rate as f32);
-        transport.set(true, u32::MAX).unwrap();
+        transport.set(true, u32::MAX, Place::default()).unwrap();
         transport.set_tempo(bpm).unwrap();
         let mut next = 0u64;
         for block in 0..3600 * sample_rate / BLOCK_FRAMES as u64 {

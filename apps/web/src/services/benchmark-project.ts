@@ -1,5 +1,5 @@
 import { type CompiledEngine, compile, type SoundLibrary } from '@escapement/compiler'
-import type { BenchmarkPlay, BuildThreadError } from '@escapement/engine'
+import { type BenchmarkPlay, type BuildThreadError, noPlace } from '@escapement/engine'
 import { plugins, Tick } from '@escapement/engine-description'
 import {
   addClip,
@@ -71,6 +71,7 @@ export const playBenchmarkProject = Effect.fnUntraced(function* (
       listening: Atom.make<Listening>(newListening),
       holds: Atom.make<Holds>(noHolds),
       playing: Atom.make(true),
+      place: Atom.make(noPlace),
       auditions: Atom.make<Auditions>(noAuditions)
     },
     engine,

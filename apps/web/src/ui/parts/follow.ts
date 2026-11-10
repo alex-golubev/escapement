@@ -16,13 +16,10 @@ export interface Lane {
 /** Whether the tick's column is in the part of the lane in sight. */
 export const inSight = ({ left, width, xOf }: Lane, tick: number) => xOf(tick) >= left && xOf(tick) < left + width
 
-/**
- * Whether the playhead has just come to be heard, or has left the lane in sight by itself: in sight a frame before, and
- * the window not scrolled by hand since, which would have taken it out.
- */
+/** Whether the playhead just came to be heard out of sight, or left the lane in sight by itself, not by a scroll. */
 const comesOrLeaves = (lane: Lane, before: Option.Option<number>, now: number, scrolledByHand: boolean) =>
   Option.match(before, {
-    onNone: () => true,
+    onNone: () => !inSight(lane, now),
     onSome: (before) => !scrolledByHand && inSight(lane, before) && !inSight(lane, now)
   })
 
@@ -39,11 +36,7 @@ const pageOf = (lane: Lane, tick: number) =>
     lane.xOf
   )
 
-/**
- * Where a window scrolls to as the playhead goes from the tick heard a frame before to the one heard now: to show it
- * from the start of its bar as it comes to be heard, and as it leaves the lane in sight by itself; not as the window is
- * scrolled away from it.
- */
+/** Where the window scrolls to as the playhead goes on: to its bar as it comes out of sight, or leaves by itself. */
 export const followed = (
   lane: Lane,
   before: Option.Option<number>,

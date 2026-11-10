@@ -1,4 +1,4 @@
-/* The transport on top, the hint line at the foot, the middle and the panel between. */
+/* The transport on top, the foot under all, the middle and the panel between. */
 .app {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
@@ -7,6 +7,21 @@
   gap: calc(var(--u) * 2);
   height: 100%;
   padding: calc(var(--u) * 2);
+}
+
+/* The hint line as wide as there is room for, and the buttons of what the middle shows, as high as it. */
+.foot {
+  display: flex;
+  gap: calc(var(--u) * 2);
+}
+
+.foot .hint {
+  flex: 1;
+  min-width: 0;
+}
+
+.foot .btn {
+  height: 1.25rem;
 }
 
 /* The middle and the panel, each as high as its share, and a border between them to drag. */

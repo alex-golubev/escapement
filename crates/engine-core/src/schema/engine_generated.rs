@@ -1288,14 +1288,148 @@ impl<'a> SetTempo {
     }
 }
 
+/// Where the page last put the transport's position: the press that did, told apart from every other by its number.
+// struct Place, aligned to 4
+#[repr(transparent)]
+#[derive(Clone, Copy, PartialEq)]
+pub struct Place(pub [u8; 8]);
+impl Default for Place {
+    fn default() -> Self {
+        Self([0; 8])
+    }
+}
+impl ::core::fmt::Debug for Place {
+    fn fmt(&self, f: &mut ::core::fmt::Formatter) -> ::core::fmt::Result {
+        f.debug_struct("Place")
+            .field("press", &self.press())
+            .field("tick", &self.tick())
+            .finish()
+    }
+}
+
+impl ::flatbuffers::SimpleToVerifyInSlice for Place {}
+impl<'a> ::flatbuffers::Follow<'a> for Place {
+    type Inner = &'a Place;
+    #[inline]
+    unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+        unsafe { <&'a Place>::follow(buf, loc) }
+    }
+}
+impl<'a> ::flatbuffers::Follow<'a> for &'a Place {
+    type Inner = &'a Place;
+    #[inline]
+    unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+        unsafe { ::flatbuffers::follow_cast_ref::<Place>(buf, loc) }
+    }
+}
+impl<'b> ::flatbuffers::Push for Place {
+    type Output = Place;
+    #[inline]
+    unsafe fn push(&self, dst: &mut [u8], _written_len: usize) {
+        let src = unsafe {
+            ::core::slice::from_raw_parts(
+                self as *const Place as *const u8,
+                <Self as ::flatbuffers::Push>::size(),
+            )
+        };
+        dst.copy_from_slice(src);
+    }
+    #[inline]
+    fn alignment() -> ::flatbuffers::PushAlignment {
+        ::flatbuffers::PushAlignment::new(4)
+    }
+}
+
+impl<'a> ::flatbuffers::Verifiable for Place {
+    #[inline]
+    fn run_verifier(
+        v: &mut ::flatbuffers::Verifier,
+        pos: usize,
+    ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+        v.in_buffer::<Self>(pos)
+    }
+}
+
+impl<'a> Place {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(press: u32, tick: u32) -> Self {
+        let mut s = Self([0; 8]);
+        s.set_press(press);
+        s.set_tick(tick);
+        s
+    }
+
+    /// 0 is no press: a new engine stands at the loop's start.
+    pub fn press(&self) -> u32 {
+        let mut mem =
+            ::core::mem::MaybeUninit::<<u32 as ::flatbuffers::EndianScalar>::Scalar>::uninit();
+        // Safety:
+        // Created from a valid Table for this object
+        // Which contains a valid value in this slot
+        ::flatbuffers::EndianScalar::from_little_endian(unsafe {
+            ::core::ptr::copy_nonoverlapping(
+                self.0[0..].as_ptr(),
+                mem.as_mut_ptr() as *mut u8,
+                ::core::mem::size_of::<<u32 as ::flatbuffers::EndianScalar>::Scalar>(),
+            );
+            mem.assume_init()
+        })
+    }
+
+    pub fn set_press(&mut self, x: u32) {
+        let x_le = ::flatbuffers::EndianScalar::to_little_endian(x);
+        // Safety:
+        // Created from a valid Table for this object
+        // Which contains a valid value in this slot
+        unsafe {
+            ::core::ptr::copy_nonoverlapping(
+                &x_le as *const _ as *const u8,
+                self.0[0..].as_mut_ptr(),
+                ::core::mem::size_of::<<u32 as ::flatbuffers::EndianScalar>::Scalar>(),
+            );
+        }
+    }
+
+    /// Ticks from the loop's start; stopped, it stands past the loop's end too, which playing wraps around.
+    pub fn tick(&self) -> u32 {
+        let mut mem =
+            ::core::mem::MaybeUninit::<<u32 as ::flatbuffers::EndianScalar>::Scalar>::uninit();
+        // Safety:
+        // Created from a valid Table for this object
+        // Which contains a valid value in this slot
+        ::flatbuffers::EndianScalar::from_little_endian(unsafe {
+            ::core::ptr::copy_nonoverlapping(
+                self.0[4..].as_ptr(),
+                mem.as_mut_ptr() as *mut u8,
+                ::core::mem::size_of::<<u32 as ::flatbuffers::EndianScalar>::Scalar>(),
+            );
+            mem.assume_init()
+        })
+    }
+
+    pub fn set_tick(&mut self, x: u32) {
+        let x_le = ::flatbuffers::EndianScalar::to_little_endian(x);
+        // Safety:
+        // Created from a valid Table for this object
+        // Which contains a valid value in this slot
+        unsafe {
+            ::core::ptr::copy_nonoverlapping(
+                &x_le as *const _ as *const u8,
+                self.0[4..].as_mut_ptr(),
+                ::core::mem::size_of::<<u32 as ::flatbuffers::EndianScalar>::Scalar>(),
+            );
+        }
+    }
+}
+
 /// The whole state of the transport, not a press of a button: sent again, it changes nothing.
 // struct SetTransport, aligned to 4
 #[repr(transparent)]
 #[derive(Clone, Copy, PartialEq)]
-pub struct SetTransport(pub [u8; 8]);
+pub struct SetTransport(pub [u8; 16]);
 impl Default for SetTransport {
     fn default() -> Self {
-        Self([0; 8])
+        Self([0; 16])
     }
 }
 impl ::core::fmt::Debug for SetTransport {
@@ -1303,6 +1437,7 @@ impl ::core::fmt::Debug for SetTransport {
         f.debug_struct("SetTransport")
             .field("playing", &self.playing())
             .field("loop_ticks", &self.loop_ticks())
+            .field("place", &self.place())
             .finish()
     }
 }
@@ -1352,14 +1487,15 @@ impl<'a> ::flatbuffers::Verifiable for SetTransport {
 
 impl<'a> SetTransport {
     #[allow(clippy::too_many_arguments)]
-    pub fn new(playing: bool, loop_ticks: u32) -> Self {
-        let mut s = Self([0; 8]);
+    pub fn new(playing: bool, loop_ticks: u32, place: &Place) -> Self {
+        let mut s = Self([0; 16]);
         s.set_playing(playing);
         s.set_loop_ticks(loop_ticks);
+        s.set_place(place);
         s
     }
 
-    /// Stopped to playing starts at the beginning; playing to stopped goes back to it.
+    /// Stopped to playing starts where the position stands; playing to stopped leaves it there.
     pub fn playing(&self) -> bool {
         let mut mem =
             ::core::mem::MaybeUninit::<<bool as ::flatbuffers::EndianScalar>::Scalar>::uninit();
@@ -1390,7 +1526,7 @@ impl<'a> SetTransport {
         }
     }
 
-    /// Ticks, 960 to a quarter note, from 1; a position past a new end wraps around.
+    /// Ticks, 960 to a quarter note, from 1; playing, a position past its end wraps around.
     pub fn loop_ticks(&self) -> u32 {
         let mut mem =
             ::core::mem::MaybeUninit::<<u32 as ::flatbuffers::EndianScalar>::Scalar>::uninit();
@@ -1419,6 +1555,19 @@ impl<'a> SetTransport {
                 ::core::mem::size_of::<<u32 as ::flatbuffers::EndianScalar>::Scalar>(),
             );
         }
+    }
+
+    /// A press the engine hasn't had yet puts the position at its tick, and playing starts again from there.
+    pub fn place(&self) -> &Place {
+        // Safety:
+        // Created from a valid Table for this object
+        // Which contains a valid struct in this slot
+        unsafe { &*(self.0[8..].as_ptr() as *const Place) }
+    }
+
+    #[allow(clippy::identity_op)]
+    pub fn set_place(&mut self, x: &Place) {
+        self.0[8..8 + 8].copy_from_slice(&x.0)
     }
 }
 

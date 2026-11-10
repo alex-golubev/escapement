@@ -32,7 +32,7 @@ use notes::page_note;
 use schema::Rejection;
 use sequencer::{Arrangement, Held, Patterns, Sequencer};
 use telemetry::{BlockMeter, Telemetry};
-use transport::Transport;
+use transport::{Place, Transport};
 
 pub use engine_plugins::{BLOCK_FRAMES, CHANNELS};
 
@@ -116,6 +116,7 @@ impl Engine {
     pub fn process(&mut self, frames: usize) {
         self.apply_commands();
         let frames = frames.min(BLOCK_FRAMES);
+        let playing = self.transport.playing();
         let position = self.transport.position();
         let loop_ticks = self.transport.loop_ticks();
         let lost =
@@ -131,8 +132,8 @@ impl Engine {
         let telemetry = &mut self.telemetry;
         telemetry.blocks = telemetry.blocks.wrapping_add(1);
         telemetry.lost_notes = telemetry.lost_notes.wrapping_add(lost);
-        telemetry.playing = position.is_some().into();
-        telemetry.position = position.unwrap_or(0);
+        telemetry.playing = playing.into();
+        telemetry.position = position;
         telemetry.loop_ticks = loop_ticks.unwrap_or(0);
         telemetry.tempo = self.transport.tempo();
         self.meter.update(&self.output, frames);
@@ -185,9 +186,14 @@ impl Engine {
                     .ok_or(Rejection::UnknownTarget)
                     .and_then(|node| node.note_off(0, page_note(note.note())?)),
                 Ok(Command::SetTempo(tempo)) => transport.set_tempo(tempo.bpm()),
-                Ok(Command::SetTransport(state)) => {
-                    transport.set(state.playing(), state.loop_ticks())
-                }
+                Ok(Command::SetTransport(state)) => transport.set(
+                    state.playing(),
+                    state.loop_ticks(),
+                    Place {
+                        press: state.place().press(),
+                        tick: state.place().tick(),
+                    },
+                ),
                 Ok(Command::PanicAudio(panic)) => panic!("PanicAudio {}", panic.code()),
                 Ok(Command::HangAudio(_)) => hang(),
                 Ok(Command::AfterBatch(marker)) => match parcels.take(marker.batch()) {
@@ -328,8 +334,8 @@ mod tests {
     };
     use crate::commands::PARSE_BUDGET;
     use crate::commands::tests::{
-        after_batch, hang_audio, no_kind, note_off, note_on, panic_audio, set_param,
-        set_strip_param, set_tempo, set_transport, unknown_kind, wrong_size,
+        after_batch, hang_audio, no_kind, note_off, note_on, panic_audio, placed_transport,
+        set_param, set_strip_param, set_tempo, set_transport, unknown_kind, wrong_size,
     };
     use crate::events::EVENT_CAPACITY;
     use crate::events::tests::decode;
@@ -1789,8 +1795,12 @@ mod tests {
         assert_eq!(rig.engine.telemetry().tempo, 120.0);
         rig.write(&[set_transport(true, BAR)]);
         assert_eq!(playheads(&mut rig.engine, 800), ticks_at(0..800));
+        // Stopped, where it stands: where it stopped, or where a place puts it.
         rig.write(&[set_transport(false, BAR)]);
-        assert_eq!(playheads(&mut rig.engine, 2), [(0, 0), (0, 0)]);
+        let stood = ticks_at(800..801)[0].1;
+        assert_eq!(playheads(&mut rig.engine, 2), [(0, stood), (0, stood)]);
+        rig.write(&[placed_transport(false, BAR, 1, 960)]);
+        assert_eq!(playheads(&mut rig.engine, 1), [(0, 960)]);
     }
 
     #[test]
@@ -1811,8 +1821,9 @@ mod tests {
         // Shorter than where it plays: round in the new one.
         rig.write(&[set_transport(true, BAR)]);
         assert_eq!(looped(&mut rig.engine), (at(800) % BAR, BAR));
+        // Stopped, it goes round in none.
         rig.write(&[set_transport(false, BAR)]);
-        assert_eq!(looped(&mut rig.engine), (0, 0));
+        assert_eq!(looped(&mut rig.engine), (at(801) % BAR, 0));
     }
 
     #[test]

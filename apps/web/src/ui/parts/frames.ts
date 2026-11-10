@@ -1,3 +1,5 @@
+import type { Heard } from '@escapement/engine'
+import { defaultTempo } from '@escapement/engine-description'
 import { Boolean, Option } from 'effect'
 import { createContext } from 'preact'
 import { useContext, useEffect, useMemo, useRef } from 'preact/hooks'
@@ -46,14 +48,33 @@ export const useFrame = (draw: Draw) => {
   }, [draws])
 }
 
-/** The arrangement's tick a frame hears; none while it is stopped. */
-export const heardTick = (frame: Frame | undefined): Option.Option<number> =>
-  Option.map(Option.fromUndefinedOr(frame?.heard), ({ tick }) => tick)
+/** As a new engine stands: at the start, at its own tempo, stopped. */
+const standing: Heard = { tick: 0, loop: 0, tempo: defaultTempo, playing: false }
 
-/** Writes only a change: a frame would otherwise touch the DOM 60 times a second for nothing. */
-export const setText = (element: HTMLElement | null, text: string) => {
-  if (element !== null && element.textContent !== text) element.textContent = text
-}
+/** Where a frame hears the arrangement, stopped or playing; with none heard yet, where a new engine stands. */
+export const heardOf = (frame: Frame | undefined): Heard =>
+  Option.getOrElse(Option.fromUndefinedOr(frame?.heard), () => standing)
+
+/** Writes only a change, into the text there: a new node would change the page's tree, which the hint line watches. */
+export const setText = (element: HTMLElement | null, text: string) =>
+  Option.map(
+    Option.filter(Option.fromNullishOr(element), (drawn) => drawn.textContent !== text),
+    (drawn) =>
+      Option.match(
+        Option.filter(
+          Option.fromNullishOr(drawn.firstChild),
+          (child): child is Text => child instanceof Text && child === drawn.lastChild
+        ),
+        {
+          onNone: () => {
+            drawn.textContent = text
+          },
+          onSome: (written) => {
+            written.data = text
+          }
+        }
+      )
+  )
 
 /** A custom property of the element's style, written only on a change, as `setText` writes text. */
 export const setStyleVar = (element: HTMLElement | null, name: string, value: string) =>

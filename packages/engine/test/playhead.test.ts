@@ -11,7 +11,15 @@ const playing = (frame: number, position: number, tempo = 120, loopTicks = bar):
   loopTicks,
   tempo
 })
-const stopped = (frame: number): Snapshot => ({ frame, playing: false, position: 0, loopTicks: 0, tempo: 120 })
+const stopped = (frame: number, position = 0): Snapshot => ({
+  frame,
+  playing: false,
+  position,
+  loopTicks: 0,
+  tempo: 120
+})
+const heardAt = (snapshots: ReadonlyArray<Snapshot>, frame: number) =>
+  Option.getOrUndefined(heardTick(snapshots, frame, rate))
 const tickAt = (snapshots: ReadonlyArray<Snapshot>, frame: number) =>
   Option.getOrUndefined(Option.map(heardTick(snapshots, frame, rate), ({ tick }) => tick))
 
@@ -30,21 +38,23 @@ test('past the loop’s end the heard tick goes round from its start, the loop o
   const grown = [playing(0, bar - 240), playing(12_000, bar + 240, 120, 2 * bar)]
   expect(tickAt(grown, 11_999)).toBeCloseTo(240, 0)
   expect(tickAt(grown, 12_000)).toBe(bar + 240)
-  expect(heardTick(grown, 11_999, rate)).toEqual(Option.some({ tick: expect.closeTo(240, 0), loop: bar }))
-  expect(heardTick(grown, 12_000, rate)).toEqual(Option.some({ tick: bar + 240, loop: 2 * bar }))
+  expect(heardAt(grown, 11_999)).toEqual({ tick: expect.closeTo(240, 0), loop: bar, tempo: 120, playing: true })
+  expect(heardAt(grown, 12_000)).toEqual({ tick: bar + 240, loop: 2 * bar, tempo: 120, playing: true })
 })
 
-test('nothing is heard before the first block of the play is', () => {
-  const snapshots = [stopped(0), playing(4096, 0)]
-  expect(tickAt(snapshots, 4095)).toBeUndefined()
-  expect(tickAt(snapshots, 4096)).toBe(0)
-  expect(tickAt([playing(4096, 0)], 4000)).toBeUndefined()
+test('until the first block of the play is heard, the transport is heard standing where it stood; before every snapshot, nowhere', () => {
+  const snapshots = [stopped(0, 960), playing(4096, 960)]
+  expect(heardAt(snapshots, 4095)).toEqual({ tick: 960, loop: 0, tempo: 120, playing: false })
+  expect(heardAt(snapshots, 4096)).toEqual({ tick: 960, loop: bar, tempo: 120, playing: true })
+  expect(heardAt([playing(4096, 0)], 4000)).toBeUndefined()
 })
 
-test('the play is heard until its last block is', () => {
-  const snapshots = [playing(0, 1000), stopped(12_000)]
+test('the play is heard until its last block is, and then where it stopped', () => {
+  const snapshots = [playing(0, 1000), stopped(12_000, 1480)]
   expect(tickAt(snapshots, 11_999)).toBeCloseTo(1480, 1)
-  expect(tickAt(snapshots, 12_000)).toBeUndefined()
+  expect(heardAt(snapshots, 12_000)).toEqual({ tick: 1480, loop: 0, tempo: 120, playing: false })
+  // Stopped, it doesn't count on.
+  expect(tickAt(snapshots, 48_000)).toBe(1480)
 })
 
 test('only the snapshot heard and those after it are kept, each block once', () => {
@@ -79,7 +89,9 @@ test('the tick heard is read from the snapshots kept, and none is kept before th
   output.contextTime = 1
   output.performanceTime = 5000
   expect(tickHeard(undefined, 5000), 'the snapshot before the output started is gone').toEqual(Option.none())
-  expect(tickHeard(playing(48_000, 1000), 5000)).toEqual(Option.some({ tick: 1000, loop: bar }))
+  expect(tickHeard(playing(48_000, 1000), 5000)).toEqual(
+    Option.some({ tick: 1000, loop: bar, tempo: 120, playing: true })
+  )
   // A quarter of a second later, from the snapshot kept.
-  expect(tickHeard(undefined, 5250)).toEqual(Option.some({ tick: 1480, loop: bar }))
+  expect(tickHeard(undefined, 5250)).toEqual(Option.some({ tick: 1480, loop: bar, tempo: 120, playing: true }))
 })

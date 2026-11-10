@@ -103,11 +103,13 @@ test("the roll scrolls across, in steps, from the first bar to the end of the ba
   expect(stepsAcross(big, big.keysWidth + 16 * big.stepWidth, 4 * barTicks, 10 ** 6)).toBe(4 * bar)
 })
 
-test('the playhead takes the roll to its bar as it starts to be heard and as it leaves the grid, not as the roll leaves it', () => {
+test('the playhead takes the roll to its bar as it starts to be heard out of sight and as it leaves the grid, not as the roll leaves it', () => {
   const barsIn = (bars: number) => bars * barTicks
-  // Starting to be heard, wherever the roll is: to the start of the bar heard, scrolled by hand just then too.
+  // Starting to be heard out of sight, wherever the roll is: to the start of the bar heard, scrolled by hand just then
+  // too; in sight, the roll stays.
   expect(followed(laneOf(view), Option.none(), barsIn(2.5), false)).toEqual(Option.some(2 * barWidth))
   expect(followed(laneOf(across), Option.none(), 0, true)).toEqual(Option.some(0))
+  expect(followed(laneOf(view), Option.none(), barsIn(0.5), false)).toEqual(Option.none())
   // In sight, on and on.
   expect(followed(laneOf(view), Option.some(barsIn(0.5)), barsIn(0.9), false)).toEqual(Option.none())
   // Out past the right edge, into the next bar; round from the end of the loop to the start.
