@@ -4,6 +4,7 @@ import { Digest } from 'effect/crypto'
 import { FetchHttpClient, HttpClient } from 'effect/http'
 import { AtomRegistry } from 'effect/reactivity'
 import { audioOutputLayer } from '../browser/audio-output'
+import { loadClocksLayer } from '../browser/load-clocks'
 import { viewStoresLayer } from '../browser/view-stores'
 import { pageLayer } from '../browser/page'
 import { projectStoreLayer } from '../browser/project-store'
@@ -12,6 +13,7 @@ import { tabChannelsLayer } from '../browser/tab-channels'
 import { DomainOps, domainOpsLayer } from '../services/domain-ops'
 import { EngineHost, engineHostLayer, engineModuleLayer } from '../services/engine-host'
 import { leavingLayer } from '../services/leaving'
+import { preferencesLayer } from '../services/preferences'
 import { ProjectSession, projectSessionLayer } from '../services/session'
 import { TabSync, tabSyncLayer } from '../services/tab-sync'
 import { Turns, turnsLayer } from '../services/turns'
@@ -32,13 +34,13 @@ export const pageLoggerLayer = Logger.layer([Logger.withLeveledConsole(Logger.fo
  * shows the project, and asking before the page goes with it unsaved, as long as it is open.
  */
 export const coreLayer = Layer.mergeAll(turnsLayer, engineHostLayer, tabSyncLayer, projectViewLayer, leavingLayer).pipe(
-  Layer.provideMerge(Layer.mergeAll(domainOpsLayer, viewStoreLayer)),
+  Layer.provideMerge(Layer.mergeAll(domainOpsLayer, viewStoreLayer, preferencesLayer)),
   // Built together: the engine's module compiles while the project, and the store of its view, load.
   Layer.provideMerge(
     Layer.mergeAll(engineModuleLayer, projectSessionLayer, keptViewsLayer, audioOutputLayer, pageReopenLayer)
   ),
   // What the browser gives the services: the page, its storage, the channels to its other tabs.
-  Layer.provideMerge(Layer.mergeAll(pageLayer, projectStoreLayer, viewStoresLayer, tabChannelsLayer)),
+  Layer.provideMerge(Layer.mergeAll(pageLayer, projectStoreLayer, viewStoresLayer, tabChannelsLayer, loadClocksLayer)),
   Layer.provideMerge(AtomRegistry.layerOptions(registryOptions)),
   // The engine's module and the samples come over the network, the samples checked by their hashes.
   Layer.provideMerge(

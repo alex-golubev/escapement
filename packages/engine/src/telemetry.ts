@@ -23,7 +23,13 @@ const meterWords = 5
 
 export const engineTelemetryWords = metersStart - 1 + meterCount * meterWords
 const frame = { low: 1 + engineTelemetryWords, high: 2 + engineTelemetryWords } as const
-const boardWords = 1 + engineTelemetryWords + 2
+const loadWords = {
+  burst: 3 + engineTelemetryWords,
+  busy: 4 + engineTelemetryWords,
+  blocks: 5 + engineTelemetryWords,
+  longest: 6 + engineTelemetryWords
+} as const
+const boardWords = 1 + engineTelemetryWords + 6
 
 export interface Telemetry {
   readonly blocks: number
@@ -51,6 +57,16 @@ export interface Telemetry {
   readonly meters: ReadonlyArray<MeterReading>
   /** The context's frame the last block started at. */
   readonly frame: number
+  /** What the worklet measured of its blocks in the load clock's last burst. */
+  readonly load: BlockLoad
+}
+
+/** The blocks timed in a burst of the load clock: how long they took together, how many, the longest; in µs. */
+export interface BlockLoad {
+  readonly burst: number
+  readonly busy: number
+  readonly blocks: number
+  readonly longest: number
 }
 
 /** A node's meter, as the master's output: the count is the node's, from its making. */
@@ -64,10 +80,10 @@ export const createTelemetryBoard = (): SharedArrayBuffer => new SharedArrayBuff
 
 const wordSpan = 2 ** 32
 
-/** Runs on the audio thread every block, with the context's frame the block started at. */
+/** Runs on the audio thread every block, with the context's frame the block started at and the blocks timed. */
 export const telemetryWriter = (board: SharedArrayBuffer) => {
   const words = new Uint32Array(board)
-  return (engineWords: Uint32Array, blockFrame: number) => {
+  return (engineWords: Uint32Array, blockFrame: number, load: BlockLoad) => {
     const next = Atomics.load(words, sequence) + 1
     Atomics.store(words, sequence, next)
     // The records in use only: the rest stand as they were, past the count the page reads up to.
@@ -75,6 +91,10 @@ export const telemetryWriter = (board: SharedArrayBuffer) => {
     for (let i = 0; i < copied; i++) Atomics.store(words, blocks + i, engineWords[i])
     Atomics.store(words, frame.low, blockFrame % wordSpan)
     Atomics.store(words, frame.high, Math.floor(blockFrame / wordSpan))
+    Atomics.store(words, loadWords.burst, load.burst)
+    Atomics.store(words, loadWords.busy, load.busy)
+    Atomics.store(words, loadWords.blocks, load.blocks)
+    Atomics.store(words, loadWords.longest, load.longest)
     Atomics.store(words, sequence, next + 1)
   }
 }
@@ -114,7 +134,13 @@ export const telemetryReader = (board: SharedArrayBuffer) => {
         overs: [Atomics.load(words, at + 3), Atomics.load(words, at + 4)]
       }
     }),
-    frame: Atomics.load(words, frame.high) * wordSpan + Atomics.load(words, frame.low)
+    frame: Atomics.load(words, frame.high) * wordSpan + Atomics.load(words, frame.low),
+    load: {
+      burst: Atomics.load(words, loadWords.burst),
+      busy: Atomics.load(words, loadWords.busy),
+      blocks: Atomics.load(words, loadWords.blocks),
+      longest: Atomics.load(words, loadWords.longest)
+    }
   })
   const consistent = (): Telemetry | undefined => {
     for (let attempt = 0; attempt < readAttempts; attempt++) {

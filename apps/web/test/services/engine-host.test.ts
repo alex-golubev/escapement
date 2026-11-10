@@ -1,5 +1,5 @@
 import type { SoundLibrary } from '@escapement/compiler'
-import { EngineLoadError, EngineStartError } from '@escapement/engine'
+import { EngineLoadError, EngineStartError, LoadClockError, loadClockViews, measuringWord } from '@escapement/engine'
 import {
   kick,
   kickSound,
@@ -25,7 +25,7 @@ import {
 import { Boolean, Cause, Effect, Fiber, Layer, Option } from 'effect'
 import { Digest } from 'effect/crypto'
 import { FetchHttpClient } from 'effect/http'
-import { AtomRegistry } from 'effect/reactivity'
+import { Atom, AtomRegistry } from 'effect/reactivity'
 import { TestClock } from 'effect/testing'
 import { expect, test } from 'vitest'
 import * as Y from 'yjs'
@@ -38,8 +38,11 @@ import {
   LoadState,
   type Restarts
 } from '../../src/services/engine-host'
+import { LoadClocks } from '../../src/services/load-clocks'
+import { preferencesLayer } from '../../src/services/preferences'
 import { CannotReopen, PageReopen, type Taken } from '../../src/services/reopen'
 import { ProjectSession, sessionOf } from '../../src/services/session'
+import { KeptViews } from '../../src/services/view-store'
 import { savedIn } from '../saved-in'
 
 /**
@@ -71,7 +74,12 @@ const sleepingContext = (wakes: boolean, running: boolean) => {
     woken.resolve()
     context.dispatchEvent(new Event('statechange'))
   }
-  return { context: context satisfies OutputContext, wake, resumes: () => resumes.count }
+  /** The device lets the context go, as when it is unplugged. */
+  const interrupt = () => {
+    context.state = 'suspended'
+    context.dispatchEvent(new Event('statechange'))
+  }
+  return { context: context satisfies OutputContext, wake, interrupt, resumes: () => resumes.count }
 }
 
 /** The one sound the project names. */
@@ -108,6 +116,11 @@ interface Hosting {
   readonly reopens: ReadonlyArray<Taken>
   /** The page misses the audio thread's next answers, as when its main thread stalls or the computer sleeps. */
   readonly missAnswers: (count: number) => void
+  /** The load clock's threads: how many the host started, and how many run now. */
+  readonly clockThreads: { readonly started: number; readonly running: number }
+  /** Whether the page is in sight. */
+  readonly seen: Atom.Writable<boolean>
+  readonly interrupt: () => void
 }
 
 interface Options {
@@ -125,6 +138,10 @@ interface Options {
   readonly startHangs?: (attempt: number) => boolean
   /** Whether the engine's module loads. */
   readonly loads?: boolean
+  /** The computer's logical cores. */
+  readonly cores?: number
+  /** Whether the load clock's thread fails as it starts. */
+  readonly clockFails?: boolean
 }
 
 /**
@@ -140,7 +157,9 @@ const hosted = (
     taken,
     keeps = true,
     startHangs = () => false,
-    loads = true
+    loads = true,
+    cores = 8,
+    clockFails = false
   }: Options = {}
 ) => {
   const doc = new Y.Doc()
@@ -171,11 +190,36 @@ const hosted = (
       ])
     )
   )
-  const { context, wake, resumes } = sleepingContext(wakes, running)
+  const { context, wake, interrupt, resumes } = sleepingContext(wakes, running)
   const started: Array<Started> = []
   const tried = { count: 0 }
   const reopens: Array<Taken> = []
   const page = { missed: 0 }
+  const clockThreads = { started: 0, running: 0 }
+  const seen = Atom.make(true)
+  const clocks: LoadClocks = {
+    cores,
+    thread: () =>
+      Effect.acquireRelease(
+        Effect.sync(() => {
+          clockThreads.started++
+          clockThreads.running++
+        }),
+        () =>
+          Effect.sync(() => {
+            clockThreads.running--
+          })
+      ).pipe(
+        Effect.andThen(
+          Boolean.match(clockFails, {
+            onTrue: () => Effect.fail(new LoadClockError({ cause: new Error('Not found') })),
+            onFalse: () => Effect.never
+          })
+        ),
+        Effect.scoped
+      ),
+    seen
+  }
   const output: AudioOutput = {
     context,
     startEngine: () =>
@@ -213,6 +257,9 @@ const hosted = (
     Layer.provide(
       Layer.mergeAll(
         Layer.succeed(AudioOutput, output),
+        Layer.succeed(LoadClocks, clocks),
+        // Kept for the page alone: a new browser's.
+        preferencesLayer.pipe(Layer.provide(Layer.succeed(KeptViews, Option.none()))),
         Layer.succeed(EngineModule, {
           module: Boolean.match(loads, {
             onTrue: () => Effect.succeed(module),
@@ -248,7 +295,10 @@ const hosted = (
       reopens,
       missAnswers: (count) => {
         page.missed = count
-      }
+      },
+      clockThreads,
+      seen,
+      interrupt
     })
   }).pipe(Effect.provide(layer), Effect.provideService(AtomRegistry.AtomRegistry, AtomRegistry.make()))
 }
@@ -387,6 +437,73 @@ test('To start takes it back to the start, playing on if it plays; Stop stops it
       yield* host.togglePlay
       playsFromTheStart(first)
     })
+  ))
+
+/** Whether the engine's clock runs its bursts, as the host set it. */
+const bursting = (engine: Started) => Atomics.load(loadClockViews(engine.engine.loadClock), measuringWord) === 1
+
+test("the DSP load is measured while it plays in sight, its clock's thread kept while measuring may go on; switched off, the thread goes", () =>
+  hosting((hosting) =>
+    Effect.gen(function* () {
+      const { host, registry, clockThreads, seen } = hosting
+      const first = yield* ready(hosting, 1)
+      expect([registry.get(host.measuring), clockThreads, bursting(first)]).toEqual([
+        'waiting',
+        { started: 1, running: 1 },
+        false
+      ])
+      yield* playing(hosting)
+      expect([registry.get(host.measuring), bursting(first)]).toEqual(['on', true])
+      registry.set(seen, false)
+      expect([registry.get(host.measuring), bursting(first)]).toEqual(['waiting', false])
+      registry.set(seen, true)
+      // Its context let go, the sound stands though Play is on.
+      hosting.interrupt()
+      expect([registry.get(host.measuring), bursting(first)]).toEqual(['waiting', false])
+      hosting.wake()
+      expect(registry.get(host.measuring)).toBe('on')
+      yield* host.toggleMeasuring
+      yield* until(() => clockThreads.running === 0)
+      expect([registry.get(host.measuring), bursting(first)]).toEqual(['off', false])
+      yield* host.toggleMeasuring
+      yield* until(() => clockThreads.running === 1)
+      expect([registry.get(host.measuring), clockThreads.started, bursting(first)]).toEqual(['on', 2, true])
+      // A new engine, a thread of its own; the old one's goes with it.
+      yield* host.restart
+      const second = yield* ready(hosting, 2)
+      yield* until(() => clockThreads.started === 3 && clockThreads.running === 1)
+      expect(bursting(second)).toBe(true)
+    })
+  ))
+
+test("a load clock's thread that fails leaves the engine playing, the load unmeasured", () =>
+  hosting(
+    (hosting) =>
+      Effect.gen(function* () {
+        const { host, registry, clockThreads } = hosting
+        const first = yield* playing(hosting)
+        // Tried again as measuring changes, waiting and then on, and failing each time.
+        yield* until(() => clockThreads.started === 2 && clockThreads.running === 0)
+        expect([registry.get(host.state)._tag, registry.get(host.measuring), host.frame()?.dspLoad]).toEqual([
+          'Ready',
+          'on',
+          undefined
+        ])
+        playsFromTheStart(first)
+      }),
+    { clockFails: true }
+  ))
+
+test('on 4 cores or fewer the DSP load is never measured, and switching it does nothing', () =>
+  hosting(
+    (hosting) =>
+      Effect.gen(function* () {
+        const { host, registry, clockThreads } = hosting
+        yield* playing(hosting)
+        yield* host.toggleMeasuring
+        expect([registry.get(host.measuring), clockThreads.started]).toEqual(['few-cores', 0])
+      }),
+    { cores: 4 }
   ))
 
 test("another tab's hold plays over the document, as this page's own does, until it lets go", () =>

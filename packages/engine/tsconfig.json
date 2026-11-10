@@ -5,5 +5,5 @@
     "types": []
   },
   "include": ["src"],
-  "exclude": ["src/worklet", "src/build-thread"]
+  "exclude": ["src/worklet", "src/build-thread", "src/clock-thread"]
 }

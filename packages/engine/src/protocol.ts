@@ -87,6 +87,8 @@ export interface EngineProcessorOptions {
   readonly eventRing: SharedArrayBuffer
   /** The processor writes, the page reads. */
   readonly telemetryBoard: SharedArrayBuffer
+  /** The load clock's thread writes the time, the processor reads it. */
+  readonly loadClock: SharedArrayBuffer
 }
 
 /** The page is done with the engine: the processor renders no more, so the browser can let its node go. */

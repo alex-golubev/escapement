@@ -15,6 +15,7 @@ import {
   pressPlay,
   pressStop,
   putNote,
+  reload,
   showCentre,
   test
 } from './page'
@@ -117,6 +118,29 @@ test('Play pauses where it plays and plays on from there; To start goes back, pl
   await pressStop(page)
   await expect.poll(async () => (await clockOf(page)).shown).toBe('BAR001.01.000 TIME00:00.000')
   await expect.poll(() => playheadAt(page)).toBeCloseTo(0, 1)
+})
+
+test("DSP load shows the engine's load while the arrangement plays, and switched off, it stays off", async ({
+  page
+}) => {
+  // As many cores as measuring needs, whatever the machine the test runs on has.
+  await page.addInitScript(() => Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 8 }))
+  await newProject(page)
+  await addTrack(page, 'Synth')
+  await newClip(page, 0, 0, 'Synth')
+  await putNote(page, 0)
+  const load = page.getByRole('button', { name: 'DSP load', exact: true })
+  const loadShown = load.locator('.dsp-load__value')
+  await expect(loadShown).toHaveText('—')
+  await pressPlay(page, true)
+  // A burst a second, measured to a tenth.
+  await expect(loadShown).toHaveText(/^\d+\.\d%$/, { timeout: 5_000 })
+  await pressStop(page)
+  await expect(loadShown).toHaveText('—')
+  await load.click()
+  await expect(load).toHaveAttribute('aria-pressed', 'false')
+  await reload(page)
+  await expect(page.getByRole('button', { name: 'DSP load', exact: true })).toHaveAttribute('aria-pressed', 'false')
 })
 
 test('a track added with + plays the note put in its clip on its synth', async ({ page }) => {
