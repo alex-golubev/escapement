@@ -1,6 +1,6 @@
 import { useAtom, useAtomValue } from '@effect/atom-react'
 import { Tick } from '@escapement/engine-description'
-import { byContent } from '@escapement/model'
+import { byContent, firstColour } from '@escapement/model'
 import { Array, Boolean, Data, Equal, Option } from 'effect'
 import type { TargetedMouseEvent, TargetedPointerEvent, TargetedWheelEvent } from 'preact'
 import { useLayoutEffect, useMemo, useRef } from 'preact/hooks'
@@ -15,7 +15,7 @@ import { onPoints } from '../../kit/pixels'
 import { useScreenScale } from '../../kit/screen-scale'
 import { useCanvasPlayhead } from '../../parts/playhead'
 import { type Cursor, cursorAt, cursorOf, draggedClips, draggedTo, type Edge, Grab, grabAt } from './drag'
-import { drawClips, drawFrame, drawGrid, paletteOf } from './draw'
+import { drawClips, drawFrame, drawGrid, paletteOf, type RowLook } from './draw'
 import {
   barsAcross,
   clipAt,
@@ -95,6 +95,23 @@ export const Arrangement = () => {
     [session, tracksAtom]
   )
   const shown = useAtomValue(shownAtom)
+  // Apart from the clips: a track changed sorts none of them, and a clip dragged to a row takes the row's look.
+  const looksAtom = useMemo(
+    () =>
+      byContent((get) =>
+        get(tracksAtom).map(
+          (track): RowLook => ({
+            colour: Option.match(get(session.project.track(track)), {
+              onNone: () => firstColour,
+              onSome: ({ colour }) => colour
+            }),
+            heard: get(session.isHeard(track))
+          })
+        )
+      ),
+    [session, tracksAtom]
+  )
+  const looks = useAtomValue(looksAtom)
   const open = useAtomValue(openAtom)
   const tracks = useAtomValue(tracksAtom).length
   const box = useRef<HTMLDivElement>(null)
@@ -169,9 +186,10 @@ export const Arrangement = () => {
   useLayer(grid, drawn, (g, { view, palette }) => drawGrid(g, view, palette), [viewKey])
   // The bars' numbers are its only text, drawn again as the font comes.
   useLayer(frame, drawn, (g, { view, palette }) => drawFrame(g, view, palette), [viewKey, fonts])
-  useLayer(clipsLayer, drawn, (g, { view, palette }) => drawClips(g, view, palette, drawing, open), [
+  useLayer(clipsLayer, drawn, (g, { view, palette }) => drawClips(g, view, palette, drawing, looks, open), [
     viewKey,
     shown,
+    looks,
     gesture.shown,
     open
   ])

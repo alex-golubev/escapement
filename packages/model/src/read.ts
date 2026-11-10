@@ -23,6 +23,7 @@ import {
 } from '@escapement/engine-description'
 import { Array, Boolean, Option, Order, Predicate, Schema } from 'effect'
 import type * as Y from 'yjs'
+import { firstColour, storedColour } from './colour'
 import {
   get,
   idsOf,
@@ -73,6 +74,7 @@ export const finite = Schema.decodeUnknownOption(Schema.Finite)
 const string = Schema.decodeUnknownOption(Schema.String)
 const boolean = Schema.decodeUnknownOption(Schema.Boolean)
 const identifier = Schema.decodeUnknownOption(storedId)
+export const colour = Schema.decodeUnknownOption(storedColour)
 const sha256 = Schema.decodeUnknownOption(Schema.String.pipe(Schema.fromBrand('Sha256', Sha256)))
 const pluginRef = Schema.decodeUnknownOption(Schema.Struct({ id: Schema.Int, version: Schema.Int }))
 /** What makes a note itself; the rest has defaults. */
@@ -117,6 +119,7 @@ const valueOr =
 const stringOr = valueOr(string)
 const booleanOr = valueOr(boolean)
 const finiteOr = valueOr(finite)
+const colourOr = valueOr(colour)
 
 /** A number past the range reads as the nearest one in it, and a whole one as the nearest whole number. */
 const numberOr = (report: Report, path: Path, found: unknown, range: Range, fallback: number): number => {
@@ -297,6 +300,7 @@ export const readTrack = (
       value: {
         id,
         name: stringOr(report, [...path, 'name'], get(map, 'name'), ''),
+        colour: colourOr(report, [...path, 'colour'], get(map, 'colour'), firstColour),
         mute: booleanOr(report, [...path, 'mute'], get(map, 'mute'), false),
         strip: readStrip(map, trackStrip, report, path),
         instrument: Option.flatMap(mapUnder(report, path, map, 'instrument', 'skipped', true), (instrument) =>

@@ -48,11 +48,13 @@ import {
   noAuditions,
   noHolds,
   readProject,
+  renameTrack,
   resizeClip,
   setMasterParam,
   setMasterStrip,
   setMute,
   setTempo,
+  setTrackColour,
   setTrackParam,
   setTrackStrip,
   stepTicks,
@@ -622,6 +624,16 @@ describe('the compiler', () => {
           played(kickNode, 0),
           played(kickNode, 2)
         ])
+      })
+    )
+  )
+
+  it.effect("sends nothing for a track's name or colour: the engine plays neither", () =>
+    compiled((run) =>
+      Effect.sync(() => {
+        const { doc, tracks } = run
+        expect(changes(run, () => renameTrack(doc, by, tracks[0], 'Big kick'))).toEqual([])
+        expect(changes(run, () => setTrackColour(doc, by, tracks[1], '#123abc'))).toEqual([])
       })
     )
   )

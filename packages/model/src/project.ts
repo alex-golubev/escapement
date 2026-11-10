@@ -8,6 +8,7 @@ import type {
   Tick
 } from '@escapement/engine-description'
 import type { Option } from 'effect'
+import type { Colour } from './colour'
 import type { Id } from './id'
 
 type InstanceOf<N extends PluginName> = {
@@ -26,6 +27,8 @@ export type PluginInstance = { readonly [N in PluginName]: InstanceOf<N> }[Plugi
 export interface Track {
   readonly id: Id
   readonly name: string
+  /** Its head's, its strip's and its clips'. */
+  readonly colour: Colour
   readonly mute: boolean
   /** Its volume and pan, after the instrument: its fader in the mixer. */
   readonly strip: StripValues

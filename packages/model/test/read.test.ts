@@ -2,7 +2,15 @@ import { defaultStrip, defaultTempo, lastTick, plugins, Sha256, strip } from '@e
 import { Option } from 'effect'
 import { describe, expect, test } from 'vitest'
 import * as Y from 'yjs'
-import { createProject, defaultTrackStrip, Id, type PluginInstance, readProject, readProjectId } from '../src'
+import {
+  createProject,
+  defaultTrackStrip,
+  firstColour,
+  Id,
+  type PluginInstance,
+  readProject,
+  readProjectId
+} from '../src'
 import {
   addDrum,
   by,
@@ -148,21 +156,34 @@ describe('a value of the wrong type reads as its default', () => {
     rawMap(doc, 'meta').set('bpm', 'fast')
     rawMap(doc, 'tracks', track.id).set('mute', 'yes')
     rawMap(doc, 'tracks', track.id).set('name', 42)
+    rawMap(doc, 'tracks', track.id).set('colour', '#2B5357')
     rawMap(doc, 'tracks', track.id).set('pan', 'left')
     const { value, replacements } = readProject(doc)
     expect(value.tempo).toBe(defaultTempo)
     expect(value.tracks.find(({ id }) => id === track.id)).toMatchObject({
       name: '',
+      colour: firstColour,
       mute: false,
       strip: defaultTrackStrip
     })
     expect(replacements.map(({ path, read }) => [path.join('/'), read])).toEqual([
       ['meta/bpm', 'default'],
       [`tracks/${track.id}/name`, 'default'],
+      [`tracks/${track.id}/colour`, 'default'],
       [`tracks/${track.id}/mute`, 'default'],
       [`tracks/${track.id}/pan`, 'default']
     ])
   })
+})
+
+test("a track's colour of no palette's reads as it is; none at all, as the palette's first, unreported", () => {
+  const doc = newProject()
+  const [kick, snare] = projectOf(doc).tracks
+  rawMap(doc, 'tracks', kick.id).set('colour', '#123abc')
+  rawMap(doc, 'tracks', snare.id).delete('colour')
+  const { value, replacements } = readProject(doc)
+  expect(value.tracks.slice(0, 2).map(({ colour }) => colour)).toEqual(['#123abc', firstColour])
+  expect(replacements).toEqual([])
 })
 
 test('a number past its range reads as the nearest one in it, a whole one as the nearest whole number', () => {

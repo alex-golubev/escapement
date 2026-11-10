@@ -133,14 +133,15 @@ const TrackStrip = memo(function TrackStrip({ id, index }: { readonly id: Id; re
   )
   return Option.match(track, {
     onNone: () => null,
-    onSome: ({ name, mute, strip: values }) => (
+    onSome: ({ name, colour, mute, strip: values }) => (
       <div
         ref={box}
-        class='strip'
+        class='strip strip--track'
         role='group'
         aria-label={trackGroup(name, index)}
         data-unheard={!heard}
         data-chosen={chosen}
+        style={{ '--track-colour': colour }}
       >
         <button
           type='button'

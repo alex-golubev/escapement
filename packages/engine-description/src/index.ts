@@ -14,6 +14,7 @@ export {
   type AnyParam,
   type Choice,
   defaultStrip,
+  formatShort,
   formatValue,
   gainOf,
   gainText,
@@ -36,6 +37,7 @@ export {
   type StripParamId,
   type StripValues,
   strip,
+  widestShort,
   widestText
 } from './plugins'
 export { Sha256 } from './sounds'

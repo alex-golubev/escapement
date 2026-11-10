@@ -96,7 +96,7 @@ export const endOf = (clips: ReadonlyArray<Drawn>) =>
 const onGrid = (view: View, { x, y }: Point) =>
   x >= view.headsWidth && y >= view.rulerHeight && x < view.width && y < view.height && rowAt(view, y) < view.tracks
 
-/** Of the clips under the point, the one drawn last, as it is on top; none off the grid, where none is seen. */
+/** Of the clips under the point, the one drawn last; none off the grid. A clip holds its row's whole height, inset or not. */
 export const clipAt = (clips: ReadonlyArray<Shown>, view: View, point: Point): Option.Option<Shown> =>
   Option.flatMap(
     Option.liftPredicate(point, (point) => onGrid(view, point)),

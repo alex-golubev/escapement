@@ -1,5 +1,6 @@
 import { expect, type Locator, type Page } from '@playwright/test'
-import { addTrack, arrangementAt, below, drawnAt, nameOf, newClip, newProject, test } from './page'
+import { trackColours } from '@escapement/model'
+import { addTrack, arrangementAt, below, clipPixel, drawnAt, nameOf, newClip, newProject, reload, test } from './page'
 
 const heads = (page: Page) => page.locator('.track-head__name')
 
@@ -42,7 +43,7 @@ test("a track's menu opens at the pointer in place of the browser's, or under it
   // The click's point as the page has it, in whole pixels.
   expect(Math.abs((opened?.x ?? 0) - at.x)).toBeLessThanOrEqual(1)
   expect(Math.abs((opened?.y ?? 0) - at.y)).toBeLessThanOrEqual(1)
-  await expect(menu.getByRole('menuitem')).toHaveText(['Rename', 'Delete'])
+  await expect(menu.getByRole('menuitem')).toHaveText(['Rename', 'Colour', 'Delete'])
   // A right click is no click: the track chosen, the last added, stays so, and the clips under the heads take nothing.
   await expect(below(page)).toHaveText('Synth 3|Track')
   await page.keyboard.press('Escape')
@@ -61,6 +62,7 @@ test("a track's menu opens at the pointer in place of the browser's, or under it
   const item = (name: string) => menu.getByRole('menuitem', { name, exact: true })
   await expect(item('Rename')).toBeFocused()
   const goes = [
+    ['ArrowDown', 'Colour'],
     ['ArrowDown', 'Delete'],
     ['ArrowDown', 'Rename'],
     ['ArrowUp', 'Delete'],
@@ -86,6 +88,61 @@ test("a track's menu opens at the pointer in place of the browser's, or under it
   await synth.press('Shift+F10')
   await nameOf(page, 'Synth 2').evaluate((name) => name.focus())
   await expect(menu).toBeHidden()
+})
+
+/** Of a `#rrggbb` colour, its red, green and blue. */
+const rgbOf = (colour: string) => [1, 3, 5].map((at) => Number.parseInt(colour.slice(at, at + 2), 16))
+
+test("a track's colour from its menu, by the keyboard, colours its head and clips for good; two tracks' clips are two colours, whole heads two lines", async ({
+  page
+}) => {
+  await threeTracks(page)
+  await newClip(page, 0, 0, 'Synth')
+  await newClip(page, 1, 1, 'Synth 2')
+  const at = await arrangementAt(page)
+  const [teal, indigo, rust] = trackColours.map(({ colour }) => colour)
+  const row = rgbOf(
+    await page
+      .locator('.arrangement')
+      .evaluate((box) => getComputedStyle(box).getPropertyValue('--arrangement-row').trim())
+  )
+  // Opaque, a share of its colour over the row's, to a unit or so.
+  const clipIn = async (colour: string, bar: number, place: number) => {
+    const [red = 0, green = 0, blue = 0, alpha = 0] = await clipPixel(page, at(bar, place))
+    const mixed = rgbOf(colour).map((channel, i) => 0.4 * channel + 0.6 * (row[i] ?? 0))
+    const off = Math.max(...[red, green, blue].map((channel, i) => Math.abs(channel - (mixed[i] ?? 0))))
+    return { near: off <= 1.5, alpha }
+  }
+  const shown = { near: true, alpha: 255 }
+  await expect.poll(() => clipIn(teal, 0, 0)).toEqual(shown)
+  expect(await clipIn(indigo, 1, 1)).toEqual(shown)
+  const synth = nameOf(page, 'Synth')
+  await synth.focus()
+  await synth.press('Shift+F10')
+  await page.keyboard.press('ArrowDown')
+  await page.keyboard.press('Enter')
+  const colours = page.getByRole('menu', { name: 'Synth: colour', exact: true })
+  await expect(colours.getByRole('menuitemradio')).toHaveText(trackColours.map(({ name }) => name))
+  await expect(colours.getByRole('menuitemradio', { name: 'Teal', exact: true })).toBeFocused()
+  await expect(colours.getByRole('menuitemradio', { checked: true })).toHaveText(['Teal'])
+  await page.keyboard.press('ArrowDown')
+  await page.keyboard.press('ArrowDown')
+  await page.keyboard.press('Enter')
+  await expect(colours).toBeHidden()
+  await expect(synth).toBeFocused()
+  await expect.poll(() => clipIn(rust, 0, 0)).toEqual(shown)
+  await reload(page)
+  await expect.poll(() => clipIn(rust, 0, 0)).toEqual(shown)
+  await expect(page.locator('.track-head').first()).toHaveCSS('--track-colour', rust)
+  // At the tests' 1280 by 720: each head's two lines whole inside it.
+  const cut = await page.locator('.track-head:not(.track-head--add)').evaluateAll(
+    (heads) =>
+      heads.filter((head) => {
+        const box = head.getBoundingClientRect()
+        return Array.from(head.children).some((line) => line.getBoundingClientRect().bottom > box.bottom)
+      }).length
+  )
+  expect(cut).toBe(0)
 })
 
 test('a track renamed in place takes the name in its head, the panel and its knobs, over its notes too; Esc and undo leave the old', async ({

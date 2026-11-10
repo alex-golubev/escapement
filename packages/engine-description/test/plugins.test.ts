@@ -2,6 +2,7 @@ import { Array, Option } from 'effect'
 import { describe, expect, test } from 'vitest'
 import {
   defaultStrip,
+  formatShort,
   formatValue,
   newTrackPosition,
   nearestIn,
@@ -10,6 +11,7 @@ import {
   pluginNameOf,
   plugins,
   strip,
+  widestShort,
   widestText
 } from '../src/plugins'
 
@@ -143,6 +145,17 @@ test('a value reads in its unit', () => {
   expect(formatValue(attack, 10)).toBe('10 s')
 })
 
+test('a value reads shorter where a pan is a side and how far, rounded as in full; anything else as in full', () => {
+  expect(formatShort(pan, 0)).toBe('C')
+  expect(formatShort(pan, -0.004)).toBe('C')
+  expect(formatShort(pan, -0.14)).toBe('L14')
+  expect(formatShort(pan, 0.225)).toBe('R23')
+  expect(formatShort(pan, 1)).toBe('R100')
+  expect(formatShort(volume, 0.5)).toBe('−6.0 dB')
+  expect(formatShort(volume, 0)).toBe('−∞ dB')
+  expect(formatShort(cutoff, 2412)).toBe('2.4 kHz')
+})
+
 test("a knob's widest number is the longest it reads anywhere along its travel", () => {
   expect(widestText(pan)).toBe('100% right'.length)
   expect(widestText(volume)).toBe('−100.0 dB'.length)
@@ -151,6 +164,8 @@ test("a knob's widest number is the longest it reads anywhere along its travel",
   expect(widestText(fine)).toBe('+100 ct'.length)
   expect(widestText(mix)).toBe('100%'.length)
   expect(widestText(attack)).toBe('999 ms'.length)
+  expect(widestShort(pan)).toBe('R100'.length)
+  expect(widestShort(volume)).toBe('−100.0 dB'.length)
 })
 
 test("a strip's volume leaves the sound as it is, its pan in the middle", () => {

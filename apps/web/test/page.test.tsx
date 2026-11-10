@@ -38,6 +38,7 @@ import {
   setTrackStrip,
   stepTicks,
   stretchNote,
+  trackColours,
   trackStrip,
   trimClip
 } from '@escapement/model'
@@ -86,7 +87,7 @@ const { keysWidth, rowHeight, rulerHeight, stepWidth } = rollLayout
 
 const arrangementLayout = arrangementLayoutOf(16)
 
-const { barWidth, headsWidth, rulerHeight: arrangementRulerHeight, trackHeight } = arrangementLayout
+const { barWidth, headsWidth, rulerHeight: arrangementRulerHeight, trackHeight, clipInset, gap } = arrangementLayout
 
 // The debug panel shows it, and happy-dom has none.
 Object.assign(globalThis, { crossOriginIsolated: false })
@@ -541,7 +542,10 @@ test('+ adds a track with a synth under the others, its pan and volume in its he
 /** The items of the menu open now, by label. */
 const menuItems = () =>
   new Map(
-    Array.from(document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'), (item) => [item.textContent, item])
+    Array.from(document.querySelectorAll<HTMLButtonElement>('[role="menuitem"], [role="menuitemradio"]'), (item) => [
+      item.textContent,
+      item
+    ])
   )
 
 /** The menu of the track's name, opened by a right click on it. */
@@ -597,7 +601,7 @@ test("F2 on a track's name renames it in place, and so does its menu: Enter keep
         yield* typed('Other', 'Escape')
         expect(names()).toEqual(['Big kick', 'Snare'])
         const menu = yield* trackMenu(target, 'Big kick')
-        expect(Array.from(menu.keys())).toEqual(['Rename', 'Delete'])
+        expect(Array.from(menu.keys())).toEqual(['Rename', 'Colour', 'Delete'])
         menu.get('Rename')?.click()
         yield* drawn()
         expect(field()?.value).toBe('Big kick')
@@ -761,7 +765,7 @@ test('a knob turns as it is dragged, redrawing only itself, and writes the docum
       yield* drawn()
       const { components } = yield* changed(() => pointer(knob, 'pointermove', 80))
       // It and the hint line, which tells the value of the knob with the focus: nothing of the Kick below.
-      expect(components).toEqual(['Dial', 'SmallKnob', 'HintLine'])
+      expect(components).toEqual(['ParamText', 'HintLine'])
       expect(knobAt(knob)).toBeCloseTo(0.9, 9)
       expect(kickAt(doc)).toBeCloseTo(0.8, 9)
       // With Shift, a tenth as far.
@@ -781,7 +785,7 @@ test("a knob another tab turns shows its value as it turns, redrawing only itsel
       const knob = kickKnob(grid)
       const volume = HoldTarget.TrackStrip({ track: readProject(doc).value.tracks[0].id, param: 'volume' })
       const { components } = yield* changed(() => elsewhere(holding(noHolds, volume, at(0.3))))
-      expect(components).toEqual(['Dial', 'SmallKnob'])
+      expect(components).toEqual(['ParamText'])
       expect(knobAt(knob)).toBeCloseTo(0.3, 9)
       expect(kickAt(doc)).toBeCloseTo(0.8, 9)
       // Turned here from what it shows, by this page's hand over the other's.
@@ -950,7 +954,7 @@ test('keys turn a knob, a key held down as one turn written once, and a double c
     })
   ))
 
-test("pan and volume stand before a track's name in its head, turn its strip and are put back by Cmd+Z", () =>
+test("pan and volume stand under a track's name in its head, short, turn its strip and are put back by Cmd+Z", () =>
   page(({ doc, grid }) =>
     Effect.gen(function* () {
       const knob = (label: string) =>
@@ -958,11 +962,13 @@ test("pan and volume stand before a track's name in its head, turn its strip and
       const [pan, volume] = [knob('Kick: pan'), knob('Kick: volume')]
       const kickStrip = () => readProject(doc).value.tracks[0].strip
       const head = pan.closest('.track-head')
-      expect(Array.from(head?.children ?? [], (child) => child.className)).toEqual([
-        'track-head__strip',
-        'track-head__name',
-        'track-head__buttons'
-      ])
+      const classes = (of: Element | null | undefined) => Array.from(of?.children ?? [], (child) => child.className)
+      const [top, bottom] = Array.from(head?.children ?? [])
+      expect(classes(top)).toEqual(['track-head__place num', 'track-head__name', 'track-head__buttons'])
+      expect(classes(bottom)).toEqual(['cap track-head__input', 'track-head__strip'])
+      expect(top?.textContent).toBe('01KickMS')
+      // The dot before the first value is the style sheet's to hide.
+      expect(bottom?.textContent).toBe('Internal DSP•C•−5.2 dB')
       // The instrument's knobs are below, with the track, and its mixer strip too.
       expect(head?.querySelectorAll('[role="slider"]')).toHaveLength(2)
       expect(head?.querySelector('[role="spinbutton"]')).toBeNull()
@@ -974,6 +980,7 @@ test("pan and volume stand before a track's name in its head, turn its strip and
       pointer(pan, 'pointermove', 80)
       yield* drawn()
       expect(pan.getAttribute('aria-valuetext')).toBe('20% right')
+      expect(pan.textContent).toBe('R20')
       expect(kickStrip().pan).toBe(0)
       pointer(pan, 'pointerup', 80)
       yield* drawn()
@@ -3569,24 +3576,42 @@ const fillsOnCanvases = () => {
   }
 }
 
-/** As `fillsOnCanvases`: the rounded rectangles stroked on each canvas since it was cleared, by their lines' width. */
-const ringsOnCanvases = () => {
-  const stroked = new Map<HTMLCanvasElement, Array<number>>()
+/** A rounded rectangle painted, filled or stroked: in what colour, how see-through, and with how wide a line. */
+interface Painted {
+  readonly paint: 'fill' | 'stroke'
+  readonly style: unknown
+  readonly alpha: number
+  readonly lineWidth: number
+}
+
+/** As `fillsOnCanvases`: the rounded rectangles painted on each canvas since it was cleared, each as often as painted. */
+const pathsOnCanvases = () => {
+  const painted = new Map<HTMLCanvasElement, Array<Painted>>()
   const spy = vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(function (
     this: HTMLCanvasElement
   ) {
     const canvas = this
-    const set: Record<string, unknown> = {}
+    const set: Record<string, unknown> = { globalAlpha: 1, lineWidth: 1 }
     const path = { rects: 0 }
+    const paint = (how: Painted['paint'], style: string) => () =>
+      painted.get(canvas)?.push(
+        ...Array.from({ length: path.rects }, () => ({
+          paint: how,
+          style: set[style],
+          alpha: Number(set.globalAlpha),
+          lineWidth: Number(set.lineWidth)
+        }))
+      )
     const drawing: Record<string, () => void> = {
-      clearRect: () => stroked.set(canvas, []),
+      clearRect: () => painted.set(canvas, []),
       beginPath: () => {
         path.rects = 0
       },
       roundRect: () => {
         path.rects += 1
       },
-      stroke: () => stroked.get(canvas)?.push(...Array.from({ length: path.rects }, () => Number(set.lineWidth)))
+      fill: paint('fill', 'fillStyle'),
+      stroke: paint('stroke', 'strokeStyle')
     }
     return new Proxy(
       {},
@@ -3600,21 +3625,25 @@ const ringsOnCanvases = () => {
     ) as CanvasRenderingContext2D
   } as never)
   return {
-    stroked: (canvas: HTMLCanvasElement | undefined) =>
-      Option.fromUndefinedOr(canvas).pipe(Option.flatMap((on) => Option.fromUndefinedOr(stroked.get(on)))),
+    painted: (canvas: HTMLCanvasElement | undefined) =>
+      Option.fromUndefinedOr(canvas).pipe(Option.flatMap((on) => Option.fromUndefinedOr(painted.get(on)))),
     restore: () => spy.mockRestore()
   }
 }
 
-test('the clip whose notes are below is ringed in the Arrangement, the others not; with its track below, none', () => {
-  const canvases = ringsOnCanvases()
+test('the clip whose notes are below has its edge lightened in the Arrangement, the others not; with its track below, none', () => {
+  const canvases = pathsOnCanvases()
   return page(({ grid, target }) =>
     Effect.gen(function* () {
-      // Rings a line twice as wide as a clip's edge.
+      // An edge stroked again, in no track's colour: the light over it, half seen.
       const rings = () =>
         Option.map(
-          canvases.stroked(target.querySelectorAll<HTMLCanvasElement>('.arrangement canvas')[1]),
-          (widths) => widths.filter((width) => width === 2).length
+          canvases.painted(target.querySelectorAll<HTMLCanvasElement>('.arrangement canvas')[1]),
+          (paths) =>
+            paths.filter(
+              ({ paint, style, alpha }) =>
+                paint === 'stroke' && alpha === 0.5 && !trackColours.some(({ colour }) => colour === style)
+            ).length
         )
       expect(rings()).toEqual(Option.some(0))
       yield* openKickClip(target)
@@ -3623,6 +3652,71 @@ test('the clip whose notes are below is ringed in the Arrangement, the others no
       yield* drawn(50)
       expect(rings()).toEqual(Option.some(0))
     })
+  ).finally(canvases.restore)
+})
+
+test("a clip is its track's colour, filled with a share of it, edged with it whole, dimmed whole while the track isn't heard; its head's menu colours the track for everyone, its head, strip and clips, and Cmd+Z brings the colour back", () => {
+  const canvases = pathsOnCanvases()
+  return withPopovers(() =>
+    page(({ doc, target, button }) =>
+      Effect.gen(function* () {
+        const [teal, indigo, rust] = trackColours.map(({ colour }) => colour)
+        const kickClip = () =>
+          Option.getOrElse(
+            canvases.painted(target.querySelectorAll<HTMLCanvasElement>('.arrangement canvas')[1]),
+            () => []
+          ).map(({ paint, style, alpha }) => ({ paint, style, alpha }))
+        // Looked for on the page: the heads are drawn anew as the Arrangement comes back to the middle.
+        const headColour = (name: string) =>
+          nameButton(target, name).closest<HTMLElement>('.track-head')?.style.getPropertyValue('--track-colour')
+        expect(readProject(doc).value.tracks.map(({ colour }) => colour)).toEqual([teal, indigo])
+        expect([headColour('Kick'), headColour('Snare')]).toEqual([teal, indigo])
+        // On the row's colour first, which hides a clip under it: the style sheet's, none in happy-dom.
+        expect(kickClip()).toEqual([
+          { paint: 'fill', style: '', alpha: 1 },
+          { paint: 'fill', style: teal, alpha: 0.4 },
+          { paint: 'stroke', style: teal, alpha: 1 }
+        ])
+        // Held over the Snare's row, it takes the row's colour before it is let go.
+        const lanes = arrangementIn(target)
+        lanes.at('pointerdown', 0, 0)
+        lanes.at('pointermove', 0, 1)
+        yield* drawn()
+        expect(kickClip().map(({ style }) => style)).toEqual(['', indigo, indigo])
+        lanes.at('pointermove', 0, 0)
+        lanes.at('pointerup', 0, 0, { buttons: 0 })
+        yield* drawn()
+        // Its colours, the one it has checked, opened from its menu in the menu's place.
+        ;(yield* trackMenu(target, 'Kick')).get('Colour')?.click()
+        yield* drawn()
+        const choices = Array.from(document.querySelectorAll<HTMLElement>('[role="menuitemradio"]'))
+        expect(choices.map(({ textContent }) => textContent)).toEqual(trackColours.map(({ name }) => name))
+        expect(
+          choices
+            .filter((choice) => choice.getAttribute('aria-checked') === 'true')
+            .map(({ textContent }) => textContent)
+        ).toEqual(['Teal'])
+        expect(document.querySelector('.menu')?.getAttribute('aria-label')).toBe('Kick: colour')
+        expect(document.activeElement).toBe(choices[0])
+        menuItems().get('Rust')?.click()
+        yield* drawn()
+        expect(readProject(doc).value.tracks.map(({ colour }) => colour)).toEqual([rust, indigo])
+        expect(headColour('Kick')).toBe(rust)
+        expect(kickClip().map(({ style }) => style)).toEqual(['', rust, rust])
+        // Muted, the clip dims whole.
+        button('Kick: mute').click()
+        yield* drawn()
+        expect(kickClip().map(({ alpha }) => alpha)).toEqual([1, 0.4 * 0.4, 0.4])
+        yield* pressCentre(target, 'Mix')
+        expect(target.querySelector<HTMLElement>('.strip--track')?.style.getPropertyValue('--track-colour')).toBe(rust)
+        yield* pressCentre(target, 'Arrange')
+        press(document.body, { key: 'z', metaKey: true })
+        press(document.body, { key: 'z', metaKey: true })
+        yield* drawn()
+        expect(readProject(doc).value.tracks[0]).toMatchObject({ colour: teal, mute: false })
+        expect(headColour('Kick')).toBe(teal)
+      })
+    )
   ).finally(canvases.restore)
 })
 
@@ -3675,11 +3769,13 @@ test('a clip longer than its pattern has a line in it where the pattern starts a
         canvases.filled(target.querySelectorAll<HTMLCanvasElement>('.arrangement canvas')[1]),
         (rects) => rects.filter(([, , width]) => width === 1).map(([x, y, , height]) => [x, y, height])
       )
-      const y = arrangementRulerHeight + 5
+      // Inside the clip, off its row by the clip's inset, and off its edges by a gap.
+      const y = arrangementRulerHeight + clipInset + gap
+      const height = trackHeight - 2 * clipInset - 2 * gap
       expect(lines).toEqual(
         Option.some([
-          [headsWidth + barWidth, y, trackHeight - 11],
-          [headsWidth + 2 * barWidth, y, trackHeight - 11]
+          [headsWidth + barWidth, y, height],
+          [headsWidth + 2 * barWidth, y, height]
         ])
       )
     })

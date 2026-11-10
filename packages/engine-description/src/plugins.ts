@@ -170,16 +170,23 @@ const millisecondsText = inThousands('ms', 's', (milliseconds) =>
   Boolean.match(milliseconds < 10, { onTrue: () => toTenth(milliseconds), onFalse: () => Math.round(milliseconds) })
 )
 
-const unitText: { readonly [U in Unit]: (value: number) => string } = {
+/** How far a pan is to a side, in whole percent; none where it rounds to the centre. */
+const panSide = (pan: number) =>
+  Option.map(
+    Option.liftPredicate(Math.round(Math.abs(pan) * 100), (percent) => percent > 0),
+    (percent) => ({ percent, left: pan < 0 })
+  )
+
+type UnitTexts = { readonly [U in Unit]: (value: number) => string }
+
+const unitText: UnitTexts = {
   hertz: hertzText,
   pan: (pan) =>
-    Option.match(
-      Option.liftPredicate(Math.round(Math.abs(pan) * 100), (percent) => percent > 0),
-      {
-        onNone: () => 'center',
-        onSome: (percent) => `${percent}% ${Boolean.match(pan < 0, { onTrue: () => 'left', onFalse: () => 'right' })}`
-      }
-    ),
+    Option.match(panSide(pan), {
+      onNone: () => 'center',
+      onSome: ({ percent, left }) =>
+        `${percent}% ${Boolean.match(left, { onTrue: () => 'left', onFalse: () => 'right' })}`
+    }),
   gain: (gain) => gainText(gain),
   semitones: (semitones) => `${wholes(semitones)} st`,
   cents: (cents) => `${wholes(cents)} ct`,
@@ -187,23 +194,44 @@ const unitText: { readonly [U in Unit]: (value: number) => string } = {
   seconds: (seconds) => millisecondsText(seconds * 1000)
 }
 
-/** As people read it. */
-export const formatValue = (param: Knob, value: number) =>
+/** As a narrow place reads them, such as a track's head: a pan as `C`, `L14` or `R22`. */
+const shortText: UnitTexts = {
+  ...unitText,
+  pan: (pan) =>
+    Option.match(panSide(pan), {
+      onNone: () => 'C',
+      onSome: ({ percent, left }) => `${Boolean.match(left, { onTrue: () => 'L', onFalse: () => 'R' })}${percent}`
+    })
+}
+
+const formatIn = (texts: UnitTexts) => (param: Knob, value: number) =>
   Option.match(Option.fromNullOr(param.unit), {
     onNone: () => value.toFixed(2),
-    onSome: (unit) => unitText[unit](value)
+    onSome: (unit) => texts[unit](value)
   })
+
+/** As people read it. */
+export const formatValue = formatIn(unitText)
+
+/** As `formatValue`, but for the few units a narrow place writes shorter. */
+export const formatShort = formatIn(shortText)
 
 /** Positions along a knob's travel where `widestText` reads it: fine enough to reach −100.0 dB near a volume's bottom. */
 const readings = Array.makeBy(1001, (step) => step / 1000)
 
-/** Descriptions don't change, so each is read along its travel once. */
-const widest = new WeakMap<Knob, number>()
+/** The most characters a knob's number reads as `format` writes it, anywhere along its travel: read once a knob. */
+const widestIn = (format: (param: Knob, value: number) => string) => {
+  const widest = new WeakMap<Knob, number>()
+  return (param: Knob): number =>
+    Option.getOrElse(Option.fromUndefinedOr(widest.get(param)), () => {
+      const chars = Math.max(...readings.map((position) => format(param, paramValue(param, position)).length))
+      widest.set(param, chars)
+      return chars
+    })
+}
 
-/** The most characters a knob's number reads anywhere along its travel: what its field holds without moving. */
-export const widestText = (param: Knob): number =>
-  Option.getOrElse(Option.fromUndefinedOr(widest.get(param)), () => {
-    const chars = Math.max(...readings.map((position) => formatValue(param, paramValue(param, position)).length))
-    widest.set(param, chars)
-    return chars
-  })
+/** What a knob's field holds without moving as it turns. */
+export const widestText = widestIn(formatValue)
+
+/** As `widestText`, as `formatShort` writes it. */
+export const widestShort = widestIn(formatShort)

@@ -47,11 +47,16 @@
   box-shadow: 0 0 0 1px var(--line);
 }
 
-/* The track chosen: a light stripe across its top, as its head has down its left. */
-.strip[data-chosen="true"] {
+/* A track's colour across its top, as down its head's left. */
+.strip--track {
   box-shadow:
-    inset 0 0.125rem var(--t-mid),
-    0 0 0 1px var(--line);
+    inset 0 0.125rem var(--track-colour),
+    0 0 0 1px var(--line-soft);
+}
+
+/* The track chosen: lighter, as its head. */
+.strip--track[data-chosen="true"] {
+  background: var(--s-hover);
 }
 
 /* As high as a track's name and its buttons together, so the faders line up. */
@@ -84,7 +89,7 @@
 }
 
 .strip__name:hover {
-  background: var(--s-raise);
+  background: var(--over);
 }
 
 .strip__buttons {

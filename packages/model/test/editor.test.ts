@@ -229,6 +229,7 @@ describe('an editor', () => {
       (editor) => editor.setTrackParam(synth.id, 'osc1.shape', 0),
       (editor) => editor.setTrackStrip(track.id, 'pan', -0.6),
       (editor) => editor.setTrackStrip(track.id, 'volume', 0.7),
+      (editor) => editor.setTrackColour(track.id, '#123abc'),
       (editor) => editor.setMasterParam(slot.id, 'cutoff', 500)
     ]
     editing(doc, (editor) => {

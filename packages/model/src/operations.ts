@@ -18,6 +18,7 @@ import {
 import { Array, Boolean, Equal, Number, Option, Order, Predicate, Record, Schema, String } from 'effect'
 import { generateKeyBetween } from 'fractional-indexing'
 import type * as Y from 'yjs'
+import { type Colour, colourBetween, firstColour } from './colour'
 import {
   type ClipBounds,
   type ClipFields,
@@ -39,7 +40,18 @@ import {
 import { type Id, newId } from './id'
 import type { Clip, Note } from './project'
 import { samePlace, withMoved, withPut, withStretched } from './notes'
-import { finite, ignore, isDeleted, latestEnd, readClip, readNotes, readPluginName, readTrack } from './read'
+import {
+  colour,
+  finite,
+  ignore,
+  inOrder,
+  isDeleted,
+  latestEnd,
+  readClip,
+  readNotes,
+  readPluginName,
+  readTrack
+} from './read'
 import { defaultNote } from './time'
 import { trackStrip } from './track-strip'
 import { newWriter, type Writer } from './writer'
@@ -316,6 +328,17 @@ export const renameTrack = (doc: Y.Doc, by: Writer, track: Id, name: string): bo
     })
   )
 
+/** As `#rrggbb` in lower case, any colour, not only the palette's; refused otherwise. */
+export const setTrackColour = (doc: Y.Doc, by: Writer, track: Id, value: string): boolean =>
+  transact(
+    doc,
+    by,
+    Option.gen(function* () {
+      const map = yield* liveTrack(projectMaps(doc), track)
+      return write(map, 'colour', yield* colour(value), firstColour)
+    })
+  )
+
 /**
  * Marked so, all it holds left in the document, and its clips hidden with it: an undo brings it back whole, its clips
  * with it, and an edit made in it offline stays.
@@ -360,21 +383,33 @@ const freeName = (label: string, taken: ReadonlyArray<string>): string => {
   )
 }
 
-/** A fractional index after the greatest of `orders` that is one; the first index if none is. */
-const orderAfter = (orders: ReadonlyArray<string>): string =>
-  Option.getOrElse(
-    Array.findFirst(Array.sort(orders, Order.flip(Order.String)), (order) =>
-      Option.liftThrowable(() => generateKeyBetween(order, null))()
-    ),
-    () => generateKeyBetween(null, null)
+/** A track's place, a deleted one's too, as an undo brings it back there, and its colour, if it has one. */
+interface TrackPlace {
+  readonly order: string
+  readonly colour: Option.Option<Colour>
+}
+
+const trackPlaces = (tracks: Stored<Record<string, Stored<TrackFields>>>): ReadonlyArray<TrackPlace> =>
+  idsOf(tracks).flatMap((id) =>
+    Option.toArray(
+      Option.flatMap(mapAt(tracks, id), (map) =>
+        Option.map(Option.liftPredicate(get(map, 'order'), Predicate.isString), (order) => ({
+          order,
+          colour: colour(get(map, 'colour'))
+        }))
+      )
+    )
   )
 
-/** The place of every entry, a deleted one's too: an undo brings it back there. */
-const placesTaken = (entries: Stored<Record<string, Stored<{ readonly order: string }>>>): ReadonlyArray<string> =>
-  idsOf(entries).flatMap((id) =>
-    Option.toArray(
-      Option.flatMap(mapAt(entries, id), (map) => Option.liftPredicate(get(map, 'order'), Predicate.isString))
-    )
+/** The place a new one goes after, the greatest that is a fractional index, with the index after it; none if none is. */
+const lastPlace = (places: ReadonlyArray<TrackPlace>) =>
+  Array.findFirst(
+    Array.sort(
+      places,
+      Order.mapInput(Order.flip(Order.String), ({ order }: TrackPlace) => order)
+    ),
+    (place) =>
+      Option.map(Option.liftThrowable(() => generateKeyBetween(place.order, null))(), (next) => ({ ...place, next }))
   )
 
 /**
@@ -552,24 +587,29 @@ export const synth: NewInstrument = { plugin: plugins.synth, sounds: {} }
 
 /**
  * A track after every other, a deleted one too, playing the instrument at its defaults, named after it so that no live
- * track has its name: "Synth", then "Synth 2" and on. Brought in so that an undo puts it in the trash, with the clips put
- * on it since. Its ID; none if the document holds no project.
+ * track has its name: "Synth", then "Synth 2" and on; coloured unlike either neighbour. Brought in so that an undo puts
+ * it in the trash, with the clips put on it since. Its ID; none if the document holds no project.
  */
 export const addTrack = (doc: Y.Doc, by: Writer, instrument: NewInstrument = synth): Option.Option<Id> => {
   const maps = projectMaps(doc)
   return Option.map(Option.liftPredicate(maps, holdsProject), () => {
-    const live = idsOf(maps.tracks).flatMap((id) => Option.toArray(readTrack(ignore, maps.tracks, id)))
+    const live = inOrder(idsOf(maps.tracks).flatMap((id) => Option.toArray(readTrack(ignore, maps.tracks, id))))
     const name = freeName(
       instrument.plugin.label,
-      live.map(({ value }) => value.name)
+      live.map(({ name }) => name)
     )
+    const last = lastPlace(trackPlaces(maps.tracks))
     return broughtIn(
       doc,
       by,
       maps.tracks,
       newMap<TrackFields>({
         name,
-        order: orderAfter(placesTaken(maps.tracks)),
+        colour: colourBetween(
+          Option.map(Array.last(live), ({ colour }) => colour),
+          Option.flatMap(last, ({ colour }) => colour)
+        ),
+        order: Option.match(last, { onNone: () => generateKeyBetween(null, null), onSome: ({ next }) => next }),
         deleted: true,
         mute: false,
         instrument: newMap(newInstance(instrument.plugin, instrument.sounds))

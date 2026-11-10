@@ -68,3 +68,10 @@
   flex: none;
   opacity: 0.8;
 }
+
+/* A check, or a chevron to a menu of its own, away at the item's end. */
+.menu__item .menu__mark {
+  margin-left: auto;
+  padding-left: 0.75rem;
+  box-sizing: content-box;
+}

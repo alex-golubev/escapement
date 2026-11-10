@@ -1,6 +1,7 @@
 import type { MidiKey, Sha256, StripValues, Tick } from '@escapement/engine-description'
 import { Option } from 'effect'
 import * as Y from 'yjs'
+import type { Colour } from './colour'
 import { Id } from './id'
 
 declare const holds: unique symbol
@@ -57,6 +58,7 @@ export interface PluginFields {
 /** Its strip's parameters by ID, each a key of its own; one left out is at its default. */
 export interface TrackFields extends Partial<StripValues> {
   readonly name: string
+  readonly colour: Colour
   /** A fractional index: tracks sort by it. */
   readonly order: string
   readonly deleted: boolean
