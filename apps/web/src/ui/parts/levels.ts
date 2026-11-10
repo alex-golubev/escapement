@@ -1,3 +1,4 @@
+import { gainText } from '@escapement/engine-description'
 import { Number, Option } from 'effect'
 
 /** Anything quieter reads as silence. */
@@ -9,6 +10,13 @@ const toDb = (peak: number) => Math.max(meterFloorDb, 20 * Math.log10(peak))
 /** Where a peak stands on a meter drawn in decibels: 0 at the floor, 1 at full scale. */
 export const meterPosition = (peak: number) =>
   Number.clamp((toDb(peak) - meterFloorDb) / -meterFloorDb, { minimum: 0, maximum: 1 })
+
+/** A peak in decibels to a tenth, as a meter reads it: anything quieter than its floor, silence. */
+export const peakText = (peak: number) =>
+  Option.match(
+    Option.liftPredicate(peak, (heard) => meterPosition(heard) > 0),
+    { onNone: () => '−∞ dB', onSome: gainText }
+  )
 
 /** One side's count of blocks over full scale, as one engine keeps it. */
 export interface Overs {

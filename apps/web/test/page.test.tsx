@@ -1575,6 +1575,71 @@ test("the meters draw the master's peaks in decibels, and a lamp lights when its
     })
   ))
 
+test("the transport's master shows the level in segments, latches its lamps as the Mixer's do, and a click on it puts out both, the Mixer's too", () =>
+  page(({ target, frame }) =>
+    Effect.gen(function* () {
+      const master = Option.getOrThrow(
+        Option.fromNullishOr(target.querySelector<HTMLButtonElement>('[aria-label="Master level"]'))
+      )
+      /** Per side, the segments its level lights and whether its lamp is lit. */
+      const sides = () =>
+        Array.from(master.querySelectorAll('.master__side'), (side) => [
+          side.querySelectorAll('.master__segment[data-on="true"]').length,
+          side.querySelector('.master__lamp')?.getAttribute('data-lit') === 'true'
+        ])
+      const mixerLamps = () =>
+        Array.from(target.querySelectorAll('.strip--master .meter-clip'), (lamp) => lamp.getAttribute('data-lit'))
+      yield* boardShown(frame, 1, [0, 0], [0, 0])
+      expect(sides()).toEqual([
+        [0, false],
+        [0, false]
+      ])
+      // −20 dB is two thirds of the scale, five segments of seven; full scale, all of them.
+      yield* boardShown(frame, 1, [0.1, 1], [0, 1])
+      expect(sides()).toEqual([
+        [5, false],
+        [7, true]
+      ])
+      yield* pressCentre(target, 'Mix')
+      expect(mixerLamps()).toEqual([null, 'true'])
+      master.click()
+      yield* drawn()
+      expect(sides()[1]).toEqual([7, false])
+      expect(mixerLamps()).toEqual([null, null])
+    })
+  ))
+
+test("the transport's master shows the loudest peak of the last two seconds, in decibels; anything below its floor is silence", () => {
+  const clock = { now: 1000 }
+  vi.spyOn(performance, 'now').mockImplementation(() => clock.now)
+  return page(({ target, frame }) =>
+    Effect.gen(function* () {
+      const peak = () => target.querySelector('.master__peak')?.textContent
+      /** The board at `peak`, `after` ms on. */
+      const peakAfter = (after: number, peak: number) =>
+        Effect.suspend(() => {
+          clock.now += after
+          return boardShown(frame, 1, [peak, 0], [0, 0])
+        })
+      yield* peakAfter(0, 0.5)
+      expect(peak()).toBe('−6.0 dB')
+      yield* peakAfter(1000, 0.316)
+      yield* peakAfter(900, 0.1)
+      expect(peak()).toBe('−6.0 dB')
+      // The −6 dB two seconds gone, the −10 dB a second before is the loudest left.
+      yield* peakAfter(200, 0.1)
+      expect(peak()).toBe('−10.0 dB')
+      yield* peakAfter(2000, 0.0005)
+      expect(peak()).toBe('−∞ dB')
+      // No engine: no peak held over from the one gone.
+      yield* peakAfter(0, 0.5)
+      frame.current = undefined
+      yield* drawn(50)
+      expect(peak()).toBe('−∞ dB')
+    })
+  ).finally(() => vi.restoreAllMocks())
+})
+
 test('DSP load shows the last burst to a tenth while measured, red once a block took 90% of its time or the sound broke; a click switches measuring', () => {
   const measuring = Atom.make<Measuring>('on')
   const switched = { count: 0 }
