@@ -1,12 +1,12 @@
 import { useAtomValue } from '@effect/atom-react'
 import { Array, Boolean, DateTime, Effect, Option } from 'effect'
+import { Trash } from 'lucide-preact'
 import type { ComponentChildren } from 'preact'
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks'
 import { projectHref } from '../../../services/address'
 import type { ListedProject } from '../../../services/project-list'
 import type { Projects, Refused } from '../../../services/projects'
 import { HintLine } from '../../kit/hint-line'
-import { TrashIcon } from '../../kit/icons'
 import { NameField } from '../../kit/name-field'
 import { neighbourOf } from '../../kit/neighbour'
 import { ToProjects } from '../../parts/to-projects'
@@ -103,12 +103,12 @@ const ShownRow = ({ project, projects, run, to, focusBack }: ModeProps) => {
       </a>
       <button
         type='button'
-        class='btn projects__delete'
+        class='btn btn--icon projects__delete'
         aria-label={`Delete ${project.name}`}
         data-hint={`Delete ${project.name}: asks first, as it can't be undone`}
         onClick={() => to('deleting')}
       >
-        <TrashIcon />
+        <Trash />
       </button>
     </div>
   )

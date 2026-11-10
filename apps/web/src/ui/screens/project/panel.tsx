@@ -1,10 +1,10 @@
 import { useAtomValue } from '@effect/atom-react'
 import type { Id } from '@escapement/model'
 import { Boolean, Option } from 'effect'
+import { ChevronDown } from 'lucide-preact'
 import type { ComponentChildren } from 'preact'
 import { Shown } from '../../../services/view-store'
 import { useCore } from '../../core-context'
-import { ChevronIcon } from '../../kit/icons'
 import { PianoRoll, useNoteLength } from '../../views/piano-roll/piano-roll'
 import { TrackChain, useTrackName } from '../../views/track/track'
 import './panel.css'
@@ -36,7 +36,7 @@ const Frame = ({
           })}
           onClick={() => view.fold(!folded)}
         >
-          <ChevronIcon />
+          <ChevronDown />
         </button>
       </div>
       {Boolean.match(folded, { onTrue: () => null, onFalse: () => children })}

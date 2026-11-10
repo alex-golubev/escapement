@@ -41,7 +41,7 @@
 }
 
 .projects__list {
-  --bin: 1.875rem;
+  --bin: var(--btn);
   display: grid;
   background: var(--s-sunk);
   border-top: 1px solid var(--line-soft);
@@ -81,8 +81,6 @@
 /* Out of sight until the row is pointed at or has the focus, but in the order of Tab all the same; always in sight
    where nothing points. */
 .projects__delete {
-  width: var(--bin);
-  min-width: 0;
   opacity: 0;
 }
 

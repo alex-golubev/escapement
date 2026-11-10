@@ -1,5 +1,6 @@
 import { useAtomValue } from '@effect/atom-react'
 import { Boolean } from 'effect'
+import { Redo2, Undo2 } from 'lucide-preact'
 import { useEffect } from 'preact/hooks'
 import { useCore } from '../../core-context'
 import { typing } from '../../kit/keys'
@@ -43,7 +44,7 @@ export const HistoryButtons = () => {
     <>
       <button
         type='button'
-        class='btn'
+        class='btn btn--icon'
         aria-label='Undo'
         data-hint={Boolean.match(canUndo, {
           onTrue: () => "Undo your last change to the project, Cmd+Z or Ctrl+Z; the other tabs' changes stay",
@@ -52,14 +53,11 @@ export const HistoryButtons = () => {
         disabled={!canUndo}
         onClick={() => ops.undo()}
       >
-        <svg viewBox='0 0 12 12' aria-hidden='true'>
-          <path d='M4.5 2 1.5 5l3 3' />
-          <path d='M2 5h5.5a2.75 2.75 0 0 1 0 5.5H5' />
-        </svg>
+        <Undo2 />
       </button>
       <button
         type='button'
-        class='btn'
+        class='btn btn--icon'
         aria-label='Redo'
         data-hint={Boolean.match(canRedo, {
           onTrue: () => 'Redo your change, Cmd+Shift+Z or Ctrl+Shift+Z',
@@ -68,10 +66,7 @@ export const HistoryButtons = () => {
         disabled={!canRedo}
         onClick={() => ops.redo()}
       >
-        <svg viewBox='0 0 12 12' aria-hidden='true'>
-          <path d='m7.5 2 3 3-3 3' />
-          <path d='M10 5H4.5a2.75 2.75 0 0 0 0 5.5H7' />
-        </svg>
+        <Redo2 />
       </button>
     </>
   )
