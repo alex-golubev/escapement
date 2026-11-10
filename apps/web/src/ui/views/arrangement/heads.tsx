@@ -1,16 +1,31 @@
 import { useAtomValue } from '@effect/atom-react'
-import { HoldTarget, type Id } from '@escapement/model'
+import { type Colour, HoldTarget, type Id, trackColours } from '@escapement/model'
 import { Boolean, Option } from 'effect'
-import { Pencil, Trash } from 'lucide-preact'
+import { Palette, Pencil, Trash } from 'lucide-preact'
+import { Fragment } from 'preact'
 import { memo } from 'preact/compat'
 import { useLayoutEffect, useRef, useState } from 'preact/hooks'
 import { useCore } from '../../core-context'
-import { useContextMenu } from '../../kit/menu'
+import { type Menu, MenuItem, useContextMenu } from '../../kit/menu'
 import { NameField } from '../../kit/name-field'
 import { focusPast } from '../../kit/neighbour'
-import { SmallKnob } from '../../parts/knob'
+import { ParamText } from '../../parts/knob'
 import { choiceHint, TrackToggles, trackGroup } from '../../parts/track-buttons'
 import { panThenVolume } from '../../parts/track-strip'
+
+/** The palette's colours for the track, the one it has checked: written for everyone. */
+const colourMenu = (name: string, now: Option.Option<Colour>, set: (colour: Colour) => void): Menu => ({
+  title: `${name}: colour`,
+  items: trackColours.map(({ name: called, colour }) =>
+    MenuItem.Choice({
+      label: called,
+      icon: <span class='swatch' style={{ background: colour }} />,
+      hint: `Colour ${name} ${called.toLowerCase()}, for everyone; Cmd+Z or Ctrl+Z brings the one before back`,
+      checked: Option.contains(now, colour),
+      chosen: () => set(colour)
+    })
+  )
+})
 
 /** Drawn again after a key settled the name, it takes the focus back. */
 const TrackName = ({
@@ -28,7 +43,7 @@ const TrackName = ({
   readonly focusBack: boolean
   readonly rename: () => void
 }) => {
-  const { ops, view } = useCore()
+  const { registry, session, ops, view } = useCore()
   const notesBelow = useAtomValue(view.hasNotesBelow(id))
   const button = useRef<HTMLButtonElement>(null)
   useLayoutEffect(() => {
@@ -37,13 +52,25 @@ const TrackName = ({
   const menu = useContextMenu(() => ({
     title: name,
     items: [
-      { label: 'Rename', icon: <Pencil />, hint: `Rename ${name}, for everyone`, chosen: rename },
-      {
+      MenuItem.Action({ label: 'Rename', icon: <Pencil />, hint: `Rename ${name}, for everyone`, chosen: rename }),
+      MenuItem.Next({
+        label: 'Colour',
+        icon: <Palette />,
+        hint: `Colour ${name}, for everyone: its head, its strip and its clips`,
+        // The document's colour now, which may be ahead of the one drawn.
+        menu: () =>
+          colourMenu(
+            name,
+            Option.map(registry.get(session.project.track(id)), ({ colour }) => colour),
+            (colour) => ops.setTrackColour(id, colour)
+          )
+      }),
+      MenuItem.Action({
         label: 'Delete',
         icon: <Trash />,
         hint: `Delete ${name} and its clips from the project, for everyone; Cmd+Z or Ctrl+Z brings them back`,
         chosen: () => ops.deleteTrack(id)
-      }
+      })
     ]
   }))
   return (
@@ -70,7 +97,10 @@ const TrackName = ({
   )
 }
 
-/** Drawn again only as what it reads changes, not as the heads scroll. */
+/** A track's place among the tracks as its head shows it: two digits at least. */
+const placeText = (index: number) => String(index).padStart(2, '0')
+
+/** Two lines, place, name, M and S over sound, pan and volume: drawn again as what it reads changes, not as it scrolls. */
 const TrackHead = memo(function TrackHead({ id, index }: { readonly id: Id; readonly index: number }) {
   const { session, ops, view } = useCore()
   const track = useAtomValue(session.project.track(id))
@@ -88,7 +118,7 @@ const TrackHead = memo(function TrackHead({ id, index }: { readonly id: Id; read
   )
   return Option.match(track, {
     onNone: () => null,
-    onSome: ({ name, mute, strip: values }) => (
+    onSome: ({ name, colour, mute, strip: values }) => (
       <div
         ref={head}
         class='track-head'
@@ -96,44 +126,62 @@ const TrackHead = memo(function TrackHead({ id, index }: { readonly id: Id; read
         aria-label={trackGroup(name, index)}
         data-unheard={!heard}
         data-chosen={chosen}
+        style={{ '--track-colour': colour }}
       >
-        <span class='track-head__strip'>
-          {panThenVolume.map((param) => (
-            <SmallKnob
-              key={param.id}
-              owner={name}
-              param={param}
-              value={values[param.id]}
-              target={HoldTarget.TrackStrip({ track: id, param: param.id })}
-            />
-          ))}
+        <span class='track-head__line'>
+          <span class='track-head__place num' aria-hidden='true'>
+            {placeText(index)}
+          </span>
+          {Boolean.match(naming.renaming, {
+            onTrue: () => (
+              <NameField
+                name={name}
+                label={`Name of track ${index}`}
+                hint='The name of the track, for everyone: Enter or a click elsewhere keeps it, Esc leaves it as it was'
+                class='track-head__field'
+                settled={(typed, focusBack) => {
+                  Option.map(typed, (named) => ops.renameTrack(id, named))
+                  setNaming({ renaming: false, focusBack })
+                }}
+              />
+            ),
+            onFalse: () => (
+              <TrackName
+                id={id}
+                index={index}
+                name={name}
+                chosen={chosen}
+                focusBack={naming.focusBack}
+                rename={() => setNaming({ renaming: true, focusBack: false })}
+              />
+            )
+          })}
+          <span class='track-head__buttons'>
+            <TrackToggles id={id} name={name} mute={mute} />
+          </span>
         </span>
-        {Boolean.match(naming.renaming, {
-          onTrue: () => (
-            <NameField
-              name={name}
-              label={`Name of track ${index}`}
-              hint='The name of the track, for everyone: Enter or a click elsewhere keeps it, Esc leaves it as it was'
-              class='track-head__field'
-              settled={(typed, focusBack) => {
-                Option.map(typed, (named) => ops.renameTrack(id, named))
-                setNaming({ renaming: false, focusBack })
-              }}
-            />
-          ),
-          onFalse: () => (
-            <TrackName
-              id={id}
-              index={index}
-              name={name}
-              chosen={chosen}
-              focusBack={naming.focusBack}
-              rename={() => setNaming({ renaming: true, focusBack: false })}
-            />
-          )
-        })}
-        <span class='track-head__buttons'>
-          <TrackToggles id={id} name={name} mute={mute} />
+        <span class='track-head__line track-head__sound'>
+          <span
+            class='cap track-head__input'
+            data-hint={`${name} sounds from its instrument, inside the engine: no track takes an input yet`}
+          >
+            Internal DSP
+          </span>
+          <span class='track-head__strip'>
+            {panThenVolume.map((param) => (
+              <Fragment key={param.id}>
+                <span class='track-head__between' aria-hidden='true'>
+                  •
+                </span>
+                <ParamText
+                  owner={name}
+                  param={param}
+                  value={values[param.id]}
+                  target={HoldTarget.TrackStrip({ track: id, param: param.id })}
+                />
+              </Fragment>
+            ))}
+          </span>
         </span>
       </div>
     )

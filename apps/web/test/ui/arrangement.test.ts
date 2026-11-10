@@ -265,5 +265,5 @@ test('nothing is in sight of an arrangement no higher than its ruler, nor narrow
 
 test('the sizes are whole pixels at any rem, so lines stay sharp, and grow with it', () => {
   expect(Object.values(layoutOf(23.1114)).every(Number.isInteger)).toBe(true)
-  expect(layoutOf(24)).toMatchObject({ trackHeight: 54, barWidth: 96, headsWidth: 294, rulerHeight: 27 })
+  expect(layoutOf(24)).toMatchObject({ trackHeight: 96, barWidth: 96, headsWidth: 432, rulerHeight: 27, clipInset: 9 })
 })

@@ -24,6 +24,22 @@
   line-height: 1;
 }
 
+/* A value alone as text, as in a track's head: dragged up or down as a knob is; as wide as its widest, at its right. */
+.param-text {
+  box-sizing: content-box;
+  min-width: calc(var(--chars) * 1ch);
+  border-radius: var(--r-sm);
+  text-align: right;
+  color: var(--t-hi);
+  cursor: ns-resize;
+  touch-action: none;
+  user-select: none;
+}
+
+.param-text:hover {
+  background: var(--over);
+}
+
 /* A cap with a mark on it, turned 270°, from seven o'clock to five; `--v` is the position, from 0 to 1. */
 .knob {
   --v: 0;

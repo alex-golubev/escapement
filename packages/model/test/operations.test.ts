@@ -27,6 +27,7 @@ import {
   deleteTrack,
   eraseClips,
   eraseNotes,
+  firstColour,
   Id,
   moveClip,
   moveNote,
@@ -36,9 +37,11 @@ import {
   setMasterStrip,
   setMute,
   setTempo,
+  setTrackColour,
   setTrackParam,
   setTrackStrip,
   stretchNote,
+  trackColours,
   trackStrip,
   trimClip
 } from '../src'
@@ -520,6 +523,7 @@ test('a value the document already holds is not written again', () => {
     expect(setTempo(doc, by, 2000)).toBe(true)
     expect(setMute(doc, by, track.id, false)).toBe(true)
     expect(renameTrack(doc, by, track.id, ' Kick ')).toBe(true)
+    expect(setTrackColour(doc, by, track.id, firstColour)).toBe(true)
   }
   expect(updatesDuring(doc, again)).toBe(0)
 })
@@ -528,13 +532,14 @@ test('nor is the value a document reads where it holds none: an edit that change
   const doc = newProjectWithSynth()
   const { track } = parts(doc)
   const synth = synthOf(doc)
-  ;['mute', 'volume', 'pan'].forEach((key) => rawMap(doc, 'tracks', track.id).delete(key))
+  ;['mute', 'volume', 'pan', 'colour'].forEach((key) => rawMap(doc, 'tracks', track.id).delete(key))
   rawMap(doc, 'meta').delete('bpm')
   const none = () => {
     expect(setTrackParam(doc, by, synth.id, 'osc1.shape', plugins.synth.params[0].default)).toBe(true)
     expect(setTrackStrip(doc, by, track.id, 'volume', defaultTrackStrip.volume)).toBe(true)
     expect(setTrackStrip(doc, by, track.id, 'pan', 0)).toBe(true)
     expect(setMute(doc, by, track.id, false)).toBe(true)
+    expect(setTrackColour(doc, by, track.id, firstColour)).toBe(true)
     expect(setTempo(doc, by, defaultTempo)).toBe(true)
   }
   expect(updatesDuring(doc, none)).toBe(0)
@@ -546,8 +551,10 @@ test('a broken value is written over even when it reads as the one written', () 
   const doc = newProject()
   const { track } = parts(doc)
   rawMap(doc, 'tracks', track.id).set('mute', 'no')
-  expect(projectOf(doc).tracks[0].mute).toBe(false)
+  rawMap(doc, 'tracks', track.id).set('colour', 'teal')
+  expect(projectOf(doc).tracks[0]).toMatchObject({ mute: false, colour: firstColour })
   expect(updatesDuring(doc, () => expect(setMute(doc, by, track.id, false)).toBe(true))).toBe(1)
+  expect(updatesDuring(doc, () => expect(setTrackColour(doc, by, track.id, firstColour)).toBe(true))).toBe(1)
   expect(replacementsOf(doc)).toEqual([])
 })
 
@@ -586,6 +593,7 @@ test('each operation is one transaction, and what it writes reads back with noth
     () => setMute(doc, by, track.id, true),
     () => setTempo(doc, by, 600),
     () => renameTrack(doc, by, track.id, 'Tom'),
+    () => setTrackColour(doc, by, track.id, '#123abc'),
     () => deleteTrack(doc, by, synth.id),
     () => moveClip(doc, by, clip, { track: projectOf(doc).tracks[1].id, tick: Tick(2 * barTicks) }),
     () => resizeClip(doc, by, clip, 2 * barTicks),
@@ -658,6 +666,68 @@ describe('a track added', () => {
   test('is refused in a document without a project', () => {
     const doc = new Y.Doc()
     expect(updatesDuring(doc, () => expect(addTrack(doc, by)).toEqual(Option.none()))).toBe(0)
+  })
+})
+
+describe("a track's colour", () => {
+  const colours = (doc: Y.Doc) => projectOf(doc).tracks.map(({ colour }) => colour)
+  const palette = trackColours.map(({ colour }) => colour)
+
+  test("of a track added is the palette's after the last live track's, round to the first", () => {
+    const doc = emptyProject()
+    palette.forEach(() => addTrack(doc, by))
+    expect(colours(doc)).toEqual(palette)
+    expect(Option.isSome(addTrack(doc, by))).toBe(true)
+    expect(colours(doc).at(-1)).toBe(palette[0])
+    // The last's chosen, then one of no palette's, then the last deleted, whose colour it skips: it goes after it.
+    const tracks = () => projectOf(doc).tracks
+    expect(setTrackColour(doc, by, tracks()[8].id, palette[4])).toBe(true)
+    expect(Option.isSome(addTrack(doc, by))).toBe(true)
+    expect(colours(doc).at(-1)).toBe(palette[5])
+    expect(setTrackColour(doc, by, tracks()[9].id, '#123abc')).toBe(true)
+    expect(Option.isSome(addTrack(doc, by))).toBe(true)
+    expect(colours(doc).at(-1)).toBe(palette[0])
+    expect(deleteTrack(doc, by, tracks()[10].id)).toBe(true)
+    expect(Option.isSome(addTrack(doc, by))).toBe(true)
+    expect(colours(doc).at(-1)).toBe(palette[1])
+  })
+
+  test("of a track added is none of its neighbours', the deleted one before it too, as an undo brings it back", () => {
+    const doc = emptyProject()
+    const [first, second] = [addTrack(doc, by), addTrack(doc, by)].map(Option.getOrThrow)
+    expect(deleteTrack(doc, by, second)).toBe(true)
+    // After the first's, but that is the deleted one's, which comes back between them.
+    const third = Option.getOrThrow(addTrack(doc, by))
+    rawMap(doc, 'tracks', second).set('deleted', false)
+    expect(projectOf(doc).tracks.map(({ id }) => id)).toEqual([first, second, third])
+    expect(colours(doc)).toEqual([palette[0], palette[1], palette[2]])
+  })
+
+  test("is any as #rrggbb in lower case, the palette's or not, the track's alone; seen by another client", () => {
+    const [here, there] = [newProject(), new Y.Doc()]
+    sync(here, there)
+    const [kick] = projectOf(here).tracks
+    const others = colours(here).slice(1)
+    expect(setTrackColour(here, by, kick.id, '#123abc')).toBe(true)
+    sync(here, there)
+    ;[here, there].forEach((doc) => expect(colours(doc)).toEqual(['#123abc', ...others]))
+    expect(replacementsOf(there)).toEqual([])
+  })
+
+  test("is refused as anything else, and for a track that isn't there or is deleted", () => {
+    const doc = newProject()
+    const [kick, snare] = projectOf(doc).tracks
+    const before = colours(doc)
+    expect(deleteTrack(doc, by, snare.id)).toBe(true)
+    const refused = () => {
+      ;['teal', '#2B5357', '#fff', '#12345g', '2b5357', ''].forEach((colour) =>
+        expect(setTrackColour(doc, by, kick.id, colour)).toBe(false)
+      )
+      expect(setTrackColour(doc, by, snare.id, '#123abc')).toBe(false)
+      expect(setTrackColour(doc, by, Id('nobody'), '#123abc')).toBe(false)
+    }
+    expect(updatesDuring(doc, refused)).toBe(0)
+    expect(colours(doc)).toEqual([before[0], ...before.slice(2)])
   })
 })
 

@@ -92,11 +92,11 @@ export const arrangementAt = async (page: Page) => {
 /** The line over the panel: the chosen track's name and what of it is shown, as `Synth|Notes`; empty for none. */
 export const below = (page: Page) => page.locator('.panel__title')
 
-/** The colour the roll's canvas, of the grid or of the notes, draws at the point. */
-export const pixelAt = (page: Page, layer: 'grid' | 'notes', { x, y }: { readonly x: number; readonly y: number }) =>
+/** The colour, as red, green, blue and alpha, that the view's canvas at `layer`, from its first, draws at the point. */
+const pixelOn = (page: Page, view: string, layer: number, { x, y }: { readonly x: number; readonly y: number }) =>
   page.evaluate(
-    ([layer, x, y]) => {
-      const canvas = document.querySelectorAll<HTMLCanvasElement>('.roll canvas')[{ grid: 0, notes: 1 }[layer]]
+    ([view, layer, x, y]) => {
+      const canvas = document.querySelectorAll<HTMLCanvasElement>(`${view} canvas`)[layer]
       const box = canvas.getBoundingClientRect()
       const scale = canvas.width / box.width
       // Read from a copy, once: the browser warns of a canvas read again and again.
@@ -107,8 +107,16 @@ export const pixelAt = (page: Page, layer: 'grid' | 'notes', { x, y }: { readonl
       g?.drawImage(canvas, (x - box.left) * scale, (y - box.top) * scale, 1, 1, 0, 0, 1, 1)
       return Array.from(g?.getImageData(0, 0, 1, 1).data ?? [])
     },
-    [layer, x, y] as const
+    [view, layer, x, y] as const
   )
+
+/** The colour the roll's canvas, of the grid or of the notes, draws at the point. */
+export const pixelAt = (page: Page, layer: 'grid' | 'notes', point: { readonly x: number; readonly y: number }) =>
+  pixelOn(page, '.roll', { grid: 0, notes: 1 }[layer], point)
+
+/** The colour the Arrangement's canvas of clips draws at the point: clear where it draws none. */
+export const clipPixel = (page: Page, point: { readonly x: number; readonly y: number }) =>
+  pixelOn(page, '.arrangement', 1, point)
 
 /** Whether the roll draws a note at the point: its notes' canvas is clear elsewhere. */
 export const noteDrawn = async (page: Page, point: { readonly x: number; readonly y: number }) =>
@@ -206,22 +214,8 @@ export const panAll = async (page: Page, track: string, key: 'Home' | 'End', tex
 }
 
 /** Whether the Arrangement draws a clip at the point: its clips' canvas is clear elsewhere. */
-export const clipDrawn = (page: Page, { x, y }: { readonly x: number; readonly y: number }) =>
-  page.evaluate(
-    ([x, y]) => {
-      const canvas = document.querySelectorAll<HTMLCanvasElement>('.arrangement canvas')[1]
-      const box = canvas.getBoundingClientRect()
-      const scale = canvas.width / box.width
-      // Read from a copy, once: the browser warns of a canvas read again and again.
-      const copy = document.createElement('canvas')
-      copy.width = 1
-      copy.height = 1
-      const g = copy.getContext('2d')
-      g?.drawImage(canvas, (x - box.left) * scale, (y - box.top) * scale, 1, 1, 0, 0, 1, 1)
-      return (g?.getImageData(0, 0, 1, 1).data[3] ?? 0) > 0
-    },
-    [x, y] as const
-  )
+export const clipDrawn = async (page: Page, point: { readonly x: number; readonly y: number }) =>
+  ((await clipPixel(page, point))[3] ?? 0) > 0
 
 /** The clips drawn at each place, by bar and track's place, as the page shows them. */
 export const drawnAt = async (page: Page, places: ReadonlyArray<readonly [bar: number, place: number]>) => {

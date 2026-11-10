@@ -1,4 +1,12 @@
-import { type AnyParam, formatValue, paramPosition, paramValue, widestText } from '@escapement/engine-description'
+import {
+  type AnyParam,
+  formatShort,
+  formatValue,
+  paramPosition,
+  paramValue,
+  widestShort,
+  widestText
+} from '@escapement/engine-description'
 import type { HoldTarget } from '@escapement/model'
 import { Boolean } from 'effect'
 import { type TurnScale, useTurnGesture } from './turn-gesture'
@@ -38,30 +46,33 @@ export const useParamTurn = (
 const useKnob = (owner: string, param: AnyParam, value: number, target: HoldTarget) =>
   useParamTurn(owner, param, value, target)
 
+type ParamTurn = ReturnType<typeof useParamTurn>
+
+/** A control turned as a knob is, to the browser: a slider of the parameter, which a drag and its keys turn. */
+const sliderOf = (label: string, param: AnyParam, { turned, text, hint }: ParamTurn) => ({
+  role: 'slider' as const,
+  tabIndex: 0,
+  'aria-label': label,
+  'aria-valuemin': param.min,
+  'aria-valuemax': param.max,
+  'aria-valuenow': turned.value,
+  'aria-valuetext': text,
+  'data-hint': hint,
+  ...turned.pointer,
+  ...turned.keys
+})
+
 /** The dial itself: a cap, its mark turned to the position. */
 const Dial = ({
   label,
   param,
-  knob: { turned, text, hint }
+  knob
 }: {
   readonly label: string
   readonly param: AnyParam
-  readonly knob: ReturnType<typeof useKnob>
+  readonly knob: ParamTurn
 }) => (
-  <span
-    class='knob'
-    role='slider'
-    tabIndex={0}
-    aria-label={label}
-    aria-valuemin={param.min}
-    aria-valuemax={param.max}
-    aria-valuenow={turned.value}
-    aria-valuetext={text}
-    style={{ '--v': paramPosition(param, turned.value) }}
-    data-hint={hint}
-    {...turned.pointer}
-    {...turned.keys}
-  >
+  <span class='knob' style={{ '--v': paramPosition(param, knob.turned.value) }} {...sliderOf(label, param, knob)}>
     <span class='knob__hand' />
   </span>
 )
@@ -100,8 +111,8 @@ export const Knob = ({
   )
 }
 
-/** A knob without its name and number, as in a track's head, where the hint reads them out. */
-export const SmallKnob = ({
+/** A parameter's value alone, short, turned as a knob is, for a narrow place: in full in the hint and when read out. */
+export const ParamText = ({
   owner,
   param,
   value,
@@ -113,5 +124,13 @@ export const SmallKnob = ({
   readonly target: HoldTarget
 }) => {
   const knob = useKnob(owner, param, value, target)
-  return <Dial label={`${owner}: ${param.label.toLowerCase()}`} param={param} knob={knob} />
+  return (
+    <span
+      class='param-text num'
+      style={{ '--chars': widestShort(param) }}
+      {...sliderOf(`${owner}: ${param.label.toLowerCase()}`, param, knob)}
+    >
+      {formatShort(param, knob.turned.value)}
+    </span>
+  )
 }

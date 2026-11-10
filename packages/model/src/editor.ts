@@ -22,6 +22,7 @@ import {
   setMasterStrip,
   setMute,
   setTempo,
+  setTrackColour,
   setTrackParam,
   setTrackStrip,
   stretchNote,
@@ -48,6 +49,8 @@ export interface Editor {
   /** The new track's ID, a synth's unless another instrument is given; none if the document holds no project. */
   readonly addTrack: (instrument?: NewInstrument) => Option.Option<Id>
   readonly renameTrack: (track: Id, name: string) => boolean
+  /** False if refused: not `#rrggbb` in lower case, or a track not live. */
+  readonly setTrackColour: (track: Id, colour: string) => boolean
   readonly deleteTrack: (track: Id) => boolean
   /** The new clip's ID; none if the track isn't live, or the tick isn't a whole one of the engine's. */
   readonly addClip: (place: ClipPlace) => Option.Option<Id>
@@ -123,6 +126,7 @@ export const editorOf = Effect.fnUntraced(function* (doc: Y.Doc, by: Writer) {
     setTempo: step(setTempo),
     addTrack: step(addTrack),
     renameTrack: step(renameTrack),
+    setTrackColour: step(setTrackColour),
     deleteTrack: step(deleteTrack),
     addClip: step(addClip),
     moveClip: step(moveClip),

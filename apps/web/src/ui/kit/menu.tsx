@@ -1,4 +1,5 @@
 import { Array, Boolean, Data, Number, Option } from 'effect'
+import { Check, ChevronRight } from 'lucide-preact'
 import {
   type ComponentChildren,
   createContext,
@@ -11,12 +12,20 @@ import { pixelsOf } from './pixels'
 import { remOf } from './rem'
 import './menu.css'
 
-export interface MenuItem {
+interface ItemFace {
   readonly label: string
   readonly icon: ComponentChildren
   readonly hint: string
-  readonly chosen: () => void
 }
+
+/** What an item does as the menu closes, alone or as one of several, one checked; or opens its menu in this one's place. */
+export type MenuItem = Data.TaggedEnum<{
+  Action: ItemFace & { readonly chosen: () => void }
+  Choice: ItemFace & { readonly chosen: () => void; readonly checked: boolean }
+  Next: ItemFace & { readonly menu: () => Menu }
+}>
+
+export const MenuItem = Data.taggedEnum<MenuItem>()
 
 /** What a control offers on a right click, under the name of what it acts on. */
 export interface Menu {
@@ -101,7 +110,8 @@ const place = (menu: HTMLElement, at: MenuPlace) => {
   menu.style.top = `${startOf(from.bottom, from.top, height, window.innerHeight, off)}px`
 }
 
-const itemsOf = (menu: HTMLElement) => Array.fromIterable(menu.querySelectorAll<HTMLElement>('[role="menuitem"]'))
+const itemsOf = (menu: HTMLElement) =>
+  Array.fromIterable(menu.querySelectorAll<HTMLElement>('[role="menuitem"], [role="menuitemradio"]'))
 
 const focusAt = (items: ReadonlyArray<HTMLElement>, at: number) =>
   Option.map(Array.get(items, at), (item) => item.focus())
@@ -109,6 +119,8 @@ const focusAt = (items: ReadonlyArray<HTMLElement>, at: number) =>
 interface Shown {
   readonly menu: Menu
   readonly at: MenuPlace
+  /** Whether its first item takes the focus: opened by a key under a control, or as the next of another menu. */
+  readonly firstFocused: boolean
 }
 
 /**
@@ -119,24 +131,52 @@ interface Shown {
 export const MenuHost = ({ children }: { readonly children: ComponentChildren }) => {
   const [shown, setShown] = useState(Option.none<Shown>())
   const popover = useRef<HTMLDivElement>(null)
-  const menus = useMemo<Menus>(() => ({ open: (menu, at) => setShown(Option.some({ menu, at })) }), [])
+  const menus = useMemo<Menus>(
+    () => ({ open: (menu, at) => setShown(Option.some({ menu, at, firstFocused: MenuPlace.$is('Under')(at) })) }),
+    []
+  )
   useLayoutEffect(
     () =>
       Option.match(Option.all([shown, Option.fromNullishOr(popover.current)]), {
         onNone: () => {},
-        onSome: ([{ at }, menu]) => {
-          menu.showPopover()
+        onSome: ([{ at, firstFocused }, menu]) => {
+          // Open already, as the next of another menu: it stays so.
+          Boolean.match(menu.matches(':popover-open'), { onTrue: () => {}, onFalse: () => menu.showPopover() })
           place(menu, at)
           // From the pointer, no item is chosen yet, as in the system's menus.
-          MenuPlace.$match(at, {
-            Pointer: () => menu.focus(),
-            Under: () => focusAt(itemsOf(menu), 0)
-          })
+          Boolean.match(firstFocused, { onTrue: () => focusAt(itemsOf(menu), 0), onFalse: () => menu.focus() })
         }
       }),
     [shown]
   )
   const close = () => Option.map(Option.fromNullishOr(popover.current), (menu) => menu.togglePopover(false))
+  // The menu itself holds the focus while its items go: the item with it, taken out, would close it.
+  const next = (menu: Menu) =>
+    Option.map(Option.all([shown, Option.fromNullishOr(popover.current)]), ([{ at }, element]) => {
+      element.focus()
+      setShown(Option.some({ menu, at, firstFocused: true }))
+    })
+  const chose = (chosen: () => void) => () => {
+    close()
+    chosen()
+  }
+  /** What an item is to the browser, what a press of it does, and what it shows at its end. */
+  const partsOf = (item: MenuItem) =>
+    MenuItem.$match(item, {
+      Action: ({ chosen }) => ({ role: 'menuitem' as const, onClick: chose(chosen), mark: null }),
+      Choice: ({ chosen, checked }) => ({
+        role: 'menuitemradio' as const,
+        'aria-checked': checked,
+        onClick: chose(chosen),
+        mark: Boolean.match(checked, { onTrue: () => <Check class='menu__mark' />, onFalse: () => null })
+      }),
+      Next: ({ menu }) => ({
+        role: 'menuitem' as const,
+        'aria-haspopup': 'menu' as const,
+        onClick: () => next(menu()),
+        mark: <ChevronRight class='menu__mark' />
+      })
+    })
   const keyDown = (event: TargetedKeyboardEvent<HTMLDivElement>) => {
     const items = itemsOf(event.currentTarget)
     const at = Array.findFirstIndex(items, (item) => item === document.activeElement)
@@ -149,7 +189,16 @@ export const MenuHost = ({ children }: { readonly children: ComponentChildren })
         ),
       Home: () => focusAt(items, 0),
       End: () => focusAt(items, items.length - 1),
-      Tab: close
+      Tab: close,
+      // Into the menu the item opens, as a system's menu goes into its own.
+      ArrowRight: () =>
+        Option.map(
+          Option.filter(
+            Option.flatMap(at, (i) => Array.get(items, i)),
+            (item) => item.getAttribute('aria-haspopup') === 'menu'
+          ),
+          (item) => item.click()
+        )
     }
     Option.match(Option.fromNullishOr(keys[event.key]), {
       onNone: () => {},
@@ -189,24 +238,24 @@ export const MenuHost = ({ children }: { readonly children: ComponentChildren })
               <div class='menu__title' aria-hidden='true'>
                 {menu.title}
               </div>
-              {/* By place: two items may have one name, and a menu doesn't change while open. */}
-              {menu.items.map((item, i) => (
-                <button
-                  key={i}
-                  type='button'
-                  role='menuitem'
-                  class='menu__item'
-                  tabIndex={-1}
-                  data-hint={item.hint}
-                  onClick={() => {
-                    close()
-                    item.chosen()
-                  }}
-                >
-                  {item.icon}
-                  {item.label}
-                </button>
-              ))}
+              {/* By menu and place: two items may have one name, and a next menu takes this one's place. */}
+              {menu.items.map((item, i) => {
+                const { mark, ...does } = partsOf(item)
+                return (
+                  <button
+                    key={`${menu.title}/${i}`}
+                    type='button'
+                    class='menu__item'
+                    tabIndex={-1}
+                    data-hint={item.hint}
+                    {...does}
+                  >
+                    {item.icon}
+                    {item.label}
+                    {mark}
+                  </button>
+                )
+              })}
             </>
           )
         })}

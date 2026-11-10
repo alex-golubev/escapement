@@ -39,6 +39,9 @@ html {
 
   --focus: #eef1f6;
 
+  /* What the pointer is over, lighter on whatever it stands on. */
+  --over: color-mix(in srgb, var(--t-hi) 8%, transparent);
+
   /* The playhead's line across a grid drawn on a canvas: light, no colour of its own. */
   --playhead: rgb(238 241 246 / 0.55);
 
@@ -95,7 +98,7 @@ body {
   color: var(--t-lo);
 }
 
-:where(.btn, .toggle, .field, .knob, .track-head__name, .strip__name):focus-visible {
+:where(.btn, .toggle, .field, .knob, .param-text, .track-head__name, .strip__name):focus-visible {
   outline: 0.125rem solid var(--focus);
   outline-offset: 0.125rem;
 }

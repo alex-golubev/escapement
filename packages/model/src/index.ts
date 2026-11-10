@@ -1,4 +1,5 @@
 export { batchedState, byContent, followProject, type ProjectAtoms } from './atoms'
+export { Colour, firstColour, type NamedColour, trackColours } from './colour'
 export { type Editor, editorOf } from './editor'
 export { Id, newId, storedId } from './id'
 export { type Hold, type Holds, HoldTarget, heldOver, heldValue, holding, lettingGo, noHolds, readHolds } from './holds'
@@ -32,6 +33,7 @@ export {
   setMasterStrip,
   setMute,
   setTempo,
+  setTrackColour,
   setTrackParam,
   setTrackStrip,
   stretchNote,
