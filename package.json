@@ -22,7 +22,7 @@
     "gen": "pnpm --filter @escapement/tools gen",
     "samples": "pnpm --filter @escapement/tools samples",
     "format": "biome format --write && cargo fmt",
-    "test": "biome check --error-on-warnings && cargo fmt --check && cargo clippy --workspace --all-targets -- -D warnings && pnpm -r typecheck && pnpm -r test && pnpm --filter @escapement/placeholder build && cargo test",
+    "test": "biome check --error-on-warnings && cargo fmt --check && cargo clippy --workspace --all-targets -- -D warnings && RUSTDOCFLAGS='-D warnings' cargo doc --workspace --no-deps && pnpm -r typecheck && pnpm -r test && pnpm --filter @escapement/placeholder build && cargo test",
     "test:e2e": "pnpm --filter @escapement/web test:e2e",
     "test:property": "pnpm --filter @escapement/engine build:wasm && pnpm --filter @escapement/compiler test:property",
     "typecheck": "pnpm -r typecheck",
