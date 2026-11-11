@@ -19,12 +19,12 @@ pub(crate) fn frame(bytes: &[u8]) -> Frame {
     let Some(prefix) = bytes.first_chunk::<SIZE_PREFIX>() else {
         return Frame::Incomplete;
     };
-    // Before any arithmetic: `usize` is 32 bits in WebAssembly.
-    let body = u32::from_le_bytes(*prefix);
-    if body > (MAX_MESSAGE - SIZE_PREFIX) as u32 {
+    // A `usize` holds any `u32` wherever the engine builds; compared before the sum, which could overflow in wasm32.
+    let body = u32::from_le_bytes(*prefix) as usize;
+    if body > MAX_MESSAGE - SIZE_PREFIX {
         return Frame::TooLarge;
     }
-    match SIZE_PREFIX + body as usize {
+    match SIZE_PREFIX + body {
         size if size <= bytes.len() => Frame::Whole(size),
         _ => Frame::Incomplete,
     }
@@ -41,7 +41,7 @@ pub(crate) fn write(out: &mut [u8], kind: u8, record: &[u8]) -> Option<usize> {
     let body = KIND + record.len();
     let message = out.get_mut(..SIZE_PREFIX + body)?;
     let (prefix, rest) = message.split_at_mut(SIZE_PREFIX);
-    prefix.copy_from_slice(&(body as u32).to_le_bytes());
+    prefix.copy_from_slice(&u32::try_from(body).ok()?.to_le_bytes());
     rest[0] = kind;
     rest[KIND..].copy_from_slice(record);
     Some(SIZE_PREFIX + body)
@@ -67,7 +67,7 @@ pub(crate) mod tests {
 
     #[test]
     fn a_size_beyond_the_limit_is_too_large_even_near_the_32_bit_limit() {
-        let largest_body = (MAX_MESSAGE - SIZE_PREFIX) as u32;
+        let largest_body = u32::try_from(MAX_MESSAGE - SIZE_PREFIX).unwrap();
         assert_eq!(
             frame(&largest_body.to_le_bytes()),
             Frame::Incomplete,

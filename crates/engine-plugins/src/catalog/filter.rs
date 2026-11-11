@@ -41,7 +41,7 @@ const DAMPING: f32 = SQRT_2;
 
 /// A moving cutoff takes `tan` once in this many samples, and the gain goes in a straight line between: `tan` on
 /// every sample would cost more than the filter itself, and changing in steps clicks.
-const GAIN_STEP: usize = 16;
+const GAIN_STEP: u32 = 16;
 
 /// The integrators' gain; it grows without bound at half the sample rate.
 fn gain(cutoff: f32, sample_rate: SampleRate) -> f32 {
@@ -81,7 +81,7 @@ struct Filter {
     /// The cutoff the gain heads for.
     heading: f32,
     /// Samples until the gain heads for the cutoff again; a turn starts the count anew, so it is heard at once.
-    until_heading: usize,
+    until_heading: u32,
     gain: Smoothed,
     /// For the gain they were made from.
     coefficients: (f32, Coefficients),
@@ -96,7 +96,7 @@ impl Filter {
             cutoff: Smoothed::for_param(&CUTOFF_PARAM, sample_rate),
             heading: CUTOFF_PARAM.default,
             until_heading: 0,
-            gain: Smoothed::new(open, GAIN_STEP as f32 / sample_rate.hz(), sample_rate),
+            gain: Smoothed::over(open, GAIN_STEP),
             coefficients: (open, Coefficients::new(open)),
             memory: Default::default(),
         }

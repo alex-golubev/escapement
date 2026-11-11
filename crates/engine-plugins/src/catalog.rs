@@ -193,7 +193,7 @@ mod tests {
         let at = before.len() + time;
         // Early in its first block, so its release is under way by the change.
         let let_go = Event::NoteOff {
-            time: BLOCK_FRAMES as u32 / 2,
+            time: u32::try_from(BLOCK_FRAMES / 2).unwrap(),
             note: NOTE_NAME,
         };
         for entry in CATALOG {
@@ -207,7 +207,7 @@ mod tests {
                 let mut heard = false;
                 for (from, to) in turns {
                     let event = Event::Param {
-                        time: time as u32,
+                        time: u32::try_from(time).unwrap(),
                         param: number,
                         value: to,
                     };

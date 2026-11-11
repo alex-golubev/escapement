@@ -108,21 +108,24 @@ impl Connection {
         }
         let rising = self.rising;
         let per_level = (fade as f32).recip();
-        let moved = |level: u32, samples: u32| {
+        let step = |level: u32| {
             if rising {
-                (level + samples).min(fade)
+                (level + 1).min(fade)
             } else {
-                level.saturating_sub(samples)
+                level.saturating_sub(1)
             }
         };
+        let mut after = self.level;
         for (sum, heard) in sum.iter_mut().zip(heard) {
             let mut level = self.level;
             for (sum, sample) in sum[..frames].iter_mut().zip(&heard[..frames]) {
-                level = moved(level, 1);
+                level = step(level);
                 *sum += sample * (level as f32 * per_level);
             }
+            // Every channel moves the gain alike.
+            after = level;
         }
-        self.level = moved(self.level, frames as u32);
+        self.level = after;
     }
 }
 

@@ -31,6 +31,16 @@ impl Shape {
         Self::Noise,
     ];
 
+    /// As its parameter's value.
+    const fn value(self) -> f32 {
+        Choice::value(self as usize)
+    }
+
+    /// The shape a value of its parameter names; none past the last.
+    fn of(value: f32) -> Option<Self> {
+        Self::ALL.get(Choice::place(value)).copied()
+    }
+
     const fn choice(self) -> Choice {
         let (id, label) = match self {
             Self::Sine => ("sine", "Sine"),
@@ -67,6 +77,9 @@ const SHAPES: [Choice; Shape::ALL.len()] = {
 /// Osc 1 first.
 pub const OSCILLATORS: usize = 3;
 
+/// Every oscillator's, until a knob turns.
+const DEFAULT_SHAPE: Shape = Shape::Saw;
+
 const fn shape(id: &'static str, group: &'static str) -> ParamDescription {
     ParamDescription {
         id,
@@ -76,8 +89,8 @@ const fn shape(id: &'static str, group: &'static str) -> ParamDescription {
         scale: Scale::Linear,
         values: Values::Choices(&SHAPES),
         min: 0.0,
-        max: (SHAPES.len() - 1) as f32,
-        default: Shape::Saw as usize as f32,
+        max: Choice::value(SHAPES.len() - 1),
+        default: DEFAULT_SHAPE.value(),
         // How long one shape takes to give way to another.
         smoothing_seconds: 0.02,
     }
@@ -309,7 +322,7 @@ struct Oscillator {
 impl Oscillator {
     fn new(params: OscillatorParams, sample_rate: SampleRate) -> Self {
         let param = |number: ParamNumber| number.entry(DESCRIPTION.params).expect("its own");
-        let chosen = Shape::ALL[param(params.shape).default as usize];
+        let chosen = DEFAULT_SHAPE;
         Self {
             shares: Shape::ALL.map(|shape| {
                 let share = if shape == chosen { 1.0 } else { 0.0 };
@@ -320,7 +333,7 @@ impl Oscillator {
             fine: Smoothed::for_param(param(params.fine), sample_rate),
             mix: match params.mix {
                 Some(mix) => Smoothed::for_param(param(mix), sample_rate),
-                None => Smoothed::new(1.0, 0.0, sample_rate),
+                None => Smoothed::over(1.0, 1),
             },
         }
     }
@@ -477,7 +490,12 @@ impl Noise {
     /// An oscillator's in a note, so two notes, even of two synths on the same steps, don't sound as one, nor two
     /// oscillators: from the note's name and the oscillator's place, mixed.
     fn of(note: NoteId, oscillator: usize) -> Self {
-        let mut x = note.get() ^ 0x2545_f491 ^ (oscillator as u32).wrapping_mul(0x9e37_79b9);
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "one of the synth's three oscillators"
+        )]
+        let oscillator = oscillator as u32;
+        let mut x = note.get() ^ 0x2545_f491 ^ oscillator.wrapping_mul(0x9e37_79b9);
         x = (x ^ (x >> 16)).wrapping_mul(0x85eb_ca6b);
         x = (x ^ (x >> 13)).wrapping_mul(0xc2b2_ae35);
         Self((x ^ (x >> 16)).max(1))
@@ -497,8 +515,7 @@ impl Synth {
     fn set(&mut self, param: ParamNumber, value: f32) {
         for (oscillator, params) in self.oscillators.iter_mut().zip(OSCILLATOR_PARAMS) {
             if param == params.shape {
-                // As the engine takes it: the nearest.
-                if let Some(&shape) = Shape::ALL.get(value.round() as usize) {
+                if let Some(shape) = Shape::of(value) {
                     oscillator.choose(shape);
                 }
             } else if param == params.coarse {
@@ -700,20 +717,25 @@ mod tests {
 
     const A: u32 = A4 as u32;
 
+    /// [`VOICES`] as keys count.
+    fn voices() -> u8 {
+        u8::try_from(VOICES).unwrap()
+    }
+
     const SHAPE: ParamNumber = OSCILLATOR_PARAMS[0].shape;
 
     fn choose(shape: Shape) -> Event {
-        Event::param_at_start(SHAPE, shape as usize as f32)
+        Event::param_at_start(SHAPE, shape.value())
     }
 
     /// A new synth's sound, `parts` one after another: so many samples each, its events in its first block; it starts
     /// with its default shape.
     fn play_parts(parts: &[(&[Event], usize)]) -> Vec<f32> {
-        play_shaped(Shape::ALL[PARAMS[0].default as usize], parts)
+        play_shaped(Shape::of(PARAMS[0].default).unwrap(), parts)
     }
 
     fn play_shaped(shape: Shape, parts: &[(&[Event], usize)]) -> Vec<f32> {
-        play_set(&[(SHAPE, shape as usize as f32)], parts)
+        play_set(&[(SHAPE, shape.value())], parts)
     }
 
     /// As `play_parts`, starting with `values` over the defaults.
@@ -829,7 +851,7 @@ mod tests {
 
     #[test]
     fn a_note_past_the_voices_makes_the_oldest_give_way() {
-        let chord: Vec<_> = (0..VOICES as u8).map(|i| on(0, 40 + i)).collect();
+        let chord: Vec<_> = (0..voices()).map(|i| on(0, 40 + i)).collect();
         let extra = [on(0, 90)];
         let over = play_parts(&[(&chord, 1000), (&extra, 4000)]);
         // What is left once the oldest is gone: fifteen of the sixteen and the extra note.
@@ -980,7 +1002,7 @@ mod tests {
 
     #[test]
     fn a_note_that_gave_way_is_let_go_of_without_touching_the_one_it_gave_way_to() {
-        let chord: Vec<_> = (0..VOICES as u8).map(|i| on(0, 40 + i)).collect();
+        let chord: Vec<_> = (0..voices()).map(|i| on(0, 40 + i)).collect();
         // Key 40 again, as another note: the first 40 gives way to it.
         let again = [named(0, 40, 99, 1.0)];
         let held = play_parts(&[(&chord, 1000), (&again, 1000), (&[], 2000)]);
@@ -994,7 +1016,7 @@ mod tests {
         let nyquist = sample_rate.hz() / 2.0;
         let level = |shape: Shape, key| {
             let mut synth = create(sample_rate);
-            let mut events = first_block(&DESCRIPTION, &[(SHAPE, shape as usize as f32)]);
+            let mut events = first_block(&DESCRIPTION, &[(SHAPE, shape.value())]);
             events.push(on(0, key));
             let [left, _] = render(&DESCRIPTION, synth.as_mut(), &events, &silence(4000));
             peak(&left)
@@ -1026,7 +1048,7 @@ mod tests {
         for (place, shape) in Shape::ALL.into_iter().enumerate() {
             assert_eq!(shape as usize, place);
         }
-        assert_eq!(Shape::ALL[PARAMS[0].default as usize], Shape::Saw);
+        assert_eq!(Shape::of(PARAMS[0].default).unwrap(), Shape::Saw);
     }
 
     #[test]
@@ -1188,7 +1210,7 @@ mod tests {
     const OSC2: OscillatorParams = OSCILLATOR_PARAMS[1];
     const OSC3: OscillatorParams = OSCILLATOR_PARAMS[2];
 
-    const SINE: f32 = Shape::Sine as usize as f32;
+    const SINE: f32 = Shape::Sine.value();
 
     /// A second of A4.
     fn a_second(values: &[(ParamNumber, f32)]) -> Vec<f32> {
@@ -1317,7 +1339,7 @@ mod tests {
 
     #[test]
     fn each_oscillator_s_noise_is_its_own() {
-        let noise = Shape::Noise as usize as f32;
+        let noise = Shape::Noise.value();
         let one = a_second(&[(OSC1.shape, noise)]);
         let two = a_second(&[
             (OSC1.shape, noise),
@@ -1364,7 +1386,7 @@ mod tests {
         let turn = 90 * BLOCK_FRAMES;
         for shape in [Shape::Sine, Shape::Triangle, Shape::Square, Shape::Saw] {
             for (from, to) in [(-24.0, 24.0), (24.0, -24.0)] {
-                let at = |coarse| [(SHAPE, shape as usize as f32), (OSC1.coarse, coarse)];
+                let at = |coarse| [(SHAPE, shape.value()), (OSC1.coarse, coarse)];
                 let steady = |coarse| largest_step(&a_second(&at(coarse)));
                 // No step past the wave's own at either pitch.
                 let limit = steady(from).max(steady(to)) + 1e-6;

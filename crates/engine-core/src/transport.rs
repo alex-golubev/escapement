@@ -22,10 +22,26 @@ pub const DEFAULT_TEMPO: u32 = 120;
 /// in these parts, the position never rounds.
 const PARTS_IN_ONE: u32 = 1 << 20;
 
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "a tempo in range comes to a whole, positive number of parts"
+)]
 fn parts(value: f32) -> u64 {
     let parts = f64::from(value) * f64::from(PARTS_IN_ONE);
     debug_assert_eq!(parts.fract(), 0.0, "{value}");
     parts as u64
+}
+
+/// A tick within the loop or a clip's period: worked out in `u64`, so sums don't overflow, and under that length, a
+/// `u32`.
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "under the length of a loop or a period, a `u32`"
+)]
+pub(crate) fn within(ticks: u64) -> u32 {
+    debug_assert!(u32::try_from(ticks).is_ok(), "{ticks}");
+    ticks as u32
 }
 
 /// Parts a frame moves the position at `tempo`.
@@ -125,8 +141,14 @@ struct Block {
 
 impl Block {
     /// The frame that passes the tick `ahead` whole ticks from the one the block starts in.
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "a frame of the block: the caller's tick is one of the stretch's"
+    )]
     fn frame(&self, ahead: u64) -> u32 {
-        ((ahead * self.tick - self.parts) / self.step) as u32
+        let frame = (ahead * self.tick - self.parts) / self.step;
+        debug_assert!(frame < BLOCK_FRAMES as u64, "{frame}");
+        frame as u32
     }
 
     /// Whole ticks from the one the block starts in to the first it passes and the last, in `frames`; none if it
@@ -285,8 +307,8 @@ impl Transport {
             let pass = left.next - left.next % left.loop_ticks;
             let end = left.last.min(pass + left.loop_ticks - 1);
             let stretch = Stretch {
-                first: (left.next - pass) as u32,
-                last: (end - pass) as u32,
+                first: within(left.next - pass),
+                last: within(end - pass),
                 ahead: left.ahead,
                 count: left.start + left.ahead,
                 block,
@@ -335,7 +357,7 @@ impl Transport {
         {
             let moved = *parts + played as u64 * self.step;
             *parts = moved % self.tick;
-            *ticks = ((u64::from(*ticks) + moved / self.tick) % u64::from(loop_ticks.get())) as u32;
+            *ticks = within((u64::from(*ticks) + moved / self.tick) % u64::from(loop_ticks.get()));
             *count += moved / self.tick;
         }
     }
@@ -344,7 +366,7 @@ impl Transport {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::{BAR, FRAMES_PER_TICK, SAMPLE_RATE, rate};
+    use crate::testing::{BAR, FRAMES_PER_TICK, SAMPLE_RATE, rate, ticks_in};
 
     fn playing(loop_ticks: u32) -> Transport {
         let mut transport = Transport::new(SAMPLE_RATE);
@@ -372,7 +394,7 @@ mod tests {
     fn moves_by_the_tempo() {
         let mut transport = playing(BAR);
         play_blocks(&mut transport, 25);
-        let ticks = (25 * BLOCK_FRAMES / FRAMES_PER_TICK) as u32;
+        let ticks = ticks_in(25);
         assert_eq!(transport.position(), ticks);
         transport.set_tempo(60.0).unwrap();
         play_blocks(&mut transport, 50);
@@ -563,7 +585,7 @@ mod tests {
         let blocks = 3600 * SAMPLE_RATE.get() as usize / BLOCK_FRAMES;
         for block in 1..=blocks {
             transport.advance(BLOCK_FRAMES);
-            let whole = (block * BLOCK_FRAMES / FRAMES_PER_TICK) as u32 % BAR;
+            let whole = ticks_in(block) % BAR;
             assert_eq!(transport.position(), whole, "{block}");
         }
     }
@@ -592,7 +614,7 @@ mod tests {
                 transport.set(true, BAR, Place::default()).unwrap();
             }
             transport.advance(BLOCK_FRAMES);
-            let whole = (block * BLOCK_FRAMES / FRAMES_PER_TICK) as u32 % BAR;
+            let whole = ticks_in(block) % BAR;
             assert_eq!(transport.position(), whole, "{block}");
         }
     }
@@ -608,12 +630,21 @@ mod tests {
             transport.set(true, u32::MAX, Place::default()).unwrap();
             transport.set_tempo(bpm).unwrap();
             // In parts the tempo is exact, and so is frames × tempo × 960 / (60 × rate).
+            #[expect(
+                clippy::cast_possible_truncation,
+                clippy::cast_sign_loss,
+                reason = "counted apart from `parts`: a tempo in range is a whole number of parts"
+            )]
             let tempo = (f64::from(bpm) * f64::from(PARTS_IN_ONE)) as u128;
             for block in 1..=10_000u128 {
                 transport.advance(BLOCK_FRAMES);
                 let exact = block * BLOCK_FRAMES as u128 * tempo * u128::from(TICKS_PER_QUARTER)
                     / (60 * u128::from(hz) * u128::from(PARTS_IN_ONE));
-                assert_eq!(transport.position(), exact as u32, "{bpm} {block}");
+                assert_eq!(
+                    transport.position(),
+                    u32::try_from(exact).unwrap(),
+                    "{bpm} {block}"
+                );
             }
         }
     }
@@ -692,7 +723,7 @@ mod tests {
                 let mut earliest = 0;
                 for (tick, frame) in passed(&transport, BLOCK_FRAMES) {
                     assert_eq!(tick, next % loop_ticks, "{sample_rate} {block}");
-                    assert!(earliest <= frame && frame < BLOCK_FRAMES as u32);
+                    assert!(earliest <= frame && frame < u32::try_from(BLOCK_FRAMES).unwrap());
                     (next, earliest) = (next + 1, frame);
                 }
                 transport.advance(BLOCK_FRAMES);
@@ -761,17 +792,17 @@ mod tests {
 
     #[test]
     fn an_hour_of_blocks_passes_every_tick_in_the_frame_it_falls_in() {
-        let (hz, bpm) = (44_100, 173.0);
+        let (hz, bpm) = (44_100, 173u16);
         let mut transport = Transport::new(rate(hz));
         transport.set(true, u32::MAX, Place::default()).unwrap();
-        transport.set_tempo(bpm).unwrap();
+        transport.set_tempo(f32::from(bpm)).unwrap();
         let mut next = 0u64;
         for block in 0..3600 * u64::from(hz) / BLOCK_FRAMES as u64 {
             for (tick, frame) in passed(&transport, BLOCK_FRAMES) {
                 assert_eq!(u64::from(tick), next);
                 // The frame whose stretch of positions holds the tick, counted from the start.
                 let exact = u128::from(next) * 60 * u128::from(hz)
-                    / (bpm as u128 * u128::from(TICKS_PER_QUARTER));
+                    / (u128::from(bpm) * u128::from(TICKS_PER_QUARTER));
                 let heard = block * BLOCK_FRAMES as u64 + u64::from(frame);
                 assert_eq!(u128::from(heard), exact, "tick {next}");
                 next += 1;

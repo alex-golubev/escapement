@@ -346,7 +346,12 @@ impl Envelope {
                 Stage::Over => return None,
             }
         }
-        Some(*level as f32)
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "worked out in f64, so a long fall doesn't drift; heard as an f32"
+        )]
+        let heard = *level as f32;
+        Some(heard)
     }
 
     /// From where it is, unless it isn't held: one still silent, or at the floor, is over at once.

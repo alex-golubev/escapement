@@ -221,6 +221,11 @@ mod tests {
         }
     }
 
+    /// [`IN_FLIGHT`] as batches count.
+    fn in_flight() -> u32 {
+        u32::try_from(IN_FLIGHT).unwrap()
+    }
+
     fn take(audio: &mut AudioEnd, number: u32) -> Arrival {
         audio.take(Batch(number))
     }
@@ -294,7 +299,7 @@ mod tests {
     #[test]
     fn a_parcel_without_room_to_come_back_is_not_taken() {
         let (mut build, mut audio) = channel();
-        let last = IN_FLIGHT as u32 + 1;
+        let last = in_flight() + 1;
         for batch in 1..last {
             build.send(parcel(batch));
             let arrival = take(&mut audio, batch);
@@ -310,7 +315,7 @@ mod tests {
     #[test]
     fn a_held_parcel_keeps_its_place_in_the_return_queue_and_goes_back_when_due() {
         let (mut build, mut audio) = channel();
-        let last = IN_FLIGHT as u32 + 1;
+        let last = in_flight() + 1;
         for batch in 1..last {
             build.send(parcel(batch));
             let Arrival::Here(parcel) = take(&mut audio, batch) else {
@@ -336,7 +341,7 @@ mod tests {
     #[test]
     fn parcels_beyond_the_queue_wait_on_the_build_thread_in_order() {
         let (mut build, mut audio) = channel();
-        let count = 2 * IN_FLIGHT as u32 + 3;
+        let count = 2 * in_flight() + 3;
         for batch in 1..=count {
             build.send(parcel(batch));
         }

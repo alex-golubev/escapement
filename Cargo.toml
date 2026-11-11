@@ -29,8 +29,7 @@ missing_errors_doc = "allow"
 missing_panics_doc = "allow"
 # `node` and `note`, the engine's two main words, stand side by side almost everywhere.
 similar_names = "allow"
-# Until numbers and indices get their own types.
-cast_possible_truncation = "allow"
+# DSP turns whole numbers into floats on purpose and loses nothing it needs: counts of samples stay below 2²⁴, where an
+# `f32` holds every whole number, and noise needs no more than an `f32` holds. Positions, where exactness matters, are
+# counted in whole numbers.
 cast_precision_loss = "allow"
-cast_sign_loss = "allow"
-cast_possible_wrap = "allow"

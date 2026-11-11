@@ -108,7 +108,13 @@ impl PeakMeter {
             .iter()
             .fold(0.0f32, |peak, sample| peak.max(sample.abs()));
         self.overs = self.overs.wrapping_add((peak > 1.0).into());
-        let fallen = self.level * self.fall_per_sample.powi(block.len() as i32);
+        #[expect(
+            clippy::cast_possible_truncation,
+            clippy::cast_possible_wrap,
+            reason = "a block at most `BLOCK_FRAMES` long"
+        )]
+        let samples = block.len() as i32;
+        let fallen = self.level * self.fall_per_sample.powi(samples);
         self.level = match peak.max(fallen) {
             level if level < SILENCE => 0.0,
             level => level,
@@ -192,7 +198,7 @@ impl NodeMeter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::SAMPLE_RATE;
+    use crate::testing::{SAMPLE_RATE, seconds};
 
     #[test]
     fn is_a_whole_number_of_words() {
@@ -219,7 +225,7 @@ mod tests {
         block[BLOCK_FRAMES - 1] = 1.0;
         meter.update(&block);
         let silence = [0.0; BLOCK_FRAMES];
-        let blocks = (FALL_SECONDS * SAMPLE_RATE.hz() / BLOCK_FRAMES as f32).round() as usize;
+        let blocks = seconds(FALL_SECONDS).div_ceil(BLOCK_FRAMES);
         let level = (0..blocks).fold(1.0, |_, _| meter.update(&silence));
         let db = 20.0 * level.log10();
         assert!((db + FALL_DB).abs() < 0.1, "{db} dB after {FALL_SECONDS} s");
@@ -230,7 +236,7 @@ mod tests {
         let mut meter = PeakMeter::new(SAMPLE_RATE);
         meter.update(&[1.0; BLOCK_FRAMES]);
         // 120 dB at 20 dB per 1.7 s takes about 10 s.
-        let blocks = (11.0 * SAMPLE_RATE.hz() / BLOCK_FRAMES as f32) as usize;
+        let blocks = seconds(11.0) / BLOCK_FRAMES;
         let level = (0..blocks).fold(1.0, |_, _| meter.update(&[0.0; BLOCK_FRAMES]));
         assert_eq!(level, 0.0);
     }
@@ -311,12 +317,13 @@ mod tests {
     #[test]
     fn meters_past_the_board_s_room_are_not_reported() {
         let mut telemetry = Telemetry::default();
-        let mut meters: Vec<_> = (1..=METERS as u32 + 1)
+        let room = u32::try_from(METERS).unwrap();
+        let mut meters: Vec<_> = (1..=room + 1)
             .map(|cell| NodeMeter::new(NodeHandle::new(cell), SAMPLE_RATE))
             .collect();
         report_all(&mut meters.iter_mut().collect::<Vec<_>>(), &mut telemetry);
-        assert_eq!(telemetry.meters_used, METERS as u32);
-        assert_eq!(telemetry.meters[METERS - 1].node, METERS as u32);
+        assert_eq!(telemetry.meters_used, room);
+        assert_eq!(telemetry.meters[METERS - 1].node, room);
     }
 
     #[test]
