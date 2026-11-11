@@ -5,7 +5,7 @@ use std::ops::ControlFlow;
 
 use engine_plugins::SampleRate;
 
-use crate::build::{FIRST_CELLS, FIRST_EXITS, FIRST_PATTERN_CELLS};
+use crate::builder::{FIRST_CELLS, FIRST_EXITS, FIRST_PATTERN_CELLS};
 use crate::commands::{Command, CommandInput, Drained};
 use crate::events::{EngineEvent, EventOutput};
 use crate::graph::{Graph, Nodes};
