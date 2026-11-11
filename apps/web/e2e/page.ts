@@ -118,6 +118,17 @@ export const pixelAt = (page: Page, layer: 'grid' | 'notes', point: { readonly x
 export const clipPixel = (page: Page, point: { readonly x: number; readonly y: number }) =>
   pixelOn(page, '.arrangement', 1, point)
 
+/** The colour the Arrangement's ruler draws at the point. */
+export const rulerPixel = (page: Page, point: { readonly x: number; readonly y: number }) =>
+  pixelOn(page, '.arrangement', 2, point)
+
+/** Of a `#rrggbb` colour, as a style sheet writes it, its red, green and blue. */
+export const rgbOf = (colour: string) => [1, 3, 5].map((at) => Number.parseInt(colour.slice(at, at + 2), 16))
+
+/** A custom property of the element's style, as the page has it. */
+export const tokenOf = (page: Page, selector: string, name: string) =>
+  page.locator(selector).evaluate((element, name) => getComputedStyle(element).getPropertyValue(name).trim(), name)
+
 /** Whether the roll draws a note at the point: its notes' canvas is clear elsewhere. */
 export const noteDrawn = async (page: Page, point: { readonly x: number; readonly y: number }) =>
   ((await pixelAt(page, 'notes', point))[3] ?? 0) > 0

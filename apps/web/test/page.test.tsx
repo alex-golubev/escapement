@@ -87,7 +87,18 @@ const { keysWidth, rowHeight, rulerHeight, stepWidth } = rollLayout
 
 const arrangementLayout = arrangementLayoutOf(16)
 
-const { barWidth, headsWidth, rulerHeight: arrangementRulerHeight, trackHeight, clipInset, gap } = arrangementLayout
+const {
+  barWidth,
+  headsWidth,
+  rulerHeight: arrangementRulerHeight,
+  trackHeight,
+  clipInset,
+  gap,
+  beatMark,
+  loopBand,
+  noteHeight,
+  clipPadding
+} = arrangementLayout
 
 // The debug panel shows it, and happy-dom has none.
 Object.assign(globalThis, { crossOriginIsolated: false })
@@ -3553,16 +3564,22 @@ test('the Arrangement follows the playhead to its bar as it starts to be heard o
   )
 })
 
-/** happy-dom draws on no canvas: one whose drawing is the rectangles filled on each canvas since it was last cleared. */
+/** happy-dom draws on no canvas: one whose drawing is the rectangles filled and text written since it was last cleared. */
 const fillsOnCanvases = () => {
   const filled = new Map<HTMLCanvasElement, Array<readonly [x: number, y: number, width: number, height: number]>>()
+  const written = new Map<HTMLCanvasElement, Array<readonly [text: string, x: number]>>()
   const spy = vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(function (
     this: HTMLCanvasElement
   ) {
     const canvas = this
-    const drawing: Record<string, (...args: ReadonlyArray<number>) => void> = {
-      clearRect: () => filled.set(canvas, []),
-      fillRect: (x = 0, y = 0, width = 0, height = 0) => filled.get(canvas)?.push([x, y, width, height])
+    const drawing: Record<string, (...args: ReadonlyArray<unknown>) => void> = {
+      clearRect: () => {
+        filled.set(canvas, [])
+        written.set(canvas, [])
+      },
+      fillRect: (...[x = 0, y = 0, width = 0, height = 0]) =>
+        filled.get(canvas)?.push([Number(x), Number(y), Number(width), Number(height)]),
+      fillText: (text, x) => written.get(canvas)?.push([String(text), Number(x)])
     }
     return new Proxy(
       {},
@@ -3572,6 +3589,8 @@ const fillsOnCanvases = () => {
   return {
     filled: (canvas: HTMLCanvasElement | undefined) =>
       Option.fromUndefinedOr(canvas).pipe(Option.flatMap((on) => Option.fromUndefinedOr(filled.get(on)))),
+    written: (canvas: HTMLCanvasElement | undefined) =>
+      Option.fromUndefinedOr(canvas).pipe(Option.flatMap((on) => Option.fromUndefinedOr(written.get(on)))),
     restore: () => spy.mockRestore()
   }
 }
@@ -3782,6 +3801,77 @@ test('a clip longer than its pattern has a line in it where the pattern starts a
   ).finally(canvases.restore)
 })
 
+test('the ruler numbers each bar as the counter reads its start, marks its beats, and bands the loop to where play goes round', () => {
+  const canvases = fillsOnCanvases()
+  return page(({ doc, target }) =>
+    Effect.gen(function* () {
+      const ruler = () => target.querySelectorAll<HTMLCanvasElement>('.arrangement canvas')[2]
+      const rects = () => Option.getOrElse(canvases.filled(ruler()), () => [])
+      expect(Option.map(canvases.written(ruler()), (texts) => texts.slice(0, 3).map(([text]) => text))).toEqual(
+        Option.some(['01.01.00', '02.01.00', '03.01.00'])
+      )
+      // The first bar's three beats after its start, up from the ruler's foot.
+      expect(
+        rects()
+          .filter(([x, , width, height]) => width === 1 && height === beatMark && x < headsWidth + barWidth)
+          .map(([x]) => x - headsWidth)
+      ).toEqual([barWidth / 4, barWidth / 2, (3 * barWidth) / 4])
+      const band = () => rects().filter(([, y, , height]) => y === 0 && height === loopBand)
+      // The Kick's clip, a bar long: round after it; drawn out to two and a half, round after the third bar.
+      expect(band()).toEqual([[headsWidth, 0, barWidth, loopBand]])
+      expect(resizeClip(doc, elsewhere, clipOn(doc, 'Kick').id, 2.5 * barTicks)).toBe(true)
+      yield* drawn()
+      expect(band()).toEqual([[headsWidth, 0, 3 * barWidth, loopBand]])
+    })
+  ).finally(canvases.restore)
+})
+
+test("a clip shows its track's name, renamed with it, and its notes as it plays them, another tab's as they come", () => {
+  const canvases = fillsOnCanvases()
+  return page(({ doc, target }) =>
+    Effect.gen(function* () {
+      const clips = () => target.querySelectorAll<HTMLCanvasElement>('.arrangement canvas')[1]
+      // A note's mark: as thick as a note gets, a key alone being the clip's whole span.
+      const notes = () =>
+        Option.getOrElse(canvases.filled(clips()), () => []).filter(([, , , height]) => height === noteHeight)
+      const names = () => Option.map(canvases.written(clips()), (texts) => texts.map(([text]) => text))
+      expect(names()).toEqual(Option.some(['Kick']))
+      expect(notes()).toEqual([])
+      const clip = clipOn(doc, 'Kick').id
+      addNote(doc, elsewhere, clip, { tick: Tick(0), key: MidiKey(60), length: barTicks / 4 })
+      addNote(doc, elsewhere, clip, { tick: Tick(barTicks / 2), key: MidiKey(60), length: barTicks / 4 })
+      yield* drawn()
+      // A beat each, from the first and the third beat, a pixel short of the next; drawn in no order of time.
+      expect(
+        notes()
+          .map(([x, , width]) => [x - headsWidth, width])
+          .toSorted(([a = 0], [b = 0]) => a - b)
+      ).toEqual([
+        [0, barWidth / 4 - 1],
+        [barWidth / 2, barWidth / 4 - 1]
+      ])
+      renameTrack(doc, elsewhere, readProject(doc).value.tracks[0].id, 'Big kick')
+      yield* drawn()
+      expect(names()).toEqual(Option.some(['Big kick']))
+      // Four bars long, its start scrolled two bars under the heads: its name at its left in sight, not under them.
+      expect(resizeClip(doc, elsewhere, clip, 4 * barTicks)).toBe(true)
+      yield* drawn()
+      arrangementIn(target).wheel({ deltaX: 2 * barWidth, deltaMode: 0 })
+      yield* drawn()
+      expect(canvases.written(clips())).toEqual(Option.some([['Big kick', headsWidth + clipPadding]]))
+    })
+  ).finally(canvases.restore)
+})
+
+test("a right click over the heads' corner opens no browser's menu, as none opens over the lanes beside it", () =>
+  page(({ target }) =>
+    Effect.sync(() => {
+      const corner = Option.getOrThrow(Option.fromNullishOr(target.querySelector('.arrangement__corner')))
+      expect(corner.textContent).toBe('Track nameIn / Pan • Vol')
+      expect(corner.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }))).toBe(false)
+    })
+  ))
+
 test('a clip started inside its pattern has its lines where the pattern starts again, after its start', () => {
   const canvases = fillsOnCanvases()
   return page(({ doc, target }) =>
@@ -3793,9 +3883,11 @@ test('a clip started inside its pattern has its lines where the pattern starts a
       const span = { tick: Tick(2 * barTicks), length: 3 * barTicks, offset: 3 * barTicks }
       expect(trimClip(doc, elsewhere, clip, span)).toBe(true)
       yield* drawn()
+      // As high as a clip's inside, off its edges: no note's mark, however thin.
+      const lineHeight = trackHeight - 2 * clipInset - 2 * gap
       const lines = Option.map(
         canvases.filled(target.querySelectorAll<HTMLCanvasElement>('.arrangement canvas')[1]),
-        (rects) => rects.filter(([, , width]) => width === 1).map(([x]) => x)
+        (rects) => rects.filter(([, , width, height]) => width === 1 && height === lineHeight).map(([x]) => x)
       )
       // The second round from its second bar, none before it: one line.
       expect(lines).toEqual(Option.some([headsWidth + 3 * barWidth]))

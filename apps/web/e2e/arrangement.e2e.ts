@@ -2,6 +2,7 @@ import { expect, type Page } from '@playwright/test'
 import {
   arrangementAt,
   arrangementLayout,
+  clipPixel,
   drawnAt,
   heard,
   listening,
@@ -11,9 +12,12 @@ import {
   pressStop,
   putNote,
   reload,
+  rgbOf,
+  rulerPixel,
   showCentre,
   synths,
-  test
+  test,
+  tokenOf
 } from './page'
 
 test('clips put by a double click, dragged and erased stay after a reload, and Cmd+Z takes each back', async ({
@@ -227,4 +231,35 @@ test('the playhead runs along the Arrangement, and the Arrangement goes with it 
   expect(now).toBeGreaterThanOrEqual(0)
   expect(now).toBeLessThan(inSight / 2)
   await pressStop(page)
+})
+
+test("a note put in the piano roll shows in its clip, and the ruler's loop band reaches the end of the last clip", async ({
+  page
+}) => {
+  await synths(page, 2)
+  await newClip(page, 0, 0, 'Synth')
+  await putNote(page, 0)
+  const box = await page.locator('.arrangement').boundingBox()
+  const { headsWidth, barWidth, rulerHeight, trackHeight, clipInset, clipHead, previewInset, noteHeight } =
+    await arrangementLayout(page)
+  // The first track's clip's preview, its one note a key alone midway down it, from the first pixel past the bar's line.
+  const top = (box?.y ?? 0) + rulerHeight + clipInset + clipHead
+  const room = trackHeight - 2 * clipInset - clipHead - 1 - 2 * previewInset
+  const noteAt = {
+    x: (box?.x ?? 0) + headsWidth + 1,
+    y: Math.round(top + previewInset + (room - noteHeight) / 2) + noteHeight / 2
+  }
+  const near = (got: ReadonlyArray<number>, want: ReadonlyArray<number>) =>
+    want.every((channel, i) => Math.abs((got[i] ?? 0) - channel) <= 2)
+  const note = rgbOf(await tokenOf(page, ':root', '--t-mid'))
+  await expect.poll(async () => near(await clipPixel(page, noteAt), note)).toBe(true)
+  // Amber along the ruler's top over the first bar, none past it; a clip put in the fourth bar takes it there.
+  const amber = rgbOf(await tokenOf(page, ':root', '--shared'))
+  const sunk = rgbOf(await tokenOf(page, ':root', '--s-sunk'))
+  const banded = amber.map((channel, i) => 0.7 * channel + 0.3 * (sunk[i] ?? 0))
+  const bandAt = (bar: number) => ({ x: (box?.x ?? 0) + headsWidth + (bar + 0.5) * barWidth, y: (box?.y ?? 0) + 1 })
+  const inBand = async (bar: number) => near(await rulerPixel(page, bandAt(bar)), banded)
+  expect([await inBand(0), await inBand(1)]).toEqual([true, false])
+  await newClip(page, 3, 1, 'Synth 2')
+  await expect.poll(async () => [await inBand(2), await inBand(3), await inBand(4)]).toEqual([true, true, false])
 })
