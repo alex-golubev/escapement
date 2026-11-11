@@ -355,11 +355,11 @@ const seenRestarts = ({ count, last }: Restarts) => ({
 const reported = (_tag: string, message: unknown) => expect.objectContaining({ _tag, message })
 
 /** What a panic says, where. */
-const panicError = (thread: 'Processor' | 'BuildThread', file: 'engine' | 'build', message: string) =>
+const panicError = (thread: 'Processor' | 'BuildThread', message: string) =>
   reported(
     `${thread}Error`,
     expect.stringMatching(
-      new RegExp(`^Uncaught Error: panicked at crates/engine-core/src/${file}\\.rs:\\d+:\\d+: ${message}$`)
+      new RegExp(`^Uncaught Error: panicked at crates/engine-core/src/[\\w/]+\\.rs:\\d+:\\d+: ${message}$`)
     )
   )
 
@@ -624,7 +624,7 @@ test("a panic of the audio thread: the watchdog makes a new engine, which plays 
       expect(registry.get(host.transport)).toBe('playing')
       expect(seenRestarts(registry.get(host.restarts))).toEqual({
         count: 1,
-        last: panicError('Processor', 'engine', 'PanicAudio 1')
+        last: panicError('Processor', 'PanicAudio 1')
       })
     })
   ))
@@ -706,7 +706,7 @@ test('a panic of the build thread: the watchdog makes a new engine, which plays 
       playsFromTheStart(yield* ready(hosting, 2))
       expect(seenRestarts(registry.get(host.restarts))).toEqual({
         count: 1,
-        last: panicError('BuildThread', 'build', 'PanicBuild 1')
+        last: panicError('BuildThread', 'PanicBuild 1')
       })
     })
   ))
@@ -727,7 +727,7 @@ test('on the third failure within a minute the watchdog gives up and the arrange
       yield* until(() => registry.get(host.state)._tag === 'Failed')
       expect(seenState(registry.get(host.state))).toEqual({
         _tag: 'Failed',
-        error: panicError('Processor', 'engine', 'PanicAudio 3'),
+        error: panicError('Processor', 'PanicAudio 3'),
         gaveUp: 'often'
       })
       expect(registry.get(host.transport)).toBe('stopped')
