@@ -8,8 +8,8 @@ use crate::envelope::{self, Contour, Envelope};
 use crate::events::{Step, steps};
 use crate::smoothing::Smoothed;
 use crate::{
-    BLOCK_FRAMES, Choice, Event, ParamDescription, Plugin, PluginDescription, ProcessContext,
-    Scale, Unit, Values,
+    BLOCK_FRAMES, Choice, Event, NoteId, ParamDescription, ParamNumber, Plugin, PluginDescription,
+    ProcessContext, SampleRate, Scale, Unit, Values,
 };
 
 /// From the smoothest to the brightest. Projects keep them by place.
@@ -211,33 +211,32 @@ pub const DESCRIPTION: PluginDescription = PluginDescription {
 /// An oscillator's parameters, by number.
 #[derive(Clone, Copy, Debug)]
 pub struct OscillatorParams {
-    pub shape: u32,
-    pub coarse: u32,
-    pub fine: u32,
+    pub shape: ParamNumber,
+    pub coarse: ParamNumber,
+    pub fine: ParamNumber,
     /// Osc 1 has none: it takes what the others leave.
-    pub mix: Option<u32>,
+    pub mix: Option<ParamNumber>,
+}
+
+impl OscillatorParams {
+    const fn of(named: &Named) -> Self {
+        Self {
+            shape: ParamNumber::of(DESCRIPTION.params, named.shape),
+            coarse: ParamNumber::of(DESCRIPTION.params, named.coarse),
+            fine: ParamNumber::of(DESCRIPTION.params, named.fine),
+            mix: match named.mix {
+                Some(mix) => Some(ParamNumber::of(DESCRIPTION.params, mix)),
+                None => None,
+            },
+        }
+    }
 }
 
 pub const OSCILLATOR_PARAMS: [OscillatorParams; OSCILLATORS] = {
-    let none = OscillatorParams {
-        shape: 0,
-        coarse: 0,
-        fine: 0,
-        mix: None,
-    };
-    let mut numbers = [none; OSCILLATORS];
-    let mut osc = 0;
+    let mut numbers = [OscillatorParams::of(&NAMED[0]); OSCILLATORS];
+    let mut osc = 1;
     while osc < OSCILLATORS {
-        let named = &NAMED[osc];
-        numbers[osc] = OscillatorParams {
-            shape: DESCRIPTION.param_number(named.shape),
-            coarse: DESCRIPTION.param_number(named.coarse),
-            fine: DESCRIPTION.param_number(named.fine),
-            mix: match named.mix {
-                Some(mix) => Some(DESCRIPTION.param_number(mix)),
-                None => None,
-            },
-        };
+        numbers[osc] = OscillatorParams::of(&NAMED[osc]);
         osc += 1;
     }
     numbers
@@ -255,7 +254,7 @@ struct Voice {
     /// Over once the voice is free.
     contour: Contour,
     /// The note it plays, as its `NoteOn` named it.
-    note: u32,
+    note: NoteId,
     /// Each oscillator's, of its period, from 0 to 1.
     phases: [f32; OSCILLATORS],
     /// Of the key's period a sample moves on; an oscillator's tuning moves it.
@@ -268,7 +267,7 @@ struct Voice {
 
 const FREE: Voice = Voice {
     contour: Contour::OVER,
-    note: 0,
+    note: NoteId::new(0),
     phases: [0.0; OSCILLATORS],
     increment: 0.0,
     gain: 0.0,
@@ -308,8 +307,8 @@ struct Oscillator {
 }
 
 impl Oscillator {
-    fn new(params: OscillatorParams, sample_rate: f32) -> Self {
-        let param = |number| DESCRIPTION.param(number).expect("its own");
+    fn new(params: OscillatorParams, sample_rate: SampleRate) -> Self {
+        let param = |number: ParamNumber| number.entry(DESCRIPTION.params).expect("its own");
         let chosen = Shape::ALL[param(params.shape).default as usize];
         Self {
             shares: Shape::ALL.map(|shape| {
@@ -382,12 +381,12 @@ struct Synth {
     heard: [[bool; Shape::ALL.len()]; OSCILLATORS],
     /// For each oscillator over the block: as `Oscillator::tune` has it.
     ratios: [Frames; OSCILLATORS],
-    sample_rate: f32,
+    sample_rate: SampleRate,
     envelope: Envelope,
     notes: u64,
 }
 
-pub(crate) fn create(sample_rate: f32) -> Box<dyn Plugin> {
+pub(crate) fn create(sample_rate: SampleRate) -> Box<dyn Plugin> {
     Box::new(Synth {
         voices: [FREE; 2 * VOICES],
         oscillators: OSCILLATOR_PARAMS.map(|params| Oscillator::new(params, sample_rate)),
@@ -477,8 +476,8 @@ struct Noise(u32);
 impl Noise {
     /// An oscillator's in a note, so two notes, even of two synths on the same steps, don't sound as one, nor two
     /// oscillators: from the note's name and the oscillator's place, mixed.
-    fn of(note: u32, oscillator: usize) -> Self {
-        let mut x = note ^ 0x2545_f491 ^ (oscillator as u32).wrapping_mul(0x9e37_79b9);
+    fn of(note: NoteId, oscillator: usize) -> Self {
+        let mut x = note.get() ^ 0x2545_f491 ^ (oscillator as u32).wrapping_mul(0x9e37_79b9);
         x = (x ^ (x >> 16)).wrapping_mul(0x85eb_ca6b);
         x = (x ^ (x >> 13)).wrapping_mul(0xc2b2_ae35);
         Self((x ^ (x >> 16)).max(1))
@@ -495,7 +494,7 @@ impl Noise {
 }
 
 impl Synth {
-    fn set(&mut self, param: u32, value: f32) {
+    fn set(&mut self, param: ParamNumber, value: f32) {
         for (oscillator, params) in self.oscillators.iter_mut().zip(OSCILLATOR_PARAMS) {
             if param == params.shape {
                 // As the engine takes it: the nearest.
@@ -513,8 +512,8 @@ impl Synth {
         self.envelope.set(param, value);
     }
 
-    fn start(&mut self, key: u8, velocity: f32, note: u32) {
-        let increment = frequency(key) / self.sample_rate;
+    fn start(&mut self, key: u8, velocity: f32, note: NoteId) {
+        let increment = frequency(key) / self.sample_rate.hz();
         // A silent note takes no voice: it would only push one that is heard out. One too high to sound does, as its
         // oscillators may be tuned down while it is held.
         if velocity == 0.0 {
@@ -568,7 +567,7 @@ impl Synth {
     }
 
     /// A voice that gave way to another note no longer holds its own.
-    fn let_go(&mut self, note: u32) {
+    fn let_go(&mut self, note: NoteId) {
         let held = self
             .voices
             .iter_mut()
@@ -666,13 +665,15 @@ mod tests {
 
     use crate::envelope::GIVE_WAY_SECONDS;
     use crate::smoothing::ramp_samples;
-    use crate::testing::{SAMPLE_RATE, first_block, largest_step, peak, render, rms, silence};
+    use crate::testing::{
+        SAMPLE_RATE, first_block, largest_step, peak, rate, render, rms, seconds, silence,
+    };
 
     const A4: u8 = 69;
 
     /// The default release's length.
     fn release() -> usize {
-        let release = DESCRIPTION.param(ENVELOPE.release).unwrap();
+        let release = ENVELOPE.release.entry(DESCRIPTION.params).unwrap();
         ramp_samples(release.default, SAMPLE_RATE) as usize
     }
 
@@ -686,17 +687,20 @@ mod tests {
             time,
             key,
             velocity,
-            note,
+            note: NoteId::new(note),
         }
     }
 
     fn off(time: u32, note: u32) -> Event {
-        Event::NoteOff { time, note }
+        Event::NoteOff {
+            time,
+            note: NoteId::new(note),
+        }
     }
 
     const A: u32 = A4 as u32;
 
-    const SHAPE: u32 = OSCILLATOR_PARAMS[0].shape;
+    const SHAPE: ParamNumber = OSCILLATOR_PARAMS[0].shape;
 
     fn choose(shape: Shape) -> Event {
         Event::param_at_start(SHAPE, shape as usize as f32)
@@ -713,7 +717,7 @@ mod tests {
     }
 
     /// As `play_parts`, starting with `values` over the defaults.
-    fn play_set(values: &[(u32, f32)], parts: &[(&[Event], usize)]) -> Vec<f32> {
+    fn play_set(values: &[(ParamNumber, f32)], parts: &[(&[Event], usize)]) -> Vec<f32> {
         let mut synth = create(SAMPLE_RATE);
         let mut sound = Vec::new();
         for (i, &(notes, samples)) in parts.iter().enumerate() {
@@ -756,13 +760,13 @@ mod tests {
 
     #[test]
     fn plays_the_key_s_pitch_at_its_velocity() {
-        let second = play(&[on(0, A4)], SAMPLE_RATE as usize);
+        let second = play(&[on(0, A4)], seconds(1.0));
         // The sawtooth rises through zero once a period.
         assert!((439..=441).contains(&rising_crossings(&second)));
         let level = peak(&second);
         assert!((level - VOICE_GAIN).abs() < 0.02, "peak {level}");
         let quiet = named(0, A4, 1, 0.5);
-        let half = peak(&play(&[quiet], SAMPLE_RATE as usize / 10));
+        let half = peak(&play(&[quiet], seconds(0.1)));
         assert!((half - VOICE_GAIN / 2.0).abs() < 0.01, "peak {half}");
         assert_eq!(frequency(A4 + 12), 880.0);
     }
@@ -839,7 +843,11 @@ mod tests {
 
     /// The sound of `parts`, then of the same with `extra` pressed at the start of the last: past the fade of the voice
     /// that gave way to it, how much it changed the sound.
-    fn traded_for(values: &[(u32, f32)], parts: &[(&[Event], usize)], extra: &[Event]) -> Vec<f32> {
+    fn traded_for(
+        values: &[(ParamNumber, f32)],
+        parts: &[(&[Event], usize)],
+        extra: &[Event],
+    ) -> Vec<f32> {
         let without = play_set(values, parts);
         let (last, before) = parts.split_last().unwrap();
         let pressed: Vec<_> = last.0.iter().chain(extra).copied().collect();
@@ -861,7 +869,7 @@ mod tests {
     /// The sound of a note alone, as `traded_for` takes it, past the same fade: so many samples silent, then the note's
     /// own `parts`.
     fn alone_past_the_fade(
-        values: &[(u32, f32)],
+        values: &[(ParamNumber, f32)],
         parts: &[(&[Event], usize)],
         extra_at: usize,
     ) -> Vec<f32> {
@@ -877,7 +885,7 @@ mod tests {
         time: 0,
         key: 100,
         velocity: 1.0,
-        note: 100,
+        note: NoteId::new(100),
     };
 
     #[test]
@@ -945,9 +953,9 @@ mod tests {
     #[test]
     fn a_held_note_falls_over_the_decay_to_the_sustain_level() {
         let values = [(ENVELOPE.sustain, 0.5), (ENVELOPE.decay, 0.1)];
-        let sound = play_set(&values, &[(&[on(0, A4)], SAMPLE_RATE as usize / 2)]);
+        let sound = play_set(&values, &[(&[on(0, A4)], seconds(0.5))]);
         assert!(peak(&sound[150..300]) > 0.95 * VOICE_GAIN);
-        let held = peak(&sound[SAMPLE_RATE as usize / 4..]);
+        let held = peak(&sound[seconds(0.25)..]);
         assert!(
             (held - 0.5 * VOICE_GAIN).abs() < 0.01 * VOICE_GAIN,
             "{held}"
@@ -961,7 +969,7 @@ mod tests {
             (ENVELOPE.sustain, 0.5),
             (ENVELOPE.decay, 0.1),
         ];
-        let later = SAMPLE_RATE as usize / 5;
+        let later = seconds(0.2);
         let both = play_set(&values, &[(&[on(0, A4)], later), (&[on(0, A4 + 7)], later)]);
         let first = play_set(&values, &[(&[on(0, A4)], 2 * later)]);
         let second = play_set(&values, &[(&[], later), (&[on(0, A4 + 7)], later)]);
@@ -982,7 +990,8 @@ mod tests {
 
     #[test]
     fn a_pitched_wave_fades_out_below_half_the_sample_rate_and_is_silent_from_it() {
-        let sample_rate = 8000.0;
+        let sample_rate = rate(8000);
+        let nyquist = sample_rate.hz() / 2.0;
         let level = |shape: Shape, key| {
             let mut synth = create(sample_rate);
             let mut events = first_block(&DESCRIPTION, &[(SHAPE, shape as usize as f32)]);
@@ -995,15 +1004,13 @@ mod tests {
             for key in 0..=127 {
                 let level = level(shape, key);
                 assert!(level <= 1.1 * VOICE_GAIN, "{shape:?} {key}: {level}");
-                let silent = shape != Shape::Noise && frequency(key) >= sample_rate / 2.0;
+                let silent = shape != Shape::Noise && frequency(key) >= nyquist;
                 assert_eq!(level == 0.0, silent, "{shape:?} {key}: {level}");
             }
         }
         // Over the half octave below it, each key quieter than the one before.
         let fading: Vec<_> = (0..=127u8)
-            .filter(|&key| {
-                (sample_rate / 2.0 * FRAC_1_SQRT_2..sample_rate / 2.0).contains(&frequency(key))
-            })
+            .filter(|&key| (nyquist * FRAC_1_SQRT_2..nyquist).contains(&frequency(key)))
             .map(|key| level(Shape::Sine, key))
             .collect();
         assert!(fading.len() >= 5, "{fading:?}");
@@ -1025,7 +1032,7 @@ mod tests {
     #[test]
     fn every_shape_but_noise_plays_the_key_s_pitch_at_full_level() {
         for shape in [Shape::Sine, Shape::Triangle, Shape::Square, Shape::Saw] {
-            let second = play_shaped(shape, &[(&[on(0, A4)], SAMPLE_RATE as usize)]);
+            let second = play_shaped(shape, &[(&[on(0, A4)], seconds(1.0))]);
             let crossings = rising_crossings(&second);
             assert!((439..=441).contains(&crossings), "{shape:?}: {crossings}");
             let level = peak(&second);
@@ -1038,7 +1045,7 @@ mod tests {
 
     #[test]
     fn noise_has_no_pitch_and_each_note_its_own() {
-        let one = play_shaped(Shape::Noise, &[(&[on(0, A4)], SAMPLE_RATE as usize)]);
+        let one = play_shaped(Shape::Noise, &[(&[on(0, A4)], seconds(1.0))]);
         // White: it rises through zero about once in four samples, whatever the key.
         let crossings = rising_crossings(&one);
         assert!((11_000..13_000).contains(&crossings), "{crossings}");
@@ -1050,7 +1057,7 @@ mod tests {
         // Two notes of the same noise would be twice as loud; of their own, √2.
         let two = play_shaped(
             Shape::Noise,
-            &[(&[on(0, A4), on(0, A4 + 12)], SAMPLE_RATE as usize)],
+            &[(&[on(0, A4), on(0, A4 + 12)], seconds(1.0))],
         );
         let louder = rms(&two) / rms(&one);
         assert!((1.3..1.55).contains(&louder), "{louder}");
@@ -1115,7 +1122,7 @@ mod tests {
     fn level_at(sound: &[f32], frequency: f64) -> f64 {
         use std::f64::consts::TAU;
         let length = sound.len() as f64;
-        let turn = TAU * frequency / f64::from(SAMPLE_RATE);
+        let turn = TAU * frequency / f64::from(SAMPLE_RATE.get());
         let (re, im) = sound
             .iter()
             .enumerate()
@@ -1132,9 +1139,9 @@ mod tests {
     fn a_high_note_aliases_far_less_than_the_bare_wave() {
         type Bare = fn(f32) -> f32;
         let key = 100;
-        let increment = frequency(key) / SAMPLE_RATE;
+        let increment = frequency(key) / SAMPLE_RATE.hz();
         let note = f64::from(frequency(key));
-        let rate = f64::from(SAMPLE_RATE);
+        let rate = f64::from(SAMPLE_RATE.get());
         // Each with its jumps and corners as they are, and whether it has only odd harmonics.
         let shapes: [(Shape, Bare, bool); 3] = [
             (Shape::Saw, |phase| 2.0 * phase - 1.0, false),
@@ -1150,7 +1157,7 @@ mod tests {
             ),
         ];
         for (shape, bare, odd_only) in shapes {
-            let second = SAMPLE_RATE as usize;
+            let second = seconds(1.0);
             let played = play_shaped(shape, &[(&[on(0, key)], second)]);
             let bare: Vec<f32> = (0..second)
                 .scan(0.0f32, |phase, _| {
@@ -1184,12 +1191,12 @@ mod tests {
     const SINE: f32 = Shape::Sine as usize as f32;
 
     /// A second of A4.
-    fn a_second(values: &[(u32, f32)]) -> Vec<f32> {
-        play_set(values, &[(&[on(0, A4)], SAMPLE_RATE as usize)])
+    fn a_second(values: &[(ParamNumber, f32)]) -> Vec<f32> {
+        play_set(values, &[(&[on(0, A4)], seconds(1.0))])
     }
 
     /// The values that leave the oscillator heard alone, a sine: its mix whole, and those after it at none, as new.
-    fn alone(osc: OscillatorParams) -> Vec<(u32, f32)> {
+    fn alone(osc: OscillatorParams) -> Vec<(ParamNumber, f32)> {
         let mut values = vec![(osc.shape, SINE)];
         values.extend(osc.mix.map(|mix| (mix, 1.0)));
         values
@@ -1206,7 +1213,7 @@ mod tests {
 
     #[test]
     fn every_parameter_is_one_oscillator_s_or_the_envelope_s_and_in_its_group() {
-        for (number, param) in DESCRIPTION.numbered_params() {
+        for (number, param) in ParamNumber::each(DESCRIPTION.params) {
             let oscillators = (OSCILLATOR_PARAMS.iter().zip(["Osc 1", "Osc 2", "Osc 3"]))
                 .filter(|(osc, _)| {
                     [Some(osc.shape), Some(osc.coarse), Some(osc.fine), osc.mix]
@@ -1222,7 +1229,8 @@ mod tests {
 
     #[test]
     fn a_new_synth_plays_osc_1_alone_with_osc_2_an_octave_down_and_osc_3_two() {
-        let coarse = OSCILLATOR_PARAMS.map(|osc| DESCRIPTION.param(osc.coarse).unwrap().default);
+        let coarse =
+            OSCILLATOR_PARAMS.map(|osc| osc.coarse.entry(DESCRIPTION.params).unwrap().default);
         assert_eq!(coarse, [0.0, -12.0, -24.0]);
         // Their mixes at none, Osc 2's and Osc 3's own settings change nothing.
         let others =
@@ -1288,10 +1296,10 @@ mod tests {
 
     #[test]
     fn an_oscillator_past_half_the_sample_rate_is_silent_and_the_others_sound() {
-        let sample_rate = 8000.0;
+        let sample_rate = rate(8000);
         // 1047 Hz, and two octaves up past 4 kHz.
         let key = 84;
-        let sound = |values: &[(u32, f32)]| {
+        let sound = |values: &[(ParamNumber, f32)]| {
             let mut synth = create(sample_rate);
             let mut events = first_block(&DESCRIPTION, values);
             events.push(on(0, key));
@@ -1323,8 +1331,8 @@ mod tests {
 
     #[test]
     fn coarse_moves_a_sounding_note_at_once_and_fine_glides_over_its_smoothing() {
-        let turn = SAMPLE_RATE as usize / 10;
-        let period = f64::from(SAMPLE_RATE) / 440.0;
+        let turn = seconds(0.1);
+        let period = f64::from(SAMPLE_RATE.get()) / 440.0;
         // The first period wholly after the turn, and the last one.
         let turned = |param, value| {
             let to = [Event::param_at_start(param, value)];
@@ -1376,7 +1384,7 @@ mod tests {
         // Osc 2 as Osc 1, so mixed in it changes nothing, unless it starts from where it was left.
         let alike = [(OSC2.coarse, 0.0), (OSC2.shape, PARAMS[0].default)];
         let mixed_in = [Event::param_at_start(OSC2.mix.unwrap(), 0.5)];
-        let late = SAMPLE_RATE as usize / 10 + 37;
+        let late = seconds(0.1) + 37;
         let mixed = play_set(&alike, &[(&[on(0, A4)], late), (&mixed_in, late)]);
         let alone = play_set(&alike, &[(&[on(0, A4)], late), (&[], late)]);
         let differs = difference(&mixed, &alone, 0..alone.len());
@@ -1385,7 +1393,7 @@ mod tests {
 
     #[test]
     fn a_note_too_high_to_sound_still_takes_a_voice_its_oscillator_may_be_tuned_down_to() {
-        let sample_rate = 8000.0;
+        let sample_rate = rate(8000);
         // 4186 Hz, past 4 kHz.
         let key = 108;
         let mut synth = create(sample_rate);

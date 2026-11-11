@@ -6,14 +6,14 @@ pub mod sampler;
 pub mod synth;
 pub mod tone;
 
-use crate::{Plugin, PluginDescription};
+use crate::{Plugin, PluginDescription, SampleRate};
 
 pub struct CatalogEntry {
     /// What code calls the plugin: its module's name. Never stored, unlike its ID.
     pub name: &'static str,
     pub description: &'static PluginDescription,
     /// Allocates, so only on the build thread.
-    pub create: fn(sample_rate: f32) -> Box<dyn Plugin>,
+    pub create: fn(sample_rate: SampleRate) -> Box<dyn Plugin>,
 }
 
 /// An entry for each plugin module, named after it.
@@ -43,9 +43,9 @@ mod tests {
     use super::*;
     use crate::smoothing::ramp_samples;
     use crate::testing::{
-        NOTE_NAME, SAMPLE_RATE, first_block_with_note, largest_step, render, silence, sine,
+        NOTE_NAME, SAMPLE_RATE, first_block_with_note, largest_step, render, seconds, silence, sine,
     };
-    use crate::{BLOCK_FRAMES, CHANNELS, Event, ParamDescription};
+    use crate::{BLOCK_FRAMES, CHANNELS, Event, ParamDescription, ParamNumber};
 
     #[test]
     fn every_plugin_has_its_own_id_and_name_a_version_and_a_label() {
@@ -123,9 +123,9 @@ mod tests {
 
     #[test]
     fn turning_any_parameter_all_the_way_at_once_has_no_click() {
-        let input = sine(SAMPLE_RATE as usize);
+        let input = sine(seconds(1.0));
         for entry in CATALOG {
-            for (number, param) in entry.description.numbered_params() {
+            for (number, param) in ParamNumber::each(entry.description.params) {
                 // Of the change, what a sample may move by: on a ramp, its share; unsmoothed, none, as the parameter
                 // must change the sound without a jump, such as a pitch whose wave goes on unbroken.
                 let share = match param.smoothing_seconds {
@@ -197,7 +197,7 @@ mod tests {
             note: NOTE_NAME,
         };
         for entry in CATALOG {
-            let params = || entry.description.numbered_params();
+            let params = || ParamNumber::each(entry.description.params);
             for (number, param) in params() {
                 // To the far end and back: a time already gone by, such as a delay, is heard only cut short.
                 let turns = [
@@ -263,12 +263,10 @@ mod tests {
     #[test]
     fn silence_after_sound_leaves_no_denormal_numbers() {
         // Long enough for the slowest memory to fade past them.
-        let mut input = sine(SAMPLE_RATE as usize / 10);
-        input.extend(silence(2 * SAMPLE_RATE as usize));
+        let mut input = sine(seconds(0.1));
+        input.extend(silence(seconds(2.0)));
         for entry in CATALOG {
-            let extremes = entry
-                .description
-                .numbered_params()
+            let extremes = ParamNumber::each(entry.description.params)
                 .flat_map(|(number, param)| [(number, param.min), (number, param.max)]);
             // At the defaults too.
             for setting in std::iter::once(None).chain(extremes.map(Some)) {

@@ -1,6 +1,6 @@
 //! Parameter smoothing: a straight line on the parameter's scale to each new value, instead of a click.
 
-use crate::{ParamDescription, Scale};
+use crate::{ParamDescription, SampleRate, Scale};
 
 /// Yields the value for each next sample, endlessly.
 pub struct Smoothed {
@@ -22,21 +22,21 @@ pub struct Smoothed {
 
 /// A change of `ramp_seconds` takes this many samples; at least one.
 #[must_use]
-pub fn ramp_samples(ramp_seconds: f32, sample_rate: f32) -> u32 {
-    ((ramp_seconds * sample_rate).round() as u32).max(1)
+pub fn ramp_samples(ramp_seconds: f32, sample_rate: SampleRate) -> u32 {
+    sample_rate.frames(ramp_seconds).max(1)
 }
 
 impl Smoothed {
     /// Evenly in the value; also for values derived from a parameter, such as filter coefficients.
     #[must_use]
-    pub fn new(value: f32, ramp_seconds: f32, sample_rate: f32) -> Self {
+    pub fn new(value: f32, ramp_seconds: f32, sample_rate: SampleRate) -> Self {
         Self::on_scale(value, ramp_seconds, sample_rate, Scale::Linear)
     }
 
     /// The parameter itself: from its default, at its smoothing time, on its scale, so a change sounds like a quick
     /// turn of its knob.
     #[must_use]
-    pub fn for_param(param: &ParamDescription, sample_rate: f32) -> Self {
+    pub fn for_param(param: &ParamDescription, sample_rate: SampleRate) -> Self {
         Self::on_scale(
             param.default,
             param.smoothing_seconds,
@@ -45,7 +45,7 @@ impl Smoothed {
         )
     }
 
-    fn on_scale(value: f32, ramp_seconds: f32, sample_rate: f32, scale: Scale) -> Self {
+    fn on_scale(value: f32, ramp_seconds: f32, sample_rate: SampleRate, scale: Scale) -> Self {
         Self {
             sounded: false,
             current: value,
@@ -114,9 +114,8 @@ impl Iterator for Smoothed {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testing::{SAMPLE_RATE, rate};
     use crate::{Unit, Values};
-
-    const SAMPLE_RATE: f32 = 48_000.0;
 
     fn take(smoothed: &mut Smoothed, samples: usize) -> Vec<f32> {
         smoothed.take(samples).collect()
@@ -150,9 +149,9 @@ mod tests {
 
     #[test]
     fn ramp_length_is_a_time() {
-        assert_eq!(Smoothed::new(0.0, 0.02, 48_000.0).ramp_samples, 960);
-        assert_eq!(Smoothed::new(0.0, 0.02, 44_100.0).ramp_samples, 882);
-        assert_eq!(Smoothed::new(0.0, 0.0, 48_000.0).ramp_samples, 1);
+        assert_eq!(Smoothed::new(0.0, 0.02, rate(48_000)).ramp_samples, 960);
+        assert_eq!(Smoothed::new(0.0, 0.02, rate(44_100)).ramp_samples, 882);
+        assert_eq!(Smoothed::new(0.0, 0.0, rate(48_000)).ramp_samples, 1);
     }
 
     #[test]

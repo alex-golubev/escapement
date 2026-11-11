@@ -1,5 +1,6 @@
 //! WebAssembly exports for the build thread and the worklet. Every `build` pointer must come from [`engine_new`] and
-//! every `engine` pointer from [`engine_hand_over`].
+//! every `engine` pointer from [`engine_hand_over`]. Sizes and counts cross as `usize`: on wasm32 it is the same 32-bit
+//! word as `u32`.
 #![expect(
     clippy::missing_safety_doc,
     reason = "one contract for every export, in the crate's doc"
@@ -22,11 +23,17 @@ use engine_core::telemetry::{METERS, TELEMETRY_WORDS, Telemetry};
 use engine_core::transport::{DEFAULT_TEMPO, MAX_TEMPO, MIN_TEMPO, TICKS_PER_QUARTER};
 use engine_core::{BLOCK_FRAMES, CHANNELS, Engine};
 use engine_plugins::catalog::CATALOG;
-use engine_plugins::fingerprint;
+use engine_plugins::{SampleRate, fingerprint};
 
 // Native builds (`cargo test`) have no WebAssembly features.
 #[cfg(all(target_arch = "wasm32", not(target_feature = "simd128")))]
 compile_error!("engine-wasm must be built with the simd128 target feature");
+
+#[cfg(target_family = "wasm")]
+const _: () = assert!(
+    usize::BITS == 32,
+    "the page reads every size as a 32-bit word"
+);
 
 /// What the build thread holds.
 pub struct BuildThread {
@@ -39,10 +46,12 @@ pub struct BuildThread {
     hash: Hash,
 }
 
-/// On the build thread.
+/// On the build thread, at the audio context's rate as JavaScript has it.
 #[unsafe(no_mangle)]
-pub extern "C" fn engine_new(sample_rate: f32) -> *mut BuildThread {
+pub extern "C" fn engine_new(sample_rate: f64) -> *mut BuildThread {
     panic_text::install();
+    let sample_rate =
+        SampleRate::from_hz(sample_rate).expect("a whole sample rate the engine plays at");
     let (builder, engine) = engine_core::new(sample_rate);
     Box::into_raw(Box::new(BuildThread {
         builder,
@@ -61,10 +70,10 @@ pub unsafe extern "C" fn engine_hand_over(build: *mut BuildThread) -> *mut Engin
 
 /// Room for a batch of `len` bytes, valid until the next call; the build thread copies the whole batch there.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn engine_batch_bytes(build: *mut BuildThread, len: u32) -> *mut u8 {
+pub unsafe extern "C" fn engine_batch_bytes(build: *mut BuildThread, len: usize) -> *mut u8 {
     let batch = unsafe { &mut (*build).batch };
     // Zeroes only what it adds: the copy overwrites every byte.
-    batch.resize(len as usize, 0);
+    batch.resize(len, 0);
     batch.as_mut_ptr()
 }
 
@@ -92,9 +101,9 @@ pub unsafe extern "C" fn engine_sample_hash(build: *mut BuildThread) -> *mut u8 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn engine_sample_begin(
     build: *mut BuildThread,
-    sample_rate: f32,
-    channels: u32,
-    frames: u32,
+    sample_rate: f64,
+    channels: usize,
+    frames: usize,
 ) -> i32 {
     let build = unsafe { &mut *build };
     let hash = build.hash;
@@ -102,22 +111,22 @@ pub unsafe extern "C" fn engine_sample_begin(
         build
             .builder
             .samples()
-            .begin(hash, sample_rate, channels as usize, frames as usize),
+            .begin(hash, sample_rate, channels, frames),
     )
 }
 
 /// Room for the next `count` numbers of the sound; valid until the next call.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn engine_sample_place(build: *mut BuildThread, count: u32) -> *mut f32 {
-    unsafe { (*build).builder.samples().place(count as usize) }
+pub unsafe extern "C" fn engine_sample_place(build: *mut BuildThread, count: usize) -> *mut f32 {
+    unsafe { (*build).builder.samples().place(count) }
         .as_mut_ptr()
         .cast()
 }
 
 /// The build thread wrote the `count` numbers it got the place for. Answers as [`engine_sample_begin`] does.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn engine_sample_copied(build: *mut BuildThread, count: u32) -> i32 {
-    answer(unsafe { (*build).builder.samples().copied(count as usize) })
+pub unsafe extern "C" fn engine_sample_copied(build: *mut BuildThread, count: usize) -> i32 {
+    answer(unsafe { (*build).builder.samples().copied(count) })
 }
 
 /// The page no longer keeps the sound under the hash in its room: it is freed once no node refers to it. Never while a
@@ -139,8 +148,8 @@ fn answer(left: Result<usize, Rejection>) -> i32 {
 
 /// Frees the parcels that came back; returns how many aren't back yet.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn engine_collect(build: *mut BuildThread) -> u32 {
-    unsafe { (*build).builder.collect() as u32 }
+pub unsafe extern "C" fn engine_collect(build: *mut BuildThread) -> usize {
+    unsafe { (*build).builder.collect() }
 }
 
 /// Must match the page's.
@@ -157,20 +166,20 @@ pub extern "C" fn engine_plugins_fingerprint() -> u32 {
 
 /// The render quantum must match.
 #[unsafe(no_mangle)]
-pub extern "C" fn engine_block_frames() -> u32 {
-    BLOCK_FRAMES as u32
+pub extern "C" fn engine_block_frames() -> usize {
+    BLOCK_FRAMES
 }
 
 /// Output channels; the worklet's must match.
 #[unsafe(no_mangle)]
-pub extern "C" fn engine_channels() -> u32 {
-    CHANNELS as u32
+pub extern "C" fn engine_channels() -> usize {
+    CHANNELS
 }
 
 /// Size prefix included.
 #[unsafe(no_mangle)]
-pub extern "C" fn engine_max_message() -> u32 {
-    MAX_MESSAGE as u32
+pub extern "C" fn engine_max_message() -> usize {
+    MAX_MESSAGE
 }
 
 /// The page's pattern notes and loops are in these.
@@ -213,8 +222,8 @@ pub extern "C" fn engine_max_velocity() -> f32 {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn engine_input_capacity() -> u32 {
-    INPUT_CAPACITY as u32
+pub extern "C" fn engine_input_capacity() -> usize {
+    INPUT_CAPACITY
 }
 
 /// Never moves.
@@ -225,8 +234,8 @@ pub unsafe extern "C" fn engine_input(engine: *mut Engine) -> *mut u8 {
 
 /// New bytes go right after these.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn engine_input_len(engine: *mut Engine) -> u32 {
-    unsafe { (*engine).input().len() as u32 }
+pub unsafe extern "C" fn engine_input_len(engine: *mut Engine) -> usize {
+    unsafe { (*engine).input().len() }
 }
 
 /// Counts `received` new input bytes and runs a block; see [`Engine::audio_block`]. Returns the size of the events
@@ -234,23 +243,23 @@ pub unsafe extern "C" fn engine_input_len(engine: *mut Engine) -> u32 {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn engine_process(
     engine: *mut Engine,
-    frames: u32,
-    received: u32,
-    event_room: u32,
-) -> u32 {
+    frames: usize,
+    received: usize,
+    event_room: usize,
+) -> usize {
     let engine = unsafe { &mut *engine };
-    engine.input().received(received as usize);
-    engine.audio_block(frames as usize, event_room as usize) as u32
+    engine.input().received(received);
+    engine.audio_block(frames, event_room)
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn engine_output(engine: *const Engine, channel: u32) -> *const f32 {
-    unsafe { (*engine).output(channel as usize).as_ptr() }
+pub unsafe extern "C" fn engine_output(engine: *const Engine, channel: usize) -> *const f32 {
+    unsafe { (*engine).output(channel).as_ptr() }
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn engine_event_capacity() -> u32 {
-    EVENT_CAPACITY as u32
+pub extern "C" fn engine_event_capacity() -> usize {
+    EVENT_CAPACITY
 }
 
 /// Never moves.
@@ -260,18 +269,18 @@ pub unsafe extern "C" fn engine_events(engine: *const Engine) -> *const u8 {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn engine_telemetry_words() -> u32 {
-    TELEMETRY_WORDS as u32
+pub extern "C" fn engine_telemetry_words() -> usize {
+    TELEMETRY_WORDS
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn engine_meters() -> u32 {
-    METERS as u32
+pub extern "C" fn engine_meters() -> usize {
+    METERS
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn engine_panic_text_bytes() -> u32 {
-    panic_text::PANIC_TEXT_BYTES as u32
+pub extern "C" fn engine_panic_text_bytes() -> usize {
+    panic_text::PANIC_TEXT_BYTES
 }
 
 /// Never moves; updated every block.

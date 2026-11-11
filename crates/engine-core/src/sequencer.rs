@@ -3,8 +3,10 @@
 
 use std::mem;
 
+use engine_plugins::NoteId;
+
 use crate::graph::Graph;
-use crate::handle::{NodeHandle, PatternHandle};
+use crate::handle::{NodeHandle, PatternCell, PatternHandle};
 use crate::notes::PAGE_NOTES;
 use crate::transport::Transport;
 
@@ -73,7 +75,7 @@ impl Patterns {
 
     /// None for a handle of another generation, or past the table.
     fn get(&self, handle: PatternHandle) -> Option<&Pattern> {
-        match self.0.get(handle.cell() as usize) {
+        match self.0.get(handle.cell().index()) {
             Some(Some((made, pattern))) if *made == handle => Some(pattern),
             _ => None,
         }
@@ -81,8 +83,8 @@ impl Patterns {
 
     /// Swaps `slot` into the cell; what was there comes back in it. False past the table: `slot` stays as it was.
     #[must_use]
-    pub fn put(&mut self, cell: u32, slot: &mut Made) -> bool {
-        let Some(cell) = self.0.get_mut(cell as usize) else {
+    pub fn put(&mut self, cell: PatternCell, slot: &mut Made) -> bool {
+        let Some(cell) = self.0.get_mut(cell.index()) else {
             return false;
         };
         mem::swap(cell, slot);
@@ -242,7 +244,7 @@ pub(crate) struct Held {
 struct HeldNote {
     node: NodeHandle,
     /// As its `NoteOn` named it.
-    note: u32,
+    note: NoteId,
     /// The start of play it was pressed in: its end counts from that one's start.
     play: u32,
     /// The count from the start of play of the tick it is let go of at; none to be let go of at once.
@@ -275,10 +277,10 @@ impl Held {
     }
 
     /// Wraps around within the pattern's half: a note held through two billion others is long gone.
-    fn next_note(&mut self) -> u32 {
+    fn next_note(&mut self) -> NoteId {
         let note = PAGE_NOTES | self.next;
         self.next = (self.next + 1) % PAGE_NOTES;
-        note
+        NoteId::new(note)
     }
 
     /// A note whose node has no room left in the block waits for the next; one whose node is gone is dropped.
@@ -310,7 +312,7 @@ mod tests {
     use crate::graph::Nodes;
     use crate::node::tests::{GIVEN, RECORDER};
     use crate::node::{NOTE_ROOM, Node};
-    use crate::testing::{BAR, SAMPLE_RATE, SILENCE};
+    use crate::testing::{BAR, SAMPLE_RATE, SILENCE, cell};
     use crate::transport::Place;
 
     /// A step long.
@@ -330,16 +332,16 @@ mod tests {
             time,
             key,
             velocity: 1.0,
-            note: PAGE_NOTES | n,
+            note: NoteId::new(PAGE_NOTES | n),
         }
     }
 
     /// Recorders in cells 1 and 2, of generation 0.
     fn graph() -> Graph {
         let mut graph = Graph::new(Nodes::new(4), Nodes::new(4), SAMPLE_RATE);
-        for cell in [1, 2] {
-            let node = Node::new(&RECORDER, SAMPLE_RATE, NodeHandle::new(cell));
-            assert!(graph.insert(cell, &mut Some(Box::new(node))));
+        for handle in [1, 2] {
+            let node = Node::new(&RECORDER, SAMPLE_RATE, NodeHandle::new(handle));
+            assert!(graph.insert(cell(handle), &mut Some(Box::new(node))));
         }
         graph
     }
@@ -348,7 +350,7 @@ mod tests {
     fn off(time: u32, n: u32) -> Event {
         Event::NoteOff {
             time,
-            note: PAGE_NOTES | n,
+            note: NoteId::new(PAGE_NOTES | n),
         }
     }
 
@@ -597,7 +599,7 @@ mod tests {
     fn a_larger_table_keeps_every_pattern_in_its_cell_and_one_past_it_is_left_out() {
         let mut patterns = patterns(vec![(PATTERN, vec![note(0, 1, 60)])]);
         let mut slot = Some((PatternHandle::new(4), Pattern::default()));
-        assert!(!patterns.put(4, &mut slot));
+        assert!(!patterns.put(PatternHandle::new(4).cell(), &mut slot));
         assert!(slot.is_some());
         let mut larger = Patterns::new(8);
         patterns.grow(&mut larger);
@@ -606,7 +608,7 @@ mod tests {
             patterns.get(PATTERN).map(Pattern::notes),
             Some(&[note(0, 1, 60)][..])
         );
-        assert!(patterns.put(4, &mut slot));
+        assert!(patterns.put(PatternHandle::new(4).cell(), &mut slot));
         assert!(patterns.get(PatternHandle::new(4)).is_some());
     }
 
@@ -666,7 +668,7 @@ mod tests {
         let (transport, mut graph) = (playing(), graph());
         // A live note took a place first.
         let node = graph.node_mut(NodeHandle::new(1)).unwrap();
-        node.note_on(0, 100, 1.0, 100).unwrap();
+        node.note_on(0, 100, 1.0, NoteId::new(100)).unwrap();
         assert_eq!(
             pattern.hand_out(&mut Held::new(), &transport, &mut graph, BLOCK_FRAMES),
             2
@@ -677,7 +679,7 @@ mod tests {
             time: 0,
             key: 100,
             velocity: 1.0,
-            note: 100,
+            note: NoteId::new(100),
         };
         assert_eq!(heard[0], live);
         let last = NOTE_ROOM as u8 - 2;
@@ -832,7 +834,7 @@ mod tests {
         // Of a node that is gone, so they stay until they end.
         let gone = HeldNote {
             node: NodeHandle::new(3),
-            note: 0,
+            note: NoteId::new(0),
             play: 1,
             until: Some(u64::MAX),
         };
@@ -852,7 +854,7 @@ mod tests {
         let mut held = Held::new();
         held.notes.push(HeldNote {
             node: NodeHandle::new(3),
-            note: 0,
+            note: NoteId::new(0),
             play: 1,
             until: Some(2),
         });

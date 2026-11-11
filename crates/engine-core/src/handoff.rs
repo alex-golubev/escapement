@@ -7,8 +7,8 @@ use std::collections::VecDeque;
 
 use rtrb::{Consumer, Producer, PushError, RingBuffer};
 
-use crate::graph::{Nodes, Order, Table};
-use crate::handle::NodeHandle;
+use crate::graph::{Exit, Nodes, Order, Table};
+use crate::handle::{NodeCell, NodeHandle, PatternCell};
 use crate::node::Node;
 use crate::schema::Rejection;
 use crate::sequencer::{Arrangement, Made, Patterns};
@@ -16,8 +16,27 @@ use crate::sequencer::{Arrangement, Made, Patterns};
 /// Each way. A burst beyond waits on the build thread until its next collection.
 const IN_FLIGHT: usize = 1024;
 
+/// One of the page's batches, numbered from 1 in the order the page sends them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct Batch(u32);
+
+impl Batch {
+    pub fn new(number: u32) -> Self {
+        Self(number)
+    }
+
+    pub fn get(self) -> u32 {
+        self.0
+    }
+
+    /// The one after, wrapping round.
+    fn next(self) -> Self {
+        Self(self.0.wrapping_add(1))
+    }
+}
+
 pub(crate) struct Parcel {
-    pub batch: u32,
+    pub batch: Batch,
     pub edits: Vec<Edit>,
     /// Started fades: it goes back once they are over, and only then is what they faded out gone.
     pub holds: bool,
@@ -28,18 +47,15 @@ pub(crate) enum Edit {
     /// Starts a session; the nodes go in removals that follow.
     Reset(u32),
     /// A larger empty table for the nodes to move over to.
-    Grow {
-        table: Table,
-        nodes: Nodes,
-    },
+    Grow { table: Table, nodes: Nodes },
     CreateNode {
-        cell: u32,
+        cell: NodeCell,
         node: Option<Box<Node>>,
     },
-    /// The node leaves its cell to play out at `place`, and comes along when the parcel goes back.
+    /// The node leaves its cell to play out at `exit`, and comes along when the parcel goes back.
     Remove {
-        cell: u32,
-        place: u32,
+        cell: NodeCell,
+        exit: Exit,
         node: Option<Box<Node>>,
     },
     /// The nodes to render, what each hears and what the output hears, once the parcel's other edits are in.
@@ -47,10 +63,7 @@ pub(crate) enum Edit {
     /// A larger empty table for the patterns to move over to.
     GrowPatterns(Patterns),
     /// What the cell holds from now on: a pattern made in it, or none.
-    Pattern {
-        cell: u32,
-        pattern: Made,
-    },
+    Pattern { cell: PatternCell, pattern: Made },
     /// The clips heard from now on.
     Arrangement(Arrangement),
     /// The notes of these nodes, sorted and each once, are let go of in the block the parcel comes in: one pass over the
@@ -72,7 +85,7 @@ pub(crate) fn channel() -> (BuildEnd, AudioEnd) {
     let audio = AudioEnd {
         incoming,
         returning,
-        next: 1,
+        next: Batch(1),
         // Each held parcel has a place kept in the return queue, so there are never more.
         held: VecDeque::with_capacity(IN_FLIGHT),
     };
@@ -131,17 +144,17 @@ pub(crate) enum Arrival {
 pub(crate) struct AudioEnd {
     incoming: Consumer<Box<Parcel>>,
     returning: Producer<Box<Parcel>>,
-    /// Batches are numbered from 1, each applied once and in order.
-    next: u32,
+    /// Each batch is applied once and in order.
+    next: Batch,
     /// Applied parcels waiting for their fades, oldest first, each with the sample it may go back at.
     held: VecDeque<(Box<Parcel>, u64)>,
 }
 
 impl AudioEnd {
     /// Takes the batch's parcel only if it can go back: dropping it here would free memory.
-    pub fn take(&mut self, batch: u32) -> Arrival {
+    pub fn take(&mut self, batch: Batch) -> Arrival {
         let in_line = self.incoming.peek().ok().map(|parcel| parcel.batch);
-        if batch != self.next || in_line.is_some_and(|number| number != batch) {
+        if batch != self.next || in_line.is_some_and(|other| other != batch) {
             return Arrival::NotNext;
         }
         if in_line.is_none() || !self.has_room() {
@@ -149,7 +162,7 @@ impl AudioEnd {
         }
         match self.incoming.pop() {
             Ok(parcel) => {
-                self.next = batch.wrapping_add(1);
+                self.next = batch.next();
                 Arrival::Here(parcel)
             }
             Err(_) => Arrival::NotYet,
@@ -200,12 +213,16 @@ mod tests {
     use super::*;
     use crate::heap;
 
-    fn parcel(batch: u32) -> Parcel {
+    fn parcel(number: u32) -> Parcel {
         Parcel {
-            batch,
+            batch: Batch(number),
             edits: Vec::new(),
             holds: false,
         }
+    }
+
+    fn take(audio: &mut AudioEnd, number: u32) -> Arrival {
+        audio.take(Batch(number))
     }
 
     fn collect(build: &mut BuildEnd) -> usize {
@@ -214,7 +231,7 @@ mod tests {
 
     impl std::fmt::Debug for Parcel {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            write!(f, "parcel of batch {}", self.batch)
+            write!(f, "parcel of batch {}", self.batch.0)
         }
     }
 
@@ -239,12 +256,12 @@ mod tests {
         let (mut build, mut audio) = channel();
         build.send(parcel(1));
         build.send(parcel(2));
-        assert_eq!(audio.take(2), Arrival::NotNext);
+        assert_eq!(take(&mut audio, 2), Arrival::NotNext);
         for batch in [1, 2] {
-            let arrival = audio.take(batch);
+            let arrival = take(&mut audio, batch);
             pass(&mut audio, arrival);
         }
-        assert_eq!(audio.take(3), Arrival::NotYet);
+        assert_eq!(take(&mut audio, 3), Arrival::NotYet);
         assert_eq!(collect(&mut build), 0);
     }
 
@@ -252,16 +269,16 @@ mod tests {
     fn a_batch_that_is_not_next_is_refused_without_waiting() {
         let (mut build, mut audio) = channel();
         // Nothing has arrived, so only the next batch may wait.
-        assert_eq!(audio.take(2), Arrival::NotNext);
-        assert_eq!(audio.take(0), Arrival::NotNext);
-        assert_eq!(audio.take(1), Arrival::NotYet);
+        assert_eq!(take(&mut audio, 2), Arrival::NotNext);
+        assert_eq!(take(&mut audio, 0), Arrival::NotNext);
+        assert_eq!(take(&mut audio, 1), Arrival::NotYet);
         build.send(parcel(1));
-        let arrival = audio.take(1);
+        let arrival = take(&mut audio, 1);
         pass(&mut audio, arrival);
-        assert_eq!(audio.take(1), Arrival::NotNext, "applied already");
+        assert_eq!(take(&mut audio, 1), Arrival::NotNext, "applied already");
         // Next is 2, but the parcel in line is another batch's.
         build.send(parcel(5));
-        assert_eq!(audio.take(2), Arrival::NotNext);
+        assert_eq!(take(&mut audio, 2), Arrival::NotNext);
     }
 
     #[test]
@@ -280,13 +297,13 @@ mod tests {
         let last = IN_FLIGHT as u32 + 1;
         for batch in 1..last {
             build.send(parcel(batch));
-            let arrival = audio.take(batch);
+            let arrival = take(&mut audio, batch);
             pass(&mut audio, arrival);
         }
         build.send(parcel(last));
-        assert_eq!(audio.take(last), Arrival::NotYet);
+        assert_eq!(take(&mut audio, last), Arrival::NotYet);
         assert_eq!(collect(&mut build), 1);
-        let arrival = audio.take(last);
+        let arrival = take(&mut audio, last);
         pass(&mut audio, arrival);
     }
 
@@ -296,19 +313,23 @@ mod tests {
         let last = IN_FLIGHT as u32 + 1;
         for batch in 1..last {
             build.send(parcel(batch));
-            let Arrival::Here(parcel) = audio.take(batch) else {
+            let Arrival::Here(parcel) = take(&mut audio, batch) else {
                 panic!("no parcel for batch {batch}");
             };
             audio.hold(parcel, 10);
         }
         build.send(parcel(last));
-        assert_eq!(audio.take(last), Arrival::NotYet, "every place is kept");
+        assert_eq!(
+            take(&mut audio, last),
+            Arrival::NotYet,
+            "every place is kept"
+        );
         audio.release(9, |_| panic!("not due yet"));
         let mut released = 0;
         audio.release(10, |_| released += 1);
         assert_eq!(released, IN_FLIGHT);
         assert_eq!(collect(&mut build), 1);
-        let arrival = audio.take(last);
+        let arrival = take(&mut audio, last);
         pass(&mut audio, arrival);
     }
 
@@ -321,11 +342,11 @@ mod tests {
         }
         assert_eq!(collect(&mut build), count as usize);
         for batch in 1..=count {
-            let arrival = match audio.take(batch) {
+            let arrival = match take(&mut audio, batch) {
                 // Waiting parcels move on as returned ones are collected.
                 Arrival::NotYet => {
                     collect(&mut build);
-                    audio.take(batch)
+                    take(&mut audio, batch)
                 }
                 arrival => arrival,
             };
@@ -341,17 +362,17 @@ mod tests {
             build.send(parcel(batch));
         }
         let before = heap::calls();
-        assert_eq!(audio.take(2), Arrival::NotNext);
+        assert_eq!(take(&mut audio, 2), Arrival::NotNext);
         for batch in [1, 2] {
-            let arrival = audio.take(batch);
+            let arrival = take(&mut audio, batch);
             pass(&mut audio, arrival);
         }
-        let Arrival::Here(held) = audio.take(3) else {
+        let Arrival::Here(held) = take(&mut audio, 3) else {
             panic!("no parcel for batch 3");
         };
         audio.hold(held, 5);
         audio.release(5, |_| {});
-        assert_eq!(audio.take(4), Arrival::NotYet);
+        assert_eq!(take(&mut audio, 4), Arrival::NotYet);
         let after_taking = heap::calls();
         build.send(parcel(4));
         let before_sending_back = heap::calls();

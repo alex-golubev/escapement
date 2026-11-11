@@ -3,16 +3,17 @@
 
 use std::ops::Range;
 
-use crate::CHANNELS;
+use crate::{CHANNELS, SampleNumber};
 
 /// What a plugin gets lasts until it asks again, so a built-in can't lean on what a plugin of its own module won't
 /// have. Two stretches at once don't compile:
 ///
 /// ```compile_fail,E0499
+/// # use engine_plugins::SampleNumber;
 /// # use engine_plugins::samples::SampleReader;
-/// fn both(reader: &mut dyn SampleReader) {
-///     let first = reader.frames(1, 0..64);
-///     let second = reader.frames(1, 64..128);
+/// fn both(reader: &mut dyn SampleReader, sample: SampleNumber) {
+///     let first = reader.frames(sample, 0..64);
+///     let second = reader.frames(sample, 64..128);
 ///     drop((first, second));
 /// }
 /// ```
@@ -20,17 +21,17 @@ use crate::CHANNELS;
 /// One after the other do:
 ///
 /// ```
+/// # use engine_plugins::SampleNumber;
 /// # use engine_plugins::samples::SampleReader;
-/// fn in_turn(reader: &mut dyn SampleReader) -> usize {
-///     let first = reader.frames(1, 0..64).map_or(0, |frames| frames.len());
-///     let second = reader.frames(1, 64..128).map_or(0, |frames| frames.len());
+/// fn in_turn(reader: &mut dyn SampleReader, sample: SampleNumber) -> usize {
+///     let first = reader.frames(sample, 0..64).map_or(0, |frames| frames.len());
+///     let second = reader.frames(sample, 64..128).map_or(0, |frames| frames.len());
 ///     first + second
 /// }
 /// ```
 pub trait SampleReader {
-    /// `sample` is a number from the plugin's description. `None` while it has no sound yet: the plugin stays
-    /// silent.
-    fn frames(&mut self, sample: u32, frames: Range<usize>) -> Option<Frames<'_>>;
+    /// `sample` is in the plugin's description. `None` while it has no sound yet: the plugin stays silent.
+    fn frames(&mut self, sample: SampleNumber, frames: Range<usize>) -> Option<Frames<'_>>;
 }
 
 /// A stretch of a sound: each of its channels over the frames asked for, cut where the sound ends.

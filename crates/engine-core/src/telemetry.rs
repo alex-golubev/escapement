@@ -2,6 +2,8 @@
 
 use std::{array, mem};
 
+use engine_plugins::SampleRate;
+
 use crate::handle::NodeHandle;
 use crate::{BLOCK_FRAMES, CHANNELS};
 
@@ -91,10 +93,10 @@ pub struct PeakMeter {
 
 impl PeakMeter {
     #[must_use]
-    pub fn new(sample_rate: f32) -> Self {
+    pub fn new(sample_rate: SampleRate) -> Self {
         Self {
             level: 0.0,
-            fall_per_sample: 10f32.powf(-FALL_DB / 20.0 / (FALL_SECONDS * sample_rate)),
+            fall_per_sample: 10f32.powf(-FALL_DB / 20.0 / (FALL_SECONDS * sample_rate.hz())),
             overs: 0,
         }
     }
@@ -130,7 +132,7 @@ pub struct BlockMeter([PeakMeter; CHANNELS]);
 
 impl BlockMeter {
     #[must_use]
-    pub fn new(sample_rate: f32) -> Self {
+    pub fn new(sample_rate: SampleRate) -> Self {
         Self(array::from_fn(|_| PeakMeter::new(sample_rate)))
     }
 
@@ -160,7 +162,7 @@ pub struct NodeMeter {
 }
 
 impl NodeMeter {
-    pub(crate) fn new(node: NodeHandle, sample_rate: f32) -> Self {
+    pub(crate) fn new(node: NodeHandle, sample_rate: SampleRate) -> Self {
         Self {
             node,
             meter: BlockMeter::new(sample_rate),
@@ -217,7 +219,7 @@ mod tests {
         block[BLOCK_FRAMES - 1] = 1.0;
         meter.update(&block);
         let silence = [0.0; BLOCK_FRAMES];
-        let blocks = (FALL_SECONDS * SAMPLE_RATE / BLOCK_FRAMES as f32).round() as usize;
+        let blocks = (FALL_SECONDS * SAMPLE_RATE.hz() / BLOCK_FRAMES as f32).round() as usize;
         let level = (0..blocks).fold(1.0, |_, _| meter.update(&silence));
         let db = 20.0 * level.log10();
         assert!((db + FALL_DB).abs() < 0.1, "{db} dB after {FALL_SECONDS} s");
@@ -228,7 +230,7 @@ mod tests {
         let mut meter = PeakMeter::new(SAMPLE_RATE);
         meter.update(&[1.0; BLOCK_FRAMES]);
         // 120 dB at 20 dB per 1.7 s takes about 10 s.
-        let blocks = (11.0 * SAMPLE_RATE / BLOCK_FRAMES as f32) as usize;
+        let blocks = (11.0 * SAMPLE_RATE.hz() / BLOCK_FRAMES as f32) as usize;
         let level = (0..blocks).fold(1.0, |_, _| meter.update(&[0.0; BLOCK_FRAMES]));
         assert_eq!(level, 0.0);
     }

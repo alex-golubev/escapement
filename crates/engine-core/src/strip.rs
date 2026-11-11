@@ -5,7 +5,9 @@ use std::array;
 use std::f64::consts::{FRAC_PI_4, SQRT_2};
 
 use engine_plugins::smoothing::Smoothed;
-use engine_plugins::{BLOCK_FRAMES, CHANNELS, ParamDescription, Scale, Unit, Values};
+use engine_plugins::{
+    BLOCK_FRAMES, CHANNELS, ParamDescription, ParamNumber, SampleRate, Scale, Unit, Values,
+};
 
 use crate::schema::Rejection;
 
@@ -43,41 +45,42 @@ pub const PAN: ParamDescription = ParamDescription {
 
 pub const STRIP: &[ParamDescription] = &[VOLUME, PAN];
 
+/// A parameter's number in [`STRIP`], apart from a plugin's so one never names the other; always one the strip has.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct StripNumber(ParamNumber);
+
+impl StripNumber {
+    const fn of(id: &str) -> Self {
+        Self(ParamNumber::of(STRIP, id))
+    }
+
+    #[must_use]
+    pub const fn get(self) -> u32 {
+        self.0.get()
+    }
+
+    fn index(self) -> usize {
+        self.0.index()
+    }
+}
+
 /// Their numbers in commands, found by ID, so the order lives only in [`STRIP`].
-pub const VOLUME_NUMBER: u32 = number(VOLUME.id);
-pub const PAN_NUMBER: u32 = number(PAN.id);
+pub const VOLUME_NUMBER: StripNumber = StripNumber::of(VOLUME.id);
+pub const PAN_NUMBER: StripNumber = StripNumber::of(PAN.id);
 
-/// An ID the strip doesn't have fails the build.
-const fn number(id: &str) -> u32 {
-    let mut place = 0;
-    while place < STRIP.len() {
-        if same(STRIP[place].id.as_bytes(), id.as_bytes()) {
-            return place as u32 + 1;
-        }
-        place += 1;
-    }
-    panic!("no strip parameter with this ID")
+/// As the page names it: 0 and a number past [`STRIP`] are refused.
+pub(crate) fn page_strip_param(number: u32) -> Result<StripNumber, Rejection> {
+    ParamNumber::new(number)
+        .filter(|number| number.index() < STRIP.len())
+        .map(StripNumber)
+        .ok_or(Rejection::UnknownTarget)
 }
 
-const fn same(a: &[u8], b: &[u8]) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
-    let mut i = 0;
-    while i < a.len() {
-        if a[i] != b[i] {
-            return false;
-        }
-        i += 1;
-    }
-    true
-}
-
-/// By the parameters' numbers, from 1.
+/// In the order of [`STRIP`].
 type StripValues = [f32; STRIP.len()];
 
-fn value(values: StripValues, number: u32) -> f32 {
-    values[number as usize - 1]
+fn value(values: StripValues, number: StripNumber) -> f32 {
+    values[number.index()]
 }
 
 pub(crate) struct Strip {
@@ -88,7 +91,7 @@ pub(crate) struct Strip {
 
 impl Strip {
     /// Every parameter at its default.
-    pub(crate) fn new(sample_rate: f32) -> Self {
+    pub(crate) fn new(sample_rate: SampleRate) -> Self {
         let values = array::from_fn(|place| STRIP[place].default);
         Self {
             values,
@@ -98,12 +101,9 @@ impl Strip {
 
     /// A value is taken as [`ParamDescription::taken`] has it. Before the first block it is there at once, after it
     /// glides there.
-    pub(crate) fn set(&mut self, number: u32, value: f32) -> Result<(), Rejection> {
-        let place = (number as usize)
-            .checked_sub(1)
-            .filter(|&place| place < STRIP.len())
-            .ok_or(Rejection::UnknownTarget)?;
-        self.values[place] = STRIP[place].taken(value).ok_or(Rejection::InvalidValue)?;
+    pub(crate) fn set(&mut self, number: StripNumber, value: f32) -> Result<(), Rejection> {
+        let index = number.index();
+        self.values[index] = STRIP[index].taken(value).ok_or(Rejection::InvalidValue)?;
         for (gain, target) in self.gains.iter_mut().zip(gains(self.values)) {
             gain.set(target);
         }
@@ -139,7 +139,7 @@ fn gains(values: StripValues) -> [f32; CHANNELS] {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::SAMPLE_RATE;
+    use crate::testing::{SAMPLE_RATE, seconds};
 
     /// 0.5 on the left and -0.25 on the right through the strip, one block.
     fn through(strip: &mut Strip) -> [[f32; BLOCK_FRAMES]; CHANNELS] {
@@ -150,12 +150,12 @@ mod tests {
 
     fn values(volume: f32, pan: f32) -> StripValues {
         let mut values = [0.0; STRIP.len()];
-        values[VOLUME_NUMBER as usize - 1] = volume;
-        values[PAN_NUMBER as usize - 1] = pan;
+        values[VOLUME_NUMBER.index()] = volume;
+        values[PAN_NUMBER.index()] = pan;
         values
     }
 
-    fn set(values: &[(u32, f32)]) -> Strip {
+    fn set(values: &[(StripNumber, f32)]) -> Strip {
         let mut strip = Strip::new(SAMPLE_RATE);
         for &(number, value) in values {
             strip.set(number, value).unwrap();
@@ -165,8 +165,8 @@ mod tests {
 
     #[test]
     fn the_numbers_follow_the_list() {
-        assert_eq!(STRIP[VOLUME_NUMBER as usize - 1].id, "volume");
-        assert_eq!(STRIP[PAN_NUMBER as usize - 1].id, "pan");
+        assert_eq!(STRIP[VOLUME_NUMBER.index()].id, "volume");
+        assert_eq!(STRIP[PAN_NUMBER.index()].id, "pan");
     }
 
     #[test]
@@ -244,8 +244,8 @@ mod tests {
                 Err(Rejection::InvalidValue)
             );
         }
-        for number in [0, PAN_NUMBER + 1, u32::MAX] {
-            assert_eq!(strip.set(number, 0.5), Err(Rejection::UnknownTarget));
+        for number in [0, PAN_NUMBER.get() + 1, u32::MAX] {
+            assert_eq!(page_strip_param(number), Err(Rejection::UnknownTarget));
         }
         // Nothing refused changed it.
         assert_eq!(
@@ -265,7 +265,7 @@ mod tests {
         assert!(left[0] > 0.49, "{}", left[0]);
         assert!(left.windows(2).all(|pair| pair[1] < pair[0]));
         assert!(left[BLOCK_FRAMES - 1] > 0.4, "{}", left[BLOCK_FRAMES - 1]);
-        let ramp = (SMOOTHING_SECONDS * SAMPLE_RATE) as usize;
+        let ramp = seconds(SMOOTHING_SECONDS);
         for _ in 0..ramp.div_ceil(BLOCK_FRAMES) {
             through(&mut strip);
         }

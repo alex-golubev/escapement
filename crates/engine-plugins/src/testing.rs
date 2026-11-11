@@ -6,10 +6,30 @@ use std::ops::Range;
 use std::sync::LazyLock;
 
 use crate::{
-    BLOCK_FRAMES, CHANNELS, Event, Frames, Plugin, PluginDescription, ProcessContext, SampleReader,
+    BLOCK_FRAMES, CHANNELS, Event, Frames, NoteId, ParamNumber, Plugin, PluginDescription,
+    ProcessContext, SampleNumber, SampleRate, SampleReader,
 };
 
-pub const SAMPLE_RATE: f32 = 48_000.0;
+pub const SAMPLE_RATE: SampleRate = SampleRate::new(48_000).unwrap();
+
+pub fn rate(hz: u32) -> SampleRate {
+    SampleRate::new(hz).unwrap()
+}
+
+/// As a command names it.
+pub fn param_number(number: u32) -> ParamNumber {
+    ParamNumber::new(number).unwrap()
+}
+
+/// As an edit names it.
+pub fn sample_number(number: u32) -> SampleNumber {
+    SampleNumber::new(number).unwrap()
+}
+
+/// The frames `seconds` take at [`SAMPLE_RATE`].
+pub const fn seconds(seconds: f32) -> usize {
+    SAMPLE_RATE.frames(seconds) as usize
+}
 
 pub fn silence(samples: usize) -> Vec<f32> {
     vec![0.0; samples]
@@ -23,14 +43,13 @@ pub fn sine(samples: usize) -> Vec<f32> {
 /// At half scale.
 pub fn sine_at(frequency: f32, samples: usize) -> Vec<f32> {
     (0..samples)
-        .map(|i| 0.5 * (TAU * frequency * i as f32 / SAMPLE_RATE).sin())
+        .map(|i| 0.5 * (TAU * frequency * i as f32 / SAMPLE_RATE.hz()).sin())
         .collect()
 }
 
 /// A new node's first block, which starts with every parameter: at its value in `values`, or at its default.
-pub fn first_block(description: &PluginDescription, values: &[(u32, f32)]) -> Vec<Event> {
-    description
-        .numbered_params()
+pub fn first_block(description: &PluginDescription, values: &[(ParamNumber, f32)]) -> Vec<Event> {
+    ParamNumber::each(description.params)
         .map(|(number, param)| {
             let given = values.iter().rev().find(|&&(given, _)| given == number);
             let value = given.map_or(param.default, |&(_, value)| value);
@@ -40,7 +59,10 @@ pub fn first_block(description: &PluginDescription, values: &[(u32, f32)]) -> Ve
 }
 
 /// A new node's first block with a note at its start, so an instrument sounds; an effect lets it pass.
-pub fn first_block_with_note(description: &PluginDescription, values: &[(u32, f32)]) -> Vec<Event> {
+pub fn first_block_with_note(
+    description: &PluginDescription,
+    values: &[(ParamNumber, f32)],
+) -> Vec<Event> {
     let mut events = first_block(description, values);
     events.push(NOTE);
     events
@@ -53,22 +75,22 @@ pub const NOTE: Event = Event::NoteOn {
     note: NOTE_NAME,
 };
 /// What [`NOTE`] is named, for letting go of it.
-pub const NOTE_NAME: u32 = 0;
+pub const NOTE_NAME: NoteId = NoteId::new(0);
 
 /// A second of [`sine`]: long enough to sound through a test, short enough to leave silence after. Made once.
-static SECOND: LazyLock<Vec<f32>> = LazyLock::new(|| sine(SAMPLE_RATE as usize));
+static SECOND: LazyLock<Vec<f32>> = LazyLock::new(|| sine(seconds(1.0)));
 
 /// The sound every sample of a plugin names, channel by channel; as in the engine, none for a number its
 /// description doesn't have.
 pub struct Sound<C> {
-    samples: u32,
+    samples: usize,
     pub channels: Vec<C>,
 }
 
 impl<C: AsRef<[f32]>> Sound<C> {
     pub fn new(description: &PluginDescription, channels: Vec<C>) -> Self {
         Self {
-            samples: description.samples.len() as u32,
+            samples: description.samples.len(),
             channels,
         }
     }
@@ -81,8 +103,8 @@ impl Sound<&'static [f32]> {
 }
 
 impl<C: AsRef<[f32]>> SampleReader for Sound<C> {
-    fn frames(&mut self, sample: u32, frames: Range<usize>) -> Option<Frames<'_>> {
-        if sample == 0 || sample > self.samples {
+    fn frames(&mut self, sample: SampleNumber, frames: Range<usize>) -> Option<Frames<'_>> {
+        if sample.index() >= self.samples {
             return None;
         }
         let last = self.channels.len() - 1;
@@ -99,7 +121,7 @@ impl<C: AsRef<[f32]>> SampleReader for Sound<C> {
 pub struct NoSound;
 
 impl SampleReader for NoSound {
-    fn frames(&mut self, _: u32, _: Range<usize>) -> Option<Frames<'_>> {
+    fn frames(&mut self, _: SampleNumber, _: Range<usize>) -> Option<Frames<'_>> {
         None
     }
 }

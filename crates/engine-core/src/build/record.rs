@@ -6,11 +6,12 @@
 use std::collections::{HashMap, HashSet};
 use std::mem;
 
-use crate::graph::{Connection, Order, Place, Start, Step};
-use crate::handle::NodeHandle;
+use crate::graph::{Connection, Exit, Order, Seat, Start, Step};
+use crate::handle::{NodeCell, NodeHandle};
+use crate::handoff::Batch;
 use crate::schema::Rejection;
 
-/// Never reused, unlike cells and places.
+/// Never reused, unlike cells and exits.
 type Id = u64;
 
 struct Entry {
@@ -25,7 +26,7 @@ struct Entry {
 struct Input {
     source: Id,
     /// The batch that started its fade, if it is fading out.
-    fading_since: Option<u32>,
+    fading_since: Option<Batch>,
 }
 
 impl Input {
@@ -42,7 +43,7 @@ impl Input {
     }
 
     /// Whether the batch's parcel coming back takes it away.
-    fn goes(&self, batch: u32, gone: &HashSet<Id>) -> bool {
+    fn goes(&self, batch: Batch, gone: &HashSet<Id>) -> bool {
         self.fading_since == Some(batch) || gone.contains(&self.source)
     }
 }
@@ -50,11 +51,11 @@ impl Input {
 #[derive(Clone, Copy)]
 enum State {
     Live {
-        cell: u32,
+        cell: NodeCell,
     },
-    /// Removed; plays out at the place until the parcel of the batch that removed it comes back.
+    /// Removed; plays out at the exit until the parcel of the batch that removed it comes back.
     Leaving {
-        place: u32,
+        exit: Exit,
     },
 }
 
@@ -62,7 +63,7 @@ enum State {
 #[derive(Default)]
 struct Sent {
     /// Each connection by listener (`None` for the output) and source, at its index in the order.
-    connections: HashMap<(Option<Id>, Id), u32>,
+    connections: HashMap<(Option<Id>, Id), usize>,
     /// Every node the output heard through it, however far upstream.
     heard: HashSet<Id>,
 }
@@ -70,18 +71,18 @@ struct Sent {
 /// A removed node's way out of its cell.
 #[derive(Debug, PartialEq)]
 pub(super) struct Removal {
-    pub cell: u32,
-    pub place: u32,
+    pub cell: NodeCell,
+    pub exit: Exit,
 }
 
 pub(super) struct Record {
     /// Live nodes by cell.
     cells: Vec<Option<Id>>,
-    free_places: Vec<u32>,
-    places: usize,
+    free_exits: Vec<Exit>,
+    exits: usize,
     entries: HashMap<Id, Entry>,
     /// Nodes playing out, by the batch that removed them.
-    leaving: HashMap<u32, Vec<Id>>,
+    leaving: HashMap<Batch, Vec<Id>>,
     /// Every node; after the nodes it hears once sorted.
     order: Vec<Id>,
     /// What the output hears.
@@ -94,11 +95,11 @@ pub(super) struct Record {
 }
 
 impl Record {
-    pub fn new(cells: usize, places: usize) -> Self {
+    pub fn new(cells: usize, exits: usize) -> Self {
         Self {
             cells: vec![None; cells],
-            free_places: (0..places as u32).rev().collect(),
-            places,
+            free_exits: (0..exits).rev().map(Exit::new).collect(),
+            exits,
             entries: HashMap::new(),
             leaving: HashMap::new(),
             order: Vec::new(),
@@ -115,9 +116,9 @@ impl Record {
         self.cells.len()
     }
 
-    /// The size of the audio thread's table of places.
-    pub fn places(&self) -> usize {
-        self.places
+    /// The size of the audio thread's table of exits.
+    pub fn exits(&self) -> usize {
+        self.exits
     }
 
     /// Under this very handle.
@@ -126,15 +127,15 @@ impl Record {
     }
 
     /// Whatever the generation.
-    pub fn is_taken(&self, cell: u32) -> bool {
-        self.cells.get(cell as usize).is_some_and(Option::is_some)
+    pub fn is_taken(&self, cell: NodeCell) -> bool {
+        self.cells.get(cell.index()).is_some_and(Option::is_some)
     }
 
     /// Room for `cell`, doubling; the audio thread's table grows in the same parcel.
-    pub fn make_room(&mut self, cell: u32) {
-        if cell as usize >= self.cells.len() {
+    pub fn make_room(&mut self, cell: NodeCell) {
+        if cell.index() >= self.cells.len() {
             self.cells
-                .resize((cell as usize + 1).next_power_of_two(), None);
+                .resize((cell.index() + 1).next_power_of_two(), None);
         }
     }
 
@@ -144,7 +145,7 @@ impl Record {
         let id = self.next_id;
         self.next_id += 1;
         let cell = handle.cell();
-        self.cells[cell as usize] = Some(id);
+        self.cells[cell.index()] = Some(id);
         let entry = Entry {
             handle,
             inputs: Vec::new(),
@@ -190,7 +191,7 @@ impl Record {
         &mut self,
         from: NodeHandle,
         to: NodeHandle,
-        batch: u32,
+        batch: Batch,
     ) -> Result<(), Rejection> {
         let (Some(from), Some(to)) = (self.live(from), self.live(to)) else {
             return Err(Rejection::UnknownTarget);
@@ -212,7 +213,7 @@ impl Record {
     }
 
     /// The output hears the node, and what it heard before fades out.
-    pub fn set_output(&mut self, handle: NodeHandle, batch: u32) -> Result<(), Rejection> {
+    pub fn set_output(&mut self, handle: NodeHandle, batch: Batch) -> Result<(), Rejection> {
         let id = self.live(handle).ok_or(Rejection::UnknownTarget)?;
         let mut found = false;
         for heard in &mut self.output {
@@ -234,18 +235,18 @@ impl Record {
 
     /// Takes the node out of its cell to play out until the batch's parcel comes back; what hears it fades it out
     /// meanwhile.
-    pub fn remove(&mut self, handle: NodeHandle, batch: u32) -> Result<Removal, Rejection> {
+    pub fn remove(&mut self, handle: NodeHandle, batch: Batch) -> Result<Removal, Rejection> {
         let id = self.live(handle).ok_or(Rejection::UnknownTarget)?;
         let cell = handle.cell();
-        if self.free_places.is_empty() {
-            self.grow_places();
+        if self.free_exits.is_empty() {
+            self.grow_exits();
         }
-        let Some(place) = self.free_places.pop() else {
-            unreachable!("the places just grew");
+        let Some(exit) = self.free_exits.pop() else {
+            unreachable!("the exits just grew");
         };
-        self.cells[cell as usize] = None;
+        self.cells[cell.index()] = None;
         if let Some(entry) = self.entries.get_mut(&id) {
-            entry.state = State::Leaving { place };
+            entry.state = State::Leaving { exit };
         }
         self.leaving.entry(batch).or_default().push(id);
         for heard in &mut self.output {
@@ -255,7 +256,7 @@ impl Record {
         }
         self.changed = true;
         self.holds = true;
-        Ok(Removal { cell, place })
+        Ok(Removal { cell, exit })
     }
 
     /// Every live node, as a reset removes them.
@@ -268,7 +269,7 @@ impl Record {
     }
 
     /// Forgets what the batch faded out: its parcel came back, so that is silent and back on this thread.
-    pub fn finish(&mut self, batch: u32) {
+    pub fn finish(&mut self, batch: Batch) {
         let gone: HashSet<Id> = self
             .leaving
             .remove(&batch)
@@ -277,11 +278,11 @@ impl Record {
             .collect();
         for id in &gone {
             if let Some(Entry {
-                state: State::Leaving { place, .. },
+                state: State::Leaving { exit },
                 ..
             }) = self.entries.remove(id)
             {
-                self.free_places.push(place);
+                self.free_exits.push(exit);
             }
         }
         let mut faded = false;
@@ -321,21 +322,21 @@ impl Record {
         let mut connections = Vec::new();
         let mut steps = Vec::with_capacity(self.order.len());
         for &id in &self.order {
-            let first = connections.len() as u32;
+            let first = connections.len();
             for input in self.inputs(id) {
                 sent.connections
-                    .insert((Some(id), input.source), connections.len() as u32);
+                    .insert((Some(id), input.source), connections.len());
                 connections.push(self.connection(Some(id), input));
             }
             steps.push(Step {
-                node: self.place(id),
-                inputs: (first, connections.len() as u32),
+                node: self.seat(id),
+                inputs: first..connections.len(),
             });
         }
-        let output = connections.len() as u32;
+        let output = connections.len();
         for heard in &self.output {
             sent.connections
-                .insert((None, heard.source), connections.len() as u32);
+                .insert((None, heard.source), connections.len());
             connections.push(self.connection(None, heard));
         }
         sent.heard = self.upstream(self.output.iter().map(|heard| heard.source), |_| true);
@@ -357,13 +358,13 @@ impl Record {
             Some(&index) if !unheard => Start::As(index),
             _ => Start::Silent,
         };
-        Connection::new(self.place(input.source), rising, start)
+        Connection::new(self.seat(input.source), rising, start)
     }
 
-    fn place(&self, id: Id) -> Place {
+    fn seat(&self, id: Id) -> Seat {
         match self.entries[&id].state {
-            State::Live { cell } => Place::Cell(cell),
-            State::Leaving { place, .. } => Place::Leaving(place),
+            State::Live { cell } => Seat::Cell(cell),
+            State::Leaving { exit } => Seat::Exit(exit),
         }
     }
 
@@ -382,7 +383,7 @@ impl Record {
 
     /// The live node under this very handle.
     fn live(&self, handle: NodeHandle) -> Option<Id> {
-        let id = (*self.cells.get(handle.cell() as usize)?)?;
+        let id = (*self.cells.get(handle.cell().index())?)?;
         (self.entries[&id].handle == handle).then_some(id)
     }
 
@@ -407,12 +408,12 @@ impl Record {
         seen
     }
 
-    /// Doubles the table of places; the audio thread's grows in the same parcel.
-    fn grow_places(&mut self) {
-        let places = (self.places * 2).max(1);
-        self.free_places
-            .extend((self.places as u32..places as u32).rev());
-        self.places = places;
+    /// Doubles the table of exits; the audio thread's grows in the same parcel.
+    fn grow_exits(&mut self) {
+        let exits = (self.exits * 2).max(1);
+        self.free_exits
+            .extend((self.exits..exits).rev().map(Exit::new));
+        self.exits = exits;
     }
 }
 
@@ -470,14 +471,14 @@ fn sort<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::handle::MAX_CELL;
+    use crate::testing::cell;
 
     fn handle(cell: u32) -> NodeHandle {
         NodeHandle::new(cell)
     }
 
-    /// Each step's node with its inputs as places, and the output's.
-    fn wiring(order: &Order) -> (Vec<(Place, Vec<Place>)>, Vec<Place>) {
+    /// Each step's node with its inputs as seats, and the output's.
+    fn wiring(order: &Order) -> (Vec<(Seat, Vec<Seat>)>, Vec<Seat>) {
         let sources = |range: std::ops::Range<usize>| {
             order.connections[range]
                 .iter()
@@ -487,21 +488,13 @@ mod tests {
         let steps = order
             .steps
             .iter()
-            .map(|step| {
-                (
-                    step.node,
-                    sources(step.inputs.0 as usize..step.inputs.1 as usize),
-                )
-            })
+            .map(|step| (step.node, sources(step.inputs.clone())))
             .collect();
-        (
-            steps,
-            sources(order.output as usize..order.connections.len()),
-        )
+        (steps, sources(order.output..order.connections.len()))
     }
 
     /// Each connection's source, whether it rises and where it starts.
-    fn fades(order: &Order) -> Vec<(Place, bool, Start)> {
+    fn fades(order: &Order) -> Vec<(Seat, bool, Start)> {
         order
             .connections
             .iter()
@@ -512,13 +505,13 @@ mod tests {
     #[test]
     fn the_longest_chain_sorts_on_a_small_stack() {
         // Each node hears the next, so the last goes first.
-        let inputs: HashMap<Id, Vec<Input>> = (1..=Id::from(MAX_CELL))
+        let inputs: HashMap<Id, Vec<Input>> = (1..=Id::from(u16::MAX))
             .map(|id| {
-                let next = (id < Id::from(MAX_CELL)).then_some(Input::kept(id + 1));
+                let next = (id < Id::from(u16::MAX)).then_some(Input::kept(id + 1));
                 (id, next.into_iter().collect())
             })
             .collect();
-        let order: Vec<_> = (1..=Id::from(MAX_CELL)).collect();
+        let order: Vec<_> = (1..=Id::from(u16::MAX)).collect();
         // A recursive sort would need megabytes of stack for this.
         let sorted = std::thread::Builder::new()
             .stack_size(64 * 1024)
@@ -526,7 +519,7 @@ mod tests {
             .unwrap()
             .join()
             .unwrap();
-        assert_eq!(sorted, (1..=Id::from(MAX_CELL)).rev().collect::<Vec<_>>());
+        assert_eq!(sorted, (1..=Id::from(u16::MAX)).rev().collect::<Vec<_>>());
     }
 
     #[test]
@@ -546,23 +539,26 @@ mod tests {
         );
         assert_eq!(record.connect(handle(2), handle(2)), Err(Rejection::Loop));
         assert_eq!(
-            record.set_output(handle(3), 1),
+            record.set_output(handle(3), Batch::new(1)),
             Err(Rejection::UnknownTarget)
         );
-        assert_eq!(record.remove(handle(3), 1), Err(Rejection::UnknownTarget));
+        assert_eq!(
+            record.remove(handle(3), Batch::new(1)),
+            Err(Rejection::UnknownTarget)
+        );
         assert_eq!(record.take_changes(), None, "refusals change nothing");
         assert_eq!(record.connect(handle(2), handle(1)), Ok(()));
         let (steps, _) = wiring(&record.take_changes().unwrap());
         assert_eq!(
             steps,
             [
-                (Place::Cell(2), vec![]),
-                (Place::Cell(1), vec![Place::Cell(2)])
+                (Seat::Cell(cell(2)), vec![]),
+                (Seat::Cell(cell(1)), vec![Seat::Cell(cell(2))])
             ]
         );
-        record.set_output(handle(1), 1).unwrap();
+        record.set_output(handle(1), Batch::new(1)).unwrap();
         assert!(record.take_changes().is_some());
-        record.set_output(handle(1), 2).unwrap();
+        record.set_output(handle(1), Batch::new(2)).unwrap();
         assert_eq!(record.take_changes(), None, "the output already hears it");
         assert!(!record.take_holds());
     }
@@ -573,17 +569,23 @@ mod tests {
         let (old, new) = (handle(1), NodeHandle::new(1 << 16 | 1));
         record.add(old);
         record.add(handle(2));
-        record.remove(old, 1).unwrap();
-        assert!(!record.is_taken(1), "the cell is free at once");
+        record.remove(old, Batch::new(1)).unwrap();
+        assert!(!record.is_taken(cell(1)), "the cell is free at once");
         record.add(new);
         assert_eq!(
             record.connect(old, handle(2)),
             Err(Rejection::UnknownTarget)
         );
-        assert_eq!(record.set_output(old, 2), Err(Rejection::UnknownTarget));
-        assert_eq!(record.remove(old, 2), Err(Rejection::UnknownTarget));
+        assert_eq!(
+            record.set_output(old, Batch::new(2)),
+            Err(Rejection::UnknownTarget)
+        );
+        assert_eq!(
+            record.remove(old, Batch::new(2)),
+            Err(Rejection::UnknownTarget)
+        );
         assert_eq!(record.connect(new, handle(2)), Ok(()));
-        assert!(record.is_taken(1));
+        assert!(record.is_taken(cell(1)));
     }
 
     #[test]
@@ -592,10 +594,10 @@ mod tests {
         for cell in 1..=3 {
             record.add(handle(cell));
         }
-        record.set_output(handle(1), 1).unwrap();
+        record.set_output(handle(1), Batch::new(1)).unwrap();
         // Before any order, nothing is heard; the output always is.
         let first = record.take_changes().unwrap();
-        assert_eq!(fades(&first), [(Place::Cell(1), true, Start::Silent)]);
+        assert_eq!(fades(&first), [(Seat::Cell(cell(1)), true, Start::Silent)]);
         // 1 is heard, 3 isn't.
         record.connect(handle(2), handle(1)).unwrap();
         record.connect(handle(2), handle(3)).unwrap();
@@ -604,17 +606,17 @@ mod tests {
         assert_eq!(
             steps,
             [
-                (Place::Cell(2), vec![]),
-                (Place::Cell(1), vec![Place::Cell(2)]),
-                (Place::Cell(3), vec![Place::Cell(2)])
+                (Seat::Cell(cell(2)), vec![]),
+                (Seat::Cell(cell(1)), vec![Seat::Cell(cell(2))]),
+                (Seat::Cell(cell(3)), vec![Seat::Cell(cell(2))])
             ]
         );
         assert_eq!(
             fades(&second),
             [
-                (Place::Cell(2), true, Start::Silent),
-                (Place::Cell(2), true, Start::Full),
-                (Place::Cell(1), true, Start::As(0)),
+                (Seat::Cell(cell(2)), true, Start::Silent),
+                (Seat::Cell(cell(2)), true, Start::Full),
+                (Seat::Cell(cell(1)), true, Start::As(0)),
             ]
         );
         // Each connection carries on from its place in the order before, but where no one hears it.
@@ -637,26 +639,28 @@ mod tests {
         record.take_changes();
         // Made and cut in one batch while no one heard 3, which then comes to be heard: 3 never hears 1.
         record.connect(handle(1), handle(3)).unwrap();
-        record.disconnect(handle(1), handle(3), 1).unwrap();
-        record.set_output(handle(3), 1).unwrap();
+        record
+            .disconnect(handle(1), handle(3), Batch::new(1))
+            .unwrap();
+        record.set_output(handle(3), Batch::new(1)).unwrap();
         assert_eq!(
             fades(&record.take_changes().unwrap()),
             [
-                (Place::Cell(1), true, Start::Full),
-                (Place::Cell(1), false, Start::Silent),
-                (Place::Cell(3), true, Start::Silent),
+                (Seat::Cell(cell(1)), true, Start::Full),
+                (Seat::Cell(cell(1)), false, Start::Silent),
+                (Seat::Cell(cell(3)), true, Start::Silent),
             ]
         );
         // 2 heard 1 in full while no one heard 2; 1 goes as 2 comes to be heard, so 2 never hears it.
-        record.remove(handle(1), 2).unwrap();
-        record.set_output(handle(2), 2).unwrap();
+        record.remove(handle(1), Batch::new(2)).unwrap();
+        record.set_output(handle(2), Batch::new(2)).unwrap();
         assert_eq!(
             fades(&record.take_changes().unwrap()),
             [
-                (Place::Leaving(0), false, Start::Silent),
-                (Place::Leaving(0), false, Start::As(1)),
-                (Place::Cell(3), false, Start::As(2)),
-                (Place::Cell(2), true, Start::Silent),
+                (Seat::Exit(Exit::new(0)), false, Start::Silent),
+                (Seat::Exit(Exit::new(0)), false, Start::As(1)),
+                (Seat::Cell(cell(3)), false, Start::As(2)),
+                (Seat::Cell(cell(2)), true, Start::Silent),
             ]
         );
     }
@@ -666,32 +670,32 @@ mod tests {
         let mut record = Record::new(4, 4);
         record.add(handle(1));
         record.add(handle(2));
-        record.set_output(handle(1), 1).unwrap();
+        record.set_output(handle(1), Batch::new(1)).unwrap();
         record.take_changes();
         assert!(!record.take_holds(), "nothing faded out");
-        record.set_output(handle(2), 2).unwrap();
+        record.set_output(handle(2), Batch::new(2)).unwrap();
         assert!(record.take_holds());
         let switched = record.take_changes().unwrap();
         assert_eq!(
             fades(&switched),
             [
-                (Place::Cell(1), false, Start::As(0)),
-                (Place::Cell(2), true, Start::Silent),
+                (Seat::Cell(cell(1)), false, Start::As(0)),
+                (Seat::Cell(cell(2)), true, Start::Silent),
             ]
         );
-        record.finish(2);
+        record.finish(Batch::new(2));
         let (_, heard) = wiring(&record.take_changes().unwrap());
-        assert_eq!(heard, [Place::Cell(2)]);
+        assert_eq!(heard, [Seat::Cell(cell(2))]);
 
         // Back before the fade is over: the earlier batch's return no longer takes it away.
-        record.set_output(handle(1), 3).unwrap();
-        record.set_output(handle(2), 4).unwrap();
-        record.finish(3);
+        record.set_output(handle(1), Batch::new(3)).unwrap();
+        record.set_output(handle(2), Batch::new(4)).unwrap();
+        record.finish(Batch::new(3));
         let (_, heard) = wiring(&record.take_changes().unwrap());
-        assert_eq!(heard, [Place::Cell(2), Place::Cell(1)]);
-        record.finish(4);
+        assert_eq!(heard, [Seat::Cell(cell(2)), Seat::Cell(cell(1))]);
+        record.finish(Batch::new(4));
         let (_, heard) = wiring(&record.take_changes().unwrap());
-        assert_eq!(heard, [Place::Cell(2)]);
+        assert_eq!(heard, [Seat::Cell(cell(2))]);
     }
 
     #[test]
@@ -702,34 +706,38 @@ mod tests {
         }
         record.connect(handle(1), handle(3)).unwrap();
         record.connect(handle(2), handle(3)).unwrap();
-        record.set_output(handle(3), 1).unwrap();
+        record.set_output(handle(3), Batch::new(1)).unwrap();
         record.take_changes();
-        record.disconnect(handle(1), handle(3), 2).unwrap();
+        record
+            .disconnect(handle(1), handle(3), Batch::new(2))
+            .unwrap();
         assert!(record.take_holds());
         assert_eq!(
             fades(&record.take_changes().unwrap()),
             [
-                (Place::Cell(1), false, Start::As(0)),
-                (Place::Cell(2), true, Start::As(1)),
-                (Place::Cell(3), true, Start::As(2)),
+                (Seat::Cell(cell(1)), false, Start::As(0)),
+                (Seat::Cell(cell(2)), true, Start::As(1)),
+                (Seat::Cell(cell(3)), true, Start::As(2)),
             ]
         );
-        record.finish(2);
+        record.finish(Batch::new(2));
         let (steps, _) = wiring(&record.take_changes().unwrap());
-        assert_eq!(steps[2], (Place::Cell(3), vec![Place::Cell(2)]));
+        assert_eq!(steps[2], (Seat::Cell(cell(3)), vec![Seat::Cell(cell(2))]));
 
         // Back before the fade is over: it rises from where it got, and the batch's return no longer takes it away.
-        record.disconnect(handle(2), handle(3), 3).unwrap();
+        record
+            .disconnect(handle(2), handle(3), Batch::new(3))
+            .unwrap();
         record.take_changes();
         record.connect(handle(2), handle(3)).unwrap();
         assert_eq!(
             fades(&record.take_changes().unwrap()),
             [
-                (Place::Cell(2), true, Start::As(0)),
-                (Place::Cell(3), true, Start::As(1)),
+                (Seat::Cell(cell(2)), true, Start::As(0)),
+                (Seat::Cell(cell(3)), true, Start::As(1)),
             ]
         );
-        record.finish(3);
+        record.finish(Batch::new(3));
         assert_eq!(record.take_changes(), None);
     }
 
@@ -740,15 +748,17 @@ mod tests {
         record.add(handle(2));
         record.connect(handle(1), handle(2)).unwrap();
         record.take_changes();
-        record.disconnect(handle(1), handle(2), 1).unwrap();
+        record
+            .disconnect(handle(1), handle(2), Batch::new(1))
+            .unwrap();
         // As the page sees it, 2 no longer hears 1; while it fades, 2 hears 1 a block late.
         record.connect(handle(2), handle(1)).unwrap();
         let (steps, _) = wiring(&record.take_changes().unwrap());
         assert_eq!(
             steps,
             [
-                (Place::Cell(2), vec![Place::Cell(1)]),
-                (Place::Cell(1), vec![Place::Cell(2)])
+                (Seat::Cell(cell(2)), vec![Seat::Cell(cell(1))]),
+                (Seat::Cell(cell(1)), vec![Seat::Cell(cell(2))])
             ]
         );
         assert_eq!(
@@ -766,32 +776,51 @@ mod tests {
         }
         record.connect(handle(1), handle(2)).unwrap();
         record.connect(handle(2), handle(3)).unwrap();
-        record.set_output(handle(3), 1).unwrap();
+        record.set_output(handle(3), Batch::new(1)).unwrap();
         record.take_changes();
-        let removal = record.remove(handle(2), 2).unwrap();
-        assert_eq!(removal, Removal { cell: 2, place: 0 });
+        let removal = record.remove(handle(2), Batch::new(2)).unwrap();
+        assert_eq!(
+            removal,
+            Removal {
+                cell: cell(2),
+                exit: Exit::new(0)
+            }
+        );
         assert!(record.take_holds());
         let playing_out = record.take_changes().unwrap();
         assert_eq!(
             fades(&playing_out),
             [
-                (Place::Cell(1), true, Start::As(0)),
-                (Place::Leaving(0), false, Start::As(1)),
-                (Place::Cell(3), true, Start::As(2)),
+                (Seat::Cell(cell(1)), true, Start::As(0)),
+                (Seat::Exit(Exit::new(0)), false, Start::As(1)),
+                (Seat::Cell(cell(3)), true, Start::As(2)),
             ]
         );
-        // The places double for a second node playing out.
-        let next = record.remove(handle(3), 3).unwrap();
-        assert_eq!(next, Removal { cell: 3, place: 1 });
-        assert_eq!(record.places(), 2);
-        record.finish(2);
+        // The exits double for a second node playing out.
+        let next = record.remove(handle(3), Batch::new(3)).unwrap();
+        assert_eq!(
+            next,
+            Removal {
+                cell: cell(3),
+                exit: Exit::new(1)
+            }
+        );
+        assert_eq!(record.exits(), 2);
+        record.finish(Batch::new(2));
         let (steps, heard) = wiring(&record.take_changes().unwrap());
         assert_eq!(
             steps,
-            [(Place::Cell(1), vec![]), (Place::Leaving(1), vec![])]
+            [
+                (Seat::Cell(cell(1)), vec![]),
+                (Seat::Exit(Exit::new(1)), vec![])
+            ]
         );
-        assert_eq!(heard, [Place::Leaving(1)]);
-        assert_eq!(record.remove(handle(1), 4).unwrap().place, 0, "freed");
+        assert_eq!(heard, [Seat::Exit(Exit::new(1))]);
+        assert_eq!(
+            record.remove(handle(1), Batch::new(4)).unwrap().exit,
+            Exit::new(0),
+            "freed"
+        );
         assert_eq!(record.live_handles(), []);
     }
 
@@ -805,16 +834,16 @@ mod tests {
         record.connect(handle(1), handle(2)).unwrap();
         record.connect(handle(2), handle(3)).unwrap();
         record.take_changes();
-        record.remove(handle(2), 1).unwrap();
+        record.remove(handle(2), Batch::new(1)).unwrap();
         // The page sees no 2 any more, so no loop.
         assert_eq!(record.connect(handle(3), handle(1)), Ok(()));
         let (steps, _) = wiring(&record.take_changes().unwrap());
         assert_eq!(
             steps,
             [
-                (Place::Cell(3), vec![Place::Leaving(0)]),
-                (Place::Cell(1), vec![Place::Cell(3)]),
-                (Place::Leaving(0), vec![Place::Cell(1)]),
+                (Seat::Cell(cell(3)), vec![Seat::Exit(Exit::new(0))]),
+                (Seat::Cell(cell(1)), vec![Seat::Cell(cell(3))]),
+                (Seat::Exit(Exit::new(0)), vec![Seat::Cell(cell(1))]),
             ]
         );
         assert_eq!(record.connect(handle(1), handle(3)), Err(Rejection::Loop));

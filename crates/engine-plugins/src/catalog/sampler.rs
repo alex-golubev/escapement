@@ -4,7 +4,10 @@
 use crate::envelope::GIVE_WAY_SECONDS;
 use crate::events::{Step, steps};
 use crate::smoothing::ramp_samples;
-use crate::{Event, Plugin, PluginDescription, ProcessContext, SampleDescription, SampleReader};
+use crate::{
+    Event, Plugin, PluginDescription, ProcessContext, SampleDescription, SampleNumber, SampleRate,
+    SampleReader,
+};
 
 const SAMPLE_SOUND: SampleDescription = SampleDescription {
     id: "sample",
@@ -19,7 +22,7 @@ pub const DESCRIPTION: PluginDescription = PluginDescription {
     samples: &[SAMPLE_SOUND],
 };
 
-pub const SAMPLE: u32 = DESCRIPTION.sample_number(SAMPLE_SOUND.id);
+pub const SAMPLE: SampleNumber = SampleNumber::of(DESCRIPTION.samples, SAMPLE_SOUND.id);
 
 /// Notes that sound at once; one more fades the oldest out.
 pub const VOICES: usize = 16;
@@ -57,7 +60,7 @@ struct Sampler {
     notes: u64,
 }
 
-pub(crate) fn create(sample_rate: f32) -> Box<dyn Plugin> {
+pub(crate) fn create(sample_rate: SampleRate) -> Box<dyn Plugin> {
     Box::new(Sampler::new(sample_rate))
 }
 
@@ -82,7 +85,7 @@ impl Plugin for Sampler {
 }
 
 impl Sampler {
-    fn new(sample_rate: f32) -> Self {
+    fn new(sample_rate: SampleRate) -> Self {
         Self {
             voices: [FREE; 2 * VOICES],
             give_way: ramp_samples(GIVE_WAY_SECONDS, sample_rate),
@@ -177,14 +180,17 @@ impl Sampler {
 mod tests {
     use super::*;
     use crate::BLOCK_FRAMES;
-    use crate::testing::{NoSound, SAMPLE_RATE, Sound, largest_step, render_with, silence};
+    use crate::NoteId;
+    use crate::testing::{
+        NoSound, SAMPLE_RATE, Sound, largest_step, render_with, seconds, silence,
+    };
 
     fn note(time: u32, velocity: f32) -> Event {
         Event::NoteOn {
             time,
             key: 60,
             velocity,
-            note: time,
+            note: NoteId::new(time),
         }
     }
 
@@ -264,7 +270,7 @@ mod tests {
 
     /// A long constant sound, so a voice's level shows as a step in the sum.
     fn level() -> Sound<Vec<f32>> {
-        Sound::new(&DESCRIPTION, vec![vec![0.01; SAMPLE_RATE as usize]])
+        Sound::new(&DESCRIPTION, vec![vec![0.01; seconds(1.0)]])
     }
 
     #[test]

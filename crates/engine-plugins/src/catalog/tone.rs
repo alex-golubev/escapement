@@ -5,7 +5,8 @@ use std::f32::consts::TAU;
 use crate::events::{Step, steps};
 use crate::smoothing::Smoothed;
 use crate::{
-    Event, ParamDescription, Plugin, PluginDescription, ProcessContext, Scale, Unit, Values,
+    Event, ParamDescription, ParamNumber, Plugin, PluginDescription, ProcessContext, SampleRate,
+    Scale, Unit, Values,
 };
 
 const VOLUME_PARAM: ParamDescription = ParamDescription {
@@ -30,7 +31,7 @@ pub const DESCRIPTION: PluginDescription = PluginDescription {
     samples: &[],
 };
 
-pub const VOLUME: u32 = DESCRIPTION.param_number(VOLUME_PARAM.id);
+pub const VOLUME: ParamNumber = ParamNumber::of(DESCRIPTION.params, VOLUME_PARAM.id);
 
 /// The peak at full volume, well below full scale: a pure sine is loud.
 pub const MAX_GAIN: f32 = 0.2;
@@ -42,10 +43,10 @@ struct Tone {
     volume: Smoothed,
 }
 
-pub(crate) fn create(sample_rate: f32) -> Box<dyn Plugin> {
+pub(crate) fn create(sample_rate: SampleRate) -> Box<dyn Plugin> {
     Box::new(Tone {
         phase: 0.0,
-        phase_step: TAU * FREQUENCY / sample_rate,
+        phase_step: TAU * FREQUENCY / sample_rate.hz(),
         volume: Smoothed::for_param(&VOLUME_PARAM, sample_rate),
     })
 }
@@ -88,18 +89,13 @@ impl Plugin for Tone {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::{SAMPLE_RATE, first_block, peak, render, silence};
+    use crate::testing::{SAMPLE_RATE, first_block, peak, render, seconds, silence};
 
     #[test]
     fn plays_a_440_hz_sine_at_the_default_volume() {
         let mut tone = create(SAMPLE_RATE);
         let first = first_block(&DESCRIPTION, &[]);
-        let [left, right] = render(
-            &DESCRIPTION,
-            tone.as_mut(),
-            &first,
-            &silence(SAMPLE_RATE as usize),
-        );
+        let [left, right] = render(&DESCRIPTION, tone.as_mut(), &first, &silence(seconds(1.0)));
         assert_eq!(left, right);
         let level = peak(&left);
         assert!(
@@ -118,12 +114,7 @@ mod tests {
     fn volume_sets_the_level() {
         let mut tone = create(SAMPLE_RATE);
         let first = first_block(&DESCRIPTION, &[(VOLUME, 0.25)]);
-        let [left, _] = render(
-            &DESCRIPTION,
-            tone.as_mut(),
-            &first,
-            &silence(SAMPLE_RATE as usize / 10),
-        );
+        let [left, _] = render(&DESCRIPTION, tone.as_mut(), &first, &silence(seconds(0.1)));
         assert!((peak(&left) - MAX_GAIN * 0.25).abs() < 1e-3);
     }
 }
