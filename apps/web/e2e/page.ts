@@ -92,9 +92,18 @@ export const arrangementAt = async (page: Page) => {
 /** The line over the panel: the chosen track's name and what of it is shown, as `Synth|Notes`; empty for none. */
 export const below = (page: Page) => page.locator('.panel__title')
 
-/** The colour, as red, green, blue and alpha, that the view's canvas at `layer`, from its first, draws at the point. */
-const pixelOn = (page: Page, view: string, layer: number, { x, y }: { readonly x: number; readonly y: number }) =>
-  page.evaluate(
+/**
+ * The colour, as red, green, blue and alpha, that the view's canvas at `layer`, from its first, draws at the point. A
+ * canvas not in yet, as just after a reload, is waited for: a read that throws would end a poll at once.
+ */
+const pixelOn = async (
+  page: Page,
+  view: string,
+  layer: number,
+  { x, y }: { readonly x: number; readonly y: number }
+) => {
+  await page.locator(`${view} canvas`).nth(layer).waitFor({ state: 'attached' })
+  return page.evaluate(
     ([view, layer, x, y]) => {
       const canvas = document.querySelectorAll<HTMLCanvasElement>(`${view} canvas`)[layer]
       const box = canvas.getBoundingClientRect()
@@ -109,6 +118,7 @@ const pixelOn = (page: Page, view: string, layer: number, { x, y }: { readonly x
     },
     [view, layer, x, y] as const
   )
+}
 
 /** The colour the roll's canvas, of the grid or of the notes, draws at the point. */
 export const pixelAt = (page: Page, layer: 'grid' | 'notes', point: { readonly x: number; readonly y: number }) =>
