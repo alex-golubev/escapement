@@ -1,6 +1,20 @@
 import { expect, type Locator, type Page } from '@playwright/test'
 import { trackColours } from '@escapement/model'
-import { addTrack, arrangementAt, below, clipPixel, drawnAt, nameOf, newClip, newProject, reload, test } from './page'
+import {
+  addTrack,
+  arrangementAt,
+  arrangementLayout,
+  below,
+  clipPixel,
+  drawnAt,
+  nameOf,
+  newClip,
+  newProject,
+  reload,
+  rgbOf,
+  test,
+  tokenOf
+} from './page'
 
 const heads = (page: Page) => page.locator('.track-head__name')
 
@@ -90,9 +104,6 @@ test("a track's menu opens at the pointer in place of the browser's, or under it
   await expect(menu).toBeHidden()
 })
 
-/** Of a `#rrggbb` colour, its red, green and blue. */
-const rgbOf = (colour: string) => [1, 3, 5].map((at) => Number.parseInt(colour.slice(at, at + 2), 16))
-
 test("a track's colour from its menu, by the keyboard, colours its head and clips for good; two tracks' clips are two colours, whole heads two lines", async ({
   page
 }) => {
@@ -100,15 +111,16 @@ test("a track's colour from its menu, by the keyboard, colours its head and clip
   await newClip(page, 0, 0, 'Synth')
   await newClip(page, 1, 1, 'Synth 2')
   const at = await arrangementAt(page)
+  const { barWidth, trackHeight, clipInset, clipHead } = await arrangementLayout(page)
   const [teal, indigo, rust] = trackColours.map(({ colour }) => colour)
-  const row = rgbOf(
-    await page
-      .locator('.arrangement')
-      .evaluate((box) => getComputedStyle(box).getPropertyValue('--arrangement-row').trim())
-  )
-  // Opaque, a share of its colour over the row's, to a unit or so.
+  const row = rgbOf(await tokenOf(page, '.arrangement', '--arrangement-row'))
+  // In the clip's head, past its name: opaque, a share of its colour over the row's, to a unit or so.
+  const headOf = (bar: number, place: number) => {
+    const { x, y } = at(bar, place)
+    return { x: x + barWidth / 2 - 4, y: y - trackHeight / 2 + clipInset + clipHead / 2 }
+  }
   const clipIn = async (colour: string, bar: number, place: number) => {
-    const [red = 0, green = 0, blue = 0, alpha = 0] = await clipPixel(page, at(bar, place))
+    const [red = 0, green = 0, blue = 0, alpha = 0] = await clipPixel(page, headOf(bar, place))
     const mixed = rgbOf(colour).map((channel, i) => 0.4 * channel + 0.6 * (row[i] ?? 0))
     const off = Math.max(...[red, green, blue].map((channel, i) => Math.abs(channel - (mixed[i] ?? 0))))
     return { near: off <= 1.5, alpha }

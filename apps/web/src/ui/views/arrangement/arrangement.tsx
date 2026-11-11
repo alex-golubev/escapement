@@ -1,7 +1,8 @@
 import { useAtom, useAtomValue } from '@effect/atom-react'
 import { Tick } from '@escapement/engine-description'
-import { byContent, firstColour } from '@escapement/model'
+import { arrangementEnd, byContent, type Id } from '@escapement/model'
 import { Array, Boolean, Data, Equal, Option } from 'effect'
+import { Atom } from 'effect/reactivity'
 import type { TargetedMouseEvent, TargetedPointerEvent, TargetedWheelEvent } from 'preact'
 import { useLayoutEffect, useMemo, useRef } from 'preact/hooks'
 import { useCore } from '../../core-context'
@@ -15,7 +16,7 @@ import { onPoints } from '../../kit/pixels'
 import { useScreenScale } from '../../kit/screen-scale'
 import { useCanvasPlayhead } from '../../parts/playhead'
 import { type Cursor, cursorAt, cursorOf, draggedClips, draggedTo, type Edge, Grab, grabAt } from './drag'
-import { drawClips, drawFrame, drawGrid, paletteOf, type RowLook } from './draw'
+import { anyRow, drawClips, drawFrame, drawGrid, paletteOf, type RowLook } from './draw'
 import {
   barsAcross,
   clipAt,
@@ -23,6 +24,7 @@ import {
   endOf,
   inDrawingOrder,
   laneOf,
+  previewOf,
   type Shown,
   type Span,
   startAt,
@@ -80,14 +82,15 @@ export const Arrangement = () => {
         const places = new Map(get(tracksAtom).map((track, place) => [track, place]))
         return inDrawingOrder(
           get(session.project.arrangementClips).map(
-            ({ id, track, tick, length, period, offset }): Shown => ({
+            ({ id, track, tick, length, period, offset, pattern }): Shown => ({
               id,
               // Each clip is on a live track, at its place.
               place: places.get(track) ?? -1,
               tick,
               length,
               period,
-              offset
+              offset,
+              pattern
             })
           )
         )
@@ -100,18 +103,30 @@ export const Arrangement = () => {
     () =>
       byContent((get) =>
         get(tracksAtom).map(
-          (track): RowLook => ({
-            colour: Option.match(get(session.project.track(track)), {
-              onNone: () => firstColour,
-              onSome: ({ colour }) => colour
-            }),
-            heard: get(session.isHeard(track))
-          })
+          (track): RowLook =>
+            Option.match(get(session.project.track(track)), {
+              onNone: () => anyRow,
+              onSome: ({ name, colour }) => ({ name, colour, heard: get(session.isHeard(track)) })
+            })
         )
       ),
     [session, tracksAtom]
   )
   const looks = useAtomValue(looksAtom)
+  // Each pattern's preview read once, as its notes change: a clip moved reads none again.
+  const previewsAtom = useMemo(() => {
+    const patterns = byContent((get) => Array.dedupe(get(session.project.clips).map(({ pattern }) => pattern)))
+    const previewAt = Atom.family((pattern: Id) => byContent((get) => previewOf(get(session.project.notes(pattern)))))
+    return byContent(
+      (get) =>
+        new Map(
+          get(patterns).flatMap((pattern) =>
+            Option.toArray(Option.map(get(previewAt(pattern)), (preview) => [pattern, preview] as const))
+          )
+        )
+    )
+  }, [session])
+  const previews = useAtomValue(previewsAtom)
   const open = useAtomValue(openAtom)
   const tracks = useAtomValue(tracksAtom).length
   const box = useRef<HTMLDivElement>(null)
@@ -184,12 +199,16 @@ export const Arrangement = () => {
     onSome: ({ width, height, top, left, tracks }) => `${width}:${height}:${top}:${left}:${tracks}:${scale}:${rem}`
   })
   useLayer(grid, drawn, (g, { view, palette }) => drawGrid(g, view, palette), [viewKey])
-  // The bars' numbers are its only text, drawn again as the font comes.
-  useLayer(frame, drawn, (g, { view, palette }) => drawFrame(g, view, palette), [viewKey, fonts])
-  useLayer(clipsLayer, drawn, (g, { view, palette }) => drawClips(g, view, palette, drawing, looks, open), [
+  // Where play goes round, as the document has the clips: one held in a drag moves it once let go.
+  const loopEnd = arrangementEnd(shown)
+  // The bars' numbers and the clips' names are its text, drawn again as the font comes.
+  useLayer(frame, drawn, (g, { view, palette }) => drawFrame(g, view, palette, loopEnd), [viewKey, fonts, loopEnd])
+  useLayer(clipsLayer, drawn, (g, { view, palette }) => drawClips(g, view, palette, drawing, looks, previews, open), [
     viewKey,
+    fonts,
     shown,
     looks,
+    previews,
     gesture.shown,
     open
   ])
@@ -345,6 +364,15 @@ export const Arrangement = () => {
         <canvas ref={over} />
       </div>
       <TrackHeads top={top} />
+      {/* No browser's menu over it, as over the lanes beside it. */}
+      <div
+        class='arrangement__corner cap'
+        onContextMenu={(event) => event.preventDefault()}
+        data-hint="Over the tracks' heads: each one's place and name, M and S; under them, where its sound comes from, its pan and its volume"
+      >
+        <span>Track name</span>
+        <span>In / Pan • Vol</span>
+      </div>
     </div>
   )
 }

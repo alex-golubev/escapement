@@ -39,6 +39,23 @@
   cursor: ew-resize;
 }
 
+/* Over the heads, at the ruler's height: what each line of a head says. */
+.arrangement__corner {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: var(--heads-w);
+  height: var(--ruler-h);
+  padding: 0 0.75rem;
+  background: var(--s-sunk);
+  box-shadow:
+    inset -1px 0 var(--line),
+    inset 0 -1px var(--line);
+}
+
 /* ─── Track heads ────────────────────────────────────────────────────────── */
 
 /* Down the left under the ruler, over the canvases' empty column, scrolled with the rows by the page. */

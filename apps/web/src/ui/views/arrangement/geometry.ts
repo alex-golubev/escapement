@@ -1,5 +1,5 @@
-import { barTicks, type Id } from '@escapement/model'
-import { Array, Number, Option, Order } from 'effect'
+import { barTicks, type Id, type Note, startInRound } from '@escapement/model'
+import { Array, Boolean, Number, Option, Order } from 'effect'
 import type { Point } from '../../kit/pointer'
 import type { Lane } from '../../parts/follow'
 import type { Layout } from './layout'
@@ -35,9 +35,10 @@ export interface Drawn extends Span {
   readonly period: number
 }
 
-/** A clip in the arrangement, to take hold of. */
+/** A clip in the arrangement, to take hold of, and the pattern its preview shows. */
 export interface Shown extends Drawn {
   readonly id: Id
+  readonly pattern: Id
 }
 
 /** How wide so many ticks are. */
@@ -153,3 +154,65 @@ export const barsInSight = (view: View): ReadonlyArray<number> =>
     Math.floor(view.left / view.barWidth),
     Math.floor((view.left + view.width - view.headsWidth) / view.barWidth)
   )
+
+/** A pattern's notes as a clip's preview draws them, and the lowest and highest keys among them. */
+export interface Preview {
+  readonly notes: ReadonlyArray<Pick<Note, 'tick' | 'length' | 'key'>>
+  readonly low: number
+  readonly high: number
+}
+
+/** None for a pattern without notes, whose preview stays empty. */
+export const previewOf = (notes: ReadonlyArray<Note>): Option.Option<Preview> =>
+  Array.match(notes, {
+    onEmpty: () => Option.none(),
+    onNonEmpty: (some) => {
+      const keys = some.map(({ key }) => key)
+      return Option.some({
+        notes: some.map(({ tick, length, key }) => ({ tick, length, key })),
+        low: Math.min(...keys),
+        high: Math.max(...keys)
+      })
+    }
+  })
+
+/** A note's thickness in a preview `height` high: a key's share of it, down to a pixel, `most` at most. */
+export const noteHeightOf = ({ low, high }: Preview, height: number, most: number) =>
+  Number.clamp(Math.floor(height / (high - low + 1)), { minimum: 1, maximum: most })
+
+/** How far down a preview `height` high a note of the key stands: the highest at the top, one key alone midway. */
+export const noteTop = ({ low, high }: Preview, key: number, height: number, noteHeight: number) =>
+  Boolean.match(high === low, {
+    onTrue: () => (height - noteHeight) / 2,
+    onFalse: () => ((high - key) / (high - low)) * (height - noteHeight)
+  })
+
+/** A note as the clip plays it: from its start to its end in the arrangement's ticks, and its key. */
+export interface NotePlayed {
+  readonly start: number
+  readonly end: number
+  readonly key: number
+}
+
+/** The preview's notes as the clip plays them round its pattern, cut to it, of the rounds over `from`–`to` only. */
+export const notesPlayed = (
+  { tick, length, period, offset }: Drawn,
+  { notes }: Preview,
+  from: number,
+  to: number
+): ReadonlyArray<NotePlayed> => {
+  const [start, end] = [Math.max(tick, from), Math.min(tick + length, to)]
+  // Where the round the clip starts in starts, at or before the clip.
+  const rounds = tick - startInRound(offset, period)
+  return wholesFrom(Math.floor((start - rounds) / period), Math.floor((end - 1 - rounds) / period)).flatMap((round) =>
+    notes.flatMap((note) => {
+      const played = rounds + round * period + note.tick
+      return Option.toArray(
+        Option.liftPredicate(
+          { start: Math.max(played, tick), end: Math.min(played + note.length, tick + length), key: note.key },
+          (cut) => cut.start < cut.end && cut.end > start && cut.start < end
+        )
+      )
+    })
+  )
+}

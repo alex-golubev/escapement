@@ -1,5 +1,5 @@
-import { lastTick } from '@escapement/engine-description'
-import { barTicks, Id } from '@escapement/model'
+import { lastTick, MidiKey, Tick } from '@escapement/engine-description'
+import { barTicks, Id, stepTicks } from '@escapement/model'
 import { Option } from 'effect'
 import { expect, test } from 'vitest'
 import { edgeWidth } from '../../src/ui/kit/edge'
@@ -10,6 +10,10 @@ import {
   clipsAlong,
   endOf,
   inDrawingOrder,
+  noteHeightOf,
+  notesPlayed,
+  noteTop,
+  previewOf,
   type Shown,
   startAt,
   barsInSight,
@@ -19,6 +23,7 @@ import {
   xOf,
   yOf
 } from '../../src/ui/views/arrangement/geometry'
+import { barText } from '../../src/ui/views/arrangement/draw'
 import { layoutOf } from '../../src/ui/views/arrangement/layout'
 
 /** The sizes at a rem of 16 px, the least the window gives. */
@@ -46,7 +51,8 @@ const clip = (id: string, place: number, bar: number, bars = 1, periodBars = bar
   tick: bar * barTicks,
   length: bars * barTicks,
   period: periodBars * barTicks,
-  offset: offsetBars * barTicks
+  offset: offsetBars * barTicks,
+  pattern: Id(`${id}-pattern`)
 })
 
 /** In the middle of the track's row, at the tick. */
@@ -265,5 +271,58 @@ test('nothing is in sight of an arrangement no higher than its ruler, nor narrow
 
 test('the sizes are whole pixels at any rem, so lines stay sharp, and grow with it', () => {
   expect(Object.values(layoutOf(23.1114)).every(Number.isInteger)).toBe(true)
-  expect(layoutOf(24)).toMatchObject({ trackHeight: 96, barWidth: 96, headsWidth: 432, rulerHeight: 27, clipInset: 9 })
+  expect(layoutOf(24)).toMatchObject({ trackHeight: 96, barWidth: 96, headsWidth: 432, rulerHeight: 42, clipInset: 9 })
+})
+
+/** A note of a pattern, a step long unless `steps` says, at the step and key given. */
+const note = (step: number, key: number, steps = 1) => ({
+  id: Id(`${step}:${key}`),
+  tick: Tick(step * stepTicks),
+  length: steps * stepTicks,
+  key: MidiKey(key),
+  velocity: 1
+})
+
+test("a clip's preview spans its notes' keys, none for no notes; a note as thick as a key's share, a pixel to `most`", () => {
+  expect(previewOf([])).toEqual(Option.none())
+  const preview = Option.getOrThrow(previewOf([note(0, 64), note(4, 60), note(8, 67)]))
+  expect([preview.low, preview.high]).toEqual([60, 67])
+  expect(preview.notes.map(({ key }) => key)).toEqual([64, 60, 67])
+  // Eight keys in 24 pixels: three each; in 4, under one, so one; in 80, ten, held to 4.
+  expect([24, 4, 80].map((height) => noteHeightOf(preview, height, 4))).toEqual([3, 1, 4])
+})
+
+test("a note stands down a clip's preview by its key: the highest at the top, the lowest at the foot, a lone key midway", () => {
+  const preview = Option.getOrThrow(previewOf([note(0, 60), note(4, 67)]))
+  expect(noteTop(preview, 67, 24, 3)).toBe(0)
+  expect(noteTop(preview, 60, 24, 3)).toBe(21)
+  expect(noteTop(preview, 64, 24, 3)).toBeCloseTo(9, 9)
+  const alone = Option.getOrThrow(previewOf([note(0, 60), note(4, 60)]))
+  expect(noteTop(alone, 60, 24, 4)).toBe(10)
+})
+
+test("a clip's notes are drawn as it plays them, round its pattern from where it starts in it, cut to it and to what is in sight", () => {
+  // A bar's pattern, notes on its first and last beats; the clip from bar 2, 2.5 bars long, from the pattern's middle.
+  const preview = Option.getOrThrow(previewOf([note(0, 60), note(12, 62, 4)]))
+  const clip = { place: 0, tick: 2 * barTicks, length: 2.5 * barTicks, period: barTicks, offset: barTicks / 2 }
+  const all = notesPlayed(clip, preview, 0, lastTick)
+  const beat = barTicks / 4
+  expect(all.map(({ start, end, key }) => [start / beat, end / beat, key])).toEqual([
+    [9, 10, 62],
+    [10, 10.25, 60],
+    [13, 14, 62],
+    [14, 14.25, 60],
+    [17, 18, 62]
+  ])
+  // What is out of sight across isn't drawn.
+  expect(notesPlayed(clip, preview, 13 * beat, 14 * beat).map(({ start }) => start / beat)).toEqual([13])
+  // Its end cuts a note short, and leaves out one that would start there.
+  const cut = (bars: number) =>
+    notesPlayed({ ...clip, length: bars * barTicks }, preview, 0, lastTick).map(({ start, end }) => [start, end])
+  expect(cut(2.4).at(-1)).toEqual([17 * beat, 4.4 * barTicks])
+  expect(cut(2.25).at(-1)).toEqual([14 * beat, 14.25 * beat])
+})
+
+test("a bar's number on the ruler reads as the counter does at its start, two digits at least", () => {
+  expect([0, 9, 99].map(barText)).toEqual(['01.01.00', '10.01.00', '100.01.00'])
 })

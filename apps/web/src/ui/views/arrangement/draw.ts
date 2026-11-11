@@ -1,9 +1,14 @@
-import { type Colour, firstColour, type Id, startInRound } from '@escapement/model'
+import { ticksPerQuarter } from '@escapement/engine-description'
+import { barTicks, type Colour, firstColour, type Id, startInRound } from '@escapement/model'
 import { Array, Boolean, Option } from 'effect'
 import { paletteOf as tokensOf } from '../../kit/canvas'
 import {
   barsInSight,
   type Drawn,
+  noteHeightOf,
+  notesPlayed,
+  noteTop,
+  type Preview,
   type Shown,
   tickUnder,
   tracksInSight,
@@ -17,13 +22,19 @@ import {
 /** The arrangement's colours and fonts, as its style sheet and the interface's language give them. */
 const tokens = {
   open: '--t-hi',
+  name: '--t-hi',
+  note: '--t-mid',
+  preview: '--s-sunk',
   row: '--arrangement-row',
   rowLine: '--arrangement-row-line',
   barLine: '--arrangement-bar-line',
   phraseLine: '--arrangement-phrase-line',
   edge: '--line',
-  ruler: '--s-well',
+  ruler: '--s-sunk',
+  rulerLine: '--line-soft',
+  beat: '--line',
   rulerText: '--t-lo',
+  loop: '--shared',
   playhead: '--playhead',
   font: '--font'
 } as const
@@ -43,6 +54,15 @@ const unheardShare = 0.4
 
 /** How far the open clip's edge goes from its colour to the light: in its colour still, and told apart. */
 const openLight = 0.5
+
+/** How much of the dark under its notes a clip's preview takes, over the clip's colour. */
+const previewShare = 0.6
+
+/** How much of the amber the loop's band takes, as the prototype's does. */
+const loopShare = 0.7
+
+/** A bar's beats, a mark at each after the first. */
+const beatsInBar = barTicks / ticksPerQuarter
 
 /** Draws inside the grid only, right of the heads and under the ruler: what is scrolled past its edges goes under. */
 const onGrid = (g: CanvasRenderingContext2D, view: View, draw: () => void) => {
@@ -95,84 +115,159 @@ const roundsInSight = (view: View, { tick, length, period, offset }: Drawn): Rea
   return wholesFrom(first, last).map((round) => from + round * period)
 }
 
-/** What a track's row gives the clips on it: its track's colour, and whether the track is heard. */
+/** What a track's row gives the clips on it: its track's name and colour, and whether the track is heard. */
 export interface RowLook {
+  readonly name: string
   readonly colour: Colour
   readonly heard: boolean
 }
 
-/** Where the rows don't say, as a clip taken past the last track: the palette's first colour, heard. */
-const anyRow: RowLook = { colour: firstColour, heard: true }
+/** Where the rows don't say, as a clip taken past the last track or on one gone: no name, the first colour, heard. */
+export const anyRow: RowLook = { name: '', colour: firstColour, heard: true }
 
-/** Each clip in sight in its row's colour, the last on top: a share of it filled, edged with it whole; dimmed unheard. */
+/** A clip as drawn: where, how big, in what colour and how much of it shows. */
+interface ClipBox {
+  readonly x: number
+  readonly y: number
+  readonly width: number
+  readonly height: number
+  readonly colour: Colour
+  readonly shown: number
+}
+
+/** Inside a clip, cut to it: its preview's dark, its rounds' lines, its notes as played, its name at its left in sight. */
+const drawInside = (
+  g: CanvasRenderingContext2D,
+  view: View,
+  palette: Palette,
+  clip: Shown,
+  name: string,
+  preview: Option.Option<Preview>,
+  { x, y, width, height, colour, shown }: ClipBox
+) => {
+  const { clipHead, clipPadding, previewInset, noteHeight, corner, gap } = view
+  g.save()
+  g.beginPath()
+  g.roundRect(x, y, width, height, corner)
+  g.clip()
+  const top = y + clipHead
+  const bottom = y + height - 1
+  g.fillStyle = palette.preview
+  g.globalAlpha = shown * previewShare
+  g.fillRect(x + 1, top, width - 2, bottom - top)
+  g.globalAlpha = shown
+  g.fillStyle = colour
+  roundsInSight(view, clip).forEach((start) => g.fillRect(Math.round(xOf(view, start)), y + gap, 1, height - 2 * gap))
+  // Notes one after another stand a pixel apart; one from the clip's start loses only the bar's line to its edge.
+  Option.map(preview, (notes) => {
+    const room = bottom - top - 2 * previewInset
+    const thick = noteHeightOf(notes, room, noteHeight)
+    g.fillStyle = palette.note
+    notesPlayed(clip, notes, tickUnder(view, view.headsWidth), tickUnder(view, view.width)).forEach(
+      ({ start, end, key }) => {
+        const left = Math.round(xOf(view, start))
+        g.fillRect(
+          left,
+          Math.round(top + previewInset + noteTop(notes, key, room, thick)),
+          Math.max(Math.round(xOf(view, end)) - left - 1, 1),
+          thick
+        )
+      }
+    )
+  })
+  g.fillStyle = palette.name
+  g.fillText(name, Math.max(x, view.headsWidth) + clipPadding, y + clipHead / 2)
+  g.restore()
+}
+
+/** Each clip in sight in its row's colour, the last on top, with its name and notes inside; dimmed while unheard. */
 export const drawClips = (
   g: CanvasRenderingContext2D,
   view: View,
   palette: Palette,
   clips: ReadonlyArray<Shown>,
   looks: ReadonlyArray<RowLook>,
+  previews: ReadonlyMap<Id, Preview>,
   open: Option.Option<Id>
 ) =>
   onGrid(g, view, () => {
+    g.font = `${view.clipName}px ${palette.font}`
+    g.textAlign = 'left'
+    g.textBaseline = 'middle'
+    g.lineWidth = 1
     clips
       .filter((clip) => shows(view, clip))
       .forEach((clip) => {
-        const { corner, gap, clipInset } = view
-        const { colour, heard } = Option.getOrElse(Array.get(looks, clip.place), () => anyRow)
+        const { corner, clipInset } = view
+        const { name, colour, heard } = Option.getOrElse(Array.get(looks, clip.place), () => anyRow)
         // Off the bar's line it starts on, up to the next one's: two clips one after another stand a line apart.
-        const x = xOf(view, clip.tick) + 1
-        const y = yOf(view, clip.place) + clipInset
-        const width = widthOf(view, clip.length) - 1
-        const height = view.trackHeight - 2 * clipInset
-        const shown = Boolean.match(heard, { onTrue: () => 1, onFalse: () => unheardShare })
+        const box: ClipBox = {
+          x: xOf(view, clip.tick) + 1,
+          y: yOf(view, clip.place) + clipInset,
+          width: widthOf(view, clip.length) - 1,
+          height: view.trackHeight - 2 * clipInset,
+          colour,
+          shown: Boolean.match(heard, { onTrue: () => 1, onFalse: () => unheardShare })
+        }
+        const { x, y, width, height, shown } = box
         // On the row's own colour first: see-through as its fill is, a clip over another still hides it.
         g.fillStyle = palette.row
         g.beginPath()
         g.roundRect(x, y, width, height, corner)
         g.fill()
         g.fillStyle = colour
-        g.strokeStyle = colour
         g.globalAlpha = shown * fillShare
         g.fill()
+        // Its edge under its notes, lightened on the open one.
+        g.strokeStyle = colour
         g.globalAlpha = shown
-        g.lineWidth = 1
         g.beginPath()
         g.roundRect(x + 0.5, y + 0.5, width - 1, height - 1, corner)
         g.stroke()
-        roundsInSight(view, clip).forEach((start) =>
-          g.fillRect(Math.round(xOf(view, start)), y + gap, 1, height - 2 * gap)
-        )
         Boolean.match(Option.contains(open, clip.id), {
           onTrue: () => {
             g.strokeStyle = palette.open
             g.globalAlpha = shown * openLight
-            g.beginPath()
-            g.roundRect(x + 0.5, y + 0.5, width - 1, height - 1, corner)
             g.stroke()
           },
           onFalse: () => {}
         })
+        drawInside(g, view, palette, clip, name, Option.fromUndefinedOr(previews.get(clip.pattern)), box)
         g.globalAlpha = 1
       })
   })
 
-/** The bars' numbers along the top, over what scrolls under them; the tracks' heads are drawn over the left. */
-export const drawFrame = (g: CanvasRenderingContext2D, view: View, palette: Palette) => {
-  const { headsWidth, rulerHeight, barWidth } = view
+/** A bar's number on the ruler, from 0, as the prototype writes its start: `01.01.00`. */
+export const barText = (bar: number) => `${String(bar + 1).padStart(2, '0')}.01.00`
+
+/** The ruler, under the heads' corner at its left: each bar's line, number and beats, the loop's band to `loopEnd`. */
+export const drawFrame = (g: CanvasRenderingContext2D, view: View, palette: Palette, loopEnd: number) => {
+  const { headsWidth, rulerHeight, barWidth, beatMark } = view
   g.fillStyle = palette.ruler
   g.fillRect(0, 0, view.width, rulerHeight)
   g.fillStyle = palette.edge
   g.fillRect(headsWidth, rulerHeight - 1, view.width - headsWidth, 1)
   g.save()
   g.beginPath()
-  g.rect(headsWidth, 0, view.width - headsWidth, rulerHeight)
+  g.rect(headsWidth, 0, view.width - headsWidth, rulerHeight - 1)
   g.clip()
-  g.fillStyle = palette.rulerText
   g.font = `${view.numbers}px ${palette.font}`
   g.textAlign = 'left'
   g.textBaseline = 'middle'
-  barsInSight(view).forEach((bar) =>
-    g.fillText(String(bar + 1), headsWidth + bar * barWidth - view.left + view.gap, rulerHeight / 2)
-  )
+  barsInSight(view).forEach((bar) => {
+    const x = headsWidth + bar * barWidth - view.left
+    g.fillStyle = palette.rulerLine
+    g.fillRect(x, 0, 1, rulerHeight - 1)
+    g.fillStyle = palette.beat
+    wholesFrom(1, beatsInBar - 1).forEach((beat) =>
+      g.fillRect(x + Math.round((beat * barWidth) / beatsInBar), rulerHeight - 1 - beatMark, 1, beatMark)
+    )
+    g.fillStyle = palette.rulerText
+    // Squeezed into its bar past the thousandth, as no wider bar holds it.
+    g.fillText(barText(bar), x + view.numbersInset, rulerHeight / 2, barWidth - 2 * view.numbersInset)
+  })
+  g.fillStyle = palette.loop
+  g.globalAlpha = loopShare
+  g.fillRect(xOf(view, 0), 0, widthOf(view, loopEnd), view.loopBand)
   g.restore()
 }
