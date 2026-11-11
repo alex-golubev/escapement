@@ -8,8 +8,8 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-engine-core = { path = "../engine-core" }
-engine-plugins = { path = "../engine-plugins" }
+engine-core.workspace = true
+engine-plugins.workspace = true
 
 [lib]
 crate-type = ["cdylib"]
