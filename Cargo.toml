@@ -9,6 +9,14 @@ publish = false
 license = "AGPL-3.0-only"
 repository = "https://github.com/alex-golubev/escapement"
 
+[workspace.dependencies]
+engine-core = { path = "crates/engine-core" }
+engine-plugins = { path = "crates/engine-plugins" }
+# Same version as flatc in tools/src/gen.ts: the generated code relies on it.
+flatbuffers = "=25.12.19"
+rtrb = "0.4.0"
+serde_json = "1.0.151"
+
 [profile.release]
 panic = "abort"
 lto = true

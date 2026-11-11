@@ -8,10 +8,9 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-engine-plugins = { path = "../engine-plugins" }
-# Same version as flatc in tools/src/gen.ts: the generated code relies on it.
-flatbuffers = "=25.12.19"
-rtrb = "0.4.0"
+engine-plugins.workspace = true
+flatbuffers.workspace = true
+rtrb.workspace = true
 
 [lints]
 workspace = true
