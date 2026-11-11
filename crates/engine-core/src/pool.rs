@@ -260,49 +260,17 @@ impl SamplePool {
 }
 
 #[cfg(test)]
-pub(crate) mod tests {
+mod tests {
     use super::*;
     use crate::heap;
-    use crate::testing::SAMPLE_RATE;
+    use crate::testing::pool::{HZ, store, write};
+    use crate::testing::{SAMPLE_RATE, ramp};
 
-    /// [`SAMPLE_RATE`], as the page has it.
-    const HZ: f64 = 48_000.0;
     const KICK: Hash = [1; 32];
     const SNARE: Hash = [2; 32];
 
-    fn write(place: &mut [MaybeUninit<f32>], numbers: &[f32]) {
-        for (slot, &number) in place.iter_mut().zip(numbers) {
-            slot.write(number);
-        }
-    }
-
-    /// As the build thread stores a sound: its numbers in parts of at most `part`.
-    pub fn store(
-        pool: &mut SamplePool,
-        hash: Hash,
-        channels: &[&[f32]],
-        part: usize,
-    ) -> Result<(), Rejection> {
-        let frames = channels.first().map_or(0, |channel| channel.len());
-        let mut left = pool.begin(hash, HZ, channels.len(), frames)?;
-        for channel in channels {
-            for numbers in channel.chunks(part) {
-                assert!(left > 0, "the pool took the sound before its last part");
-                write(pool.place(numbers.len()), numbers);
-                // Safety: just written.
-                left = unsafe { pool.copied(numbers.len()) }?;
-            }
-        }
-        assert_eq!(left, 0, "the pool wants more");
-        Ok(())
-    }
-
     fn coming_in(pool: &SamplePool) -> bool {
         pool.copying.is_some()
-    }
-
-    fn ramp(len: usize, from: f32) -> Vec<f32> {
-        (0..len).map(|i| from + i as f32).collect()
     }
 
     fn pcm<'a>(pool: &'a SamplePool, hash: &Hash) -> Option<&'a Pcm> {

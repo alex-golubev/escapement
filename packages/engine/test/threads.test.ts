@@ -79,7 +79,7 @@ test('a panic of either thread throws what it said, the trap its cause; each thr
   const audio = thrown(() => engine.peak())
   expect(audio).toBeInstanceOf(Error)
   expect(audio).toMatchObject({
-    message: expect.stringMatching(/^panicked at crates\/engine-core\/src\/lib\.rs:\d+:\d+: PanicAudio 4$/),
+    message: expect.stringMatching(/^panicked at crates\/engine-core\/src\/engine\.rs:\d+:\d+: PanicAudio 4$/),
     cause: expect.any(WebAssembly.RuntimeError)
   })
   const build = thrown(() => engine.send({ edits: [DeviceEdit.PanicBuild({ code: 5 })] }))

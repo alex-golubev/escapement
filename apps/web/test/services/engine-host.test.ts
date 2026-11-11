@@ -355,7 +355,7 @@ const seenRestarts = ({ count, last }: Restarts) => ({
 const reported = (_tag: string, message: unknown) => expect.objectContaining({ _tag, message })
 
 /** What a panic says, where. */
-const panicError = (thread: 'Processor' | 'BuildThread', file: 'lib' | 'build', message: string) =>
+const panicError = (thread: 'Processor' | 'BuildThread', file: 'engine' | 'build', message: string) =>
   reported(
     `${thread}Error`,
     expect.stringMatching(
@@ -624,7 +624,7 @@ test("a panic of the audio thread: the watchdog makes a new engine, which plays 
       expect(registry.get(host.transport)).toBe('playing')
       expect(seenRestarts(registry.get(host.restarts))).toEqual({
         count: 1,
-        last: panicError('Processor', 'lib', 'PanicAudio 1')
+        last: panicError('Processor', 'engine', 'PanicAudio 1')
       })
     })
   ))
@@ -727,7 +727,7 @@ test('on the third failure within a minute the watchdog gives up and the arrange
       yield* until(() => registry.get(host.state)._tag === 'Failed')
       expect(seenState(registry.get(host.state))).toEqual({
         _tag: 'Failed',
-        error: panicError('Processor', 'lib', 'PanicAudio 3'),
+        error: panicError('Processor', 'engine', 'PanicAudio 3'),
         gaveUp: 'often'
       })
       expect(registry.get(host.transport)).toBe('stopped')

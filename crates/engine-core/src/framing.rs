@@ -4,7 +4,7 @@
 pub const MAX_MESSAGE: usize = 64 * 1024;
 
 pub(crate) const SIZE_PREFIX: usize = size_of::<u32>();
-const KIND: usize = 1;
+pub(crate) const KIND: usize = 1;
 
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum Frame {
@@ -48,14 +48,9 @@ pub(crate) fn write(out: &mut [u8], kind: u8, record: &[u8]) -> Option<usize> {
 }
 
 #[cfg(test)]
-pub(crate) mod tests {
+mod tests {
     use super::*;
-
-    pub fn message(kind: u8, record: &[u8]) -> Vec<u8> {
-        let mut bytes = vec![0; SIZE_PREFIX + KIND + record.len()];
-        write(&mut bytes, kind, record).unwrap();
-        bytes
-    }
+    use crate::testing::commands::message;
 
     #[test]
     fn tells_whole_messages_from_parts() {
