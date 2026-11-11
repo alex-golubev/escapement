@@ -11,7 +11,7 @@ See [Development](README.md#development) in the README.
 
 ## Before a pull request
 
-- `pnpm test` passes: Biome (lint and format), rustfmt, types, unit tests in TypeScript and Rust.
+- `pnpm test` passes: Biome (lint and format), rustfmt, clippy, the Rust docs, types, unit tests in TypeScript and Rust.
 - `pnpm test:e2e` passes when the change is something the page shows or plays.
 - After a change to `schema/engine.fbs` or to the plugin catalog, `pnpm gen` is run and its output committed.
 - `pnpm format` formats everything Biome and rustfmt cover.
