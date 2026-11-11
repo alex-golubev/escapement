@@ -11,7 +11,7 @@ use engine_plugins::{
 use super::sample_number;
 
 thread_local! {
-    pub static GIVEN: RefCell<Vec<Event>> = const { RefCell::new(Vec::new()) };
+    pub(crate) static GIVEN: RefCell<Vec<Event>> = const { RefCell::new(Vec::new()) };
 }
 
 /// Keeps every event it is given in `GIVEN`, which takes the heap.

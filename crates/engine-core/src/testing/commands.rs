@@ -1,14 +1,16 @@
 //! Messages of the command ring, as the page writes them.
 
-use crate::framing::{KIND, SIZE_PREFIX, write};
+use crate::MAX_MESSAGE;
+use crate::framing::write;
 use crate::schema::{
     AfterBatch, CommandKind, HangAudio, NoteOff, NoteOn, PanicAudio, Place, SetParam,
     SetStripParam, SetTempo, SetTransport,
 };
 
 pub(crate) fn message(kind: u8, record: &[u8]) -> Vec<u8> {
-    let mut bytes = vec![0; SIZE_PREFIX + KIND + record.len()];
-    write(&mut bytes, kind, record).unwrap();
+    let mut bytes = vec![0; MAX_MESSAGE];
+    let size = write(&mut bytes, kind, record).unwrap();
+    bytes.truncate(size);
     bytes
 }
 
