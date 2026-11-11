@@ -85,7 +85,7 @@ const SILENCE: f32 = 1e-6;
 
 /// Rises at once, falls slowly: a page that looks only now and then still sees short peaks. Counts the blocks that go
 /// over full scale, which the falling level can't tell, until whoever keeps the count takes them.
-pub struct PeakMeter {
+pub(crate) struct PeakMeter {
     level: f32,
     fall_per_sample: f32,
     overs: u32,
@@ -93,7 +93,7 @@ pub struct PeakMeter {
 
 impl PeakMeter {
     #[must_use]
-    pub fn new(sample_rate: SampleRate) -> Self {
+    pub(crate) fn new(sample_rate: SampleRate) -> Self {
         Self {
             level: 0.0,
             fall_per_sample: 10f32.powf(-FALL_DB / 20.0 / (FALL_SECONDS * sample_rate.hz())),
@@ -102,7 +102,7 @@ impl PeakMeter {
     }
 
     /// Returns the level after `block`, at most [`BLOCK_FRAMES`] long.
-    pub fn update(&mut self, block: &[f32]) -> f32 {
+    pub(crate) fn update(&mut self, block: &[f32]) -> f32 {
         debug_assert!(block.len() <= BLOCK_FRAMES);
         let peak = block
             .iter()
@@ -123,37 +123,37 @@ impl PeakMeter {
     }
 
     #[must_use]
-    pub fn level(&self) -> f32 {
+    pub(crate) fn level(&self) -> f32 {
         self.level
     }
 
     /// Blocks over full scale since last taken.
-    pub fn take_overs(&mut self) -> u32 {
+    pub(crate) fn take_overs(&mut self) -> u32 {
         mem::take(&mut self.overs)
     }
 }
 
 /// A meter per channel of a block, as the master's output has and a node's meter.
-pub struct BlockMeter([PeakMeter; CHANNELS]);
+pub(crate) struct BlockMeter([PeakMeter; CHANNELS]);
 
 impl BlockMeter {
     #[must_use]
-    pub fn new(sample_rate: SampleRate) -> Self {
+    pub(crate) fn new(sample_rate: SampleRate) -> Self {
         Self(array::from_fn(|_| PeakMeter::new(sample_rate)))
     }
 
-    pub fn update(&mut self, block: &[[f32; BLOCK_FRAMES]; CHANNELS], frames: usize) {
+    pub(crate) fn update(&mut self, block: &[[f32; BLOCK_FRAMES]; CHANNELS], frames: usize) {
         for (side, channel) in self.0.iter_mut().zip(block) {
             side.update(&channel[..frames]);
         }
     }
 
-    pub fn levels(&self) -> [f32; CHANNELS] {
+    pub(crate) fn levels(&self) -> [f32; CHANNELS] {
         self.0.each_ref().map(PeakMeter::level)
     }
 
     /// Adds the blocks over full scale since the last time to `overs`, wrapping.
-    pub fn count_overs(&mut self, overs: &mut [u32; CHANNELS]) {
+    pub(crate) fn count_overs(&mut self, overs: &mut [u32; CHANNELS]) {
         for (count, side) in overs.iter_mut().zip(&mut self.0) {
             *count = count.wrapping_add(side.take_overs());
         }
@@ -161,7 +161,7 @@ impl BlockMeter {
 }
 
 /// A node's meter: of what the node passes on, named by the node's handle.
-pub struct NodeMeter {
+pub(crate) struct NodeMeter {
     node: NodeHandle,
     meter: BlockMeter,
     overs: [u32; CHANNELS],
@@ -176,12 +176,12 @@ impl NodeMeter {
         }
     }
 
-    pub fn update(&mut self, block: &[[f32; BLOCK_FRAMES]; CHANNELS], frames: usize) {
+    pub(crate) fn update(&mut self, block: &[[f32; BLOCK_FRAMES]; CHANNELS], frames: usize) {
         self.meter.update(block, frames);
     }
 
     /// Writes its record into the board's next place, if there is one left, and counts it in.
-    pub fn report(&mut self, telemetry: &mut Telemetry) {
+    pub(crate) fn report(&mut self, telemetry: &mut Telemetry) {
         let Some(record) = telemetry.meters.get_mut(telemetry.meters_used as usize) else {
             return;
         };

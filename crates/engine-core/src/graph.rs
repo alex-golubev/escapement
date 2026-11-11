@@ -25,12 +25,12 @@ pub(crate) struct Nodes(Box<[Option<Box<Node>>]>);
 
 impl Nodes {
     /// Allocates, so only on the build thread.
-    pub fn new(len: usize) -> Self {
+    pub(crate) fn new(len: usize) -> Self {
         Self(std::iter::repeat_with(|| None).take(len).collect())
     }
 
     #[cfg(test)]
-    pub fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         self.0.len()
     }
 }
@@ -46,11 +46,11 @@ pub(crate) enum Table {
 pub(crate) struct Exit(usize);
 
 impl Exit {
-    pub fn new(index: usize) -> Self {
+    pub(crate) fn new(index: usize) -> Self {
         Self(index)
     }
 
-    pub fn index(self) -> usize {
+    pub(crate) fn index(self) -> usize {
         self.0
     }
 }
@@ -83,7 +83,7 @@ pub(crate) struct Connection {
 }
 
 impl Connection {
-    pub fn new(source: Seat, rising: bool, start: Start) -> Self {
+    pub(crate) fn new(source: Seat, rising: bool, start: Start) -> Self {
         Self {
             source,
             rising,
@@ -157,7 +157,7 @@ pub(crate) struct Graph {
 }
 
 impl Graph {
-    pub fn new(cells: Nodes, exits: Nodes, sample_rate: SampleRate) -> Self {
+    pub(crate) fn new(cells: Nodes, exits: Nodes, sample_rate: SampleRate) -> Self {
         Self {
             cells,
             exits,
@@ -167,12 +167,12 @@ impl Graph {
         }
     }
 
-    pub fn fade(&self) -> u32 {
+    pub(crate) fn fade(&self) -> u32 {
         self.fade
     }
 
     /// Only a live node under this very handle: one of an older generation is gone.
-    pub fn node_mut(&mut self, handle: NodeHandle) -> Option<&mut Node> {
+    pub(crate) fn node_mut(&mut self, handle: NodeHandle) -> Option<&mut Node> {
         let node = self
             .cells
             .0
@@ -182,7 +182,7 @@ impl Graph {
     }
 
     /// Moves the nodes over to `larger`, an empty table, and swaps it in; the old one comes back empty.
-    pub fn grow(&mut self, table: Table, larger: &mut Nodes) {
+    pub(crate) fn grow(&mut self, table: Table, larger: &mut Nodes) {
         let nodes = match table {
             Table::Cells => &mut self.cells,
             Table::Exits => &mut self.exits,
@@ -196,7 +196,7 @@ impl Graph {
     /// Swaps `slot` into the cell; what was there, nothing as the build thread keeps track, comes back in it. False
     /// past the table: the node stays in `slot`.
     #[must_use]
-    pub fn insert(&mut self, cell: NodeCell, slot: &mut Option<Box<Node>>) -> bool {
+    pub(crate) fn insert(&mut self, cell: NodeCell, slot: &mut Option<Box<Node>>) -> bool {
         let Some(cell) = self.cells.0.get_mut(cell.index()) else {
             return false;
         };
@@ -206,7 +206,7 @@ impl Graph {
 
     /// Moves the node out of its cell to play out at `exit`, so the cell is free at once. False past either table.
     #[must_use]
-    pub fn remove(&mut self, cell: NodeCell, exit: Exit) -> bool {
+    pub(crate) fn remove(&mut self, cell: NodeCell, exit: Exit) -> bool {
         let (Some(cell), Some(exit)) = (
             self.cells.0.get_mut(cell.index()),
             self.exits.0.get_mut(exit.index()),
@@ -218,14 +218,14 @@ impl Graph {
     }
 
     /// Swaps the node that played out at `exit` into `slot`, to go back to the build thread.
-    pub fn take_back(&mut self, exit: Exit, slot: &mut Option<Box<Node>>) {
+    pub(crate) fn take_back(&mut self, exit: Exit, slot: &mut Option<Box<Node>>) {
         if let Some(exit) = self.exits.0.get_mut(exit.index()) {
             mem::swap(exit, slot);
         }
     }
 
     /// Swaps in `order`, which comes back holding the old one; each connection starts as it says.
-    pub fn reorder(&mut self, order: &mut Order) {
+    pub(crate) fn reorder(&mut self, order: &mut Order) {
         mem::swap(&mut self.order, order);
         let previous = &order.connections;
         for connection in &mut self.order.connections {
@@ -238,7 +238,7 @@ impl Graph {
     }
 
     /// Hands `report` the meter of each node in the order that has one, live ones only: not those playing out.
-    pub fn each_meter(&mut self, mut report: impl FnMut(&mut NodeMeter)) {
+    pub(crate) fn each_meter(&mut self, mut report: impl FnMut(&mut NodeMeter)) {
         let Self { cells, order, .. } = self;
         for step in &order.steps {
             if let Seat::Cell(cell) = step.node
@@ -254,7 +254,7 @@ impl Graph {
     }
 
     /// Every node in the order renders on the sum of its inputs, heard or not; the output gets the sum of its own.
-    pub fn process(&mut self, frames: usize, output: &mut Block) {
+    pub(crate) fn process(&mut self, frames: usize, output: &mut Block) {
         let Self {
             cells,
             exits,

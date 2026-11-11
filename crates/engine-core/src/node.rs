@@ -32,7 +32,7 @@ pub(crate) fn page_sample(number: u32) -> Result<SampleNumber, Rejection> {
     SampleNumber::new(number).ok_or(Rejection::UnknownTarget)
 }
 
-pub struct Node {
+pub(crate) struct Node {
     handle: NodeHandle,
     kind: Kind,
     strip: Strip,
@@ -106,7 +106,7 @@ impl Node {
 
     /// A value is taken as [`engine_plugins::ParamDescription::taken`] has it. An insert has no parameters a
     /// plugin's could be taken for.
-    pub fn set_param(&mut self, number: ParamNumber, value: f32) -> Result<(), Rejection> {
+    pub(crate) fn set_param(&mut self, number: ParamNumber, value: f32) -> Result<(), Rejection> {
         let Kind::Plugin(slot) = &mut self.kind else {
             return Err(Rejection::UnknownTarget);
         };
@@ -119,7 +119,11 @@ impl Node {
     }
 
     /// A parameter of its strip, by its place in [`crate::strip::STRIP`].
-    pub fn set_strip_param(&mut self, number: StripNumber, value: f32) -> Result<(), Rejection> {
+    pub(crate) fn set_strip_param(
+        &mut self,
+        number: StripNumber,
+        value: f32,
+    ) -> Result<(), Rejection> {
         self.strip.set(number, value)
     }
 
@@ -142,7 +146,7 @@ impl Node {
     /// At the frame `time` of the next block, in time order among its notes. An insert doesn't hear notes, as a plugin
     /// that plays none doesn't.
     /// `note` names it until it is let go of.
-    pub fn note_on(
+    pub(crate) fn note_on(
         &mut self,
         time: u32,
         key: u8,
@@ -159,7 +163,7 @@ impl Node {
     }
 
     /// As [`Node::note_on`]: lets go of the note it named.
-    pub fn note_off(&mut self, time: u32, note: NoteId) -> Result<(), Rejection> {
+    pub(crate) fn note_off(&mut self, time: u32, note: NoteId) -> Result<(), Rejection> {
         self.note(Event::NoteOff { time, note })
     }
 
@@ -178,7 +182,7 @@ impl Node {
     }
 
     /// Renders `frames` of `input` into its output, at most [`BLOCK_FRAMES`].
-    pub fn process(&mut self, input: &[[f32; BLOCK_FRAMES]; CHANNELS], frames: usize) {
+    pub(crate) fn process(&mut self, input: &[[f32; BLOCK_FRAMES]; CHANNELS], frames: usize) {
         match &mut self.kind {
             Kind::Plugin(slot) => slot.process(input, &mut self.output, frames),
             Kind::Insert => {
@@ -193,7 +197,7 @@ impl Node {
         }
     }
 
-    pub fn output(&self) -> &[[f32; BLOCK_FRAMES]; CHANNELS] {
+    pub(crate) fn output(&self) -> &[[f32; BLOCK_FRAMES]; CHANNELS] {
         &self.output
     }
 

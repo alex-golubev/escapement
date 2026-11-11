@@ -51,7 +51,7 @@ fn step(tempo: f32) -> u64 {
 
 /// Where the page last put the position: a press the transport hasn't had puts the position at its tick.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct Place {
+pub(crate) struct Place {
     /// 0 is none: a new transport stands at the loop's start.
     pub press: u32,
     /// From the loop's start; past its end it wraps around.
@@ -81,7 +81,7 @@ enum State {
 
 /// A run of the loop's ticks that a block passes in one pass of the loop.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Stretch {
+pub(crate) struct Stretch {
     /// Both ends included.
     pub first: u32,
     pub last: u32,
@@ -95,14 +95,14 @@ pub struct Stretch {
 impl Stretch {
     /// The frame of the block that passes `tick`, one of the stretch's.
     #[must_use]
-    pub fn frame(&self, tick: u32) -> u32 {
+    pub(crate) fn frame(&self, tick: u32) -> u32 {
         debug_assert!((self.first..=self.last).contains(&tick));
         self.block.frame(self.ahead + u64::from(tick - self.first))
     }
 
     /// Whole ticks from the start of play to `tick`, one of the stretch's, through the loop's ends.
     #[must_use]
-    pub fn count(&self, tick: u32) -> u64 {
+    pub(crate) fn count(&self, tick: u32) -> u64 {
         debug_assert!((self.first..=self.last).contains(&tick));
         self.count + u64::from(tick - self.first)
     }
@@ -110,7 +110,7 @@ impl Stretch {
 
 /// The ticks a block passes by their count from the start of play: one run, as the loop's ends don't break it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Run {
+pub(crate) struct Run {
     /// Both ends included.
     pub first: u64,
     pub last: u64,
@@ -122,7 +122,7 @@ pub struct Run {
 impl Run {
     /// The frame of the block that passes the tick of `count`, one of the run's.
     #[must_use]
-    pub fn frame(&self, count: u64) -> u32 {
+    pub(crate) fn frame(&self, count: u64) -> u32 {
         debug_assert!((self.first..=self.last).contains(&count));
         self.block.frame(count - self.start)
     }
@@ -172,7 +172,7 @@ struct Passing {
     start: u64,
 }
 
-pub struct Transport {
+pub(crate) struct Transport {
     /// Parts in a tick.
     tick: u64,
     tempo: f32,
@@ -186,7 +186,7 @@ pub struct Transport {
 
 impl Transport {
     #[must_use]
-    pub fn new(sample_rate: SampleRate) -> Self {
+    pub(crate) fn new(sample_rate: SampleRate) -> Self {
         let tempo = DEFAULT_TEMPO as f32;
         Self {
             tick: 60 * u64::from(sample_rate.get()) * u64::from(PARTS_IN_ONE),
@@ -199,7 +199,7 @@ impl Transport {
     }
 
     /// From the next frame played. A tempo past [`MIN_TEMPO`] to [`MAX_TEMPO`] is clamped.
-    pub fn set_tempo(&mut self, bpm: f32) -> Result<(), Rejection> {
+    pub(crate) fn set_tempo(&mut self, bpm: f32) -> Result<(), Rejection> {
         if !bpm.is_finite() {
             return Err(Rejection::InvalidValue);
         }
@@ -209,7 +209,12 @@ impl Transport {
     }
 
     /// The whole state, the same again changing nothing: only a new place moves the position; playing wraps it.
-    pub fn set(&mut self, playing: bool, loop_ticks: u32, place: Place) -> Result<(), Rejection> {
+    pub(crate) fn set(
+        &mut self,
+        playing: bool,
+        loop_ticks: u32,
+        place: Place,
+    ) -> Result<(), Rejection> {
         let loop_ticks = NonZeroU32::new(loop_ticks).ok_or(Rejection::InvalidValue)?;
         let moved = place.press != self.placed;
         self.placed = place.press;
@@ -248,25 +253,25 @@ impl Transport {
     }
 
     #[must_use]
-    pub fn tempo(&self) -> f32 {
+    pub(crate) fn tempo(&self) -> f32 {
         self.tempo
     }
 
     #[must_use]
-    pub fn playing(&self) -> bool {
+    pub(crate) fn playing(&self) -> bool {
         matches!(self.state, State::Playing { .. })
     }
 
     /// In whole ticks from the loop's start, before the next frame: where it plays, or where it stands.
     #[must_use]
-    pub fn position(&self) -> u32 {
+    pub(crate) fn position(&self) -> u32 {
         self.at().0
     }
 
     /// Which start of play this is, each new from stopped to playing: a count from another doesn't belong to it. None
     /// while stopped.
     #[must_use]
-    pub fn play(&self) -> Option<u32> {
+    pub(crate) fn play(&self) -> Option<u32> {
         match self.state {
             State::Stopped { .. } => None,
             State::Playing { play, .. } => Some(play),
@@ -275,7 +280,7 @@ impl Transport {
 
     /// None while stopped.
     #[must_use]
-    pub fn loop_ticks(&self) -> Option<u32> {
+    pub(crate) fn loop_ticks(&self) -> Option<u32> {
         match self.state {
             State::Stopped { .. } => None,
             State::Playing { loop_ticks, .. } => Some(loop_ticks.get()),
@@ -284,7 +289,7 @@ impl Transport {
 
     /// The ticks the next `frames` frames pass, at most a block's, a stretch for each pass of the loop: more than one
     /// where the loop ends among them. None while stopped.
-    pub fn stretches(&self, frames: usize) -> impl Iterator<Item = Stretch> + use<> {
+    pub(crate) fn stretches(&self, frames: usize) -> impl Iterator<Item = Stretch> + use<> {
         debug_assert!(frames <= BLOCK_FRAMES);
         let block = self.block();
         let mut left = match self.state {
@@ -322,7 +327,7 @@ impl Transport {
     /// The ticks the next `frames` frames pass, at most a block's, by their count from the start of play. None while
     /// stopped, or if they pass none.
     #[must_use]
-    pub fn run(&self, frames: usize) -> Option<Run> {
+    pub(crate) fn run(&self, frames: usize) -> Option<Run> {
         debug_assert!(frames <= BLOCK_FRAMES);
         let State::Playing { count, .. } = self.state else {
             return None;
@@ -345,7 +350,7 @@ impl Transport {
     }
 
     /// By at most a block.
-    pub fn advance(&mut self, played: usize) {
+    pub(crate) fn advance(&mut self, played: usize) {
         debug_assert!(played <= BLOCK_FRAMES);
         if let State::Playing {
             loop_ticks,

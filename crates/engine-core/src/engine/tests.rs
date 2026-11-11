@@ -44,11 +44,11 @@ const SNARE: Hash = [12; 32];
 mod raw {
     use super::{filter, sampler, strip, tone};
 
-    pub const VOLUME: u32 = tone::VOLUME.get();
-    pub const CUTOFF: u32 = filter::CUTOFF.get();
-    pub const SAMPLE: u32 = sampler::SAMPLE.get();
-    pub const VOLUME_NUMBER: u32 = strip::VOLUME_NUMBER.get();
-    pub const PAN_NUMBER: u32 = strip::PAN_NUMBER.get();
+    pub(super) const VOLUME: u32 = tone::VOLUME.get();
+    pub(super) const CUTOFF: u32 = filter::CUTOFF.get();
+    pub(super) const SAMPLE: u32 = sampler::SAMPLE.get();
+    pub(super) const VOLUME_NUMBER: u32 = strip::VOLUME_NUMBER.get();
+    pub(super) const PAN_NUMBER: u32 = strip::PAN_NUMBER.get();
 }
 
 const DEFAULT_VOLUME: f32 = tone::VOLUME
@@ -551,7 +551,7 @@ fn after_a_lost_stream_parcels_go_back_unapplied() {
         "nothing piles up on the build thread"
     );
     assert!((settled_peak(&mut rig.engine) - at_volume(DEFAULT_VOLUME)).abs() < 1e-3);
-    assert_eq!(rig.engine.epoch(), 0);
+    assert_eq!(rig.engine.telemetry().epoch, 0);
 }
 
 #[test]
@@ -712,13 +712,13 @@ fn reset_removes_every_node_and_starts_a_session() {
     assert!(peak(&mut rig.engine, 1) > 0.0);
     rig.send(&[Spec::Reset(3)], &[set_param(TONE, raw::VOLUME, 0.5)]);
     assert_eq!(
-        rig.engine.epoch(),
+        rig.engine.telemetry().epoch,
         0,
         "applied at its marker, in the next block"
     );
     peak(&mut rig.engine, FADE_BLOCKS);
     assert_eq!(peak(&mut rig.engine, 4), 0.0);
-    assert_eq!(rig.engine.epoch(), 3);
+    assert_eq!(rig.engine.telemetry().epoch, 3);
     assert_eq!(
         events(&mut rig.engine),
         [rejected(3, Rejection::UnknownTarget)]
@@ -1166,7 +1166,7 @@ fn parcels_cross_between_two_threads_in_order_and_the_audio_thread_never_touches
         assert_eq!(engine.input().write(&play), play.len());
         let mut message = [0; 9];
         // Every batch starts a session numbered after it, so the last one ends the run once its fade is over.
-        while engine.epoch() != BATCHES {
+        while engine.telemetry().epoch != BATCHES {
             while let Ok(batch) = ring.pop() {
                 let record = AfterBatch::new(batch).0;
                 framing::write(&mut message, CommandKind::AfterBatch.0, &record);
@@ -1587,7 +1587,7 @@ fn a_reset_leaves_the_transport_playing_on() {
         &[set_transport(true, BAR)],
     );
     rig.engine.process(BLOCK_FRAMES);
-    assert_eq!(rig.engine.epoch(), 1);
+    assert_eq!(rig.engine.telemetry().epoch, 1);
     // 140 quarter notes a minute: 20 4/7 frames a tick.
     let ticks = |blocks: usize| {
         u32::try_from(blocks * BLOCK_FRAMES * 140 * 960 / (60 * SAMPLE_RATE.get() as usize))

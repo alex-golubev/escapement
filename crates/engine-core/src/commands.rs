@@ -9,14 +9,14 @@ use crate::schema::{
 };
 
 /// In bytes, since the worklet has no precise clock; the largest message still fits.
-pub const PARSE_BUDGET: usize = MAX_MESSAGE;
+pub(crate) const PARSE_BUDGET: usize = MAX_MESSAGE;
 
 /// A partly received largest message and as much again.
 pub const INPUT_CAPACITY: usize = 2 * MAX_MESSAGE;
 
 /// One record per kind of the schema.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub enum Command {
+pub(crate) enum Command {
     SetParam(SetParam),
     AfterBatch(AfterBatch),
     NoteOn(NoteOn),
@@ -63,7 +63,7 @@ impl Command {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub enum Drained {
+pub(crate) enum Drained {
     Ok,
     /// Message boundaries are lost: the waiting bytes are dropped, and the input takes no more.
     Lost,
@@ -105,7 +105,7 @@ impl CommandInput {
 
     /// For good: see [`Drained::Lost`].
     #[must_use]
-    pub fn is_lost(&self) -> bool {
+    pub(crate) fn is_lost(&self) -> bool {
         self.lost
     }
 
@@ -119,7 +119,7 @@ impl CommandInput {
     /// Returns how many of `bytes` fit. The worklet writes into the input itself; tests write through this.
     #[cfg(test)]
     #[must_use]
-    pub fn write(&mut self, bytes: &[u8]) -> usize {
+    pub(crate) fn write(&mut self, bytes: &[u8]) -> usize {
         if self.lost {
             return 0;
         }
@@ -131,7 +131,7 @@ impl CommandInput {
 
     /// Hands whole messages to `apply`, up to [`PARSE_BUDGET`] bytes. On a break, that message and the rest wait for
     /// the next block.
-    pub fn drain(
+    pub(crate) fn drain(
         &mut self,
         mut apply: impl FnMut(Result<Command, Rejection>) -> ControlFlow<()>,
     ) -> Drained {

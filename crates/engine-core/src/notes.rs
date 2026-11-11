@@ -11,7 +11,7 @@ pub const MIN_VELOCITY: f32 = 0.0;
 pub const MAX_VELOCITY: f32 = 1.0;
 
 /// Notes the page names lie below it; the pattern's take the rest, so the two never meet.
-pub const PAGE_NOTES: u32 = 1 << 31;
+pub(crate) const PAGE_NOTES: u32 = 1 << 31;
 
 /// A note the page names past [`PAGE_NOTES`] is refused.
 pub(crate) fn page_note(note: u32) -> Result<NoteId, Rejection> {

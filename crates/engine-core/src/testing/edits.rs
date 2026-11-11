@@ -14,7 +14,7 @@ use crate::schema::{
 
 /// An edit as the page writes it.
 #[derive(Clone, Copy)]
-pub enum Spec<'a> {
+pub(crate) enum Spec<'a> {
     Reset(u32),
     CreateNode {
         node: u32,
@@ -52,13 +52,13 @@ pub enum Spec<'a> {
 }
 
 /// A note of a pattern: tick, node, key, velocity and length.
-pub type Played = (u32, u32, u8, f32, u32);
+pub(crate) type Played = (u32, u32, u8, f32, u32);
 
 /// A clip: tick, length, period, offset and pattern.
-pub type Placed = (u32, u32, u32, u32, u32);
+pub(crate) type Placed = (u32, u32, u32, u32, u32);
 
 /// The test tone with initial values.
-pub fn tone_node(node: u32, params: &[(u32, f32)]) -> Spec<'_> {
+pub(crate) fn tone_node(node: u32, params: &[(u32, f32)]) -> Spec<'_> {
     Spec::CreateNode {
         node,
         plugin: tone::DESCRIPTION.id,
@@ -69,20 +69,20 @@ pub fn tone_node(node: u32, params: &[(u32, f32)]) -> Spec<'_> {
     }
 }
 
-pub fn connect(from: u32, to: u32) -> Spec<'static> {
+pub(crate) fn connect(from: u32, to: u32) -> Spec<'static> {
     Spec::Connect { from, to }
 }
 
-pub fn disconnect(from: u32, to: u32) -> Spec<'static> {
+pub(crate) fn disconnect(from: u32, to: u32) -> Spec<'static> {
     Spec::Disconnect { from, to }
 }
 
 /// The handle of a cell in its `generation`.
-pub const fn handle(generation: u32, cell: u32) -> u32 {
+pub(crate) const fn handle(generation: u32, cell: u32) -> u32 {
     generation << 16 | cell
 }
 
-pub fn batch(specs: &[Spec<'_>]) -> Vec<u8> {
+pub(crate) fn batch(specs: &[Spec<'_>]) -> Vec<u8> {
     let mut fbb = FlatBufferBuilder::new();
     let edits: Vec<_> = specs
         .iter()

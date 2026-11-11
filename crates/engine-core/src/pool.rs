@@ -23,17 +23,17 @@ const HEADROOM: usize = 16 << 20;
 
 /// Empty until every number is in; set once, then only read.
 #[derive(Default)]
-pub struct Sample(OnceLock<Pcm>);
+pub(crate) struct Sample(OnceLock<Pcm>);
 
 impl Sample {
     /// None while empty: one atomic read, no heap and no waiting.
-    pub fn pcm(&self) -> Option<&Pcm> {
+    pub(crate) fn pcm(&self) -> Option<&Pcm> {
         self.0.get()
     }
 }
 
 /// A sound's numbers, channel after channel.
-pub struct Pcm {
+pub(crate) struct Pcm {
     channels: usize,
     frames: usize,
     numbers: Vec<f32>,
@@ -41,18 +41,19 @@ pub struct Pcm {
 
 impl Pcm {
     #[must_use]
-    pub fn channels(&self) -> usize {
+    pub(crate) fn channels(&self) -> usize {
         self.channels
     }
 
+    #[cfg(test)]
     #[must_use]
-    pub fn frames(&self) -> usize {
+    pub(crate) fn frames(&self) -> usize {
         self.frames
     }
 
     /// The channel's numbers over `frames`, cut at the sound's end; nothing for a channel it doesn't have.
     #[must_use]
-    pub fn view(&self, channel: usize, frames: Range<usize>) -> &[f32] {
+    pub(crate) fn view(&self, channel: usize, frames: Range<usize>) -> &[f32] {
         if channel >= self.channels {
             return &[];
         }
@@ -103,18 +104,19 @@ impl SamplePool {
         }
     }
 
+    #[cfg(test)]
     #[must_use]
-    pub fn get(&self, hash: &Hash) -> Option<&Arc<Sample>> {
+    pub(crate) fn get(&self, hash: &Hash) -> Option<&Arc<Sample>> {
         self.samples.get(hash).map(|entry| &entry.sample)
     }
 
     /// The sound under `hash`: stored, coming in, or an empty place that it fills once it is stored.
-    pub fn refer(&mut self, hash: Hash) -> Arc<Sample> {
+    pub(crate) fn refer(&mut self, hash: Hash) -> Arc<Sample> {
         Arc::clone(&self.samples.entry(hash).or_default().sample)
     }
 
     /// A sound the page doesn't keep lives only while someone refers to it, a sound coming in included.
-    pub fn forget_unreferred(&mut self) {
+    pub(crate) fn forget_unreferred(&mut self) {
         self.samples
             .retain(|_, entry| entry.kept || Arc::strong_count(&entry.sample) > 1);
     }

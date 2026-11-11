@@ -37,13 +37,13 @@ pub(crate) struct Pattern(Box<[Note]>);
 
 impl Pattern {
     /// Allocates, so only on the build thread. Notes of one tick keep their order.
-    pub fn new(mut notes: Vec<Note>) -> Self {
+    pub(crate) fn new(mut notes: Vec<Note>) -> Self {
         notes.sort_by_key(|note| note.tick);
         Self(notes.into_boxed_slice())
     }
 
     #[cfg(test)]
-    pub fn notes(&self) -> &[Note] {
+    pub(crate) fn notes(&self) -> &[Note] {
         &self.0
     }
 
@@ -64,12 +64,12 @@ pub(crate) struct Patterns(Box<[Made]>);
 
 impl Patterns {
     /// Allocates, so only on the build thread, or before the audio thread starts.
-    pub fn new(cells: usize) -> Self {
+    pub(crate) fn new(cells: usize) -> Self {
         Self((0..cells).map(|_| None).collect())
     }
 
     #[cfg(test)]
-    pub fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         self.0.len()
     }
 
@@ -83,7 +83,7 @@ impl Patterns {
 
     /// Swaps `slot` into the cell; what was there comes back in it. False past the table: `slot` stays as it was.
     #[must_use]
-    pub fn put(&mut self, cell: PatternCell, slot: &mut Made) -> bool {
+    pub(crate) fn put(&mut self, cell: PatternCell, slot: &mut Made) -> bool {
         let Some(cell) = self.0.get_mut(cell.index()) else {
             return false;
         };
@@ -92,7 +92,7 @@ impl Patterns {
     }
 
     /// Every pattern moves over to `larger`, which takes this table's place; this one, empty, is left in it.
-    pub fn grow(&mut self, larger: &mut Patterns) {
+    pub(crate) fn grow(&mut self, larger: &mut Patterns) {
         for (old, new) in self.0.iter_mut().zip(larger.0.iter_mut()) {
             mem::swap(old, new);
         }
@@ -123,7 +123,7 @@ pub(crate) struct Arrangement {
 
 impl Arrangement {
     /// Allocates, so only on the build thread. Clips of one tick keep their order.
-    pub fn new(mut clips: Vec<Clip>) -> Self {
+    pub(crate) fn new(mut clips: Vec<Clip>) -> Self {
         clips.sort_by_key(|clip| clip.tick);
         let longest = clips.iter().map(|clip| clip.last - clip.tick).max();
         Self {
@@ -133,7 +133,7 @@ impl Arrangement {
     }
 
     #[cfg(test)]
-    pub fn clips(&self) -> &[Clip] {
+    pub(crate) fn clips(&self) -> &[Clip] {
         &self.clips
     }
 
@@ -162,7 +162,7 @@ impl Sequencer {
     /// of a pattern that is gone, and a note of a node that is gone, play nothing. Then lets go of the notes whose end the
     /// frames pass, and of every one of another play or while the transport stands. Returns how many notes found no
     /// room: in the budget, among the held, or in their node's block.
-    pub fn hand_out(
+    pub(crate) fn hand_out(
         &self,
         held: &mut Held,
         transport: &Transport,
@@ -252,7 +252,7 @@ struct HeldNote {
 
 impl Held {
     /// Allocates, so only before the audio thread starts.
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             notes: Vec::with_capacity(HELD_ROOM),
             next: 0,
@@ -260,12 +260,12 @@ impl Held {
     }
 
     #[cfg(test)]
-    pub fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         self.notes.len()
     }
 
     /// Every note the nodes hold, at the next block's start; `nodes` are sorted.
-    pub fn let_go_of(&mut self, nodes: &[NodeHandle]) {
+    pub(crate) fn let_go_of(&mut self, nodes: &[NodeHandle]) {
         for held in self
             .notes
             .iter_mut()

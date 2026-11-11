@@ -77,16 +77,12 @@ impl Engine {
         &mut self.input
     }
 
-    pub fn epoch(&self) -> u32 {
-        self.telemetry.epoch
-    }
-
     pub fn events(&self) -> &EventOutput {
         &self.events
     }
 
     /// Hands out the events that fit into `room` bytes; the rest are lost and counted.
-    pub fn take_events(&mut self, room: usize) -> &[u8] {
+    pub(crate) fn take_events(&mut self, room: usize) -> &[u8] {
         let (bytes, lost) = self.events.take(room);
         add_to_board(&mut self.telemetry.lost_events, lost);
         bytes
@@ -94,7 +90,7 @@ impl Engine {
 
     /// Applies commands, renders at most [`BLOCK_FRAMES`] frames, gives back the parcels whose fades are over and
     /// updates the telemetry.
-    pub fn process(&mut self, frames: usize) {
+    pub(crate) fn process(&mut self, frames: usize) {
         self.apply_commands();
         let frames = frames.min(BLOCK_FRAMES);
         let playing = self.transport.playing();

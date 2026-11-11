@@ -21,11 +21,11 @@ const IN_FLIGHT: usize = 1024;
 pub(crate) struct Batch(u32);
 
 impl Batch {
-    pub fn new(number: u32) -> Self {
+    pub(crate) fn new(number: u32) -> Self {
         Self(number)
     }
 
-    pub fn get(self) -> u32 {
+    pub(crate) fn get(self) -> u32 {
         self.0
     }
 
@@ -102,14 +102,14 @@ pub(crate) struct BuildEnd {
 }
 
 impl BuildEnd {
-    pub fn send(&mut self, parcel: Parcel) {
+    pub(crate) fn send(&mut self, parcel: Parcel) {
         self.waiting.push_back(Box::new(parcel));
         self.flush();
     }
 
     /// Shows `back` each parcel that came back, then frees it, and sends what waited; returns how many parcels
     /// aren't back yet.
-    pub fn collect(&mut self, mut back: impl FnMut(&Parcel)) -> usize {
+    pub(crate) fn collect(&mut self, mut back: impl FnMut(&Parcel)) -> usize {
         while let Ok(parcel) = self.returned.pop() {
             back(&parcel);
             drop(parcel);
@@ -152,7 +152,7 @@ pub(crate) struct AudioEnd {
 
 impl AudioEnd {
     /// Takes the batch's parcel only if it can go back: dropping it here would free memory.
-    pub fn take(&mut self, batch: Batch) -> Arrival {
+    pub(crate) fn take(&mut self, batch: Batch) -> Arrival {
         let in_line = self.incoming.peek().ok().map(|parcel| parcel.batch);
         if batch != self.next || in_line.is_some_and(|other| other != batch) {
             return Arrival::NotNext;
@@ -170,7 +170,7 @@ impl AudioEnd {
     }
 
     /// For when no marker will come any more: every parcel goes back unapplied, as there is room.
-    pub fn send_back_unapplied(&mut self) {
+    pub(crate) fn send_back_unapplied(&mut self) {
         while self.has_room() {
             let Ok(parcel) = self.incoming.pop() else {
                 return;
@@ -180,20 +180,20 @@ impl AudioEnd {
     }
 
     /// Only the audio thread fills the return queue, and `take` made sure of room.
-    pub fn give_back(&mut self, parcel: Box<Parcel>) {
+    pub(crate) fn give_back(&mut self, parcel: Box<Parcel>) {
         if self.returning.push(parcel).is_err() {
             unreachable!("a parcel is taken only with room to give it back");
         }
     }
 
     /// Keeps an applied parcel until the sample `due`.
-    pub fn hold(&mut self, parcel: Box<Parcel>, due: u64) {
+    pub(crate) fn hold(&mut self, parcel: Box<Parcel>, due: u64) {
         debug_assert!(self.held.len() < self.held.capacity(), "held parcels grew");
         self.held.push_back((parcel, due));
     }
 
     /// Gives back every held parcel due by the sample `now`, after `release` takes back what it left playing.
-    pub fn release(&mut self, now: u64, mut release: impl FnMut(&mut Parcel)) {
+    pub(crate) fn release(&mut self, now: u64, mut release: impl FnMut(&mut Parcel)) {
         while self.held.front().is_some_and(|&(_, due)| due <= now) {
             if let Some((mut parcel, _)) = self.held.pop_front() {
                 release(&mut parcel);
