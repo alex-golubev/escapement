@@ -1,5 +1,11 @@
 //! What the crate's tests share.
 
+pub mod commands;
+pub mod edits;
+pub mod events;
+pub mod plugins;
+pub mod pool;
+
 use engine_plugins::{ParamNumber, SampleNumber, SampleRate};
 
 use crate::handle::{NodeCell, NodeHandle};
@@ -53,4 +59,8 @@ pub fn ticks_in(blocks: usize) -> u32 {
 /// Of a node whose handle is `handle`.
 pub fn cell(handle: u32) -> NodeCell {
     NodeHandle::new(handle).cell()
+}
+
+pub fn ramp(len: usize, from: f32) -> Vec<f32> {
+    (0..len).map(|i| from + i as f32).collect()
 }

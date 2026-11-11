@@ -402,11 +402,11 @@ test.each<[string, Partial<EngineHost>]>([
     }
   ],
   [
-    'restarts: 1 (last: ProcessorError: Uncaught Error: panicked at lib.rs:1:1: PanicAudio 1) · back in 72 ms',
+    'restarts: 1 (last: ProcessorError: Uncaught Error: panicked at engine.rs:1:1: PanicAudio 1) · back in 72 ms',
     {
       restarts: restartedFor(
         Option.some(
-          Cause.fail(new ProcessorError({ message: 'Uncaught Error: panicked at lib.rs:1:1: PanicAudio 1' }))
+          Cause.fail(new ProcessorError({ message: 'Uncaught Error: panicked at engine.rs:1:1: PanicAudio 1' }))
         ),
         Option.some(72.4)
       )
