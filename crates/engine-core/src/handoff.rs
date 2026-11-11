@@ -213,7 +213,7 @@ mod tests {
     }
 
     impl std::fmt::Debug for Parcel {
-        fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
             write!(f, "parcel of batch {}", self.batch)
         }
     }

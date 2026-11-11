@@ -62,7 +62,7 @@ pub(crate) fn create(sample_rate: f32) -> Box<dyn Plugin> {
 }
 
 impl Plugin for Sampler {
-    fn process(&mut self, context: ProcessContext) {
+    fn process(&mut self, context: ProcessContext<'_>) {
         let ProcessContext {
             output: [left, right],
             events,

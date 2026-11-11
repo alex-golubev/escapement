@@ -401,7 +401,7 @@ pub(crate) fn create(sample_rate: f32) -> Box<dyn Plugin> {
 }
 
 impl Plugin for Synth {
-    fn process(&mut self, context: ProcessContext) {
+    fn process(&mut self, context: ProcessContext<'_>) {
         let ProcessContext {
             output: [left, right],
             events,
@@ -424,12 +424,13 @@ impl Plugin for Synth {
 }
 
 /// Equal temperament, A above middle C at 440 Hz.
+#[must_use]
 pub fn frequency(key: u8) -> f32 {
     440.0 * ((f32::from(key) - 69.0) / 12.0).exp2()
 }
 
-/// What smooths a jump up by 2 at phase 0 over a sample either side (PolyBLEP), so high notes don't alias into tones of
-/// their own.
+/// What smooths a jump up by 2 at phase 0 over a sample either side (`PolyBLEP`), so high notes don't alias into tones
+/// of their own.
 fn jump(phase: f32, increment: f32) -> f32 {
     if phase < increment {
         let t = phase / increment;
@@ -442,7 +443,7 @@ fn jump(phase: f32, increment: f32) -> f32 {
     }
 }
 
-/// What rounds a corner at phase 0 where the slope rises by 1 a sample (PolyBLAMP), as `jump` smooths a jump.
+/// What rounds a corner at phase 0 where the slope rises by 1 a sample (`PolyBLAMP`), as `jump` smooths a jump.
 fn corner(phase: f32, increment: f32) -> f32 {
     let samples = if phase < 0.5 { phase } else { phase - 1.0 } / increment;
     let near = (1.0 - samples.abs()).max(0.0);
@@ -677,7 +678,7 @@ mod tests {
 
     /// Named by its key.
     fn on(time: u32, key: u8) -> Event {
-        named(time, key, key as u32, 1.0)
+        named(time, key, u32::from(key), 1.0)
     }
 
     fn named(time: u32, key: u8, note: u32, velocity: f32) -> Event {
@@ -1129,12 +1130,12 @@ mod tests {
 
     #[test]
     fn a_high_note_aliases_far_less_than_the_bare_wave() {
+        type Bare = fn(f32) -> f32;
         let key = 100;
         let increment = frequency(key) / SAMPLE_RATE;
         let note = f64::from(frequency(key));
         let rate = f64::from(SAMPLE_RATE);
         // Each with its jumps and corners as they are, and whether it has only odd harmonics.
-        type Bare = fn(f32) -> f32;
         let shapes: [(Shape, Bare, bool); 3] = [
             (Shape::Saw, |phase| 2.0 * phase - 1.0, false),
             (
@@ -1159,6 +1160,10 @@ mod tests {
                 })
                 .collect();
             // Harmonics between half the sample rate and the rate fold back under the half, clear of the note's own.
+            #[expect(
+                clippy::maybe_infinite_iter,
+                reason = "the harmonics rise past the rate"
+            )]
             let folded: Vec<f64> = (1..)
                 .map(|harmonic| f64::from(harmonic) * note)
                 .take_while(|&above| above < rate)
@@ -1313,10 +1318,7 @@ mod tests {
         ]);
         // Halves of two noises add up to less than a whole one: by a square root of two.
         let ratio = rms(&two) / rms(&one);
-        assert!(
-            (ratio - std::f32::consts::FRAC_1_SQRT_2).abs() < 0.02,
-            "{ratio}"
-        );
+        assert!((ratio - FRAC_1_SQRT_2).abs() < 0.02, "{ratio}");
     }
 
     #[test]
@@ -1343,7 +1345,7 @@ mod tests {
         let up = period / 2f64.powf(1.0 / 12.0);
         let (first, last) = turned(OSC1.fine, 100.0);
         assert!(
-            first > (period + up) / 2.0,
+            first > f64::midpoint(period, up),
             "a semitone up from where it stood: {first}"
         );
         assert!((last - up).abs() < 0.1, "{last} for {up}");

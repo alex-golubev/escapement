@@ -76,12 +76,14 @@ pub struct Stretch {
 
 impl Stretch {
     /// The frame of the block that passes `tick`, one of the stretch's.
+    #[must_use]
     pub fn frame(&self, tick: u32) -> u32 {
         debug_assert!((self.first..=self.last).contains(&tick));
         self.block.frame(self.ahead + u64::from(tick - self.first))
     }
 
     /// Whole ticks from the start of play to `tick`, one of the stretch's, through the loop's ends.
+    #[must_use]
     pub fn count(&self, tick: u32) -> u64 {
         debug_assert!((self.first..=self.last).contains(&tick));
         self.count + u64::from(tick - self.first)
@@ -101,6 +103,7 @@ pub struct Run {
 
 impl Run {
     /// The frame of the block that passes the tick of `count`, one of the run's.
+    #[must_use]
     pub fn frame(&self, count: u64) -> u32 {
         debug_assert!((self.first..=self.last).contains(&count));
         self.block.frame(count - self.start)
@@ -158,6 +161,7 @@ pub struct Transport {
 }
 
 impl Transport {
+    #[must_use]
     pub fn new(sample_rate: f32) -> Self {
         let tempo = DEFAULT_TEMPO as f32;
         Self {
@@ -219,21 +223,25 @@ impl Transport {
         }
     }
 
+    #[must_use]
     pub fn tempo(&self) -> f32 {
         self.tempo
     }
 
+    #[must_use]
     pub fn playing(&self) -> bool {
         matches!(self.state, State::Playing { .. })
     }
 
     /// In whole ticks from the loop's start, before the next frame: where it plays, or where it stands.
+    #[must_use]
     pub fn position(&self) -> u32 {
         self.at().0
     }
 
     /// Which start of play this is, each new from stopped to playing: a count from another doesn't belong to it. None
     /// while stopped.
+    #[must_use]
     pub fn play(&self) -> Option<u32> {
         match self.state {
             State::Stopped { .. } => None,
@@ -242,6 +250,7 @@ impl Transport {
     }
 
     /// None while stopped.
+    #[must_use]
     pub fn loop_ticks(&self) -> Option<u32> {
         match self.state {
             State::Stopped { .. } => None,
@@ -288,6 +297,7 @@ impl Transport {
 
     /// The ticks the next `frames` frames pass, at most a block's, by their count from the start of play. None while
     /// stopped, or if they pass none.
+    #[must_use]
     pub fn run(&self, frames: usize) -> Option<Run> {
         debug_assert!(frames <= BLOCK_FRAMES);
         let State::Playing { count, .. } = self.state else {
@@ -708,14 +718,11 @@ mod tests {
                             .map(move |tick| (stretch.count(tick), stretch.frame(tick)))
                     })
                     .collect();
-                let by_run: Vec<_> = transport
-                    .run(BLOCK_FRAMES)
-                    .map(|run| {
-                        (run.first..=run.last)
-                            .map(|count| (count, run.frame(count)))
-                            .collect()
-                    })
-                    .unwrap_or_default();
+                let by_run: Vec<_> = transport.run(BLOCK_FRAMES).map_or_default(|run| {
+                    (run.first..=run.last)
+                        .map(|count| (count, run.frame(count)))
+                        .collect()
+                });
                 assert_eq!(by_run, by_stretch, "{sample_rate} {block}");
                 for (count, _) in by_run {
                     assert_eq!(count, next, "{sample_rate} {block}");

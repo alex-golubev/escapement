@@ -111,6 +111,7 @@ impl Filter {
         for (i, cutoff) in frames.zip(&mut self.cutoff) {
             if self.until_heading == 0 {
                 self.until_heading = GAIN_STEP;
+                #[expect(clippy::float_cmp, reason = "any change of the cutoff counts")]
                 if cutoff != self.heading {
                     self.heading = cutoff;
                     self.gain.set(gain(cutoff, self.sample_rate));
@@ -118,6 +119,7 @@ impl Filter {
             }
             self.until_heading -= 1;
             let gain = self.gain.next().unwrap_or(self.coefficients.0);
+            #[expect(clippy::float_cmp, reason = "any change of the gain counts")]
             if gain != self.coefficients.0 {
                 self.coefficients = (gain, Coefficients::new(gain));
             }
@@ -139,7 +141,7 @@ pub(crate) fn create(sample_rate: f32) -> Box<dyn Plugin> {
 }
 
 impl Plugin for Filter {
-    fn process(&mut self, context: ProcessContext) {
+    fn process(&mut self, context: ProcessContext<'_>) {
         let ProcessContext {
             input,
             mut output,

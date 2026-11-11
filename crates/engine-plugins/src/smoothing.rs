@@ -21,18 +21,21 @@ pub struct Smoothed {
 }
 
 /// A change of `ramp_seconds` takes this many samples; at least one.
+#[must_use]
 pub fn ramp_samples(ramp_seconds: f32, sample_rate: f32) -> u32 {
     ((ramp_seconds * sample_rate).round() as u32).max(1)
 }
 
 impl Smoothed {
     /// Evenly in the value; also for values derived from a parameter, such as filter coefficients.
+    #[must_use]
     pub fn new(value: f32, ramp_seconds: f32, sample_rate: f32) -> Self {
         Self::on_scale(value, ramp_seconds, sample_rate, Scale::Linear)
     }
 
     /// The parameter itself: from its default, at its smoothing time, on its scale, so a change sounds like a quick
     /// turn of its knob.
+    #[must_use]
     pub fn for_param(param: &ParamDescription, sample_rate: f32) -> Self {
         Self::on_scale(
             param.default,

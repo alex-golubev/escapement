@@ -31,7 +31,7 @@ impl PanicText {
     };
 
     /// In place of anything before; cut short with [`CUT`] if it doesn't fit.
-    fn set(&mut self, text: fmt::Arguments) {
+    fn set(&mut self, text: fmt::Arguments<'_>) {
         self.len = 0;
         if self.write_fmt(text).is_err() {
             let at = (self.len as usize).min(PANIC_TEXT_BYTES - CUT.len());
@@ -41,10 +41,10 @@ impl PanicText {
     }
 
     /// `panicked at file:line:column: message`.
-    fn keep(&mut self, info: &PanicHookInfo) {
+    fn keep(&mut self, info: &PanicHookInfo<'_>) {
         match (info.location(), info.payload_as_str()) {
             (Some(location), Some(message)) => {
-                self.set(format_args!("panicked at {location}: {message}"))
+                self.set(format_args!("panicked at {location}: {message}"));
             }
             (Some(location), None) => self.set(format_args!("panicked at {location}")),
             (None, Some(message)) => self.set(format_args!("panicked: {message}")),
@@ -79,7 +79,7 @@ impl Write for PanicText {
     }
 }
 
-fn keep(info: &PanicHookInfo) {
+fn keep(info: &PanicHookInfo<'_>) {
     TEXT.with_borrow_mut(|text| text.keep(info));
 }
 
@@ -121,7 +121,7 @@ mod tests {
         TEXT.with_borrow(|text| text.as_str().to_owned())
     }
 
-    fn set(text: fmt::Arguments) -> String {
+    fn set(text: fmt::Arguments<'_>) -> String {
         let mut kept = PanicText::EMPTY;
         kept.set(text);
         kept.as_str().to_owned()

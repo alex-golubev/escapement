@@ -80,6 +80,7 @@ impl Patterns {
     }
 
     /// Swaps `slot` into the cell; what was there comes back in it. False past the table: `slot` stays as it was.
+    #[must_use]
     pub fn put(&mut self, cell: u32, slot: &mut Made) -> bool {
         let Some(cell) = self.0.get_mut(cell as usize) else {
             return false;
@@ -338,7 +339,7 @@ mod tests {
         let mut graph = Graph::new(Nodes::new(4), Nodes::new(4), SAMPLE_RATE);
         for cell in [1, 2] {
             let node = Node::new(&RECORDER, SAMPLE_RATE, NodeHandle::new(cell));
-            graph.insert(cell, &mut Some(Box::new(node)));
+            assert!(graph.insert(cell, &mut Some(Box::new(node))));
         }
         graph
     }

@@ -65,7 +65,7 @@ impl Tone {
 }
 
 impl Plugin for Tone {
-    fn process(&mut self, context: ProcessContext) {
+    fn process(&mut self, context: ProcessContext<'_>) {
         let ProcessContext {
             output: [left, right],
             events,

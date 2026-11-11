@@ -337,4 +337,4 @@ export const scales = ['linear', 'logarithmic', 'volume', 'time'] as const
 export const silenceBelow = 1e-15
 
 /** The engine computes it from its own catalog and strip; the page and the engine must match. */
-export const descriptionsFingerprint = 0x8f59b831
+export const descriptionsFingerprint = 0x8f59_b831

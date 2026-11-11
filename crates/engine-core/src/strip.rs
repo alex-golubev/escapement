@@ -76,7 +76,7 @@ const fn same(a: &[u8], b: &[u8]) -> bool {
 /// By the parameters' numbers, from 1.
 type StripValues = [f32; STRIP.len()];
 
-fn value(values: &StripValues, number: u32) -> f32 {
+fn value(values: StripValues, number: u32) -> f32 {
     values[number as usize - 1]
 }
 
@@ -129,8 +129,8 @@ impl Strip {
 
 /// The left side's gain and the right's; their squares add up to twice the volume's.
 fn gains(values: StripValues) -> [f32; CHANNELS] {
-    let volume = f64::from(value(&values, VOLUME_NUMBER));
-    let pan = f64::from(value(&values, PAN_NUMBER));
+    let volume = f64::from(value(values, VOLUME_NUMBER));
+    let pan = f64::from(value(values, PAN_NUMBER));
     // In f64, so the middle comes out as exactly 1 and the far side as exactly 0.
     let side = |toward: f64| (volume * SQRT_2 * ((1.0 + toward) * FRAC_PI_4).sin()) as f32;
     [side(-pan), side(pan)]

@@ -1,6 +1,9 @@
 //! WebAssembly exports for the build thread and the worklet. Every `build` pointer must come from [`engine_new`] and
 //! every `engine` pointer from [`engine_hand_over`].
-#![allow(clippy::missing_safety_doc)]
+#![expect(
+    clippy::missing_safety_doc,
+    reason = "one contract for every export, in the crate's doc"
+)]
 
 mod audio_thread;
 mod panic_text;
@@ -196,7 +199,7 @@ pub extern "C" fn engine_default_tempo() -> u32 {
 /// The page's notes must not go past what the engine plays.
 #[unsafe(no_mangle)]
 pub extern "C" fn engine_highest_key() -> u32 {
-    HIGHEST_KEY as u32
+    u32::from(HIGHEST_KEY)
 }
 
 #[unsafe(no_mangle)]

@@ -204,13 +204,12 @@ impl Slot {
     fn change(&mut self, number: u32, value: f32) {
         let event = Event::param_at_start(number, value);
         let place = &mut self.changes[number as usize - 1];
-        match *place {
-            Some(at) => self.events[at] = event,
-            None => {
-                *place = Some(self.changed);
-                self.events.insert(self.changed, event);
-                self.changed += 1;
-            }
+        if let Some(at) = *place {
+            self.events[at] = event;
+        } else {
+            *place = Some(self.changed);
+            self.events.insert(self.changed, event);
+            self.changed += 1;
         }
     }
 
@@ -271,7 +270,7 @@ pub(crate) mod tests {
     struct Recorder;
 
     impl Plugin for Recorder {
-        fn process(&mut self, context: ProcessContext) {
+        fn process(&mut self, context: ProcessContext<'_>) {
             GIVEN.with_borrow_mut(|given| given.extend(context.events));
             for channel in context.output {
                 channel.fill(0.0);
@@ -283,7 +282,7 @@ pub(crate) mod tests {
     struct Constant;
 
     impl Plugin for Constant {
-        fn process(&mut self, context: ProcessContext) {
+        fn process(&mut self, context: ProcessContext<'_>) {
             let [left, right] = context.output;
             left.fill(1.0);
             right.fill(-1.0);
@@ -309,7 +308,7 @@ pub(crate) mod tests {
     struct Through;
 
     impl Plugin for Through {
-        fn process(&mut self, context: ProcessContext) {
+        fn process(&mut self, context: ProcessContext<'_>) {
             for (output, input) in context.output.into_iter().zip(context.input) {
                 output.copy_from_slice(input);
             }
@@ -345,7 +344,7 @@ pub(crate) mod tests {
     struct Reader;
 
     impl Plugin for Reader {
-        fn process(&mut self, context: ProcessContext) {
+        fn process(&mut self, context: ProcessContext<'_>) {
             let [left, right] = context.output;
             left.fill(0.0);
             right.fill(0.0);

@@ -38,6 +38,7 @@ pub use engine_plugins::{BLOCK_FRAMES, CHANNELS};
 
 /// The build thread keeps the builder and hands the engine to the audio thread. All of the engine's own memory is
 /// allocated here; what grows comes in parcels.
+#[must_use]
 pub fn new(sample_rate: f32) -> (Builder, Engine) {
     let (build, audio) = handoff::channel();
     let engine = Engine {
@@ -386,7 +387,7 @@ mod tests {
         }
 
         /// As the page sends a transaction: the batch to the build thread, its marker and `commands` to the ring.
-        fn send(&mut self, edits: &[Spec], commands: &[Vec<u8>]) {
+        fn send(&mut self, edits: &[Spec<'_>], commands: &[Vec<u8>]) {
             let batch = self.next_batch;
             self.next_batch += 1;
             self.write(&[after_batch(batch)]);
@@ -396,7 +397,12 @@ mod tests {
 
         fn write(&mut self, commands: &[Vec<u8>]) {
             for command in commands {
-                self.engine.input().write(command);
+                let input = self.engine.input();
+                let written = input.write(command);
+                assert!(
+                    written == command.len() || input.is_lost(),
+                    "no room for a command"
+                );
             }
         }
     }
@@ -412,7 +418,7 @@ mod tests {
         }
     }
 
-    fn sampler_node<'a>(node: u32, samples: &'a [(u32, Hash)]) -> Spec<'a> {
+    fn sampler_node(node: u32, samples: &[(u32, Hash)]) -> Spec<'_> {
         Spec::CreateNode {
             node,
             plugin: sampler::DESCRIPTION.id,
@@ -520,7 +526,7 @@ mod tests {
     }
 
     /// What is heard from `blocks` blocks before `edits` until both fades are over, once `rig` has settled.
-    fn heard_across(rig: &mut Rig, blocks: usize, edits: &[Spec]) -> Vec<f32> {
+    fn heard_across(rig: &mut Rig, blocks: usize, edits: &[Spec<'_>]) -> Vec<f32> {
         peak(&mut rig.engine, FADE_BLOCKS);
         let mut heard = left(&mut rig.engine, blocks);
         rig.send(edits, &[]);
@@ -1132,7 +1138,7 @@ mod tests {
             connect(TONE, handle(1, FILTER)),
             Spec::SetOutput(handle(1, FILTER)),
         ];
-        let cases: [(&[Spec], &[Spec], &[Spec]); 3] = [
+        let cases: [(&[Spec<'_>], &[Spec<'_>], &[Spec<'_>]); 3] = [
             // A tone added, then removed while it rises.
             (
                 &[],
@@ -1274,7 +1280,7 @@ mod tests {
     }
 
     /// Each kind of edit the schema has that `edits` leave out.
-    fn edits_left_out(edits: &[Spec]) -> Vec<schema::DeviceEdit> {
+    fn edits_left_out(edits: &[Spec<'_>]) -> Vec<schema::DeviceEdit> {
         let bytes = batch_bytes(edits);
         let sent: Vec<_> = schema::root_as_device_batch(&bytes)
             .unwrap()
@@ -1304,6 +1310,7 @@ mod tests {
     }
 
     #[test]
+    #[expect(clippy::too_many_lines, reason = "every command and edit there is")]
     fn the_audio_thread_never_touches_the_heap() {
         // Every command and edit there is, refused ones, both overflows and a lost stream.
         const INSERT: u32 = 3;
@@ -1440,14 +1447,14 @@ mod tests {
         let play = set_transport(true, 8);
         let audio = thread::spawn(move || {
             let before = heap::calls();
-            engine.input().write(&play);
+            assert_eq!(engine.input().write(&play), play.len());
             let mut message = [0; 9];
             // Every batch starts a session numbered after it, so the last one ends the run once its fade is over.
             while engine.epoch() != BATCHES {
                 while let Ok(batch) = ring.pop() {
                     let record = AfterBatch::new(batch).0;
                     framing::write(&mut message, CommandKind::AfterBatch.0, &record);
-                    engine.input().write(&message);
+                    assert_eq!(engine.input().write(&message), message.len());
                 }
                 engine.audio_block(BLOCK_FRAMES, EVENT_CAPACITY);
             }
@@ -1662,7 +1669,7 @@ mod tests {
             let before = heap::calls();
             let mut loudest = 0.0f32;
             while !stopped.load(Ordering::Acquire) {
-                engine.input().write(&note);
+                assert_eq!(engine.input().write(&note), note.len());
                 engine.audio_block(BLOCK_FRAMES, EVENT_CAPACITY);
                 loudest = engine
                     .output(0)

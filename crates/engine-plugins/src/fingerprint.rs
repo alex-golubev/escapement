@@ -10,7 +10,7 @@ struct Fnv(u32);
 impl Fnv {
     fn bytes(&mut self, bytes: &[u8]) {
         for &byte in bytes {
-            self.0 = (self.0 ^ byte as u32).wrapping_mul(0x0100_0193);
+            self.0 = (self.0 ^ u32::from(byte)).wrapping_mul(0x0100_0193);
         }
     }
 
@@ -31,6 +31,7 @@ impl Fnv {
 
 /// Takes every field by name, so a new one doesn't compile until it counts. `node_params` are the ones the engine gives
 /// every node of its own, such as its volume.
+#[must_use]
 pub fn fingerprint(catalog: &[CatalogEntry], node_params: &[ParamDescription]) -> u32 {
     let mut hash = Fnv(0x811c_9dc5);
     hash.number(catalog.len() as u32);
@@ -218,6 +219,7 @@ mod tests {
     }
 
     #[test]
+    #[expect(clippy::too_many_lines, reason = "every field there is")]
     fn every_field_changes_the_number() {
         let base = of("filter", PLUGIN);
         let changed = [

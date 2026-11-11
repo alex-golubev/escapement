@@ -93,15 +93,18 @@ impl CommandInput {
         self.buf.as_mut_ptr()
     }
 
+    #[must_use]
     pub fn len(&self) -> usize {
         self.len
     }
 
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.len == 0
     }
 
     /// For good: see [`Drained::Lost`].
+    #[must_use]
     pub fn is_lost(&self) -> bool {
         self.lost
     }
@@ -113,7 +116,9 @@ impl CommandInput {
         }
     }
 
-    /// Returns how many of `bytes` fit.
+    /// Returns how many of `bytes` fit. The worklet writes into the input itself; tests write through this.
+    #[cfg(test)]
+    #[must_use]
     pub fn write(&mut self, bytes: &[u8]) -> usize {
         if self.lost {
             return 0;
@@ -271,9 +276,9 @@ pub(crate) mod tests {
         let mut input = CommandInput::default();
         let bytes = after_batch(1);
         let (head, tail) = bytes.split_at(bytes.len() / 2);
-        input.write(head);
+        assert_eq!(input.write(head), head.len());
         assert_eq!(drain_markers(&mut input), (vec![], Drained::Ok));
-        input.write(tail);
+        assert_eq!(input.write(tail), tail.len());
         assert_eq!(drain_markers(&mut input), (vec![1], Drained::Ok));
         assert!(input.is_empty());
     }
@@ -295,8 +300,9 @@ pub(crate) mod tests {
     #[test]
     fn a_size_too_large_drops_everything_and_takes_nothing_more() {
         let mut input = CommandInput::default();
-        input.write(&u32::MAX.to_le_bytes());
-        input.write(&after_batch(1));
+        assert_eq!(input.write(&u32::MAX.to_le_bytes()), SIZE_PREFIX);
+        let marker = after_batch(1);
+        assert_eq!(input.write(&marker), marker.len());
         assert_eq!(drain_markers(&mut input), (vec![], Drained::Lost));
         assert!(input.is_empty());
         assert_eq!(input.write(&after_batch(2)), 0);
@@ -308,7 +314,8 @@ pub(crate) mod tests {
     #[test]
     fn waits_for_a_message_of_the_largest_size() {
         let mut input = CommandInput::default();
-        input.write(&((MAX_MESSAGE - SIZE_PREFIX) as u32).to_le_bytes());
+        let size = ((MAX_MESSAGE - SIZE_PREFIX) as u32).to_le_bytes();
+        assert_eq!(input.write(&size), SIZE_PREFIX);
         assert_eq!(drain_markers(&mut input), (vec![], Drained::Ok));
         assert_eq!(input.len(), SIZE_PREFIX);
     }
@@ -316,8 +323,9 @@ pub(crate) mod tests {
     #[test]
     fn skips_an_invalid_message() {
         let mut input = CommandInput::default();
-        input.write(&wrong_size());
-        input.write(&after_batch(2));
+        for message in [wrong_size(), after_batch(2)] {
+            assert_eq!(input.write(&message), message.len());
+        }
         let mut results = Vec::new();
         input.drain(|command| {
             results.push(command);
@@ -336,7 +344,8 @@ pub(crate) mod tests {
     fn a_message_that_waits_keeps_its_place_and_holds_back_the_rest() {
         let mut input = CommandInput::default();
         for batch in 1..=3 {
-            input.write(&after_batch(batch));
+            let marker = after_batch(batch);
+            assert_eq!(input.write(&marker), marker.len());
         }
         assert_eq!(drain_until(&mut input, 2), (vec![1], Drained::Ok));
         assert_eq!(input.len(), 2 * after_batch(2).len());
