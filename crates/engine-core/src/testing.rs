@@ -8,10 +8,10 @@ pub(crate) mod pool;
 
 use engine_plugins::{ParamNumber, SampleNumber, SampleRate};
 
+use crate::BLOCK_FRAMES;
 use crate::handle::{NodeCell, NodeHandle};
 use crate::node::NOTE_ROOM;
 use crate::transport::{DEFAULT_TEMPO, TICKS_PER_QUARTER};
-use crate::{BLOCK_FRAMES, CHANNELS};
 
 pub(crate) const SAMPLE_RATE: SampleRate = SampleRate::new(48_000).unwrap();
 
@@ -24,8 +24,6 @@ const _: () = assert!(
 );
 
 pub(crate) const BAR: u32 = 4 * TICKS_PER_QUARTER;
-
-pub(crate) const SILENCE: [[f32; BLOCK_FRAMES]; CHANNELS] = [[0.0; BLOCK_FRAMES]; CHANNELS];
 
 pub(crate) fn rate(hz: u32) -> SampleRate {
     SampleRate::new(hz).unwrap()

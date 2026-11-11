@@ -19,7 +19,7 @@ use crate::sequencer::{Arrangement, Held, Patterns, Sequencer};
 use crate::strip::page_strip_param;
 use crate::telemetry::{BlockMeter, Telemetry};
 use crate::transport::{Place, Transport};
-use crate::{BLOCK_FRAMES, CHANNELS, hang};
+use crate::{BLOCK_FRAMES, Block, SILENCE, hang};
 
 /// The audio thread's part: plays, applies live edits and swaps parcels in.
 pub struct Engine {
@@ -34,7 +34,7 @@ pub struct Engine {
     held: Held,
     input: CommandInput,
     events: EventOutput,
-    output: [[f32; BLOCK_FRAMES]; CHANNELS],
+    output: Block,
     /// The output's.
     meter: BlockMeter,
     telemetry: Telemetry,
@@ -58,7 +58,7 @@ impl Engine {
             held: Held::new(),
             input: CommandInput::default(),
             events: EventOutput::default(),
-            output: [[0.0; BLOCK_FRAMES]; CHANNELS],
+            output: SILENCE,
             meter: BlockMeter::new(sample_rate),
             telemetry: Telemetry::default(),
         }

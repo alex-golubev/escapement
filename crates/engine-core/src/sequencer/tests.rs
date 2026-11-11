@@ -1,12 +1,12 @@
 use engine_plugins::Event;
 
 use super::*;
-use crate::BLOCK_FRAMES;
 use crate::graph::Nodes;
 use crate::node::{NOTE_ROOM, Node};
 use crate::testing::plugins::{GIVEN, RECORDER};
-use crate::testing::{BAR, SAMPLE_RATE, SILENCE, cell, note_room};
+use crate::testing::{BAR, SAMPLE_RATE, cell, note_room};
 use crate::transport::Place;
+use crate::{BLOCK_FRAMES, SILENCE};
 
 /// A step long.
 fn note(tick: u32, node: u32, key: u8) -> Note {

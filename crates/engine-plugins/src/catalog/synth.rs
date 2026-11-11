@@ -382,18 +382,18 @@ fn fill(smoothed: &mut Smoothed, over: &mut [f32]) {
     }
 }
 
-/// Over a block's frames.
-type Frames = [f32; BLOCK_FRAMES];
+/// A value for each of a block's frames.
+type Signal = [f32; BLOCK_FRAMES];
 
 struct Synth {
     /// Half of them for voices giving way.
     voices: [Voice; 2 * VOICES],
     oscillators: [Oscillator; OSCILLATORS],
     /// For each oscillator over the block: each shape's part of the sound, and whether it is heard.
-    parts: [[Frames; Shape::ALL.len()]; OSCILLATORS],
+    parts: [[Signal; Shape::ALL.len()]; OSCILLATORS],
     heard: [[bool; Shape::ALL.len()]; OSCILLATORS],
     /// For each oscillator over the block: as `Oscillator::tune` has it.
-    ratios: [Frames; OSCILLATORS],
+    ratios: [Signal; OSCILLATORS],
     sample_rate: SampleRate,
     envelope: Envelope,
     notes: u64,

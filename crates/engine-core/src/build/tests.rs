@@ -17,7 +17,7 @@ enum Brought {
         cell: usize,
         exit: usize,
     },
-    /// Each step's node with what it hears, then what the output hears.
+    /// Each turn's node with what it hears, then what the output hears.
     Order(Vec<(Seat, Vec<Seat>)>, Vec<Seat>),
     GrowPatterns(usize),
     /// The cell, and the handle and notes of the pattern made in it.
@@ -76,11 +76,11 @@ fn brought_edit(edit: &Edit) -> Brought {
 
 /// Nodes in cells that hear nothing, and the output's.
 fn order(cells: &[u32], output: &[u32]) -> Brought {
-    let steps: Vec<_> = cells.iter().map(|&cell| (cell, &[][..])).collect();
-    wired(&steps, output)
+    let turns: Vec<_> = cells.iter().map(|&cell| (cell, &[][..])).collect();
+    wired(&turns, output)
 }
 
-fn wired(steps: &[(u32, &[u32])], output: &[u32]) -> Brought {
+fn wired(turns: &[(u32, &[u32])], output: &[u32]) -> Brought {
     let seats = |handles: &[u32]| {
         handles
             .iter()
@@ -88,7 +88,7 @@ fn wired(steps: &[(u32, &[u32])], output: &[u32]) -> Brought {
             .collect()
     };
     Brought::Order(
-        steps
+        turns
             .iter()
             .map(|&(handle, inputs)| (Seat::Cell(cell(handle)), seats(inputs)))
             .collect(),
@@ -105,9 +105,9 @@ fn brought(order: &Order) -> Brought {
     };
     Brought::Order(
         order
-            .steps
+            .turns
             .iter()
-            .map(|step| (step.node, sources(step.inputs.clone())))
+            .map(|turn| (turn.node, sources(turn.inputs.clone())))
             .collect(),
         sources(order.output..order.connections.len()),
     )

@@ -5,10 +5,9 @@ use std::array;
 use std::f64::consts::{FRAC_PI_4, SQRT_2};
 
 use engine_plugins::smoothing::Smoothed;
-use engine_plugins::{
-    BLOCK_FRAMES, CHANNELS, ParamDescription, ParamNumber, SampleRate, Scale, Unit, Values,
-};
+use engine_plugins::{CHANNELS, ParamDescription, ParamNumber, SampleRate, Scale, Unit, Values};
 
+use crate::Block;
 use crate::schema::Rejection;
 
 /// Both alike: a change of either moves the same two gains.
@@ -113,7 +112,7 @@ impl Strip {
     }
 
     /// To the first `frames` of `output`, in place; a side whose gain is still walks its samples only if it isn't 1.
-    pub(crate) fn apply(&mut self, output: &mut [[f32; BLOCK_FRAMES]; CHANNELS], frames: usize) {
+    pub(crate) fn apply(&mut self, output: &mut Block, frames: usize) {
         for (side, gain) in output.iter_mut().zip(&mut self.gains) {
             let side = &mut side[..frames];
             match gain.steady() {
@@ -145,9 +144,10 @@ fn gains(values: StripValues) -> [f32; CHANNELS] {
 mod tests {
     use super::*;
     use crate::testing::{SAMPLE_RATE, seconds};
+    use crate::{BLOCK_FRAMES, SILENCE};
 
     /// 0.5 on the left and -0.25 on the right through the strip, one block.
-    fn through(strip: &mut Strip) -> [[f32; BLOCK_FRAMES]; CHANNELS] {
+    fn through(strip: &mut Strip) -> Block {
         let mut output = [[0.5; BLOCK_FRAMES], [-0.25; BLOCK_FRAMES]];
         strip.apply(&mut output, BLOCK_FRAMES);
         output
@@ -231,13 +231,13 @@ mod tests {
             output[1][0]
         );
         let silent = through(&mut set(&[(VOLUME_NUMBER, -1.0)]));
-        assert_eq!(silent, [[0.0; BLOCK_FRAMES]; CHANNELS]);
+        assert_eq!(silent, SILENCE);
     }
 
     #[test]
     fn a_volume_far_below_hearing_is_silence_not_denormals() {
         let output = through(&mut set(&[(VOLUME_NUMBER, 1e-40)]));
-        assert_eq!(output, [[0.0; BLOCK_FRAMES]; CHANNELS]);
+        assert_eq!(output, SILENCE);
     }
 
     #[test]
@@ -274,7 +274,7 @@ mod tests {
         for _ in 0..ramp.div_ceil(BLOCK_FRAMES) {
             through(&mut strip);
         }
-        assert_eq!(through(&mut strip), [[0.0; BLOCK_FRAMES]; CHANNELS]);
+        assert_eq!(through(&mut strip), SILENCE);
     }
 
     #[test]
