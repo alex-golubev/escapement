@@ -168,8 +168,11 @@
   opacity: 0.9;
 }
 
+/* As wide as its widest number, padding aside, no wider for a sign a hair wider than a digit, on one line: nothing moves. */
 .master__peak {
-  min-width: 8ch;
+  box-sizing: content-box;
+  width: calc(var(--chars) * 1ch);
   padding-left: 0.25rem;
   text-align: right;
+  white-space: nowrap;
 }

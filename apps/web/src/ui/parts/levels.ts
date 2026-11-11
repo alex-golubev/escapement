@@ -1,5 +1,5 @@
 import { gainText } from '@escapement/engine-description'
-import { Number, Option } from 'effect'
+import { Array, Number, Option } from 'effect'
 
 /** Anything quieter reads as silence. */
 const meterFloorDb = -60
@@ -17,6 +17,11 @@ export const peakText = (peak: number) =>
     Option.liftPredicate(peak, (heard) => meterPosition(heard) > 0),
     { onNone: () => '−∞ dB', onSome: gainText }
   )
+
+/** The most characters `peakText` reads, from silence to 99.9 dB over, a tenth at a time: what holds it unmoved. */
+export const peakChars = Math.max(
+  ...Array.makeBy(1600, (tenths) => peakText(10 ** ((meterFloorDb + tenths / 10) / 20)).length)
+)
 
 /** One side's count of blocks over full scale, as one engine keeps it. */
 export interface Overs {

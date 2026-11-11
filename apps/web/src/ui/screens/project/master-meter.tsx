@@ -1,6 +1,6 @@
 import { useContext, useRef } from 'preact/hooks'
 import { setFlag, setText, useFrame } from '../../parts/frames'
-import { meterPosition, peakText } from '../../parts/levels'
+import { meterPosition, peakChars, peakText } from '../../parts/levels'
 import { MeterBoardContext, masterMeter, type Side } from '../../parts/meter-board'
 
 /** Segments of a side lit by the level, in equal steps of the meter's scale: five green, then two yellow. */
@@ -73,7 +73,7 @@ export const MasterMeter = () => {
           </span>
         ))}
       </span>
-      <span class='field__name master__peak' ref={peak}>
+      <span class='field__name master__peak' style={{ '--chars': peakChars }} ref={peak}>
         −∞ dB
       </span>
     </button>
