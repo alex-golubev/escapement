@@ -4,6 +4,7 @@ use super::*;
 use crate::heap;
 use crate::testing::plugins::{CONSTANT, THROUGH};
 use crate::testing::{SAMPLE_RATE, cell};
+use crate::{BLOCK_FRAMES, CHANNELS};
 
 /// 20 ms at 48 kHz.
 const FADE: usize = 960;
@@ -32,15 +33,15 @@ fn full(source: Seat) -> Connection {
     Connection::new(source, true, Start::Full)
 }
 
-/// Steps with their inputs, and the output's connections.
-fn order(steps: Vec<(Seat, Vec<Connection>)>, heard: Vec<Connection>) -> Order {
+/// Each turn's node with its inputs, and the output's connections.
+fn order(turns: Vec<(Seat, Vec<Connection>)>, heard: Vec<Connection>) -> Order {
     let mut connections = Vec::new();
-    let steps = steps
+    let turns = turns
         .into_iter()
         .map(|(node, inputs)| {
             let start = connections.len();
             connections.extend(inputs);
-            Step {
+            Turn {
                 node,
                 inputs: start..connections.len(),
             }
@@ -49,7 +50,7 @@ fn order(steps: Vec<(Seat, Vec<Connection>)>, heard: Vec<Connection>) -> Order {
     let output = connections.len();
     connections.extend(heard);
     Order {
-        steps,
+        turns,
         connections: connections.into(),
         output,
     }
@@ -57,11 +58,11 @@ fn order(steps: Vec<(Seat, Vec<Connection>)>, heard: Vec<Connection>) -> Order {
 
 /// Nodes that hear nothing, the first on the output.
 fn alone(handles: &[u32]) -> Order {
-    let steps = handles
+    let turns = handles
         .iter()
         .map(|&handle| (Seat::Cell(cell(handle)), vec![]))
         .collect();
-    order(steps, vec![full(Seat::Cell(cell(handles[0])))])
+    order(turns, vec![full(Seat::Cell(cell(handles[0])))])
 }
 
 fn left(graph: &mut Graph, cell: u32) -> f32 {
@@ -166,14 +167,14 @@ fn a_node_hears_the_sum_of_its_inputs_and_a_node_can_feed_several() {
         assert!(graph.insert(cell(handle), &mut Some(through(handle))));
     }
     let [one, two] = [Seat::Cell(cell(1)), Seat::Cell(cell(2))];
-    let steps = vec![
+    let turns = vec![
         (one, vec![]),
         (two, vec![]),
         (Seat::Cell(cell(3)), vec![full(one), full(two)]),
         (Seat::Cell(cell(4)), vec![full(one)]),
         (Seat::Cell(cell(5)), vec![]),
     ];
-    graph.reorder(&mut order(steps, vec![full(Seat::Cell(cell(3)))]));
+    graph.reorder(&mut order(turns, vec![full(Seat::Cell(cell(3)))]));
     assert_eq!(
         render(&mut graph),
         [[2.0; BLOCK_FRAMES], [-2.0; BLOCK_FRAMES]]
@@ -187,11 +188,11 @@ fn a_node_renders_after_the_nodes_it_hears_in_this_block() {
     let mut graph = graph(16);
     assert!(graph.insert(cell(5), &mut Some(through(5))));
     assert!(graph.insert(cell(9), &mut Some(node(9))));
-    let steps = vec![
+    let turns = vec![
         (Seat::Cell(cell(9)), vec![]),
         (Seat::Cell(cell(5)), vec![full(Seat::Cell(cell(9)))]),
     ];
-    graph.reorder(&mut order(steps, vec![full(Seat::Cell(cell(5)))]));
+    graph.reorder(&mut order(turns, vec![full(Seat::Cell(cell(5)))]));
     assert_eq!(
         render(&mut graph),
         [[1.0; BLOCK_FRAMES], [-1.0; BLOCK_FRAMES]]
@@ -213,7 +214,7 @@ fn with_nothing_to_hear_the_output_is_silent() {
     let mut graph = graph(4);
     assert!(graph.insert(cell(1), &mut Some(node(1))));
     graph.reorder(&mut order(vec![(Seat::Cell(cell(1)), vec![])], vec![]));
-    assert_eq!(render(&mut graph), [[0.0; BLOCK_FRAMES]; CHANNELS]);
+    assert_eq!(render(&mut graph), SILENCE);
 }
 
 #[test]
@@ -289,9 +290,9 @@ fn a_removed_node_plays_out_from_its_exit_while_its_cell_takes_another() {
     assert!(graph.remove(cell(1), Exit::new(0)));
     assert!(graph.insert(cell(1), &mut Some(through(1 << 16 | 1))));
     let playing_out = Seat::Exit(Exit::new(0));
-    let steps = vec![(playing_out, vec![]), (Seat::Cell(cell(1)), vec![])];
+    let turns = vec![(playing_out, vec![]), (Seat::Cell(cell(1)), vec![])];
     let falling = Connection::new(playing_out, false, Start::As(0));
-    graph.reorder(&mut order(steps, vec![falling]));
+    graph.reorder(&mut order(turns, vec![falling]));
     let out = heard(&mut graph, 8);
     assert!((out[0] - (1.0 - 1.0 / FADE as f32)).abs() < 1e-6);
     assert!(out[FADE - 1..].iter().all(|&sample| sample == 0.0));
@@ -303,7 +304,7 @@ fn fading_never_touches_the_heap() {
     let mut graph = graph(4);
     assert!(graph.insert(cell(1), &mut Some(node(1))));
     assert!(graph.insert(cell(2), &mut Some(through(2))));
-    let steps = vec![
+    let turns = vec![
         (Seat::Cell(cell(1)), vec![]),
         (
             Seat::Cell(cell(2)),
@@ -314,7 +315,7 @@ fn fading_never_touches_the_heap() {
         Connection::new(Seat::Cell(cell(1)), false, Start::Full),
         Connection::new(Seat::Cell(cell(2)), true, Start::Silent),
     ];
-    let mut wiring = order(steps, heard);
+    let mut wiring = order(turns, heard);
     let before = heap::calls();
     graph.reorder(&mut wiring);
     for _ in 0..10 {

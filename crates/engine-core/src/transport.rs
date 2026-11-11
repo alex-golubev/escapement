@@ -89,7 +89,7 @@ pub(crate) struct Stretch {
     ahead: u64,
     /// The count of `first`.
     count: u64,
-    block: Block,
+    pace: Pace,
 }
 
 impl Stretch {
@@ -97,7 +97,7 @@ impl Stretch {
     #[must_use]
     pub(crate) fn frame(&self, tick: u32) -> u32 {
         debug_assert!((self.first..=self.last).contains(&tick));
-        self.block.frame(self.ahead + u64::from(tick - self.first))
+        self.pace.frame(self.ahead + u64::from(tick - self.first))
     }
 
     /// Whole ticks from the start of play to `tick`, one of the stretch's, through the loop's ends.
@@ -116,7 +116,7 @@ pub(crate) struct Run {
     pub last: u64,
     /// The count of the tick the block starts in.
     start: u64,
-    block: Block,
+    pace: Pace,
 }
 
 impl Run {
@@ -124,13 +124,13 @@ impl Run {
     #[must_use]
     pub(crate) fn frame(&self, count: u64) -> u32 {
         debug_assert!((self.first..=self.last).contains(&count));
-        self.block.frame(count - self.start)
+        self.pace.frame(count - self.start)
     }
 }
 
 /// Where a block starts in its tick, and how fast it moves.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct Block {
+struct Pace {
     /// Of the tick the block starts in, already played.
     parts: u64,
     /// Parts in a tick.
@@ -139,7 +139,7 @@ struct Block {
     step: u64,
 }
 
-impl Block {
+impl Pace {
     /// The frame that passes the tick `ahead` whole ticks from the one the block starts in.
     #[expect(
         clippy::cast_possible_truncation,
@@ -291,14 +291,14 @@ impl Transport {
     /// where the loop ends among them. None while stopped.
     pub(crate) fn stretches(&self, frames: usize) -> impl Iterator<Item = Stretch> + use<> {
         debug_assert!(frames <= BLOCK_FRAMES);
-        let block = self.block();
+        let pace = self.pace();
         let mut left = match self.state {
             State::Playing {
                 loop_ticks,
                 ticks,
                 count,
                 ..
-            } => block.passes(frames).map(|(past, reached)| Passing {
+            } => pace.passes(frames).map(|(past, reached)| Passing {
                 next: u64::from(ticks) + past,
                 last: u64::from(ticks) + reached,
                 ahead: past,
@@ -316,7 +316,7 @@ impl Transport {
                 last: within(end - pass),
                 ahead: left.ahead,
                 count: left.start + left.ahead,
-                block,
+                pace,
             };
             left.ahead += end + 1 - left.next;
             left.next = end + 1;
@@ -332,17 +332,17 @@ impl Transport {
         let State::Playing { count, .. } = self.state else {
             return None;
         };
-        let block = self.block();
-        block.passes(frames).map(|(past, reached)| Run {
+        let pace = self.pace();
+        pace.passes(frames).map(|(past, reached)| Run {
             first: count + past,
             last: count + reached,
             start: count,
-            block,
+            pace,
         })
     }
 
-    fn block(&self) -> Block {
-        Block {
+    fn pace(&self) -> Pace {
+        Pace {
             parts: self.at().1,
             tick: self.tick,
             step: self.step,

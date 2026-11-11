@@ -8,8 +8,8 @@ use std::sync::Arc;
 
 use engine_plugins::catalog::CatalogEntry;
 use engine_plugins::{
-    BLOCK_FRAMES, CHANNELS, Event, Frames, NoteId, ParamNumber, Plugin, PluginDescription,
-    ProcessContext, SampleNumber, SampleRate, SampleReader,
+    Event, Frames, NoteId, ParamNumber, Plugin, PluginDescription, ProcessContext, SampleNumber,
+    SampleRate, SampleReader,
 };
 
 use crate::handle::NodeHandle;
@@ -18,6 +18,7 @@ use crate::pool::Sample;
 use crate::schema::Rejection;
 use crate::strip::{Strip, StripNumber};
 use crate::telemetry::NodeMeter;
+use crate::{Block, SILENCE};
 
 /// Notes a node takes in one block: far more than hands or a pattern's steps give.
 pub(crate) const NOTE_ROOM: usize = 32;
@@ -39,7 +40,7 @@ pub(crate) struct Node {
     /// Of what it passes on, for the page, if the page gave it one.
     meter: Option<NodeMeter>,
     /// The last block's.
-    output: [[f32; BLOCK_FRAMES]; CHANNELS],
+    output: Block,
 }
 
 /// What the node does with what it hears.
@@ -100,7 +101,7 @@ impl Node {
             kind,
             strip: Strip::new(sample_rate),
             meter: None,
-            output: [[0.0; BLOCK_FRAMES]; CHANNELS],
+            output: SILENCE,
         }
     }
 
@@ -181,8 +182,8 @@ impl Node {
         Ok(())
     }
 
-    /// Renders `frames` of `input` into its output, at most [`BLOCK_FRAMES`].
-    pub(crate) fn process(&mut self, input: &[[f32; BLOCK_FRAMES]; CHANNELS], frames: usize) {
+    /// Renders `frames` of `input` into its output, at most [`BLOCK_FRAMES`](crate::BLOCK_FRAMES).
+    pub(crate) fn process(&mut self, input: &Block, frames: usize) {
         match &mut self.kind {
             Kind::Plugin(slot) => slot.process(input, &mut self.output, frames),
             Kind::Insert => {
@@ -197,7 +198,7 @@ impl Node {
         }
     }
 
-    pub(crate) fn output(&self) -> &[[f32; BLOCK_FRAMES]; CHANNELS] {
+    pub(crate) fn output(&self) -> &Block {
         &self.output
     }
 
@@ -231,12 +232,7 @@ impl Slot {
         }
     }
 
-    fn process(
-        &mut self,
-        input: &[[f32; BLOCK_FRAMES]; CHANNELS],
-        output: &mut [[f32; BLOCK_FRAMES]; CHANNELS],
-        frames: usize,
-    ) {
+    fn process(&mut self, input: &Block, output: &mut Block, frames: usize) {
         self.plugin.process(ProcessContext {
             input: input.each_ref().map(|channel| &channel[..frames]),
             output: output.each_mut().map(|channel| &mut channel[..frames]),

@@ -6,7 +6,7 @@
 use std::collections::{HashMap, HashSet};
 use std::mem;
 
-use crate::graph::{Connection, Exit, Order, Seat, Start, Step};
+use crate::graph::{Connection, Exit, Order, Seat, Start, Turn};
 use crate::handle::{NodeCell, NodeHandle};
 use crate::handoff::Batch;
 use crate::schema::Rejection;
@@ -324,7 +324,7 @@ impl Record {
         );
         let mut sent = Sent::default();
         let mut connections = Vec::new();
-        let mut steps = Vec::with_capacity(self.order.len());
+        let mut turns = Vec::with_capacity(self.order.len());
         for &id in &self.order {
             let first = connections.len();
             for input in self.inputs(id) {
@@ -332,7 +332,7 @@ impl Record {
                     .insert((Some(id), input.source), connections.len());
                 connections.push(self.connection(Some(id), input));
             }
-            steps.push(Step {
+            turns.push(Turn {
                 node: self.seat(id),
                 inputs: first..connections.len(),
             });
@@ -346,7 +346,7 @@ impl Record {
         sent.heard = self.upstream(self.output.iter().map(|heard| heard.source), |_| true);
         self.sent = sent;
         Some(Order {
-            steps: steps.into(),
+            turns: turns.into(),
             connections: connections.into(),
             output,
         })
@@ -481,7 +481,7 @@ mod tests {
         NodeHandle::new(cell)
     }
 
-    /// Each step's node with its inputs as seats, and the output's.
+    /// Each turn's node with its inputs as seats, and the output's.
     fn wiring(order: &Order) -> (Vec<(Seat, Vec<Seat>)>, Vec<Seat>) {
         let sources = |range: std::ops::Range<usize>| {
             order.connections[range]
@@ -489,12 +489,12 @@ mod tests {
                 .map(|connection| connection.source)
                 .collect::<Vec<_>>()
         };
-        let steps = order
-            .steps
+        let turns = order
+            .turns
             .iter()
-            .map(|step| (step.node, sources(step.inputs.clone())))
+            .map(|turn| (turn.node, sources(turn.inputs.clone())))
             .collect();
-        (steps, sources(order.output..order.connections.len()))
+        (turns, sources(order.output..order.connections.len()))
     }
 
     /// Each connection's source, whether it rises and where it starts.
@@ -533,7 +533,7 @@ mod tests {
         record.add(handle(1));
         record.add(handle(2));
         assert_eq!(
-            record.take_changes().map(|order| order.steps.len()),
+            record.take_changes().map(|order| order.turns.len()),
             Some(2)
         );
         assert_eq!(record.take_changes(), None);
@@ -552,9 +552,9 @@ mod tests {
         );
         assert_eq!(record.take_changes(), None, "refusals change nothing");
         assert_eq!(record.connect(handle(2), handle(1)), Ok(()));
-        let (steps, _) = wiring(&record.take_changes().unwrap());
+        let (turns, _) = wiring(&record.take_changes().unwrap());
         assert_eq!(
-            steps,
+            turns,
             [
                 (Seat::Cell(cell(2)), vec![]),
                 (Seat::Cell(cell(1)), vec![Seat::Cell(cell(2))])
@@ -606,9 +606,9 @@ mod tests {
         record.connect(handle(2), handle(1)).unwrap();
         record.connect(handle(2), handle(3)).unwrap();
         let second = record.take_changes().unwrap();
-        let (steps, _) = wiring(&second);
+        let (turns, _) = wiring(&second);
         assert_eq!(
-            steps,
+            turns,
             [
                 (Seat::Cell(cell(2)), vec![]),
                 (Seat::Cell(cell(1)), vec![Seat::Cell(cell(2))]),
@@ -725,8 +725,8 @@ mod tests {
             ]
         );
         record.finish(Batch::new(2));
-        let (steps, _) = wiring(&record.take_changes().unwrap());
-        assert_eq!(steps[2], (Seat::Cell(cell(3)), vec![Seat::Cell(cell(2))]));
+        let (turns, _) = wiring(&record.take_changes().unwrap());
+        assert_eq!(turns[2], (Seat::Cell(cell(3)), vec![Seat::Cell(cell(2))]));
 
         // Back before the fade is over: it rises from where it got, and the batch's return no longer takes it away.
         record
@@ -757,9 +757,9 @@ mod tests {
             .unwrap();
         // As the page sees it, 2 no longer hears 1; while it fades, 2 hears 1 a block late.
         record.connect(handle(2), handle(1)).unwrap();
-        let (steps, _) = wiring(&record.take_changes().unwrap());
+        let (turns, _) = wiring(&record.take_changes().unwrap());
         assert_eq!(
-            steps,
+            turns,
             [
                 (Seat::Cell(cell(2)), vec![Seat::Cell(cell(1))]),
                 (Seat::Cell(cell(1)), vec![Seat::Cell(cell(2))])
@@ -811,9 +811,9 @@ mod tests {
         );
         assert_eq!(record.exits(), 2);
         record.finish(Batch::new(2));
-        let (steps, heard) = wiring(&record.take_changes().unwrap());
+        let (turns, heard) = wiring(&record.take_changes().unwrap());
         assert_eq!(
-            steps,
+            turns,
             [
                 (Seat::Cell(cell(1)), vec![]),
                 (Seat::Exit(Exit::new(1)), vec![])
@@ -841,9 +841,9 @@ mod tests {
         record.remove(handle(2), Batch::new(1)).unwrap();
         // The page sees no 2 any more, so no loop.
         assert_eq!(record.connect(handle(3), handle(1)), Ok(()));
-        let (steps, _) = wiring(&record.take_changes().unwrap());
+        let (turns, _) = wiring(&record.take_changes().unwrap());
         assert_eq!(
-            steps,
+            turns,
             [
                 (Seat::Cell(cell(3)), vec![Seat::Exit(Exit::new(0))]),
                 (Seat::Cell(cell(1)), vec![Seat::Cell(cell(3))]),

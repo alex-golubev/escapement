@@ -32,7 +32,7 @@ use crate::testing::events::decode;
 use crate::testing::pool::store;
 use crate::testing::{BAR, FRAMES_PER_TICK, SAMPLE_RATE, note_room, seconds, ticks_in};
 use crate::transport::TICKS_PER_QUARTER;
-use crate::{new, strip};
+use crate::{CHANNELS, new, strip};
 
 const TONE: u32 = 1;
 const FILTER: u32 = 2;

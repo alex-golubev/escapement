@@ -5,7 +5,7 @@ use std::{array, mem};
 use engine_plugins::SampleRate;
 
 use crate::handle::NodeHandle;
-use crate::{BLOCK_FRAMES, CHANNELS};
+use crate::{BLOCK_FRAMES, Block, CHANNELS};
 
 /// The board's layout word by word, mirrored in `packages/engine/src/telemetry.ts`.
 #[repr(C)]
@@ -81,7 +81,7 @@ pub const TELEMETRY_WORDS: usize = size_of::<Telemetry>() / 4;
 const FALL_DB: f32 = 20.0;
 const FALL_SECONDS: f32 = 1.7;
 /// −120 dB. Without a floor the level would never reach zero.
-const SILENCE: f32 = 1e-6;
+const FLOOR: f32 = 1e-6;
 
 /// Rises at once, falls slowly: a page that looks only now and then still sees short peaks. Counts the blocks that go
 /// over full scale, which the falling level can't tell, until whoever keeps the count takes them.
@@ -116,7 +116,7 @@ impl PeakMeter {
         let samples = block.len() as i32;
         let fallen = self.level * self.fall_per_sample.powi(samples);
         self.level = match peak.max(fallen) {
-            level if level < SILENCE => 0.0,
+            level if level < FLOOR => 0.0,
             level => level,
         };
         self.level
@@ -142,7 +142,7 @@ impl BlockMeter {
         Self(array::from_fn(|_| PeakMeter::new(sample_rate)))
     }
 
-    pub(crate) fn update(&mut self, block: &[[f32; BLOCK_FRAMES]; CHANNELS], frames: usize) {
+    pub(crate) fn update(&mut self, block: &Block, frames: usize) {
         for (side, channel) in self.0.iter_mut().zip(block) {
             side.update(&channel[..frames]);
         }
@@ -176,7 +176,7 @@ impl NodeMeter {
         }
     }
 
-    pub(crate) fn update(&mut self, block: &[[f32; BLOCK_FRAMES]; CHANNELS], frames: usize) {
+    pub(crate) fn update(&mut self, block: &Block, frames: usize) {
         self.meter.update(block, frames);
     }
 
@@ -198,6 +198,7 @@ impl NodeMeter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::SILENCE;
     use crate::testing::{SAMPLE_RATE, seconds};
 
     #[test]
@@ -265,8 +266,8 @@ mod tests {
     }
 
     /// A block of `peak` on the left and silence on the right.
-    fn left_at(peak: f32) -> [[f32; BLOCK_FRAMES]; CHANNELS] {
-        let mut block = [[0.0; BLOCK_FRAMES]; CHANNELS];
+    fn left_at(peak: f32) -> Block {
+        let mut block = SILENCE;
         block[0][3] = peak;
         block
     }

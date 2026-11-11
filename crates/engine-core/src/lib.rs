@@ -35,6 +35,11 @@ pub use transport::{DEFAULT_TEMPO, MAX_TEMPO, MIN_TEMPO, TICKS_PER_QUARTER};
 
 use engine_plugins::SampleRate;
 
+/// A block of stereo sound, by channel.
+pub(crate) type Block = [[f32; BLOCK_FRAMES]; CHANNELS];
+
+pub(crate) const SILENCE: Block = [[0.0; BLOCK_FRAMES]; CHANNELS];
+
 /// The build thread keeps the builder and hands the engine to the audio thread. All of the engine's own memory is
 /// allocated here; what grows comes in parcels.
 #[must_use]

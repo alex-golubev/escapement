@@ -11,14 +11,9 @@ use engine_plugins::smoothing::ramp_samples;
 use crate::handle::{NodeCell, NodeHandle};
 use crate::node::Node;
 use crate::telemetry::NodeMeter;
-use crate::{BLOCK_FRAMES, CHANNELS};
+use crate::{Block, SILENCE};
 
 pub(crate) const FADE_SECONDS: f32 = 0.02;
-
-/// What a node without connections hears.
-static SILENCE: [[f32; BLOCK_FRAMES]; CHANNELS] = [[0.0; BLOCK_FRAMES]; CHANNELS];
-
-type Block = [[f32; BLOCK_FRAMES]; CHANNELS];
 
 /// Live nodes by cell, or removed ones by their exit while they play out. Cell 0 stays empty: 0 is no node.
 pub(crate) struct Nodes(Box<[Option<Box<Node>>]>);
@@ -131,7 +126,7 @@ impl Connection {
 
 /// A node to render and where its inputs lie in the order's connections.
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct Step {
+pub(crate) struct Turn {
     pub node: Seat,
     pub inputs: Range<usize>,
 }
@@ -139,8 +134,8 @@ pub(crate) struct Step {
 /// Every node in turn, after the nodes it hears: a block costs the nodes, not the table's size.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct Order {
-    pub steps: Box<[Step]>,
-    /// Every step's inputs, then the output's.
+    pub turns: Box<[Turn]>,
+    /// Every turn's inputs, then the output's.
     pub connections: Box<[Connection]>,
     /// Where the output's connections start.
     pub output: usize,
@@ -163,7 +158,7 @@ impl Graph {
             exits,
             order: Order::default(),
             fade: ramp_samples(FADE_SECONDS, sample_rate),
-            input: [[0.0; BLOCK_FRAMES]; CHANNELS],
+            input: SILENCE,
         }
     }
 
@@ -240,8 +235,8 @@ impl Graph {
     /// Hands `report` the meter of each node in the order that has one, live ones only: not those playing out.
     pub(crate) fn each_meter(&mut self, mut report: impl FnMut(&mut NodeMeter)) {
         let Self { cells, order, .. } = self;
-        for step in &order.steps {
-            if let Seat::Cell(cell) = step.node
+        for turn in &order.turns {
+            if let Seat::Cell(cell) = turn.node
                 && let Some(meter) = cells
                     .0
                     .get_mut(cell.index())
@@ -263,24 +258,24 @@ impl Graph {
             input,
         } = self;
         let Order {
-            steps,
+            turns,
             connections,
             output: first_output,
         } = order;
         let (inputs, heard) = connections.split_at_mut(*first_output);
-        for step in steps.iter() {
+        for turn in turns.iter() {
             // Gone back to the build thread, it waits only for the next order to drop it.
-            if node(cells, exits, step.node).is_none() {
+            if node(cells, exits, turn.node).is_none() {
                 continue;
             }
-            let inputs = &mut inputs[step.inputs.clone()];
+            let inputs = &mut inputs[turn.inputs.clone()];
             let block = if inputs.is_empty() {
                 &SILENCE
             } else {
                 mix(cells, exits, inputs, *fade, frames, input);
                 &*input
             };
-            if let Some(node) = node_mut(cells, exits, step.node) {
+            if let Some(node) = node_mut(cells, exits, turn.node) {
                 node.process(block, frames);
             }
         }

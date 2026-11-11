@@ -1,11 +1,12 @@
 use engine_plugins::catalog::CATALOG;
 
 use super::*;
+use crate::BLOCK_FRAMES;
 use crate::heap;
 use crate::pool::SamplePool;
 use crate::testing::plugins::{CONSTANT, GIVEN, READER, RECORDER};
 use crate::testing::pool::store;
-use crate::testing::{SAMPLE_RATE, SILENCE, param_number, ramp, sample_number};
+use crate::testing::{SAMPLE_RATE, param_number, ramp, sample_number};
 
 const HANDLE: NodeHandle = NodeHandle::new(1);
 
