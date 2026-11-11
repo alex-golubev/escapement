@@ -4,7 +4,7 @@
 pub const MAX_MESSAGE: usize = 64 * 1024;
 
 pub(crate) const SIZE_PREFIX: usize = size_of::<u32>();
-pub(crate) const KIND: usize = 1;
+const KIND: usize = 1;
 
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum Frame {
