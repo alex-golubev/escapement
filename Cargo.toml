@@ -13,3 +13,24 @@ repository = "https://github.com/alex-golubev/escapement"
 panic = "abort"
 lto = true
 codegen-units = 1
+
+[workspace.lints.rust]
+rust_2018_idioms = { level = "warn", priority = -1 }
+unused_qualifications = "warn"
+
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+# An exception is an `expect` with a reason, so it speaks up once it is no longer needed.
+allow_attributes = "warn"
+allow_attributes_without_reason = "warn"
+unwrap_used = "warn"
+# They want a section on every such function, needed or not; a non-obvious error or panic gets one anyway.
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+# `node` and `note`, the engine's two main words, stand side by side almost everywhere.
+similar_names = "allow"
+# Until numbers and indices get their own types.
+cast_possible_truncation = "allow"
+cast_precision_loss = "allow"
+cast_sign_loss = "allow"
+cast_possible_wrap = "allow"

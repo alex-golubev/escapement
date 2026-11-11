@@ -6,6 +6,7 @@ pub const THRESHOLD: f32 = 1e-15;
 
 /// For each value a plugin keeps from one sample to the next.
 #[inline]
+#[must_use]
 pub fn flush(value: f32) -> f32 {
     if value.abs() < THRESHOLD { 0.0 } else { value }
 }

@@ -153,7 +153,7 @@ mod tests {
             match param.scale {
                 Scale::Linear => {}
                 Scale::Logarithmic => {
-                    assert!(param.min > 0.0, "{at}: a logarithmic scale starts above 0")
+                    assert!(param.min > 0.0, "{at}: a logarithmic scale starts above 0");
                 }
                 Scale::Volume => {
                     assert_eq!(param.min, 0.0, "{at}: a volume is silent at the bottom");

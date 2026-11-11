@@ -90,6 +90,7 @@ pub struct PeakMeter {
 }
 
 impl PeakMeter {
+    #[must_use]
     pub fn new(sample_rate: f32) -> Self {
         Self {
             level: 0.0,
@@ -113,6 +114,7 @@ impl PeakMeter {
         self.level
     }
 
+    #[must_use]
     pub fn level(&self) -> f32 {
         self.level
     }
@@ -127,6 +129,7 @@ impl PeakMeter {
 pub struct BlockMeter([PeakMeter; CHANNELS]);
 
 impl BlockMeter {
+    #[must_use]
     pub fn new(sample_rate: f32) -> Self {
         Self(array::from_fn(|_| PeakMeter::new(sample_rate)))
     }

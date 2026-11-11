@@ -42,6 +42,7 @@ pub struct Frames<'a> {
 
 impl<'a> Frames<'a> {
     /// The first `count` channels, of one length, are the sound's; the rest are ignored.
+    #[must_use]
     pub fn new(channels: [&'a [f32]; CHANNELS], count: usize) -> Self {
         debug_assert!((1..=CHANNELS).contains(&count), "{count} channels");
         debug_assert!(
@@ -54,15 +55,18 @@ impl<'a> Frames<'a> {
     }
 
     /// One for a mono sound, two for stereo.
+    #[must_use]
     pub fn channels(&self) -> &[&'a [f32]] {
         &self.channels[..self.count]
     }
 
     /// Fewer than asked for where the sound ends.
+    #[must_use]
     pub fn len(&self) -> usize {
         self.channels[0].len()
     }
 
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }

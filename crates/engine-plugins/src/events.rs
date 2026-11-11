@@ -24,6 +24,7 @@ pub enum Event {
 
 impl Event {
     /// A value given between blocks takes effect at the start of the next.
+    #[must_use]
     pub const fn param_at_start(param: u32, value: f32) -> Self {
         Self::Param {
             time: 0,
@@ -33,6 +34,7 @@ impl Event {
     }
 
     /// The frame of the block.
+    #[must_use]
     pub fn time(&self) -> u32 {
         match *self {
             Self::Param { time, .. } | Self::NoteOn { time, .. } | Self::NoteOff { time, .. } => {
@@ -52,7 +54,7 @@ pub enum Step {
 /// The block of `frames` as a plugin goes through it: each event at its time, the frames between. `events` are in
 /// time order; one past the block comes at its end.
 pub fn steps(events: &[Event], frames: usize) -> impl Iterator<Item = Step> {
-    let mut events: Peekable<slice::Iter<Event>> = events.iter().peekable();
+    let mut events: Peekable<slice::Iter<'_, Event>> = events.iter().peekable();
     let mut start = 0;
     iter::from_fn(move || {
         let next = events

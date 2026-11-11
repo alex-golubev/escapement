@@ -181,7 +181,7 @@ impl Builder {
         edits: &mut Vec<Edit>,
         let_go: &mut Vec<NodeHandle>,
         batch: u32,
-        edit: schema::Edit,
+        edit: schema::Edit<'_>,
     ) -> Result<(), Rejection> {
         match edit.edit_type() {
             DeviceEdit::Reset => {
@@ -287,7 +287,7 @@ impl Builder {
     fn create_node(
         &mut self,
         edits: &mut Vec<Edit>,
-        create: schema::CreateNode,
+        create: schema::CreateNode<'_>,
     ) -> Result<(), Rejection> {
         let handle = self.free_handle(create.node())?;
         let entry =
@@ -339,7 +339,7 @@ impl Builder {
     fn set_pattern(
         &mut self,
         edits: &mut Vec<Edit>,
-        set: schema::SetPattern,
+        set: schema::SetPattern<'_>,
     ) -> Result<(), Rejection> {
         let handle = PatternHandle::new(set.pattern());
         if handle.is_none() {
@@ -381,7 +381,7 @@ impl Builder {
     }
 
     /// A clip of no length, or of no period, is dropped under one refusal for the edit; the rest play.
-    fn set_clips(&mut self, edits: &mut Vec<Edit>, set: schema::SetClips) {
+    fn set_clips(&mut self, edits: &mut Vec<Edit>, set: schema::SetClips<'_>) {
         let mut refused = None;
         let clips: Vec<_> = set
             .clips()
@@ -532,7 +532,7 @@ pub(crate) mod tests {
         generation << 16 | cell
     }
 
-    pub fn batch(specs: &[Spec]) -> Vec<u8> {
+    pub fn batch(specs: &[Spec<'_>]) -> Vec<u8> {
         let mut fbb = FlatBufferBuilder::new();
         let edits: Vec<_> = specs
             .iter()
@@ -564,7 +564,11 @@ pub(crate) mod tests {
         fbb.create_vector(&values)
     }
 
-    fn table(fbb: &mut FlatBufferBuilder, spec: Spec) -> (DeviceEdit, WIPOffset<UnionWIPOffset>) {
+    #[expect(clippy::too_many_lines, reason = "one arm for each kind of edit")]
+    fn table(
+        fbb: &mut FlatBufferBuilder<'_>,
+        spec: Spec<'_>,
+    ) -> (DeviceEdit, WIPOffset<UnionWIPOffset>) {
         match spec {
             Spec::Reset(epoch) => (
                 DeviceEdit::Reset,
@@ -788,6 +792,10 @@ pub(crate) mod tests {
         (Builder::new(SAMPLE_RATE, build), audio)
     }
 
+    #[expect(
+        clippy::unnecessary_box_returns,
+        reason = "the parcel goes back to the audio end in its box"
+    )]
     fn parcel(
         builder: &mut Builder,
         audio: &mut AudioEnd,

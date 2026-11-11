@@ -30,6 +30,7 @@ macro_rules! catalog {
 pub static CATALOG: &[CatalogEntry] = catalog![tone, filter, sampler, synth];
 
 /// Only the exact version: another one may sound different.
+#[must_use]
 pub fn find(plugin: u32, version: u32) -> Option<&'static CatalogEntry> {
     CATALOG.iter().find(|entry| {
         let description = entry.description;
@@ -234,6 +235,7 @@ mod tests {
                         let rest = render(entry.description, plugin.as_mut(), &[event], after);
                         for (channel, unchanged) in unchanged.iter().enumerate() {
                             changed[channel].extend(&rest[channel]);
+                            #[expect(clippy::float_cmp, reason = "any difference counts")]
                             let differs = unchanged
                                 .iter()
                                 .zip(&changed[channel])

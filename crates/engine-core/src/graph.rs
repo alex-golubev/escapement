@@ -175,6 +175,7 @@ impl Graph {
 
     /// Swaps `slot` into the cell; what was there, nothing as the build thread keeps track, comes back in it. False
     /// past the table: the node stays in `slot`.
+    #[must_use]
     pub fn insert(&mut self, cell: u32, slot: &mut Option<Box<Node>>) -> bool {
         let Some(cell) = self.cells.0.get_mut(cell as usize) else {
             return false;
@@ -184,6 +185,7 @@ impl Graph {
     }
 
     /// Moves the node out of its cell to play out at `place`, so the cell is free at once. False past either table.
+    #[must_use]
     pub fn remove(&mut self, cell: u32, place: u32) -> bool {
         let (Some(cell), Some(place)) = (
             self.cells.0.get_mut(cell as usize),
@@ -206,7 +208,7 @@ impl Graph {
     pub fn reorder(&mut self, order: &mut Order) {
         mem::swap(&mut self.order, order);
         let previous = &order.connections;
-        for connection in self.order.connections.iter_mut() {
+        for connection in &mut self.order.connections {
             connection.level = match connection.start {
                 Start::Silent => 0,
                 Start::Full => self.fade,
@@ -218,7 +220,7 @@ impl Graph {
     /// Hands `report` the meter of each node in the order that has one, live ones only: not those playing out.
     pub fn each_meter(&mut self, mut report: impl FnMut(&mut NodeMeter)) {
         let Self { cells, order, .. } = self;
-        for step in order.steps.iter() {
+        for step in &order.steps {
             if let Place::Cell(cell) = step.node
                 && let Some(meter) = cells
                     .0
@@ -317,20 +319,12 @@ mod tests {
     const FADE: usize = 960;
 
     /// Plays 1 on the left and −1 on the right.
-    fn node(cell: u32) -> Option<Box<Node>> {
-        Some(Box::new(Node::new(
-            &CONSTANT,
-            SAMPLE_RATE,
-            NodeHandle::new(cell),
-        )))
+    fn node(cell: u32) -> Box<Node> {
+        Box::new(Node::new(&CONSTANT, SAMPLE_RATE, NodeHandle::new(cell)))
     }
 
-    fn through(cell: u32) -> Option<Box<Node>> {
-        Some(Box::new(Node::new(
-            &THROUGH,
-            SAMPLE_RATE,
-            NodeHandle::new(cell),
-        )))
+    fn through(cell: u32) -> Box<Node> {
+        Box::new(Node::new(&THROUGH, SAMPLE_RATE, NodeHandle::new(cell)))
     }
 
     fn graph(cells: usize) -> Graph {
@@ -398,16 +392,16 @@ mod tests {
     #[test]
     fn swaps_bring_nodes_in_and_take_what_they_displace_out_without_the_heap() {
         let mut graph = graph(4);
-        let (mut first, mut second, mut far) = (node(1), node(9), node(16));
+        let (mut first, mut second, mut far) = (Some(node(1)), Some(node(9)), Some(node(16)));
         let (mut larger, mut leaving) = (Nodes::new(16), Nodes::new(8));
         let mut new_order = alone(&[9, 1]);
         let mut back = None;
 
         let before = heap::calls();
-        graph.insert(1, &mut first);
+        assert!(graph.insert(1, &mut first));
         graph.grow(Table::Cells, &mut larger);
         graph.grow(Table::Leaving, &mut leaving);
-        graph.insert(9, &mut second);
+        assert!(graph.insert(9, &mut second));
         let past_the_table = graph.insert(16, &mut far);
         graph.reorder(&mut new_order);
         let output = render(&mut graph);
@@ -436,7 +430,7 @@ mod tests {
     #[test]
     fn a_handle_reaches_only_the_node_of_its_generation() {
         let mut graph = graph(4);
-        graph.insert(2, &mut node(1 << 16 | 2));
+        assert!(graph.insert(2, &mut Some(node(1 << 16 | 2))));
         assert!(graph.node_mut(NodeHandle::new(1 << 16 | 2)).is_some());
         assert!(graph.node_mut(NodeHandle::new(2)).is_none());
         assert!(graph.node_mut(NodeHandle::new(2 << 16 | 2)).is_none());
@@ -446,9 +440,9 @@ mod tests {
     fn growing_keeps_every_node_where_it_was() {
         let mut graph = graph(4);
         for cell in 1..4 {
-            graph.insert(cell, &mut node(cell));
+            assert!(graph.insert(cell, &mut Some(node(cell))));
         }
-        graph.remove(3, 2);
+        assert!(graph.remove(3, 2));
         graph.grow(Table::Cells, &mut Nodes::new(8));
         graph.grow(Table::Leaving, &mut Nodes::new(8));
         assert_eq!(cells(&mut graph), [1, 2]);
@@ -460,10 +454,10 @@ mod tests {
     #[test]
     fn every_node_renders_and_only_what_the_output_hears_is_heard() {
         let mut graph = graph(4);
-        graph.insert(1, &mut node(1));
+        assert!(graph.insert(1, &mut Some(node(1))));
         let tone = engine_plugins::catalog::find(tone::DESCRIPTION.id, tone::DESCRIPTION.version);
         let tone = Node::new(tone.unwrap(), SAMPLE_RATE, NodeHandle::new(2));
-        graph.insert(2, &mut Some(Box::new(tone)));
+        assert!(graph.insert(2, &mut Some(Box::new(tone))));
         graph.reorder(&mut alone(&[1, 2]));
         assert_eq!(
             render(&mut graph),
@@ -476,10 +470,10 @@ mod tests {
     #[test]
     fn a_node_hears_the_sum_of_its_inputs_and_a_node_can_feed_several() {
         let mut graph = graph(8);
-        graph.insert(1, &mut node(1));
-        graph.insert(2, &mut node(2));
+        assert!(graph.insert(1, &mut Some(node(1))));
+        assert!(graph.insert(2, &mut Some(node(2))));
         for cell in 3..6 {
-            graph.insert(cell, &mut through(cell));
+            assert!(graph.insert(cell, &mut Some(through(cell))));
         }
         let [one, two] = [Place::Cell(1), Place::Cell(2)];
         let steps = vec![
@@ -501,8 +495,8 @@ mod tests {
     #[test]
     fn a_node_renders_after_the_nodes_it_hears_in_this_block() {
         let mut graph = graph(16);
-        graph.insert(5, &mut through(5));
-        graph.insert(9, &mut node(9));
+        assert!(graph.insert(5, &mut Some(through(5))));
+        assert!(graph.insert(9, &mut Some(node(9))));
         let steps = vec![
             (Place::Cell(9), vec![]),
             (Place::Cell(5), vec![full(Place::Cell(9))]),
@@ -517,8 +511,8 @@ mod tests {
     #[test]
     fn only_nodes_in_the_order_render() {
         let mut graph = graph(4);
-        graph.insert(1, &mut node(1));
-        graph.insert(2, &mut node(2));
+        assert!(graph.insert(1, &mut Some(node(1))));
+        assert!(graph.insert(2, &mut Some(node(2))));
         graph.reorder(&mut alone(&[2]));
         render(&mut graph);
         assert_eq!([left(&mut graph, 1), left(&mut graph, 2)], [0.0, 1.0]);
@@ -527,7 +521,7 @@ mod tests {
     #[test]
     fn with_nothing_to_hear_the_output_is_silent() {
         let mut graph = graph(4);
-        graph.insert(1, &mut node(1));
+        assert!(graph.insert(1, &mut Some(node(1))));
         graph.reorder(&mut order(vec![(Place::Cell(1), vec![])], vec![]));
         assert_eq!(render(&mut graph), [[0.0; BLOCK_FRAMES]; CHANNELS]);
     }
@@ -535,13 +529,15 @@ mod tests {
     #[test]
     fn a_connection_rises_and_falls_in_equal_steps_over_20_ms() {
         let mut graph = graph(4);
-        graph.insert(1, &mut node(1));
+        assert!(graph.insert(1, &mut Some(node(1))));
         let rising = Connection::new(Place::Cell(1), true, Start::Silent);
         graph.reorder(&mut order(vec![(Place::Cell(1), vec![])], vec![rising]));
         let up = heard(&mut graph, 8);
         assert!((up[0] - 1.0 / FADE as f32).abs() < 1e-6);
         assert!((up[FADE / 2 - 1] - 0.5).abs() < 1e-6);
-        assert!(up[FADE - 1..].iter().all(|&sample| sample == 1.0));
+        #[expect(clippy::float_cmp, reason = "the rise ends on 1 exactly")]
+        let risen = up[FADE - 1..].iter().all(|&sample| sample == 1.0);
+        assert!(risen);
 
         // Carried over from where it got to, then down.
         let falling = Connection::new(Place::Cell(1), false, Start::As(0));
@@ -554,7 +550,7 @@ mod tests {
     #[test]
     fn a_connection_turned_back_halfway_returns_from_where_it_got() {
         let mut graph = graph(4);
-        graph.insert(1, &mut node(1));
+        assert!(graph.insert(1, &mut Some(node(1))));
         let rising = Connection::new(Place::Cell(1), true, Start::Silent);
         graph.reorder(&mut order(vec![(Place::Cell(1), vec![])], vec![rising]));
         let half = FADE / 2 / BLOCK_FRAMES;
@@ -570,8 +566,8 @@ mod tests {
     #[test]
     fn a_crossfade_keeps_the_sum_whole() {
         let mut graph = graph(4);
-        graph.insert(1, &mut node(1));
-        graph.insert(2, &mut node(2));
+        assert!(graph.insert(1, &mut Some(node(1))));
+        assert!(graph.insert(2, &mut Some(node(2))));
         let both = vec![(Place::Cell(1), vec![]), (Place::Cell(2), vec![])];
         graph.reorder(&mut order(both.clone(), vec![full(Place::Cell(1))]));
         render(&mut graph);
@@ -585,11 +581,11 @@ mod tests {
     #[test]
     fn a_removed_node_plays_out_from_its_place_while_its_cell_takes_another() {
         let mut graph = graph(4);
-        graph.insert(1, &mut node(1));
+        assert!(graph.insert(1, &mut Some(node(1))));
         graph.reorder(&mut alone(&[1]));
         render(&mut graph);
-        graph.remove(1, 0);
-        graph.insert(1, &mut through(1 << 16 | 1));
+        assert!(graph.remove(1, 0));
+        assert!(graph.insert(1, &mut Some(through(1 << 16 | 1))));
         let leaving = Place::Leaving(0);
         let steps = vec![(leaving, vec![]), (Place::Cell(1), vec![])];
         let falling = Connection::new(leaving, false, Start::As(0));
@@ -603,8 +599,8 @@ mod tests {
     #[test]
     fn fading_never_touches_the_heap() {
         let mut graph = graph(4);
-        graph.insert(1, &mut node(1));
-        graph.insert(2, &mut through(2));
+        assert!(graph.insert(1, &mut Some(node(1))));
+        assert!(graph.insert(2, &mut Some(through(2))));
         let steps = vec![
             (Place::Cell(1), vec![]),
             (

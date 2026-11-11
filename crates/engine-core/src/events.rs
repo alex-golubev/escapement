@@ -33,25 +33,24 @@ impl Default for EventOutput {
 
 impl EventOutput {
     /// Where [`take`](Self::take) hands out events.
+    #[must_use]
     pub fn as_ptr(&self) -> *const u8 {
         self.buf.as_ptr()
     }
 
     /// False if the event is lost. After one is lost, later ones are too until the next take:
     /// events stay in order, and a flood doesn't cost writing events only to drop them.
+    #[must_use]
     pub fn push(&mut self, epoch: u32, event: EngineEvent) -> bool {
         if self.full {
             return false;
         }
-        match write(&mut self.buf[self.len..], epoch, event) {
-            Some(size) => {
-                self.len += size;
-                true
-            }
-            None => {
-                self.full = true;
-                false
-            }
+        if let Some(size) = write(&mut self.buf[self.len..], epoch, event) {
+            self.len += size;
+            true
+        } else {
+            self.full = true;
+            false
         }
     }
 
@@ -159,8 +158,8 @@ pub(crate) mod tests {
     #[test]
     fn hands_out_events_in_order() {
         let mut output = EventOutput::default();
-        output.push(1, REJECTED);
-        output.push(2, EngineEvent::CommandStreamLost);
+        assert!(output.push(1, REJECTED));
+        assert!(output.push(2, EngineEvent::CommandStreamLost));
         let (bytes, lost) = output.take(EVENT_CAPACITY);
         assert_eq!(
             decode(bytes),
@@ -173,7 +172,7 @@ pub(crate) mod tests {
     fn events_that_do_not_fit_into_the_room_are_lost() {
         let mut output = EventOutput::default();
         for epoch in 1..=3 {
-            output.push(epoch, REJECTED);
+            assert!(output.push(epoch, REJECTED));
         }
         // Room for one and a half.
         let (bytes, lost) = output.take(message_size(REJECTED) * 3 / 2);
@@ -184,7 +183,7 @@ pub(crate) mod tests {
     #[test]
     fn take_empties_the_buffer() {
         let mut output = EventOutput::default();
-        output.push(1, REJECTED);
+        assert!(output.push(1, REJECTED));
         output.take(0);
         assert_eq!(output.take(EVENT_CAPACITY), (&[][..], 0));
     }

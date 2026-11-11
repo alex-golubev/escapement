@@ -38,15 +38,18 @@ pub struct Pcm {
 }
 
 impl Pcm {
+    #[must_use]
     pub fn channels(&self) -> usize {
         self.channels
     }
 
+    #[must_use]
     pub fn frames(&self) -> usize {
         self.frames
     }
 
     /// The channel's numbers over `frames`, cut at the sound's end; nothing for a channel it doesn't have.
+    #[must_use]
     pub fn view(&self, channel: usize, frames: Range<usize>) -> &[f32] {
         if channel >= self.channels {
             return &[];
@@ -98,6 +101,7 @@ impl SamplePool {
         }
     }
 
+    #[must_use]
     pub fn get(&self, hash: &Hash) -> Option<&Arc<Sample>> {
         self.samples.get(hash).map(|entry| &entry.sample)
     }
@@ -142,6 +146,10 @@ impl SamplePool {
         if channels > CHANNELS {
             return Err(Rejection::TooManyChannels);
         }
+        #[expect(
+            clippy::float_cmp,
+            reason = "a sound comes at the engine's rate exactly"
+        )]
         if sample_rate != self.sample_rate {
             return Err(Rejection::WrongSampleRate);
         }

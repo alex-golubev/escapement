@@ -72,6 +72,7 @@ pub struct Numbers {
 
 impl Numbers {
     /// For an instrument's own constants: one that doesn't list [`PARAMS`] fails the build.
+    #[must_use]
     pub const fn of(description: &PluginDescription) -> Self {
         Self {
             delay: description.param_number(DELAY.id),
@@ -83,6 +84,7 @@ impl Numbers {
         }
     }
 
+    #[must_use]
     pub const fn all(self) -> [u32; PARAMS.len()] {
         [
             self.delay,
@@ -136,6 +138,7 @@ impl Contour {
         level: 0.0,
     };
 
+    #[must_use]
     pub fn is_held(&self) -> bool {
         matches!(
             self.stage,
@@ -147,19 +150,23 @@ impl Contour {
         )
     }
 
+    #[must_use]
     pub fn is_giving_way(&self) -> bool {
         self.stage == Stage::GivingWay
     }
 
+    #[must_use]
     pub fn is_over(&self) -> bool {
         self.stage == Stage::Over
     }
 
+    #[must_use]
     pub fn level(&self) -> f64 {
         self.level
     }
 
     /// Held at a sustain level of none, where it can sound again only if the sustain is turned up.
+    #[must_use]
     pub fn has_fallen_silent(&self) -> bool {
         self.stage == Stage::Sustaining && self.level == 0.0
     }
@@ -197,6 +204,7 @@ pub struct Envelope {
 
 impl Envelope {
     /// At the defaults.
+    #[must_use]
     pub fn new(numbers: Numbers, sample_rate: f32) -> Self {
         let samples = |seconds| f64::from(ramp_samples(seconds, sample_rate));
         let mut envelope = Self {
@@ -314,6 +322,7 @@ impl Envelope {
                     release,
                 } => {
                     // A turn of the release takes the rest of the fall on at its own pace.
+                    #[expect(clippy::float_cmp, reason = "any turn of the release counts")]
                     if *release != self.release {
                         *release = self.release;
                         *fall = (f64::from(FLOOR) / *from).powf(release.recip());
@@ -386,13 +395,16 @@ mod tests {
         LetGo,
     }
 
-    /// A note's levels from its press, block by block, with what it is told at the start of each stretch: so many samples
-    /// each. The first stretch's knobs come before the first sample. None once it is over.
-    fn levels(stretches: &[(&[Told], usize)]) -> Vec<Option<f32>> {
+    /// What the envelope is told, then for how many samples.
+    type Span<'a> = (&'a [Told], usize);
+
+    /// A note's levels from its press, block by block, with what it is told at the start of each span: so many samples
+    /// each. The first span's knobs come before the first sample. None once it is over.
+    fn levels(spans: &[Span<'_>]) -> Vec<Option<f32>> {
         let mut envelope = Envelope::new(NUMBERS, SAMPLE_RATE);
         let mut contour = Contour::START;
         let mut levels = Vec::new();
-        for &(told, samples) in stretches {
+        for &(told, samples) in spans {
             for told in told {
                 match *told {
                     Told::Set(param, value) => envelope.set(param, value),
@@ -422,6 +434,14 @@ mod tests {
         (a - b).abs() <= by
     }
 
+    #[expect(
+        clippy::float_cmp,
+        reason = "a level that gets to its target stays on it exactly"
+    )]
+    fn all_at(levels: &[f32], target: f32) -> bool {
+        levels.iter().all(|&level| level == target)
+    }
+
     #[test]
     fn a_new_note_rises_at_once_in_a_straight_line_over_3_ms_and_holds_full_level() {
         let attack = at(0.003);
@@ -430,7 +450,7 @@ mod tests {
             let line = (i + 1) as f32 / attack as f32;
             assert!(near(*level, line, 1e-6), "{i}: {level} for {line}");
         }
-        assert!(levels[attack - 1..].iter().all(|&level| level == 1.0));
+        assert!(all_at(&levels[attack - 1..], 1.0));
     }
 
     #[test]
@@ -492,7 +512,7 @@ mod tests {
         ];
         let levels = sounding(&levels(&[(&knobs, attack + hold + decay + 1000)]));
         let top = attack - 1;
-        assert!(levels[top..=top + hold].iter().all(|&level| level == 1.0));
+        assert!(all_at(&levels[top..=top + hold], 1.0));
         let falling = &levels[top + hold + 1..];
         // A quarter of the way down in decibels each quarter of the time.
         for quarter in 1..=4 {
@@ -501,7 +521,7 @@ mod tests {
             assert!(near(level, line, 0.01), "{quarter}: {level} for {line}");
         }
         assert!(falling[decay - 2] > 0.25);
-        assert!(falling[decay - 1..].iter().all(|&level| level == 0.25));
+        assert!(all_at(&falling[decay - 1..], 0.25));
     }
 
     #[test]
@@ -600,7 +620,7 @@ mod tests {
             "{}",
             levels[held + glide / 2 - 1]
         );
-        assert!(levels[held + glide - 1..].iter().all(|&level| level == 0.5));
+        assert!(all_at(&levels[held + glide - 1..], 0.5));
     }
 
     #[test]
@@ -624,7 +644,7 @@ mod tests {
         let shortest = |param: &ParamDescription| Told::Set(NUMBERS.all()[place(param)], param.min);
         let silent = Told::Set(NUMBERS.sustain, 0.0);
         let long = |param: &ParamDescription| Told::Set(NUMBERS.all()[place(param)], param.max);
-        let cases: [(&str, &[(&[Told], usize)]); 6] = [
+        let cases: [(&str, &[Span<'_>]); 6] = [
             ("attack", &[(&[shortest(&ATTACK)], 1000)]),
             ("decay", &[(&[shortest(&DECAY), silent], 2000)]),
             (

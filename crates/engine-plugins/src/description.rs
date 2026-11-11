@@ -140,6 +140,7 @@ macro_rules! numbered {
 impl ParamDescription {
     /// As the engine takes it: in range, a whole number or a choice the nearest, and 0 far below hearing, so no
     /// denormal reaches a sample; none for what isn't a number.
+    #[must_use]
     pub fn taken(&self, value: f32) -> Option<f32> {
         value.is_finite().then(|| {
             let value = value.clamp(self.min, self.max);
@@ -152,6 +153,7 @@ impl ParamDescription {
     }
 
     /// Whole numbers only, such as semitones or a choice's place.
+    #[must_use]
     pub const fn whole(&self) -> bool {
         matches!(self.values, Values::Whole | Values::Choices(_))
     }

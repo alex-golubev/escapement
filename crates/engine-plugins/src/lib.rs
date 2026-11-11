@@ -38,5 +38,5 @@ pub struct ProcessContext<'a> {
 /// What sits in a node's slot. The first block starts with every parameter's value, so values that come before the
 /// first sample must apply at once. The audio thread calls `process`, which must not touch the heap.
 pub trait Plugin: Send {
-    fn process(&mut self, context: ProcessContext);
+    fn process(&mut self, context: ProcessContext<'_>);
 }

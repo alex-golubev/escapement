@@ -13,3 +13,6 @@ engine-plugins = { path = "../engine-plugins" }
 
 [lib]
 crate-type = ["cdylib"]
+
+[lints]
+workspace = true
