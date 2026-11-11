@@ -186,7 +186,11 @@ mod tests {
                 Values::Choices(choices) => {
                     assert!(choices.len() >= 2, "{at}: a choice of one is none");
                     assert_eq!(param.min, 0.0, "{at}: the first choice is 0");
-                    assert_eq!(param.max as usize, choices.len() - 1, "{at}: the last");
+                    assert_eq!(
+                        param.max,
+                        Choice::value(choices.len() - 1),
+                        "{at}: the last"
+                    );
                     assert_eq!(param.unit, None, "{at}: a choice reads as its label");
                     for choice in choices {
                         let at = format!("{at} {:?}", choice.id);

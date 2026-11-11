@@ -22,9 +22,14 @@ impl Fnv {
         self.number(float.to_bits());
     }
 
+    /// As the page counts it: a description's lists and texts are short.
+    fn length(&mut self, length: usize) {
+        self.number(u32::try_from(length).expect("a length below 2³²"));
+    }
+
     /// Length first, so neighbouring strings can't trade bytes.
     fn text(&mut self, text: &str) {
-        self.number(text.len() as u32);
+        self.length(text.len());
         self.bytes(text.as_bytes());
     }
 }
@@ -34,7 +39,7 @@ impl Fnv {
 #[must_use]
 pub fn fingerprint(catalog: &[CatalogEntry], node_params: &[ParamDescription]) -> u32 {
     let mut hash = Fnv(0x811c_9dc5);
-    hash.number(catalog.len() as u32);
+    hash.length(catalog.len());
     for entry in catalog {
         let CatalogEntry {
             name,
@@ -53,7 +58,7 @@ pub fn fingerprint(catalog: &[CatalogEntry], node_params: &[ParamDescription]) -
         hash.number(*version);
         hash.text(label);
         hash.params(params);
-        hash.number(samples.len() as u32);
+        hash.length(samples.len());
         for sample in *samples {
             let SampleDescription { id, label } = sample;
             hash.text(id);
@@ -66,7 +71,7 @@ pub fn fingerprint(catalog: &[CatalogEntry], node_params: &[ParamDescription]) -
 
 impl Fnv {
     fn params(&mut self, params: &[ParamDescription]) {
-        self.number(params.len() as u32);
+        self.length(params.len());
         for param in params {
             let ParamDescription {
                 id,
@@ -110,7 +115,7 @@ impl Fnv {
                 Values::Whole => self.number(2),
                 Values::Choices(choices) => {
                     self.number(1);
-                    self.number(choices.len() as u32);
+                    self.length(choices.len());
                     for Choice { id, label } in *choices {
                         self.text(id);
                         self.text(label);

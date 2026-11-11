@@ -30,7 +30,13 @@ impl Smoothed {
     /// Evenly in the value; also for values derived from a parameter, such as filter coefficients.
     #[must_use]
     pub fn new(value: f32, ramp_seconds: f32, sample_rate: SampleRate) -> Self {
-        Self::on_scale(value, ramp_seconds, sample_rate, Scale::Linear)
+        Self::over(value, ramp_samples(ramp_seconds, sample_rate))
+    }
+
+    /// As [`Self::new`], over so many samples.
+    #[must_use]
+    pub fn over(value: f32, ramp_samples: u32) -> Self {
+        Self::on_scale(value, ramp_samples, Scale::Linear)
     }
 
     /// The parameter itself: from its default, at its smoothing time, on its scale, so a change sounds like a quick
@@ -39,13 +45,13 @@ impl Smoothed {
     pub fn for_param(param: &ParamDescription, sample_rate: SampleRate) -> Self {
         Self::on_scale(
             param.default,
-            param.smoothing_seconds,
-            sample_rate,
+            ramp_samples(param.smoothing_seconds, sample_rate),
             param.scale,
         )
     }
 
-    fn on_scale(value: f32, ramp_seconds: f32, sample_rate: SampleRate, scale: Scale) -> Self {
+    /// A ramp takes at least one sample: `set` divides by its length.
+    fn on_scale(value: f32, ramp_samples: u32, scale: Scale) -> Self {
         Self {
             sounded: false,
             current: value,
@@ -55,7 +61,7 @@ impl Smoothed {
             low: value,
             high: value,
             remaining: 0,
-            ramp_samples: ramp_samples(ramp_seconds, sample_rate),
+            ramp_samples: ramp_samples.max(1),
             scale,
         }
     }
@@ -104,7 +110,12 @@ impl Iterator for Smoothed {
                     Scale::Linear | Scale::Volume | Scale::Time => self.ramp + self.step,
                     Scale::Logarithmic => self.ramp * self.step,
                 };
-                (self.ramp as f32).clamp(self.low, self.high)
+                #[expect(
+                    clippy::cast_possible_truncation,
+                    reason = "the ramp walks in f64 so it doesn't drift; the value is an f32"
+                )]
+                let value = self.ramp as f32;
+                value.clamp(self.low, self.high)
             };
         }
         Some(self.current)

@@ -22,9 +22,16 @@ impl SampleRate {
     /// As the page has it, a JavaScript number: none unless whole and from 1 to [`Self::MAX`].
     #[must_use]
     pub fn from_hz(hz: f64) -> Option<Self> {
-        (hz.fract() == 0.0 && (0.0..=f64::from(Self::MAX)).contains(&hz))
-            .then_some(hz as u32)
-            .and_then(Self::new)
+        if hz.fract() != 0.0 || !(1.0..=f64::from(Self::MAX)).contains(&hz) {
+            return None;
+        }
+        #[expect(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "a whole number from 1 to `MAX` by now"
+        )]
+        let hz = hz as u32;
+        Self::new(hz)
     }
 
     #[must_use]
@@ -41,6 +48,11 @@ impl SampleRate {
     /// The frames `seconds` take, the nearest whole number: none for less than half a frame, or for what isn't a
     /// number.
     #[must_use]
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "`as` saturates: a time below 0, or one not a number, takes no frames"
+    )]
     pub const fn frames(self, seconds: f32) -> u32 {
         (seconds * self.hz()).round() as u32
     }

@@ -8,7 +8,7 @@ use engine_plugins::NoteId;
 use crate::graph::Graph;
 use crate::handle::{NodeHandle, PatternCell, PatternHandle};
 use crate::notes::PAGE_NOTES;
-use crate::transport::Transport;
+use crate::transport::{Transport, within};
 
 /// Notes a block hands out at most, to all nodes together: however many notes a pattern has on a tick, and however short
 /// its loop, a block's work stays bounded. Past it, notes are lost and counted.
@@ -168,7 +168,7 @@ impl Sequencer {
         transport: &Transport,
         graph: &mut Graph,
         frames: usize,
-    ) -> u32 {
+    ) -> usize {
         let (mut left, mut lost) = (NOTE_BUDGET, 0);
         let play = transport.play().unwrap_or(0);
         let loop_ticks = transport.loop_ticks().unwrap_or(0);
@@ -188,8 +188,8 @@ impl Sequencer {
                     let start = round * period;
                     // Both under the period, so within the pattern's ticks.
                     let passed = pattern.between(
-                        (first.max(start) - start) as u32,
-                        (last.min(start + period - 1) - start) as u32,
+                        within(first.max(start) - start),
+                        within(last.min(start + period - 1) - start),
                     );
                     let (handed, over) = passed.split_at(passed.len().min(left));
                     left -= handed.len();
@@ -198,7 +198,7 @@ impl Sequencer {
                     let round_end = u64::from(clip.tick) + start + period - offset;
                     for note in handed {
                         // From the clip's start, as the note is in the stretch: within the loop.
-                        let tick = clip.tick + (start + u64::from(note.tick) - offset) as u32;
+                        let tick = clip.tick + within(start + u64::from(note.tick) - offset);
                         let Some(node) = graph.node_mut(note.node) else {
                             continue;
                         };
@@ -226,8 +226,7 @@ impl Sequencer {
             }
         }
         held.let_go(transport, graph, frames);
-        // The board's count wraps around.
-        lost as u32
+        lost
     }
 }
 
@@ -312,7 +311,7 @@ mod tests {
     use crate::graph::Nodes;
     use crate::node::tests::{GIVEN, RECORDER};
     use crate::node::{NOTE_ROOM, Node};
-    use crate::testing::{BAR, SAMPLE_RATE, SILENCE, cell};
+    use crate::testing::{BAR, SAMPLE_RATE, SILENCE, cell, note_room};
     use crate::transport::Place;
 
     /// A step long.
@@ -663,7 +662,7 @@ mod tests {
 
     #[test]
     fn notes_past_the_node_s_room_are_counted_and_the_rest_play() {
-        let notes = (0..=NOTE_ROOM as u8).map(|key| note(0, 1, key)).collect();
+        let notes = (0..=note_room()).map(|key| note(0, 1, key)).collect();
         let pattern = played(notes);
         let (transport, mut graph) = (playing(), graph());
         // A live note took a place first.
@@ -682,7 +681,7 @@ mod tests {
             note: NoteId::new(100),
         };
         assert_eq!(heard[0], live);
-        let last = NOTE_ROOM as u8 - 2;
+        let last = note_room() - 2;
         assert_eq!(heard[NOTE_ROOM - 1], at(0, last, last.into()));
     }
 
@@ -721,7 +720,7 @@ mod tests {
         let passes = transport.stretches(BLOCK_FRAMES).count();
         assert_eq!(passes, 23);
         let lost = pattern.hand_out(&mut Held::new(), &transport, &mut graph(), BLOCK_FRAMES);
-        assert_eq!(lost as usize, passes * 100 - NOTE_BUDGET);
+        assert_eq!(lost, passes * 100 - NOTE_BUDGET);
     }
 
     #[test]
@@ -813,7 +812,7 @@ mod tests {
 
     #[test]
     fn a_note_whose_node_has_no_room_left_is_let_go_of_at_the_next_block_s_start() {
-        let notes = (0..NOTE_ROOM as u8)
+        let notes = (0..note_room())
             .map(|key| lasting(1, note(0, 1, key)))
             .collect();
         let pattern = played(notes);
@@ -823,7 +822,7 @@ mod tests {
         assert_eq!(held.len(), NOTE_ROOM);
         transport.advance(BLOCK_FRAMES);
         pattern.hand_out(&mut held, &transport, &mut graph, BLOCK_FRAMES);
-        let expected: Vec<_> = (0..NOTE_ROOM as u32).map(|n| off(0, n)).collect();
+        let expected: Vec<_> = (0..u32::from(note_room())).map(|n| off(0, n)).collect();
         assert_eq!(given(&mut graph, 1), expected);
         assert_eq!(held.len(), 0);
     }

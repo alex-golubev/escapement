@@ -3,6 +3,7 @@
 use engine_plugins::{ParamNumber, SampleNumber, SampleRate};
 
 use crate::handle::{NodeCell, NodeHandle};
+use crate::node::NOTE_ROOM;
 use crate::transport::{DEFAULT_TEMPO, TICKS_PER_QUARTER};
 use crate::{BLOCK_FRAMES, CHANNELS};
 
@@ -37,6 +38,16 @@ pub fn param_number(number: u32) -> ParamNumber {
 /// As an edit names it.
 pub fn sample_number(number: u32) -> SampleNumber {
     SampleNumber::new(number).unwrap()
+}
+
+/// [`NOTE_ROOM`] as keys count.
+pub fn note_room() -> u8 {
+    u8::try_from(NOTE_ROOM).unwrap()
+}
+
+/// Whole ticks `blocks` full blocks pass at the default tempo, from the start.
+pub fn ticks_in(blocks: usize) -> u32 {
+    u32::try_from(blocks * BLOCK_FRAMES / FRAMES_PER_TICK).unwrap()
 }
 
 /// Of a node whose handle is `handle`.

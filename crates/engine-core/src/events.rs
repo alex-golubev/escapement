@@ -56,7 +56,7 @@ impl EventOutput {
     }
 
     /// Hands out the events that fit into `room` bytes, drops the rest and returns how many were lost.
-    pub fn take(&mut self, room: usize) -> (&[u8], u32) {
+    pub fn take(&mut self, room: usize) -> (&[u8], usize) {
         let (mut handed, mut lost, mut start) = (0, 0, 0);
         while let Frame::Whole(size) = frame(&self.buf[start..self.len]) {
             if start + size <= room {

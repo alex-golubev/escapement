@@ -287,14 +287,17 @@ pub(crate) mod tests {
     fn applies_at_most_the_budget_per_block() {
         let mut input = CommandInput::default();
         let size = after_batch(1).len();
-        let count = (PARSE_BUDGET / size + 10) as u32;
+        let count = u32::try_from(PARSE_BUDGET / size + 10).unwrap();
         for batch in 1..=count {
             assert_eq!(input.write(&after_batch(batch)), size);
         }
         let (first, _) = drain_markers(&mut input);
         assert_eq!(first.len(), PARSE_BUDGET / size);
         let (second, _) = drain_markers(&mut input);
-        assert_eq!(second, (first.len() as u32 + 1..=count).collect::<Vec<_>>());
+        assert_eq!(
+            second,
+            (u32::try_from(first.len()).unwrap() + 1..=count).collect::<Vec<_>>()
+        );
     }
 
     #[test]
@@ -314,7 +317,9 @@ pub(crate) mod tests {
     #[test]
     fn waits_for_a_message_of_the_largest_size() {
         let mut input = CommandInput::default();
-        let size = ((MAX_MESSAGE - SIZE_PREFIX) as u32).to_le_bytes();
+        let size = u32::try_from(MAX_MESSAGE - SIZE_PREFIX)
+            .unwrap()
+            .to_le_bytes();
         assert_eq!(input.write(&size), SIZE_PREFIX);
         assert_eq!(drain_markers(&mut input), (vec![], Drained::Ok));
         assert_eq!(input.len(), SIZE_PREFIX);

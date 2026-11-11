@@ -194,6 +194,13 @@ mod tests {
         }
     }
 
+    /// One at full velocity on each of the first `count` frames.
+    fn a_note_a_frame(count: usize) -> Vec<Event> {
+        (0..u32::try_from(count).unwrap())
+            .map(|time| note(time, 1.0))
+            .collect()
+    }
+
     fn ramp(len: usize, from: f32, step: f32) -> Vec<f32> {
         (0..len).map(|i| from + i as f32 * step).collect()
     }
@@ -277,7 +284,7 @@ mod tests {
     fn one_note_more_than_the_voices_fades_the_oldest_out_without_a_click() {
         let mut plugin = create(SAMPLE_RATE);
         let mut sound = level();
-        let notes: Vec<_> = (0..VOICES as u32).map(|time| note(time, 1.0)).collect();
+        let notes = a_note_a_frame(VOICES);
         render_with(plugin.as_mut(), &notes, &silence(BLOCK_FRAMES), &mut sound);
         let heard = render_with(plugin.as_mut(), &[note(0, 1.0)], &silence(2048), &mut sound);
         let left = &heard[0];
@@ -301,7 +308,7 @@ mod tests {
     fn a_silent_note_pushes_no_voice_out() {
         let mut plugin = create(SAMPLE_RATE);
         let mut sound = level();
-        let notes: Vec<_> = (0..VOICES as u32).map(|time| note(time, 1.0)).collect();
+        let notes = a_note_a_frame(VOICES);
         render_with(plugin.as_mut(), &notes, &silence(BLOCK_FRAMES), &mut sound);
         let [left, _] = render_with(plugin.as_mut(), &[note(0, 0.0)], &silence(2048), &mut sound);
         let all = 0.01 * VOICES as f32;
@@ -312,7 +319,7 @@ mod tests {
     fn a_burst_of_notes_past_every_place_cuts_the_voice_nearest_silence() {
         let mut plugin = create(SAMPLE_RATE);
         let mut sound = level();
-        let notes: Vec<_> = (0..3 * VOICES as u32).map(|time| note(time, 1.0)).collect();
+        let notes = a_note_a_frame(3 * VOICES);
         let [left, _] = render_with(plugin.as_mut(), &notes, &silence(BLOCK_FRAMES), &mut sound);
         // Every note came in, and never more than the voices sound at full.
         assert!(
@@ -329,7 +336,7 @@ mod tests {
     #[test]
     fn a_voice_is_free_once_its_sound_ends() {
         let mut sampler = Sampler::new(SAMPLE_RATE);
-        let notes: Vec<_> = (0..VOICES as u32).map(|time| note(time, 1.0)).collect();
+        let notes = a_note_a_frame(VOICES);
         let mut short = Sound::new(&DESCRIPTION, vec![vec![0.5; 200]]);
         render_with(&mut sampler, &notes, &silence(512), &mut short);
         assert!(

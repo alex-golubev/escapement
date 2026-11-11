@@ -112,7 +112,7 @@ impl Engine {
     /// Hands out the events that fit into `room` bytes; the rest are lost and counted.
     pub fn take_events(&mut self, room: usize) -> &[u8] {
         let (bytes, lost) = self.events.take(room);
-        self.telemetry.lost_events = self.telemetry.lost_events.wrapping_add(lost);
+        add_to_board(&mut self.telemetry.lost_events, lost);
         bytes
     }
 
@@ -136,7 +136,7 @@ impl Engine {
 
         let telemetry = &mut self.telemetry;
         telemetry.blocks = telemetry.blocks.wrapping_add(1);
-        telemetry.lost_notes = telemetry.lost_notes.wrapping_add(lost);
+        add_to_board(&mut telemetry.lost_notes, lost);
         telemetry.playing = playing.into();
         telemetry.position = position;
         telemetry.loop_ticks = loop_ticks.unwrap_or(0);
@@ -307,8 +307,17 @@ fn take_back(parcel: &mut Parcel, graph: &mut Graph) {
 /// Without room the event is lost and counted.
 fn report(events: &mut EventOutput, telemetry: &mut Telemetry, event: EngineEvent) {
     if !events.push(telemetry.epoch, event) {
-        telemetry.lost_events = telemetry.lost_events.wrapping_add(1);
+        add_to_board(&mut telemetry.lost_events, 1);
     }
+}
+
+/// Adds a block's count to one on the board.
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "the board's count wraps around, so only the low bits of the block's count matter"
+)]
+fn add_to_board(board: &mut u32, count: usize) {
+    *board = board.wrapping_add(count as u32);
 }
 
 /// Never returns, so the page's recovery from a hung thread can be checked. A test sees it as a panic instead.
@@ -354,7 +363,7 @@ mod tests {
     use crate::schema::{AfterBatch, CommandKind};
     use crate::sequencer::NOTE_BUDGET;
     use crate::strip;
-    use crate::testing::{BAR, FRAMES_PER_TICK, SAMPLE_RATE, seconds};
+    use crate::testing::{BAR, FRAMES_PER_TICK, SAMPLE_RATE, note_room, seconds, ticks_in};
     use crate::transport::TICKS_PER_QUARTER;
 
     const TONE: u32 = 1;
@@ -498,7 +507,7 @@ mod tests {
 
     /// The mean over each period of the tone: away from zero, the sound has a thump in it.
     fn largest_thump(samples: &[f32]) -> f32 {
-        let period = (SAMPLE_RATE.hz() / FREQUENCY).round() as usize;
+        let period = seconds(FREQUENCY.recip());
         samples.windows(period).fold(0.0, |thump, window| {
             let mean = window.iter().sum::<f32>() / period as f32;
             thump.max(mean.abs())
@@ -557,9 +566,9 @@ mod tests {
         heard
     }
 
-    /// The loudest sample of each period of the tone.
+    /// The loudest sample of each period of the tone: a window a sample longer than one holds a whole period.
     fn period_peaks(samples: &[f32]) -> Vec<f32> {
-        let period = (SAMPLE_RATE.hz() / FREQUENCY).ceil() as usize;
+        let period = seconds(FREQUENCY.recip()) + 1;
         samples
             .windows(period)
             .map(|window| window.iter().fold(0.0, |peak, s| f32::max(peak, s.abs())))
@@ -1359,6 +1368,7 @@ mod tests {
             (2, 40, 60, 1.0, 240),
             (3, 99, 60, 1.0, 240),
         ]);
+        let past = u32::try_from(FIRST_PATTERN_CELLS).unwrap();
         let edits = [
             tone_node(TONE, &[(raw::VOLUME, 0.3), (raw::VOLUME, f32::NAN)]),
             tone_node(TONE, &[]),
@@ -1373,11 +1383,11 @@ mod tests {
             Spec::SetPattern(PATTERN, &notes),
             Spec::SetPattern(PATTERN, &notes),
             // Past the pattern table, of a taken cell, of none, and gone.
-            Spec::SetPattern(FIRST_PATTERN_CELLS as u32, &notes),
+            Spec::SetPattern(past, &notes),
             Spec::SetPattern(handle(1, PATTERN), &[]),
             Spec::SetPattern(0, &[]),
-            Spec::DestroyPattern(FIRST_PATTERN_CELLS as u32),
-            Spec::DestroyPattern(FIRST_PATTERN_CELLS as u32),
+            Spec::DestroyPattern(past),
+            Spec::DestroyPattern(past),
             // Clips that overlap, of no length, of a pattern that isn't there, and after a clip of every tick.
             Spec::SetClips(&[
                 (0, BAR, BAR, 0, PATTERN),
@@ -1467,7 +1477,7 @@ mod tests {
         calls += audio_block(&mut rig.engine, 0);
         assert_eq!(
             rig.engine.telemetry().lost_events - lost_in_engine,
-            flood as u32
+            u32::try_from(flood).unwrap()
         );
 
         rig.write(&[u32::MAX.to_le_bytes().to_vec()]);
@@ -1828,9 +1838,7 @@ mod tests {
 
     /// At 120 and 48 kHz a tick is 25 frames: whole ticks at the start of each block.
     fn ticks_at(blocks: std::ops::Range<usize>) -> Vec<(u32, u32)> {
-        blocks
-            .map(|block| (1, (block * BLOCK_FRAMES / FRAMES_PER_TICK) as u32 % BAR))
-            .collect()
+        blocks.map(|block| (1, ticks_in(block) % BAR)).collect()
     }
 
     #[test]
@@ -1858,17 +1866,16 @@ mod tests {
         };
         assert_eq!(looped(&mut rig.engine), (0, 0));
         rig.write(&[set_transport(true, 2 * BAR)]);
-        let at = |block: usize| (block * BLOCK_FRAMES / FRAMES_PER_TICK) as u32;
         let played: Vec<_> = (0..800).map(|_| looped(&mut rig.engine)).collect();
-        let expected: Vec<_> = (0..800).map(|block| (at(block), 2 * BAR)).collect();
+        let expected: Vec<_> = (0..800).map(|block| (ticks_in(block), 2 * BAR)).collect();
         assert_eq!(played, expected);
-        assert!(at(800) > BAR);
+        assert!(ticks_in(800) > BAR);
         // Shorter than where it plays: round in the new one.
         rig.write(&[set_transport(true, BAR)]);
-        assert_eq!(looped(&mut rig.engine), (at(800) % BAR, BAR));
+        assert_eq!(looped(&mut rig.engine), (ticks_in(800) % BAR, BAR));
         // Stopped, it goes round in none.
         rig.write(&[set_transport(false, BAR)]);
-        assert_eq!(looped(&mut rig.engine), (at(801) % BAR, 0));
+        assert_eq!(looped(&mut rig.engine), (ticks_in(801) % BAR, 0));
     }
 
     #[test]
@@ -1877,7 +1884,7 @@ mod tests {
         rig.write(&[set_tempo(60.0), set_transport(true, BAR)]);
         // At 60 a tick is 50 frames.
         let expected: Vec<_> = (0..30)
-            .map(|block| (1, (block * BLOCK_FRAMES / 50) as u32))
+            .map(|block| (1, u32::try_from(block * BLOCK_FRAMES / 50).unwrap()))
             .collect();
         assert_eq!(playheads(&mut rig.engine, 30), expected);
         assert_eq!(rig.engine.telemetry().tempo, 60.0);
@@ -1915,7 +1922,8 @@ mod tests {
         assert_eq!(rig.engine.epoch(), 1);
         // 140 quarter notes a minute: 20 4/7 frames a tick.
         let ticks = |blocks: usize| {
-            (blocks * BLOCK_FRAMES * 140 * 960 / (60 * SAMPLE_RATE.get() as usize)) as u32
+            u32::try_from(blocks * BLOCK_FRAMES * 140 * 960 / (60 * SAMPLE_RATE.get() as usize))
+                .unwrap()
         };
         assert_eq!(rig.engine.telemetry().position, ticks(10));
         assert_eq!(playheads(&mut rig.engine, 1), [(1, ticks(11))]);
@@ -2112,7 +2120,7 @@ mod tests {
     #[test]
     fn notes_past_a_node_s_room_are_counted_on_the_board_each_pass() {
         let mut rig = kick_sampler();
-        let chord: Vec<_> = (0..=NOTE_ROOM as u8)
+        let chord: Vec<_> = (0..=note_room())
             .map(|key| (0, SAMPLER, key, 1.0, 240))
             .collect();
         rig.send(&heard(&chord), &[set_transport(true, STEP)]);

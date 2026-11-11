@@ -54,6 +54,26 @@ pub struct Choice {
     pub label: &'static str,
 }
 
+impl Choice {
+    /// Its parameter's value for the choice at `place`.
+    #[must_use]
+    pub const fn value(place: usize) -> f32 {
+        place as f32
+    }
+
+    /// The place of the choice `value` names, the nearest as the engine takes a value; one past the list is for the
+    /// caller to refuse.
+    #[must_use]
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "`as` saturates: below the first choice is the first"
+    )]
+    pub fn place(value: f32) -> usize {
+        halves_up(value) as usize
+    }
+}
+
 /// A sound the plugin plays: whoever creates the node names it by its hash.
 #[derive(Clone, Copy, Debug)]
 pub struct SampleDescription {
@@ -193,8 +213,7 @@ impl ParamDescription {
             let value = value.clamp(self.min, self.max);
             match self.values {
                 Values::Any => crate::denormal::flush(value),
-                // Halves up, as the page's `Math.round`, so both read a value alike.
-                Values::Whole | Values::Choices(_) => (value + 0.5).floor(),
+                Values::Whole | Values::Choices(_) => halves_up(value),
             }
         })
     }
@@ -204,6 +223,11 @@ impl ParamDescription {
     pub const fn whole(&self) -> bool {
         matches!(self.values, Values::Whole | Values::Choices(_))
     }
+}
+
+/// The nearest whole number, halves up, as the page's `Math.round`: both read a value alike.
+fn halves_up(value: f32) -> f32 {
+    (value + 0.5).floor()
 }
 
 const fn same(a: &str, b: &str) -> bool {
@@ -305,6 +329,21 @@ mod tests {
             assert_eq!(choice.taken(value), Some(taken), "{value}");
         }
         assert_eq!(choice.taken(f32::NAN), None);
+    }
+
+    #[test]
+    fn a_choice_s_value_is_its_place_and_a_value_names_the_nearest() {
+        assert_eq!(Choice::value(2), 2.0);
+        for (value, place) in [
+            (2.0, 2),
+            (1.6, 2),
+            (1.5, 2),
+            (1.4, 1),
+            (-3.0, 0),
+            (f32::NAN, 0),
+        ] {
+            assert_eq!(Choice::place(value), place, "{value}");
+        }
     }
 
     #[test]
