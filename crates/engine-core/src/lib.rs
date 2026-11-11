@@ -1,6 +1,6 @@
 //! Audio engine core: DSP, sequencer, mixer graph. No web dependencies.
 
-mod build;
+mod builder;
 mod commands;
 mod engine;
 mod events;
@@ -20,7 +20,7 @@ mod telemetry;
 mod testing;
 mod transport;
 
-pub use build::Builder;
+pub use builder::Builder;
 pub use commands::{CommandInput, INPUT_CAPACITY};
 pub use engine::Engine;
 pub use engine_plugins::{BLOCK_FRAMES, CHANNELS};

@@ -11,7 +11,7 @@ use engine_plugins::catalog::tone::{self, FREQUENCY, MAX_GAIN};
 use engine_plugins::smoothing::ramp_samples;
 
 use super::*;
-use crate::build::Builder;
+use crate::builder::Builder;
 use crate::commands::PARSE_BUDGET;
 use crate::events::EVENT_CAPACITY;
 use crate::framing;
