@@ -1,5 +1,7 @@
 //! What a note the engine plays may be.
 
+use engine_plugins::NoteId;
+
 use crate::schema::Rejection;
 
 /// MIDI's: a key past it is refused.
@@ -12,11 +14,11 @@ pub const MAX_VELOCITY: f32 = 1.0;
 pub const PAGE_NOTES: u32 = 1 << 31;
 
 /// A note the page names past [`PAGE_NOTES`] is refused.
-pub(crate) fn page_note(note: u32) -> Result<u32, Rejection> {
+pub(crate) fn page_note(note: u32) -> Result<NoteId, Rejection> {
     if note >= PAGE_NOTES {
         return Err(Rejection::InvalidValue);
     }
-    Ok(note)
+    Ok(NoteId::new(note))
 }
 
 /// A key past MIDI's is refused.

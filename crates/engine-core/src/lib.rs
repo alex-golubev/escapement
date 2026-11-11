@@ -19,18 +19,22 @@ pub mod telemetry;
 mod testing;
 pub mod transport;
 
-use build::{Builder, FIRST_CELLS, FIRST_PATTERN_CELLS, FIRST_PLACES};
 use std::mem;
 use std::ops::ControlFlow;
 
+use engine_plugins::SampleRate;
+
+use build::{Builder, FIRST_CELLS, FIRST_EXITS, FIRST_PATTERN_CELLS};
 use commands::{Command, CommandInput, Drained};
 use events::{EngineEvent, EventOutput};
 use graph::{Graph, Nodes};
 use handle::NodeHandle;
-use handoff::{Arrival, AudioEnd, Edit, Parcel};
+use handoff::{Arrival, AudioEnd, Batch, Edit, Parcel};
+use node::page_param;
 use notes::page_note;
 use schema::Rejection;
 use sequencer::{Arrangement, Held, Patterns, Sequencer};
+use strip::page_strip_param;
 use telemetry::{BlockMeter, Telemetry};
 use transport::{Place, Transport};
 
@@ -39,12 +43,12 @@ pub use engine_plugins::{BLOCK_FRAMES, CHANNELS};
 /// The build thread keeps the builder and hands the engine to the audio thread. All of the engine's own memory is
 /// allocated here; what grows comes in parcels.
 #[must_use]
-pub fn new(sample_rate: f32) -> (Builder, Engine) {
+pub fn new(sample_rate: SampleRate) -> (Builder, Engine) {
     let (build, audio) = handoff::channel();
     let engine = Engine {
         graph: Graph::new(
             Nodes::new(FIRST_CELLS),
-            Nodes::new(FIRST_PLACES),
+            Nodes::new(FIRST_EXITS),
             sample_rate,
         ),
         parcels: audio,
@@ -168,14 +172,16 @@ impl Engine {
         } = self;
         let drained = input.drain(|command| {
             let applied = match command {
-                Ok(Command::SetParam(set_param)) => graph
-                    .node_mut(NodeHandle::new(set_param.node()))
+                Ok(Command::SetParam(set)) => graph
+                    .node_mut(NodeHandle::new(set.node()))
                     .ok_or(Rejection::UnknownTarget)
-                    .and_then(|node| node.set_param(set_param.param(), set_param.value())),
+                    .and_then(|node| node.set_param(page_param(set.param())?, set.value())),
                 Ok(Command::SetStripParam(set)) => graph
                     .node_mut(NodeHandle::new(set.node()))
                     .ok_or(Rejection::UnknownTarget)
-                    .and_then(|node| node.set_strip_param(set.param(), set.value())),
+                    .and_then(|node| {
+                        node.set_strip_param(page_strip_param(set.param())?, set.value())
+                    }),
                 Ok(Command::NoteOn(note)) => graph
                     .node_mut(NodeHandle::new(note.node()))
                     .ok_or(Rejection::UnknownTarget)
@@ -197,7 +203,7 @@ impl Engine {
                 ),
                 Ok(Command::PanicAudio(panic)) => panic!("PanicAudio {}", panic.code()),
                 Ok(Command::HangAudio(_)) => hang(),
-                Ok(Command::AfterBatch(marker)) => match parcels.take(marker.batch()) {
+                Ok(Command::AfterBatch(marker)) => match parcels.take(Batch::new(marker.batch())) {
                     Arrival::Here(mut parcel) => {
                         apply(&mut parcel, graph, sequencer, held, events, telemetry);
                         if parcel.holds {
@@ -253,8 +259,8 @@ fn apply(
             Edit::CreateNode { cell, node } => {
                 (!graph.insert(*cell, node)).then_some(Rejection::InvalidHandle)
             }
-            Edit::Remove { cell, place, .. } => {
-                (!graph.remove(*cell, *place)).then_some(Rejection::InvalidHandle)
+            Edit::Remove { cell, exit, .. } => {
+                (!graph.remove(*cell, *exit)).then_some(Rejection::InvalidHandle)
             }
             Edit::Order(order) => {
                 graph.reorder(order);
@@ -292,8 +298,8 @@ fn apply(
 /// The nodes the parcel removed have played out: they go back with it.
 fn take_back(parcel: &mut Parcel, graph: &mut Graph) {
     for edit in &mut parcel.edits {
-        if let Edit::Remove { place, node, .. } = edit {
-            graph.take_back(*place, node);
+        if let Edit::Remove { exit, node, .. } = edit {
+            graph.take_back(*exit, node);
         }
     }
 }
@@ -323,10 +329,10 @@ mod tests {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
-    use engine_plugins::catalog::filter::{self, CUTOFF};
-    use engine_plugins::catalog::sampler::{self, SAMPLE};
+    use engine_plugins::catalog::filter;
+    use engine_plugins::catalog::sampler;
     use engine_plugins::catalog::synth;
-    use engine_plugins::catalog::tone::{self, FREQUENCY, MAX_GAIN, VOLUME};
+    use engine_plugins::catalog::tone::{self, FREQUENCY, MAX_GAIN};
     use engine_plugins::smoothing::ramp_samples;
 
     use super::*;
@@ -347,8 +353,8 @@ mod tests {
     use crate::pool::tests::store;
     use crate::schema::{AfterBatch, CommandKind};
     use crate::sequencer::NOTE_BUDGET;
-    use crate::strip::{PAN_NUMBER, VOLUME_NUMBER};
-    use crate::testing::{BAR, FRAMES_PER_TICK, SAMPLE_RATE};
+    use crate::strip;
+    use crate::testing::{BAR, FRAMES_PER_TICK, SAMPLE_RATE, seconds};
     use crate::transport::TICKS_PER_QUARTER;
 
     const TONE: u32 = 1;
@@ -357,10 +363,27 @@ mod tests {
     const SYNTH: u32 = 4;
     const KICK: Hash = [11; 32];
     const SNARE: Hash = [12; 32];
-    const DEFAULT_VOLUME: f32 = tone::DESCRIPTION.param(VOLUME).unwrap().default;
-    const VOLUME_RAMP_SECONDS: f32 = tone::DESCRIPTION.param(VOLUME).unwrap().smoothing_seconds;
+    /// The numbers of parameters and samples as the page writes them.
+    mod raw {
+        use super::{filter, sampler, strip, tone};
+
+        pub const VOLUME: u32 = tone::VOLUME.get();
+        pub const CUTOFF: u32 = filter::CUTOFF.get();
+        pub const SAMPLE: u32 = sampler::SAMPLE.get();
+        pub const VOLUME_NUMBER: u32 = strip::VOLUME_NUMBER.get();
+        pub const PAN_NUMBER: u32 = strip::PAN_NUMBER.get();
+    }
+
+    const DEFAULT_VOLUME: f32 = tone::VOLUME
+        .entry(tone::DESCRIPTION.params)
+        .unwrap()
+        .default;
+    const VOLUME_RAMP_SECONDS: f32 = tone::VOLUME
+        .entry(tone::DESCRIPTION.params)
+        .unwrap()
+        .smoothing_seconds;
     /// Blocks a connection takes to rise or fall, and one over.
-    const FADE_BLOCKS: usize = (graph::FADE_SECONDS * SAMPLE_RATE) as usize / BLOCK_FRAMES + 1;
+    const FADE_BLOCKS: usize = seconds(graph::FADE_SECONDS) / BLOCK_FRAMES + 1;
 
     /// Both parts of the engine, driven the way the page and the build thread drive them.
     struct Rig {
@@ -475,7 +498,7 @@ mod tests {
 
     /// The mean over each period of the tone: away from zero, the sound has a thump in it.
     fn largest_thump(samples: &[f32]) -> f32 {
-        let period = (SAMPLE_RATE / FREQUENCY).round() as usize;
+        let period = (SAMPLE_RATE.hz() / FREQUENCY).round() as usize;
         samples.windows(period).fold(0.0, |thump, window| {
             let mean = window.iter().sum::<f32>() / period as f32;
             thump.max(mean.abs())
@@ -495,7 +518,7 @@ mod tests {
 
     /// Once a volume change has finished.
     fn settled_peak(engine: &mut Engine) -> f32 {
-        let ramp_blocks = (VOLUME_RAMP_SECONDS * SAMPLE_RATE) as usize / BLOCK_FRAMES + 1;
+        let ramp_blocks = seconds(VOLUME_RAMP_SECONDS) / BLOCK_FRAMES + 1;
         peak(engine, ramp_blocks);
         peak(engine, 4)
     }
@@ -536,7 +559,7 @@ mod tests {
 
     /// The loudest sample of each period of the tone.
     fn period_peaks(samples: &[f32]) -> Vec<f32> {
-        let period = (SAMPLE_RATE / FREQUENCY).ceil() as usize;
+        let period = (SAMPLE_RATE.hz() / FREQUENCY).ceil() as usize;
         samples
             .windows(period)
             .map(|window| window.iter().fold(0.0, |peak, s| f32::max(peak, s.abs())))
@@ -552,7 +575,13 @@ mod tests {
     }
 
     fn edit_rejected(epoch: u32, batch: u32, reason: Rejection) -> (u32, EngineEvent) {
-        (epoch, EngineEvent::EditRejected { batch, reason })
+        (
+            epoch,
+            EngineEvent::EditRejected {
+                batch: Batch::new(batch),
+                reason,
+            },
+        )
     }
 
     #[test]
@@ -565,7 +594,7 @@ mod tests {
     #[test]
     fn set_param_changes_the_volume() {
         let mut rig = Rig::with_tone(&[]);
-        rig.write(&[set_param(TONE, VOLUME, 0.25)]);
+        rig.write(&[set_param(TONE, raw::VOLUME, 0.25)]);
         assert!((settled_peak(&mut rig.engine) - at_volume(0.25)).abs() < 1e-3);
         assert_eq!(events(&mut rig.engine), []);
     }
@@ -581,10 +610,10 @@ mod tests {
         let default = first_block(&[], &[]);
         assert!(default > 0.0);
         let ratio = 0.25 / DEFAULT_VOLUME;
-        let in_batch = first_block(&[(VOLUME, 0.25)], &[]);
+        let in_batch = first_block(&[(raw::VOLUME, 0.25)], &[]);
         assert!((in_batch / default - ratio).abs() < 1e-3);
         // Live edits right behind the marker come before the node's first block too.
-        let behind_marker = first_block(&[], &[set_param(TONE, VOLUME, 0.25)]);
+        let behind_marker = first_block(&[], &[set_param(TONE, raw::VOLUME, 0.25)]);
         assert!((behind_marker / default - ratio).abs() < 1e-3);
     }
 
@@ -608,10 +637,10 @@ mod tests {
         let [left, right] = settled_sides(&mut rig.engine);
         assert_eq!(left, right);
         assert!((left - alone).abs() < 1e-3);
-        rig.write(&[set_strip_param(TONE, VOLUME_NUMBER, 0.5)]);
+        rig.write(&[set_strip_param(TONE, raw::VOLUME_NUMBER, 0.5)]);
         let [left, right] = settled_sides(&mut rig.engine);
         assert!((left - alone / 2.0).abs() < 1e-3 && (right - left).abs() < 1e-6);
-        rig.write(&[set_strip_param(TONE, PAN_NUMBER, 1.0)]);
+        rig.write(&[set_strip_param(TONE, raw::PAN_NUMBER, 1.0)]);
         let [left, right] = settled_sides(&mut rig.engine);
         assert_eq!(left, 0.0);
         assert!((right - alone / 2.0 * std::f32::consts::SQRT_2).abs() < 1e-3);
@@ -624,7 +653,7 @@ mod tests {
         let mut rig = Rig::empty();
         rig.send(
             &[
-                Spec::CreateInsert(INSERT, &[(PAN_NUMBER, -1.0)]),
+                Spec::CreateInsert(INSERT, &[(raw::PAN_NUMBER, -1.0)]),
                 tone_node(TONE, &[]),
                 connect(TONE, INSERT),
                 Spec::SetOutput(INSERT),
@@ -644,8 +673,8 @@ mod tests {
         let mut rig = Rig::empty();
         rig.send(
             &[
-                Spec::MeteredInsert(LEFT, &[(PAN_NUMBER, -1.0)]),
-                Spec::MeteredInsert(HALF, &[(VOLUME_NUMBER, 0.5)]),
+                Spec::MeteredInsert(LEFT, &[(raw::PAN_NUMBER, -1.0)]),
+                Spec::MeteredInsert(HALF, &[(raw::VOLUME_NUMBER, 0.5)]),
                 Spec::CreateInsert(UNMETERED, &[]),
                 tone_node(TONE, &[]),
                 connect(TONE, LEFT),
@@ -699,9 +728,9 @@ mod tests {
         };
         let default = first_block(&[], &[]);
         assert!(default > 0.0);
-        let in_batch = first_block(&[(VOLUME_NUMBER, 0.25)], &[]);
+        let in_batch = first_block(&[(raw::VOLUME_NUMBER, 0.25)], &[]);
         assert!((in_batch / default - 0.25).abs() < 1e-3);
-        let behind_marker = first_block(&[], &[set_strip_param(TONE, VOLUME_NUMBER, 0.25)]);
+        let behind_marker = first_block(&[], &[set_strip_param(TONE, raw::VOLUME_NUMBER, 0.25)]);
         assert!((behind_marker / default - 0.25).abs() < 1e-3);
     }
 
@@ -714,7 +743,7 @@ mod tests {
             version: tone::DESCRIPTION.version,
             params: &[],
             samples: &[],
-            strip: &[(VOLUME_NUMBER, f32::NAN), (PAN_NUMBER, 1.0)],
+            strip: &[(raw::VOLUME_NUMBER, f32::NAN), (raw::PAN_NUMBER, 1.0)],
         };
         rig.send(&[tone, Spec::SetOutput(TONE)], &[]);
         let [left, right] = settled_sides(&mut rig.engine);
@@ -725,12 +754,12 @@ mod tests {
     #[test]
     fn strip_values_that_are_not_numbers_and_unknown_addresses_are_refused() {
         let mut rig = Rig::with_tone(&[
-            set_strip_param(TONE, VOLUME_NUMBER, f32::NAN),
-            set_strip_param(TONE, PAN_NUMBER, f32::INFINITY),
-            set_strip_param(TONE + 1, VOLUME_NUMBER, 0.0),
-            set_strip_param(0, VOLUME_NUMBER, 0.0),
+            set_strip_param(TONE, raw::VOLUME_NUMBER, f32::NAN),
+            set_strip_param(TONE, raw::PAN_NUMBER, f32::INFINITY),
+            set_strip_param(TONE + 1, raw::VOLUME_NUMBER, 0.0),
+            set_strip_param(0, raw::VOLUME_NUMBER, 0.0),
             set_strip_param(TONE, 0, 0.0),
-            set_strip_param(TONE, PAN_NUMBER + 1, 0.0),
+            set_strip_param(TONE, raw::PAN_NUMBER + 1, 0.0),
         ]);
         let [left, right] = settled_sides(&mut rig.engine);
         assert!((left - at_volume(DEFAULT_VOLUME)).abs() < 1e-3);
@@ -754,7 +783,7 @@ mod tests {
         rig.send(&filter_on_tone(&[]), &[]);
         // Open, the filter leaves the tone as it is.
         assert!((settled_peak(&mut rig.engine) - at_volume(DEFAULT_VOLUME)).abs() < 1e-3);
-        rig.write(&[set_param(FILTER, CUTOFF, 200.0)]);
+        rig.write(&[set_param(FILTER, raw::CUTOFF, 200.0)]);
         // 440 Hz is more than an octave above: over 12 dB down.
         assert!(settled_peak(&mut rig.engine) < at_volume(DEFAULT_VOLUME) / 4.0);
         assert_eq!(events(&mut rig.engine), []);
@@ -763,7 +792,7 @@ mod tests {
     #[test]
     fn a_filter_goes_into_a_playing_tone_without_a_click() {
         // Open, and closed well below the tone, at a few points of its wave.
-        for params in [&[][..], &[(CUTOFF, 200.0)], &[(CUTOFF, 40.0)]] {
+        for params in [&[][..], &[(raw::CUTOFF, 200.0)], &[(raw::CUTOFF, 40.0)]] {
             for blocks in 2..5 {
                 let mut rig = Rig::with_tone(&[]);
                 // Past the tone's own fade-in.
@@ -789,7 +818,7 @@ mod tests {
     #[test]
     fn live_edits_behind_a_marker_wait_for_its_parcel() {
         let mut rig = Rig::empty();
-        rig.write(&[after_batch(1), set_param(TONE, VOLUME, 0.25)]);
+        rig.write(&[after_batch(1), set_param(TONE, raw::VOLUME, 0.25)]);
         assert_eq!(peak(&mut rig.engine, 3), 0.0);
         assert_eq!(
             events(&mut rig.engine),
@@ -805,7 +834,7 @@ mod tests {
     fn a_batch_does_not_overtake_live_edits_sent_before_it() {
         let mut rig = Rig::with_tone(&[]);
         // Meant for the node being replaced.
-        rig.write(&[set_param(TONE, VOLUME, 0.1)]);
+        rig.write(&[set_param(TONE, raw::VOLUME, 0.1)]);
         let edits = [Spec::Reset(1), tone_node(TONE, &[]), Spec::SetOutput(TONE)];
         rig.send(&edits, &[]);
         let expected = at_volume(DEFAULT_VOLUME);
@@ -822,7 +851,7 @@ mod tests {
         rig.write(&[
             after_batch(1),
             after_batch(5),
-            set_param(TONE, VOLUME, 0.25),
+            set_param(TONE, raw::VOLUME, 0.25),
         ]);
         assert!((settled_peak(&mut rig.engine) - at_volume(0.25)).abs() < 1e-3);
         assert_eq!(
@@ -854,7 +883,7 @@ mod tests {
         let (mut rig, mut unchanged) = (Rig::with_tone(&[]), Rig::with_tone(&[]));
         peak(&mut rig.engine, 1);
         peak(&mut unchanged.engine, 1);
-        rig.write(&[set_param(TONE, VOLUME, 0.0)]);
+        rig.write(&[set_param(TONE, raw::VOLUME, 0.0)]);
         let (first, reference) = (peak(&mut rig.engine, 1), peak(&mut unchanged.engine, 1));
         assert!(
             0.0 < first && first < reference,
@@ -865,19 +894,19 @@ mod tests {
 
     #[test]
     fn clamps_the_volume() {
-        let mut rig = Rig::with_tone(&[set_param(TONE, VOLUME, 3.0)]);
+        let mut rig = Rig::with_tone(&[set_param(TONE, raw::VOLUME, 3.0)]);
         assert!((settled_peak(&mut rig.engine) - MAX_GAIN).abs() < 1e-3);
     }
 
     #[test]
     fn rejects_values_that_are_not_numbers_and_unknown_addresses() {
         let mut rig = Rig::with_tone(&[
-            set_param(TONE, VOLUME, f32::NAN),
-            set_param(TONE, VOLUME, f32::INFINITY),
-            set_param(TONE + 1, VOLUME, 0.0),
-            set_param(0, VOLUME, 0.0),
+            set_param(TONE, raw::VOLUME, f32::NAN),
+            set_param(TONE, raw::VOLUME, f32::INFINITY),
+            set_param(TONE + 1, raw::VOLUME, 0.0),
+            set_param(0, raw::VOLUME, 0.0),
             set_param(TONE, 0, 0.0),
-            set_param(TONE, VOLUME + 1, 0.0),
+            set_param(TONE, raw::VOLUME + 1, 0.0),
         ]);
         assert!((settled_peak(&mut rig.engine) - at_volume(DEFAULT_VOLUME)).abs() < 1e-3);
         assert_eq!(
@@ -906,7 +935,7 @@ mod tests {
                 connect(TONE + 10, INSERT),
                 Spec::SetOutput(INSERT),
             ],
-            &[set_param(INSERT, VOLUME, 0.25)],
+            &[set_param(INSERT, raw::VOLUME, 0.25)],
         );
         // Two tones in phase: twice one.
         assert!((settled_peak(&mut rig.engine) - 2.0 * at_volume(DEFAULT_VOLUME)).abs() < 1e-3);
@@ -985,7 +1014,7 @@ mod tests {
 
     #[test]
     fn events_carry_the_session_they_happened_in() {
-        let bad = set_param(TONE + 1, VOLUME, 0.0);
+        let bad = set_param(TONE + 1, raw::VOLUME, 0.0);
         let mut rig = Rig::empty();
         rig.write(std::slice::from_ref(&bad));
         rig.send(&[Spec::Reset(3)], &[bad]);
@@ -1004,7 +1033,7 @@ mod tests {
         let mut rig = Rig::with_tone(&[]);
         rig.send(&[tone_node(40, &[])], &[]);
         assert!(peak(&mut rig.engine, 1) > 0.0);
-        rig.send(&[Spec::Reset(3)], &[set_param(TONE, VOLUME, 0.5)]);
+        rig.send(&[Spec::Reset(3)], &[set_param(TONE, raw::VOLUME, 0.5)]);
         assert_eq!(
             rig.engine.epoch(),
             0,
@@ -1029,7 +1058,10 @@ mod tests {
         let mut rig = Rig::with_tone(&[]);
         peak(&mut rig.engine, FADE_BLOCKS);
         assert_eq!(rig.builder.collect(), 0);
-        rig.send(&[Spec::DestroyNode(TONE)], &[set_param(TONE, VOLUME, 0.5)]);
+        rig.send(
+            &[Spec::DestroyNode(TONE)],
+            &[set_param(TONE, raw::VOLUME, 0.5)],
+        );
         let fading = peak(&mut rig.engine, FADE_BLOCKS - 2);
         assert!(fading > 0.0);
         assert_eq!(rig.builder.collect(), 1, "still playing out");
@@ -1049,7 +1081,7 @@ mod tests {
             for blocks in 2..5 {
                 let mut rig = Rig::with_tone(&[]);
                 if let Some(cutoff) = through {
-                    rig.send(&filter_on_tone(&[(CUTOFF, cutoff)]), &[]);
+                    rig.send(&filter_on_tone(&[(raw::CUTOFF, cutoff)]), &[]);
                 }
                 let heard = heard_across(&mut rig, blocks, &[Spec::DestroyNode(TONE)]);
                 assert_smooth(
@@ -1069,7 +1101,7 @@ mod tests {
         for cutoff in [20_000.0, 200.0, 40.0] {
             for blocks in 2..5 {
                 let mut rig = Rig::with_tone(&[]);
-                rig.send(&filter_on_tone(&[(CUTOFF, cutoff)]), &[]);
+                rig.send(&filter_on_tone(&[(raw::CUTOFF, cutoff)]), &[]);
                 let edits = [Spec::DestroyNode(FILTER), Spec::SetOutput(TONE)];
                 let heard = heard_across(&mut rig, blocks, &edits);
                 assert_smooth(&heard, &format!("{cutoff} Hz after {blocks} blocks"));
@@ -1084,7 +1116,7 @@ mod tests {
             for blocks in 2..5 {
                 let mut rig = Rig::empty();
                 // The filter on the output, hearing nothing yet.
-                let params = [(CUTOFF, cutoff)];
+                let params = [(raw::CUTOFF, cutoff)];
                 rig.send(
                     &[filter_node(FILTER, &params), Spec::SetOutput(FILTER)],
                     &[],
@@ -1110,7 +1142,7 @@ mod tests {
 
     #[test]
     fn a_reset_while_playing_fades_out_and_a_rebuild_in_the_same_batch_fades_in() {
-        let [filter, connect, output] = filter_on_tone(&[(CUTOFF, 300.0)]);
+        let [filter, connect, output] = filter_on_tone(&[(raw::CUTOFF, 300.0)]);
         let rebuild = [
             Spec::Reset(1),
             tone_node(TONE, &[]),
@@ -1121,7 +1153,7 @@ mod tests {
         for edits in [&[Spec::Reset(1)][..], &rebuild] {
             for blocks in 2..5 {
                 let mut rig = Rig::with_tone(&[]);
-                rig.send(&filter_on_tone(&[(CUTOFF, 300.0)]), &[]);
+                rig.send(&filter_on_tone(&[(raw::CUTOFF, 300.0)]), &[]);
                 let heard = heard_across(&mut rig, blocks, edits);
                 assert_smooth(
                     &heard,
@@ -1134,7 +1166,7 @@ mod tests {
     #[test]
     fn quick_changes_inside_the_fade_never_click() {
         let refilter = [
-            filter_node(handle(1, FILTER), &[(CUTOFF, 200.0)]),
+            filter_node(handle(1, FILTER), &[(raw::CUTOFF, 200.0)]),
             connect(TONE, handle(1, FILTER)),
             Spec::SetOutput(handle(1, FILTER)),
         ];
@@ -1147,14 +1179,14 @@ mod tests {
             ),
             // A filter taken out, then put back while the tone comes back.
             (
-                &filter_on_tone(&[(CUTOFF, 200.0)]),
+                &filter_on_tone(&[(raw::CUTOFF, 200.0)]),
                 &[Spec::DestroyNode(FILTER), Spec::SetOutput(TONE)],
                 &refilter,
             ),
             // A filter put in, then taken out while it comes in.
             (
                 &[],
-                &filter_on_tone(&[(CUTOFF, 200.0)]),
+                &filter_on_tone(&[(raw::CUTOFF, 200.0)]),
                 &[Spec::DestroyNode(FILTER), Spec::SetOutput(TONE)],
             ),
         ];
@@ -1226,7 +1258,10 @@ mod tests {
         ];
         let heard = heard_across(&mut rig, 3, &edits);
         assert_smooth(&heard, "the tone replaced in its cell");
-        rig.write(&[set_param(TONE, VOLUME, 0.0), set_param(new, VOLUME, 0.25)]);
+        rig.write(&[
+            set_param(TONE, raw::VOLUME, 0.0),
+            set_param(new, raw::VOLUME, 0.25),
+        ]);
         assert!((settled_peak(&mut rig.engine) - at_volume(0.25)).abs() < 1e-3);
         rig.send(&[connect(TONE, new), Spec::DestroyNode(TONE)], &[]);
         rig.engine.process(BLOCK_FRAMES);
@@ -1314,9 +1349,9 @@ mod tests {
     fn the_audio_thread_never_touches_the_heap() {
         // Every command and edit there is, refused ones, both overflows and a lost stream.
         const INSERT: u32 = 3;
-        let bad = set_param(TONE + 1, VOLUME, 0.0);
+        let bad = set_param(TONE + 1, raw::VOLUME, 0.0);
         let mut rig = Rig::empty();
-        let [filter, tone_to_filter, output] = filter_on_tone(&[(CUTOFF, 300.0)]);
+        let [filter, tone_to_filter, output] = filter_on_tone(&[(raw::CUTOFF, 300.0)]);
         // More notes than a node and a block have room for, one no note can have, and one of a node that isn't there.
         let mut notes: Vec<Played> = (0..=NOTE_BUDGET).map(|_| (0, TONE, 60, 1.0, 240)).collect();
         notes.extend([
@@ -1325,7 +1360,7 @@ mod tests {
             (3, 99, 60, 1.0, 240),
         ]);
         let edits = [
-            tone_node(TONE, &[(VOLUME, 0.3), (VOLUME, f32::NAN)]),
+            tone_node(TONE, &[(raw::VOLUME, 0.3), (raw::VOLUME, f32::NAN)]),
             tone_node(TONE, &[]),
             tone_node(40, &[]),
             Spec::SetPattern(PATTERN, &notes),
@@ -1359,7 +1394,10 @@ mod tests {
                 from: FILTER,
                 to: TONE,
             },
-            Spec::CreateInsert(INSERT, &[(VOLUME_NUMBER, 0.5), (PAN_NUMBER, f32::NAN)]),
+            Spec::CreateInsert(
+                INSERT,
+                &[(raw::VOLUME_NUMBER, 0.5), (raw::PAN_NUMBER, f32::NAN)],
+            ),
             connect(TONE, INSERT),
             disconnect(TONE, INSERT),
             disconnect(TONE, INSERT),
@@ -1369,12 +1407,12 @@ mod tests {
         ];
         // An insert has no parameters, and lets notes pass.
         let live = [
-            set_param(TONE, VOLUME, 0.3),
-            set_param(FILTER, CUTOFF, 5000.0),
-            set_param(INSERT, VOLUME, 0.3),
-            set_strip_param(TONE, PAN_NUMBER, 0.5),
-            set_strip_param(INSERT, VOLUME_NUMBER, 0.5),
-            set_strip_param(TONE, PAN_NUMBER + 1, 0.5),
+            set_param(TONE, raw::VOLUME, 0.3),
+            set_param(FILTER, raw::CUTOFF, 5000.0),
+            set_param(INSERT, raw::VOLUME, 0.3),
+            set_strip_param(TONE, raw::PAN_NUMBER, 0.5),
+            set_strip_param(INSERT, raw::VOLUME_NUMBER, 0.5),
+            set_strip_param(TONE, raw::PAN_NUMBER + 1, 0.5),
             bad.clone(),
             note_on(TONE, 60, 1.0),
             note_on(INSERT, 60, 1.0),
@@ -1385,7 +1423,7 @@ mod tests {
             set_transport(true, 4),
         ];
         let written = [
-            set_param(TONE, VOLUME, f32::NAN),
+            set_param(TONE, raw::VOLUME, f32::NAN),
             wrong_size(),
             unknown_kind(),
             no_kind(),
@@ -1467,7 +1505,7 @@ mod tests {
         for batch in 1..=BATCHES {
             // A reset sends every node back; varying numbers grow the table.
             let node = batch % 300 + 1;
-            let volume = [(VOLUME, 0.3)];
+            let volume = [(raw::VOLUME, 0.3)];
             let notes = [(0, node, 60, 1.0, 240), (4, node, 62, 1.0, 240)];
             let edits = [
                 Spec::Reset(batch),
@@ -1514,7 +1552,7 @@ mod tests {
         store(rig.builder.samples(), KICK, &[&kick()], 128).unwrap();
         rig.send(
             &[
-                sampler_node(SAMPLER, &[(SAMPLE, KICK)]),
+                sampler_node(SAMPLER, &[(raw::SAMPLE, KICK)]),
                 Spec::SetOutput(SAMPLER),
             ],
             &[],
@@ -1530,7 +1568,7 @@ mod tests {
 
     #[test]
     fn a_sampler_made_before_its_sound_is_silent_until_the_sound_is_stored() {
-        let mut rig = with_sampler(&[(SAMPLE, KICK)]);
+        let mut rig = with_sampler(&[(raw::SAMPLE, KICK)]);
         let waiting = rig.builder.samples().get(&KICK);
         assert!(
             waiting.is_some_and(|sample| sample.pcm().is_none()),
@@ -1554,15 +1592,15 @@ mod tests {
         assert_eq!(events(&mut rig.engine), [refused, refused]);
         assert!(rig.builder.samples().get(&KICK).is_none(), "no place made");
         assert!(rig.builder.samples().get(&SNARE).is_none());
-        rig.write(&[set_strip_param(SAMPLER, VOLUME_NUMBER, 0.5)]);
+        rig.write(&[set_strip_param(SAMPLER, raw::VOLUME_NUMBER, 0.5)]);
         rig.engine.process(BLOCK_FRAMES);
         assert_eq!(events(&mut rig.engine), []);
     }
 
     #[test]
     fn an_empty_place_goes_with_the_last_node_that_waited_for_its_sound() {
-        let mut rig = with_sampler(&[(SAMPLE, KICK)]);
-        rig.send(&[sampler_node(4, &[(SAMPLE, KICK)])], &[]);
+        let mut rig = with_sampler(&[(raw::SAMPLE, KICK)]);
+        rig.send(&[sampler_node(4, &[(raw::SAMPLE, KICK)])], &[]);
         rig.send(&[Spec::DestroyNode(SAMPLER)], &[]);
         left(&mut rig.engine, FADE_BLOCKS + 1);
         rig.builder.collect();
@@ -1584,7 +1622,7 @@ mod tests {
         store(rig.builder.samples(), KICK, &[&kick()], 128).unwrap();
         rig.send(
             &[
-                sampler_node(SAMPLER, &[(SAMPLE, KICK)]),
+                sampler_node(SAMPLER, &[(raw::SAMPLE, KICK)]),
                 Spec::SetOutput(SAMPLER),
             ],
             &[],
@@ -1599,7 +1637,7 @@ mod tests {
         // A node made after the eviction gets the same sound.
         rig.send(
             &[
-                sampler_node(4, &[(SAMPLE, KICK)]),
+                sampler_node(4, &[(raw::SAMPLE, KICK)]),
                 Spec::DestroyNode(SAMPLER),
                 Spec::SetOutput(4),
             ],
@@ -1622,7 +1660,7 @@ mod tests {
 
     #[test]
     fn rejects_notes_a_node_can_not_take() {
-        let mut rig = with_sampler(&[(SAMPLE, KICK)]);
+        let mut rig = with_sampler(&[(raw::SAMPLE, KICK)]);
         rig.write(&[
             note_on(SAMPLER + 1, 60, 1.0),
             note_on(SAMPLER, 128, 1.0),
@@ -1649,7 +1687,7 @@ mod tests {
         store(rig.builder.samples(), KICK, &[&[0.25; 4000]], 1000).unwrap();
         rig.send(
             &[
-                sampler_node(SAMPLER, &[(SAMPLE, KICK)]),
+                sampler_node(SAMPLER, &[(raw::SAMPLE, KICK)]),
                 Spec::SetOutput(SAMPLER),
             ],
             &[],
@@ -1727,7 +1765,7 @@ mod tests {
 
     #[test]
     fn events_without_room_in_the_ring_are_lost_and_counted() {
-        let bad = set_param(TONE + 1, VOLUME, 0.0);
+        let bad = set_param(TONE + 1, raw::VOLUME, 0.0);
         let mut rig = Rig::empty();
         rig.write(&[bad.clone(), bad.clone(), bad]);
         rig.engine.process(BLOCK_FRAMES);
@@ -1768,7 +1806,7 @@ mod tests {
         rig.write(&[u32::MAX.to_le_bytes().to_vec()]);
         rig.engine.process(BLOCK_FRAMES);
         assert_eq!(rig.engine.telemetry().stream_lost, 1);
-        rig.write(&[set_param(TONE, VOLUME, 0.0)]);
+        rig.write(&[set_param(TONE, raw::VOLUME, 0.0)]);
         assert!((settled_peak(&mut rig.engine) - at_volume(DEFAULT_VOLUME)).abs() < 1e-3);
         assert_eq!(
             events(&mut rig.engine),
@@ -1877,7 +1915,7 @@ mod tests {
         assert_eq!(rig.engine.epoch(), 1);
         // 140 quarter notes a minute: 20 4/7 frames a tick.
         let ticks = |blocks: usize| {
-            (blocks * BLOCK_FRAMES * 140 * 960 / (60 * SAMPLE_RATE as usize)) as u32
+            (blocks * BLOCK_FRAMES * 140 * 960 / (60 * SAMPLE_RATE.get() as usize)) as u32
         };
         assert_eq!(rig.engine.telemetry().position, ticks(10));
         assert_eq!(playheads(&mut rig.engine, 1), [(1, ticks(11))]);
@@ -1911,7 +1949,7 @@ mod tests {
         store(rig.builder.samples(), KICK, &[&kick()], 128).unwrap();
         rig.send(
             &[
-                sampler_node(SAMPLER, &[(SAMPLE, KICK)]),
+                sampler_node(SAMPLER, &[(raw::SAMPLE, KICK)]),
                 Spec::SetOutput(SAMPLER),
             ],
             &[],
@@ -2034,7 +2072,7 @@ mod tests {
         rig.send(
             &[
                 Spec::Reset(1),
-                sampler_node(again, &[(SAMPLE, KICK)]),
+                sampler_node(again, &[(raw::SAMPLE, KICK)]),
                 Spec::SetOutput(again),
                 Spec::SetPattern(handle(1, PATTERN), &rebuilt),
                 Spec::SetClips(&[(0, u32::MAX, u32::MAX, 0, handle(1, PATTERN))]),
@@ -2059,7 +2097,7 @@ mod tests {
         rig.send(
             &[
                 Spec::DestroyNode(SAMPLER),
-                sampler_node(again, &[(SAMPLE, KICK)]),
+                sampler_node(again, &[(raw::SAMPLE, KICK)]),
                 Spec::SetOutput(again),
             ],
             &[],
@@ -2108,7 +2146,7 @@ mod tests {
 
     /// The synth's default release, as long as the synth takes it.
     fn release_frames() -> usize {
-        let release = synth::DESCRIPTION.param(synth::ENVELOPE.release);
+        let release = synth::ENVELOPE.release.entry(synth::DESCRIPTION.params);
         ramp_samples(release.expect("a synth lets go").default, SAMPLE_RATE) as usize
     }
 

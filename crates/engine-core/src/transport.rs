@@ -5,6 +5,8 @@
 use std::iter;
 use std::num::NonZeroU32;
 
+use engine_plugins::SampleRate;
+
 use crate::BLOCK_FRAMES;
 use crate::schema::Rejection;
 
@@ -16,12 +18,12 @@ pub const MAX_TEMPO: u32 = 522;
 /// MIDI's, until the page sends one.
 pub const DEFAULT_TEMPO: u32 = 120;
 
-/// Every f32 from 8 up is a whole number of 2⁻²⁰, any tempo in range and any sample rate among them: counted in these
-/// parts, the position never rounds.
-const PARTS_IN_ONE: f64 = (1u64 << 20) as f64;
+/// Every f32 from 8 up is a whole number of 2⁻²⁰, any tempo in range among them, and so is a whole sample rate: counted
+/// in these parts, the position never rounds.
+const PARTS_IN_ONE: u32 = 1 << 20;
 
 fn parts(value: f32) -> u64 {
-    let parts = f64::from(value) * PARTS_IN_ONE;
+    let parts = f64::from(value) * f64::from(PARTS_IN_ONE);
     debug_assert_eq!(parts.fract(), 0.0, "{value}");
     parts as u64
 }
@@ -162,10 +164,10 @@ pub struct Transport {
 
 impl Transport {
     #[must_use]
-    pub fn new(sample_rate: f32) -> Self {
+    pub fn new(sample_rate: SampleRate) -> Self {
         let tempo = DEFAULT_TEMPO as f32;
         Self {
-            tick: 60 * parts(sample_rate),
+            tick: 60 * u64::from(sample_rate.get()) * u64::from(PARTS_IN_ONE),
             tempo,
             step: step(tempo),
             state: State::Stopped { ticks: 0, parts: 0 },
@@ -342,7 +344,7 @@ impl Transport {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::{BAR, FRAMES_PER_TICK, SAMPLE_RATE};
+    use crate::testing::{BAR, FRAMES_PER_TICK, SAMPLE_RATE, rate};
 
     fn playing(loop_ticks: u32) -> Transport {
         let mut transport = Transport::new(SAMPLE_RATE);
@@ -547,7 +549,10 @@ mod tests {
             let mut transport = playing(u32::MAX);
             transport.set_tempo(bpm).unwrap();
             assert_eq!(transport.tempo(), clamped as f32);
-            play_blocks(&mut transport, 60 * SAMPLE_RATE as usize / BLOCK_FRAMES);
+            play_blocks(
+                &mut transport,
+                60 * SAMPLE_RATE.get() as usize / BLOCK_FRAMES,
+            );
             assert_eq!(transport.position(), clamped * TICKS_PER_QUARTER, "{bpm}");
         }
     }
@@ -555,7 +560,7 @@ mod tests {
     #[test]
     fn an_hour_of_blocks_lands_on_exact_ticks() {
         let mut transport = playing(BAR);
-        let blocks = 3600 * SAMPLE_RATE as usize / BLOCK_FRAMES;
+        let blocks = 3600 * SAMPLE_RATE.get() as usize / BLOCK_FRAMES;
         for block in 1..=blocks {
             transport.advance(BLOCK_FRAMES);
             let whole = (block * BLOCK_FRAMES / FRAMES_PER_TICK) as u32 % BAR;
@@ -594,20 +599,20 @@ mod tests {
 
     #[test]
     fn counts_the_finest_tempos_at_rates_a_tick_has_no_whole_frames_in() {
-        for (bpm, sample_rate) in [
+        for (bpm, hz) in [
             ((MIN_TEMPO as f32).next_up(), 44_100),
             (128.5, 22_050),
             ((MAX_TEMPO as f32).next_down(), 96_000),
         ] {
-            let mut transport = Transport::new(sample_rate as f32);
+            let mut transport = Transport::new(rate(hz));
             transport.set(true, u32::MAX, Place::default()).unwrap();
             transport.set_tempo(bpm).unwrap();
             // In parts the tempo is exact, and so is frames × tempo × 960 / (60 × rate).
-            let tempo = (f64::from(bpm) * PARTS_IN_ONE) as u128;
+            let tempo = (f64::from(bpm) * f64::from(PARTS_IN_ONE)) as u128;
             for block in 1..=10_000u128 {
                 transport.advance(BLOCK_FRAMES);
                 let exact = block * BLOCK_FRAMES as u128 * tempo * u128::from(TICKS_PER_QUARTER)
-                    / (60 * sample_rate * PARTS_IN_ONE as u128);
+                    / (60 * u128::from(hz) * u128::from(PARTS_IN_ONE));
                 assert_eq!(transport.position(), exact as u32, "{bpm} {block}");
             }
         }
@@ -673,11 +678,11 @@ mod tests {
     fn blocks_share_out_the_ticks_with_none_twice_and_none_left_out_through_changes_of_tempo() {
         // At 3 kHz, the lowest rate of Web Audio, a frame passes more than a tick at the fastest tempos.
         for (sample_rate, tempos) in [
-            (48_000.0, [120.0, 173.3, 61.0, MAX_TEMPO as f32]),
-            (3_000.0, [MAX_TEMPO as f32, MIN_TEMPO as f32, 333.3, 97.0]),
+            (48_000, [120.0, 173.3, 61.0, MAX_TEMPO as f32]),
+            (3_000, [MAX_TEMPO as f32, MIN_TEMPO as f32, 333.3, 97.0]),
         ] {
             let loop_ticks = 7;
-            let mut transport = Transport::new(sample_rate);
+            let mut transport = Transport::new(rate(sample_rate));
             transport.set(true, loop_ticks, Place::default()).unwrap();
             let mut next = 0;
             for block in 0..4000 {
@@ -701,10 +706,10 @@ mod tests {
     #[test]
     fn the_run_passes_the_stretches_ticks_by_their_count_from_the_start_of_play_at_their_frames() {
         for (sample_rate, tempos) in [
-            (48_000.0, [120.0, 173.3, 61.0, MAX_TEMPO as f32]),
-            (3_000.0, [MAX_TEMPO as f32, MIN_TEMPO as f32, 333.3, 97.0]),
+            (48_000, [120.0, 173.3, 61.0, MAX_TEMPO as f32]),
+            (3_000, [MAX_TEMPO as f32, MIN_TEMPO as f32, 333.3, 97.0]),
         ] {
-            let mut transport = Transport::new(sample_rate);
+            let mut transport = Transport::new(rate(sample_rate));
             transport.set(true, 7, Place::default()).unwrap();
             let mut next = 0;
             for block in 0..4000 {
@@ -756,16 +761,16 @@ mod tests {
 
     #[test]
     fn an_hour_of_blocks_passes_every_tick_in_the_frame_it_falls_in() {
-        let (sample_rate, bpm) = (44_100, 173.0);
-        let mut transport = Transport::new(sample_rate as f32);
+        let (hz, bpm) = (44_100, 173.0);
+        let mut transport = Transport::new(rate(hz));
         transport.set(true, u32::MAX, Place::default()).unwrap();
         transport.set_tempo(bpm).unwrap();
         let mut next = 0u64;
-        for block in 0..3600 * sample_rate / BLOCK_FRAMES as u64 {
+        for block in 0..3600 * u64::from(hz) / BLOCK_FRAMES as u64 {
             for (tick, frame) in passed(&transport, BLOCK_FRAMES) {
                 assert_eq!(u64::from(tick), next);
                 // The frame whose stretch of positions holds the tick, counted from the start.
-                let exact = u128::from(next) * 60 * u128::from(sample_rate)
+                let exact = u128::from(next) * 60 * u128::from(hz)
                     / (bpm as u128 * u128::from(TICKS_PER_QUARTER));
                 let heard = block * BLOCK_FRAMES as u64 + u64::from(frame);
                 assert_eq!(u128::from(heard), exact, "tick {next}");

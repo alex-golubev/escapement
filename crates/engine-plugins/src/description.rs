@@ -1,6 +1,9 @@
 //! A plugin's static data. A parameter's or a sample's lasting ID is a string; commands and edits address it by
 //! number, its place in the description counted from 1, so 0 is none.
 
+use std::iter;
+use std::num::NonZeroU32;
+
 #[derive(Clone, Copy, Debug)]
 pub struct PluginDescription {
     /// Lasting, never reused; 0 is none.
@@ -106,36 +109,80 @@ listed! {
     }
 }
 
-/// A list of the description, numbered from 1: a number, the entry it names, and the number of an ID.
-macro_rules! numbered {
-    ($list:ident: $entry:ty, $one:ident, $all:ident, $number:ident, $missing:literal) => {
-        /// `None` for 0 and numbers past the last.
-        pub const fn $one(&self, number: u32) -> Option<&'static $entry> {
-            let list = self.$list;
-            if number == 0 || number as usize > list.len() {
-                return None;
-            }
-            Some(&list[number as usize - 1])
-        }
+/// The number of an entry of one of a description's lists: its place counted from 1, as commands and edits name it,
+/// so 0 is none.
+macro_rules! number {
+    ($(#[$doc:meta])* $name:ident of $entry:ty, $missing:literal) => {
+        $(#[$doc])*
+        #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+        pub struct $name(NonZeroU32);
 
-        pub fn $all(&self) -> impl Iterator<Item = (u32, &'static $entry)> {
-            (1..).zip(self.$list)
-        }
-
-        /// For a plugin's own constants: an ID that isn't there fails the build.
-        pub const fn $number(&self, id: &str) -> u32 {
-            let list = self.$list;
-            let mut index = 0;
-            while index < list.len() {
-                if same(list[index].id, id) {
-                    return index as u32 + 1;
+        impl $name {
+            /// As a command names it: none for 0.
+            #[must_use]
+            pub const fn new(number: u32) -> Option<Self> {
+                match NonZeroU32::new(number) {
+                    Some(number) => Some(Self(number)),
+                    None => None,
                 }
-                index += 1;
             }
-            panic!($missing)
+
+            #[must_use]
+            pub const fn get(self) -> u32 {
+                self.0.get()
+            }
+
+            /// The entry's place in its list, from 0.
+            #[must_use]
+            pub const fn index(self) -> usize {
+                self.0.get() as usize - 1
+            }
+
+            /// Its entry in `list`; none past the last.
+            #[must_use]
+            pub const fn entry(self, list: &[$entry]) -> Option<&$entry> {
+                if self.index() < list.len() {
+                    Some(&list[self.index()])
+                } else {
+                    None
+                }
+            }
+
+            /// Every entry of `list`, with its number.
+            pub fn each(list: &[$entry]) -> impl Iterator<Item = (Self, &$entry)> {
+                iter::successors(Some(NonZeroU32::MIN), |number| number.checked_add(1))
+                    .map(Self)
+                    .zip(list)
+            }
+
+            /// For constants, such as a plugin's own: an ID that isn't in `list` fails the build.
+            #[must_use]
+            pub const fn of(list: &[$entry], id: &str) -> Self {
+                let (mut index, mut number) = (0, NonZeroU32::MIN);
+                while index < list.len() {
+                    if same(list[index].id, id) {
+                        return Self(number);
+                    }
+                    index += 1;
+                    number = number.saturating_add(1);
+                }
+                panic!($missing)
+            }
         }
     };
 }
+
+number!(
+    /// A parameter's, in a plugin's description or in the engine's own list for every node.
+    ParamNumber of ParamDescription,
+    "no parameter with this ID"
+);
+
+number!(
+    /// A sample's, in a plugin's description.
+    SampleNumber of SampleDescription,
+    "no sample with this ID"
+);
 
 impl ParamDescription {
     /// As the engine takes it: in range, a whole number or a choice the nearest, and 0 far below hearing, so no
@@ -159,11 +206,6 @@ impl ParamDescription {
     }
 }
 
-impl PluginDescription {
-    numbered!(params: ParamDescription, param, numbered_params, param_number, "no parameter with this ID");
-    numbered!(samples: SampleDescription, sample, numbered_samples, sample_number, "no sample with this ID");
-}
-
 const fn same(a: &str, b: &str) -> bool {
     let (a, b) = (a.as_bytes(), b.as_bytes());
     if a.len() != b.len() {
@@ -182,6 +224,7 @@ const fn same(a: &str, b: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testing::{param_number, sample_number};
 
     const fn param(id: &'static str) -> ParamDescription {
         ParamDescription {
@@ -289,48 +332,64 @@ mod tests {
 
     #[test]
     fn parameters_are_numbered_from_1() {
-        assert_eq!(DESCRIPTION.param_number("first"), 1);
-        assert_eq!(DESCRIPTION.param_number("second"), 2);
-        assert_eq!(DESCRIPTION.param(1).map(|p| p.id), Some("first"));
-        assert_eq!(DESCRIPTION.param(2).map(|p| p.id), Some("second"));
-        let numbers: Vec<_> = DESCRIPTION
-            .numbered_params()
-            .map(|(n, p)| (n, p.id))
+        assert_eq!(ParamNumber::of(DESCRIPTION.params, "first").get(), 1);
+        assert_eq!(ParamNumber::of(DESCRIPTION.params, "second").get(), 2);
+        assert_eq!(ParamNumber::of(DESCRIPTION.params, "second").index(), 1);
+        assert_eq!(
+            param_number(1).entry(DESCRIPTION.params).map(|p| p.id),
+            Some("first")
+        );
+        assert_eq!(
+            param_number(2).entry(DESCRIPTION.params).map(|p| p.id),
+            Some("second")
+        );
+        let numbers: Vec<_> = ParamNumber::each(DESCRIPTION.params)
+            .map(|(n, p)| (n.get(), p.id))
             .collect();
         assert_eq!(numbers, [(1, "first"), (2, "second")]);
     }
 
     #[test]
     fn there_is_no_parameter_0_or_past_the_last() {
-        for number in [0, 3, u32::MAX] {
-            assert!(DESCRIPTION.param(number).is_none(), "{number}");
+        assert_eq!(ParamNumber::new(0), None);
+        for number in [3, u32::MAX] {
+            assert!(
+                param_number(number).entry(DESCRIPTION.params).is_none(),
+                "{number}"
+            );
         }
     }
 
     #[test]
     #[should_panic(expected = "no parameter with this ID")]
     fn an_id_that_is_not_there_has_no_number() {
-        DESCRIPTION.param_number("firs");
+        let _ = ParamNumber::of(DESCRIPTION.params, "firs");
     }
 
     #[test]
     fn samples_are_numbered_from_1_apart_from_parameters() {
-        assert_eq!(DESCRIPTION.sample_number("low"), 1);
-        assert_eq!(DESCRIPTION.sample_number("high"), 2);
-        assert_eq!(DESCRIPTION.sample(2).map(|s| s.id), Some("high"));
-        let numbers: Vec<_> = DESCRIPTION
-            .numbered_samples()
-            .map(|(n, s)| (n, s.id))
+        assert_eq!(SampleNumber::of(DESCRIPTION.samples, "low").get(), 1);
+        assert_eq!(SampleNumber::of(DESCRIPTION.samples, "high").get(), 2);
+        assert_eq!(
+            sample_number(2).entry(DESCRIPTION.samples).map(|s| s.id),
+            Some("high")
+        );
+        let numbers: Vec<_> = SampleNumber::each(DESCRIPTION.samples)
+            .map(|(n, s)| (n.get(), s.id))
             .collect();
         assert_eq!(numbers, [(1, "low"), (2, "high")]);
-        for number in [0, 3, u32::MAX] {
-            assert!(DESCRIPTION.sample(number).is_none(), "{number}");
+        assert_eq!(SampleNumber::new(0), None);
+        for number in [3, u32::MAX] {
+            assert!(
+                sample_number(number).entry(DESCRIPTION.samples).is_none(),
+                "{number}"
+            );
         }
     }
 
     #[test]
     #[should_panic(expected = "no sample with this ID")]
     fn a_sample_id_that_is_not_there_has_no_number() {
-        DESCRIPTION.sample_number("first");
+        let _ = SampleNumber::of(DESCRIPTION.samples, "first");
     }
 }

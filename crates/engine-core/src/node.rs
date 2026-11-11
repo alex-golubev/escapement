@@ -8,18 +8,29 @@ use std::sync::Arc;
 
 use engine_plugins::catalog::CatalogEntry;
 use engine_plugins::{
-    BLOCK_FRAMES, CHANNELS, Event, Frames, Plugin, PluginDescription, ProcessContext, SampleReader,
+    BLOCK_FRAMES, CHANNELS, Event, Frames, NoteId, ParamNumber, Plugin, PluginDescription,
+    ProcessContext, SampleNumber, SampleRate, SampleReader,
 };
 
 use crate::handle::NodeHandle;
 use crate::notes::note_velocity;
 use crate::pool::Sample;
 use crate::schema::Rejection;
-use crate::strip::Strip;
+use crate::strip::{Strip, StripNumber};
 use crate::telemetry::NodeMeter;
 
 /// Notes a node takes in one block: far more than hands or a pattern's steps give.
 pub(crate) const NOTE_ROOM: usize = 32;
+
+/// As the page names it: 0 is refused, as is a number the node's plugin doesn't have, once it is asked.
+pub(crate) fn page_param(number: u32) -> Result<ParamNumber, Rejection> {
+    ParamNumber::new(number).ok_or(Rejection::UnknownTarget)
+}
+
+/// As [`page_param`].
+pub(crate) fn page_sample(number: u32) -> Result<SampleNumber, Rejection> {
+    SampleNumber::new(number).ok_or(Rejection::UnknownTarget)
+}
 
 pub struct Node {
     handle: NodeHandle,
@@ -54,7 +65,11 @@ struct Slot {
 
 impl Node {
     /// A plugin of the catalog, every parameter at its default. Allocates, so only on the build thread.
-    pub(crate) fn new(entry: &'static CatalogEntry, sample_rate: f32, handle: NodeHandle) -> Self {
+    pub(crate) fn new(
+        entry: &'static CatalogEntry,
+        sample_rate: SampleRate,
+        handle: NodeHandle,
+    ) -> Self {
         let description = entry.description;
         let params = description.params.len();
         let mut slot = Slot {
@@ -65,21 +80,21 @@ impl Node {
             changes: vec![None; params].into_boxed_slice(),
             samples: vec![None; description.samples.len()].into_boxed_slice(),
         };
-        for (number, param) in description.numbered_params() {
+        for (number, param) in ParamNumber::each(description.params) {
             slot.change(number, param.default);
         }
         Self::with(handle, Kind::Plugin(slot), sample_rate)
     }
 
     /// A mixer insert, with a meter if the page asked for one. Allocates, so only on the build thread.
-    pub(crate) fn insert(sample_rate: f32, handle: NodeHandle, metered: bool) -> Self {
+    pub(crate) fn insert(sample_rate: SampleRate, handle: NodeHandle, metered: bool) -> Self {
         Self {
             meter: metered.then(|| NodeMeter::new(handle, sample_rate)),
             ..Self::with(handle, Kind::Insert, sample_rate)
         }
     }
 
-    fn with(handle: NodeHandle, kind: Kind, sample_rate: f32) -> Self {
+    fn with(handle: NodeHandle, kind: Kind, sample_rate: SampleRate) -> Self {
         Self {
             handle,
             kind,
@@ -91,13 +106,12 @@ impl Node {
 
     /// A value is taken as [`engine_plugins::ParamDescription::taken`] has it. An insert has no parameters a
     /// plugin's could be taken for.
-    pub fn set_param(&mut self, number: u32, value: f32) -> Result<(), Rejection> {
+    pub fn set_param(&mut self, number: ParamNumber, value: f32) -> Result<(), Rejection> {
         let Kind::Plugin(slot) = &mut self.kind else {
             return Err(Rejection::UnknownTarget);
         };
-        let param = slot
-            .description
-            .param(number)
+        let param = number
+            .entry(slot.description.params)
             .ok_or(Rejection::UnknownTarget)?;
         let value = param.taken(value).ok_or(Rejection::InvalidValue)?;
         slot.change(number, value);
@@ -105,23 +119,23 @@ impl Node {
     }
 
     /// A parameter of its strip, by its place in [`crate::strip::STRIP`].
-    pub fn set_strip_param(&mut self, number: u32, value: f32) -> Result<(), Rejection> {
+    pub fn set_strip_param(&mut self, number: StripNumber, value: f32) -> Result<(), Rejection> {
         self.strip.set(number, value)
     }
 
     /// `sound` is taken only for a sample the plugin has.
     pub(crate) fn set_sample(
         &mut self,
-        number: u32,
+        number: SampleNumber,
         sound: impl FnOnce() -> Arc<Sample>,
     ) -> Result<(), Rejection> {
         let Kind::Plugin(slot) = &mut self.kind else {
             return Err(Rejection::UnknownTarget);
         };
-        slot.description
-            .sample(number)
+        number
+            .entry(slot.description.samples)
             .ok_or(Rejection::UnknownTarget)?;
-        slot.samples[number as usize - 1] = Some(sound());
+        slot.samples[number.index()] = Some(sound());
         Ok(())
     }
 
@@ -133,7 +147,7 @@ impl Node {
         time: u32,
         key: u8,
         velocity: f32,
-        note: u32,
+        note: NoteId,
     ) -> Result<(), Rejection> {
         let velocity = note_velocity(key, velocity)?;
         self.note(Event::NoteOn {
@@ -145,7 +159,7 @@ impl Node {
     }
 
     /// As [`Node::note_on`]: lets go of the note it named.
-    pub fn note_off(&mut self, time: u32, note: u32) -> Result<(), Rejection> {
+    pub fn note_off(&mut self, time: u32, note: NoteId) -> Result<(), Rejection> {
         self.note(Event::NoteOff { time, note })
     }
 
@@ -201,9 +215,9 @@ impl Slot {
     /// A parameter has one value at a time, so a later change replaces the earlier one: the changes never outgrow
     /// the room for one each. They go before the notes, so a note hears its block's values. `number` is in the
     /// description.
-    fn change(&mut self, number: u32, value: f32) {
+    fn change(&mut self, number: ParamNumber, value: f32) {
         let event = Event::param_at_start(number, value);
-        let place = &mut self.changes[number as usize - 1];
+        let place = &mut self.changes[number.index()];
         if let Some(at) = *place {
             self.events[at] = event;
         } else {
@@ -227,7 +241,7 @@ impl Slot {
         });
         for event in &self.events[..self.changed] {
             if let Event::Param { param, .. } = event {
-                self.changes[*param as usize - 1] = None;
+                self.changes[param.index()] = None;
             }
         }
         self.events.clear();
@@ -239,8 +253,8 @@ impl Slot {
 struct Sounds<'a>(&'a [Option<Arc<Sample>>]);
 
 impl SampleReader for Sounds<'_> {
-    fn frames(&mut self, sample: u32, frames: Range<usize>) -> Option<Frames<'_>> {
-        let sound = self.0.get((sample as usize).checked_sub(1)?)?.as_deref()?;
+    fn frames(&mut self, sample: SampleNumber, frames: Range<usize>) -> Option<Frames<'_>> {
+        let sound = self.0.get(sample.index())?.as_deref()?;
         let pcm = sound.pcm()?;
         let channels = array::from_fn(|channel| pcm.view(channel, frames.clone()));
         Some(Frames::new(channels, pcm.channels()))
@@ -258,7 +272,7 @@ pub(crate) mod tests {
     use crate::heap;
     use crate::pool::SamplePool;
     use crate::pool::tests::store;
-    use crate::testing::{SAMPLE_RATE, SILENCE};
+    use crate::testing::{SAMPLE_RATE, SILENCE, param_number, sample_number};
 
     const HANDLE: NodeHandle = NodeHandle::new(1);
 
@@ -348,7 +362,7 @@ pub(crate) mod tests {
             let [left, right] = context.output;
             left.fill(0.0);
             right.fill(0.0);
-            if let Some(frames) = context.samples.frames(1, 0..left.len()) {
+            if let Some(frames) = context.samples.frames(sample_number(1), 0..left.len()) {
                 let (first, last) = (
                     frames.channels()[0],
                     frames.channels()[frames.channels().len() - 1],
@@ -407,16 +421,22 @@ pub(crate) mod tests {
     #[test]
     fn an_insert_takes_no_parameter_or_sound_and_lets_notes_pass_unheard() {
         let mut insert = Node::insert(SAMPLE_RATE, HANDLE, false);
-        assert_eq!(insert.set_param(1, 0.5), Err(Rejection::UnknownTarget));
+        assert_eq!(
+            insert.set_param(param_number(1), 0.5),
+            Err(Rejection::UnknownTarget)
+        );
         let sound =
             || -> Arc<Sample> { unreachable!("an insert has no sample to take a sound for") };
-        assert_eq!(insert.set_sample(1, sound), Err(Rejection::UnknownTarget));
-        assert_eq!(insert.note_on(0, 60, 1.0, 60), Ok(()));
         assert_eq!(
-            insert.note_on(0, 128, 1.0, 128),
+            insert.set_sample(sample_number(1), sound),
+            Err(Rejection::UnknownTarget)
+        );
+        assert_eq!(insert.note_on(0, 60, 1.0, NoteId::new(60)), Ok(()));
+        assert_eq!(
+            insert.note_on(0, 128, 1.0, NoteId::new(128)),
             Err(Rejection::InvalidValue)
         );
-        assert_eq!(insert.note_off(0, 60), Ok(()));
+        assert_eq!(insert.note_off(0, NoteId::new(60)), Ok(()));
     }
 
     #[test]
@@ -426,8 +446,8 @@ pub(crate) mod tests {
         assert_eq!(
             GIVEN.take(),
             [
-                Event::param_at_start(1, 0.25),
-                Event::param_at_start(2, 0.75)
+                Event::param_at_start(param_number(1), 0.25),
+                Event::param_at_start(param_number(2), 0.75)
             ]
         );
         node.process(&SILENCE, BLOCK_FRAMES);
@@ -437,13 +457,13 @@ pub(crate) mod tests {
     #[test]
     fn values_given_before_the_first_block_replace_the_defaults() {
         let mut node = Node::new(&RECORDER, SAMPLE_RATE, HANDLE);
-        assert_eq!(node.set_param(2, 0.1), Ok(()));
+        assert_eq!(node.set_param(param_number(2), 0.1), Ok(()));
         node.process(&SILENCE, BLOCK_FRAMES);
         assert_eq!(
             GIVEN.take(),
             [
-                Event::param_at_start(1, 0.25),
-                Event::param_at_start(2, 0.1)
+                Event::param_at_start(param_number(1), 0.25),
+                Event::param_at_start(param_number(2), 0.1)
             ]
         );
     }
@@ -454,12 +474,15 @@ pub(crate) mod tests {
         node.process(&SILENCE, BLOCK_FRAMES);
         GIVEN.take();
         for (number, value) in [(1, 0.1), (2, 0.3), (1, 0.2)] {
-            assert_eq!(node.set_param(number, value), Ok(()));
+            assert_eq!(node.set_param(param_number(number), value), Ok(()));
         }
         node.process(&SILENCE, BLOCK_FRAMES);
         assert_eq!(
             GIVEN.take(),
-            [Event::param_at_start(1, 0.2), Event::param_at_start(2, 0.3)]
+            [
+                Event::param_at_start(param_number(1), 0.2),
+                Event::param_at_start(param_number(2), 0.3)
+            ]
         );
     }
 
@@ -469,7 +492,7 @@ pub(crate) mod tests {
             time: 0,
             key,
             velocity,
-            note: key.into(),
+            note: NoteId::new(key.into()),
         }
     }
 
@@ -478,12 +501,16 @@ pub(crate) mod tests {
         let mut node = Node::new(&RECORDER, SAMPLE_RATE, HANDLE);
         node.process(&SILENCE, BLOCK_FRAMES);
         GIVEN.take();
-        assert_eq!(node.note_on(0, 60, 1.0, 60), Ok(()));
-        assert_eq!(node.set_param(1, 0.1), Ok(()));
-        assert_eq!(node.note_on(0, 62, 0.5, 62), Ok(()));
-        assert_eq!(node.set_param(1, 0.2), Ok(()));
+        assert_eq!(node.note_on(0, 60, 1.0, NoteId::new(60)), Ok(()));
+        assert_eq!(node.set_param(param_number(1), 0.1), Ok(()));
+        assert_eq!(node.note_on(0, 62, 0.5, NoteId::new(62)), Ok(()));
+        assert_eq!(node.set_param(param_number(1), 0.2), Ok(()));
         node.process(&SILENCE, BLOCK_FRAMES);
-        let given = [Event::param_at_start(1, 0.2), note(60, 1.0), note(62, 0.5)];
+        let given = [
+            Event::param_at_start(param_number(1), 0.2),
+            note(60, 1.0),
+            note(62, 0.5),
+        ];
         assert_eq!(GIVEN.take(), given);
         node.process(&SILENCE, BLOCK_FRAMES);
         assert_eq!(GIVEN.take(), []);
@@ -494,15 +521,15 @@ pub(crate) mod tests {
         let mut node = Node::new(&RECORDER, SAMPLE_RATE, HANDLE);
         node.process(&SILENCE, BLOCK_FRAMES);
         GIVEN.take();
-        assert_eq!(node.note_on(0, 60, 1.0, 60), Ok(()));
-        assert_eq!(node.note_on(37, 62, 0.5, 62), Ok(()));
-        assert_eq!(node.note_on(37, 64, 0.25, 64), Ok(()));
+        assert_eq!(node.note_on(0, 60, 1.0, NoteId::new(60)), Ok(()));
+        assert_eq!(node.note_on(37, 62, 0.5, NoteId::new(62)), Ok(()));
+        assert_eq!(node.note_on(37, 64, 0.25, NoteId::new(64)), Ok(()));
         node.process(&SILENCE, BLOCK_FRAMES);
         let at = |time, key: u8, velocity| Event::NoteOn {
             time,
             key,
             velocity,
-            note: key.into(),
+            note: NoteId::new(key.into()),
         };
         assert_eq!(
             GIVEN.take(),
@@ -515,18 +542,21 @@ pub(crate) mod tests {
         let mut node = Node::new(&RECORDER, SAMPLE_RATE, HANDLE);
         node.process(&SILENCE, BLOCK_FRAMES);
         GIVEN.take();
-        let off = |time, note| Event::NoteOff { time, note };
+        let off = |time, note| Event::NoteOff {
+            time,
+            note: NoteId::new(note),
+        };
         let on = |time, key: u8| Event::NoteOn {
             time,
             key,
             velocity: 1.0,
-            note: key.into(),
+            note: NoteId::new(key.into()),
         };
-        assert_eq!(node.note_off(90, 60), Ok(()));
-        assert_eq!(node.note_on(90, 62, 1.0, 62), Ok(()));
-        assert_eq!(node.note_on(10, 60, 1.0, 60), Ok(()));
-        assert_eq!(node.note_off(10, 64), Ok(()));
-        assert_eq!(node.note_on(10, 64, 1.0, 64), Ok(()));
+        assert_eq!(node.note_off(90, NoteId::new(60)), Ok(()));
+        assert_eq!(node.note_on(90, 62, 1.0, NoteId::new(62)), Ok(()));
+        assert_eq!(node.note_on(10, 60, 1.0, NoteId::new(60)), Ok(()));
+        assert_eq!(node.note_off(10, NoteId::new(64)), Ok(()));
+        assert_eq!(node.note_on(10, 64, 1.0, NoteId::new(64)), Ok(()));
         node.process(&SILENCE, BLOCK_FRAMES);
         // At one frame, pressed before let go of; otherwise in the order they came.
         assert_eq!(
@@ -541,10 +571,16 @@ pub(crate) mod tests {
         node.process(&SILENCE, BLOCK_FRAMES);
         GIVEN.take();
         for _ in 0..NOTE_ROOM {
-            assert_eq!(node.note_off(0, 127), Ok(()));
+            assert_eq!(node.note_off(0, NoteId::new(127)), Ok(()));
         }
-        assert_eq!(node.note_off(0, 60), Err(Rejection::TooManyNotes));
-        assert_eq!(node.note_on(0, 60, 1.0, 60), Err(Rejection::TooManyNotes));
+        assert_eq!(
+            node.note_off(0, NoteId::new(60)),
+            Err(Rejection::TooManyNotes)
+        );
+        assert_eq!(
+            node.note_on(0, 60, 1.0, NoteId::new(60)),
+            Err(Rejection::TooManyNotes)
+        );
         node.process(&SILENCE, BLOCK_FRAMES);
         assert_eq!(GIVEN.take().len(), NOTE_ROOM);
     }
@@ -554,17 +590,20 @@ pub(crate) mod tests {
         let mut node = Node::new(&RECORDER, SAMPLE_RATE, HANDLE);
         node.process(&SILENCE, BLOCK_FRAMES);
         GIVEN.take();
-        assert_eq!(node.note_on(0, 128, 1.0, 128), Err(Rejection::InvalidValue));
         assert_eq!(
-            node.note_on(0, 60, f32::NAN, 60),
+            node.note_on(0, 128, 1.0, NoteId::new(128)),
             Err(Rejection::InvalidValue)
         );
         assert_eq!(
-            node.note_on(0, 60, f32::INFINITY, 60),
+            node.note_on(0, 60, f32::NAN, NoteId::new(60)),
             Err(Rejection::InvalidValue)
         );
-        assert_eq!(node.note_on(0, 127, 2.0, 127), Ok(()));
-        assert_eq!(node.note_on(0, 0, -1.0, 0), Ok(()));
+        assert_eq!(
+            node.note_on(0, 60, f32::INFINITY, NoteId::new(60)),
+            Err(Rejection::InvalidValue)
+        );
+        assert_eq!(node.note_on(0, 127, 2.0, NoteId::new(127)), Ok(()));
+        assert_eq!(node.note_on(0, 0, -1.0, NoteId::new(0)), Ok(()));
         node.process(&SILENCE, BLOCK_FRAMES);
         assert_eq!(GIVEN.take(), [note(127, 1.0), note(0, 0.0)]);
     }
@@ -573,14 +612,17 @@ pub(crate) mod tests {
     fn a_block_takes_notes_up_to_its_room() {
         let mut node = Node::new(&RECORDER, SAMPLE_RATE, HANDLE);
         for _ in 0..NOTE_ROOM {
-            assert_eq!(node.note_on(0, 60, 1.0, 60), Ok(()));
+            assert_eq!(node.note_on(0, 60, 1.0, NoteId::new(60)), Ok(()));
         }
-        assert_eq!(node.note_on(0, 60, 1.0, 60), Err(Rejection::TooManyNotes));
+        assert_eq!(
+            node.note_on(0, 60, 1.0, NoteId::new(60)),
+            Err(Rejection::TooManyNotes)
+        );
         // Parameter changes still fit.
-        assert_eq!(node.set_param(2, 0.5), Ok(()));
+        assert_eq!(node.set_param(param_number(2), 0.5), Ok(()));
         node.process(&SILENCE, BLOCK_FRAMES);
         assert_eq!(GIVEN.take().len(), 2 + NOTE_ROOM);
-        assert_eq!(node.note_on(0, 60, 1.0, 60), Ok(()));
+        assert_eq!(node.note_on(0, 60, 1.0, NoteId::new(60)), Ok(()));
     }
 
     #[test]
@@ -588,19 +630,27 @@ pub(crate) mod tests {
         let mut node = Node::new(&RECORDER, SAMPLE_RATE, HANDLE);
         node.process(&SILENCE, BLOCK_FRAMES);
         GIVEN.take();
-        assert_eq!(node.set_param(0, 0.5), Err(Rejection::UnknownTarget));
-        assert_eq!(node.set_param(3, 0.5), Err(Rejection::UnknownTarget));
-        assert_eq!(node.set_param(1, f32::NAN), Err(Rejection::InvalidValue));
         assert_eq!(
-            node.set_param(1, f32::INFINITY),
+            node.set_param(param_number(3), 0.5),
+            Err(Rejection::UnknownTarget)
+        );
+        assert_eq!(
+            node.set_param(param_number(1), f32::NAN),
             Err(Rejection::InvalidValue)
         );
-        assert_eq!(node.set_param(1, -2.0), Ok(()));
-        assert_eq!(node.set_param(2, 0.5), Ok(()));
+        assert_eq!(
+            node.set_param(param_number(1), f32::INFINITY),
+            Err(Rejection::InvalidValue)
+        );
+        assert_eq!(node.set_param(param_number(1), -2.0), Ok(()));
+        assert_eq!(node.set_param(param_number(2), 0.5), Ok(()));
         node.process(&SILENCE, BLOCK_FRAMES);
         assert_eq!(
             GIVEN.take(),
-            [Event::param_at_start(1, 0.0), Event::param_at_start(2, 0.5)]
+            [
+                Event::param_at_start(param_number(1), 0.0),
+                Event::param_at_start(param_number(2), 0.5)
+            ]
         );
     }
 
@@ -610,7 +660,7 @@ pub(crate) mod tests {
             let mut node = Node::new(entry, SAMPLE_RATE, HANDLE);
             let before = heap::calls();
             node.process(&SILENCE, BLOCK_FRAMES);
-            for (number, param) in entry.description.numbered_params() {
+            for (number, param) in ParamNumber::each(entry.description.params) {
                 for value in [param.min, param.max, f32::NAN] {
                     let _ = node.set_param(number, value);
                     node.process(&SILENCE, BLOCK_FRAMES);
@@ -618,12 +668,12 @@ pub(crate) mod tests {
             }
             // A flood of changes to every parameter and of notes in one block.
             for _ in 0..100 {
-                for (number, param) in entry.description.numbered_params() {
+                for (number, param) in ParamNumber::each(entry.description.params) {
                     let _ = node.set_param(number, param.min);
-                    let _ = node.note_on(0, 60, 1.0, 60);
+                    let _ = node.note_on(0, 60, 1.0, NoteId::new(60));
                     let _ = node.set_param(number, param.max);
                 }
-                let _ = node.note_on(0, 60, 1.0, 60);
+                let _ = node.note_on(0, 60, 1.0, NoteId::new(60));
             }
             node.process(&SILENCE, BLOCK_FRAMES);
             let calls = heap::calls().wrapping_sub(before);
@@ -637,7 +687,10 @@ pub(crate) mod tests {
         let mut node = Node::new(&READER, SAMPLE_RATE, HANDLE);
         node.process(&SILENCE, BLOCK_FRAMES);
         assert_eq!(node.output(), &SILENCE, "no sound named");
-        assert_eq!(node.set_sample(1, || pool.refer(KICK)), Ok(()));
+        assert_eq!(
+            node.set_sample(sample_number(1), || pool.refer(KICK)),
+            Ok(())
+        );
         node.process(&SILENCE, BLOCK_FRAMES);
         assert_eq!(node.output(), &SILENCE, "not stored yet");
         // Shorter than a block, so the view is cut at the sound's end.
@@ -656,7 +709,10 @@ pub(crate) mod tests {
         let mono = ramp(BLOCK_FRAMES, 0.5);
         store(&mut pool, KICK, &[&mono], BLOCK_FRAMES).unwrap();
         let mut node = Node::new(&READER, SAMPLE_RATE, HANDLE);
-        assert_eq!(node.set_sample(1, || pool.refer(KICK)), Ok(()));
+        assert_eq!(
+            node.set_sample(sample_number(1), || pool.refer(KICK)),
+            Ok(())
+        );
         node.process(&SILENCE, BLOCK_FRAMES);
         assert_eq!(node.output()[0], *mono);
         assert_eq!(node.output()[1], *mono);
@@ -665,16 +721,13 @@ pub(crate) mod tests {
     #[test]
     fn a_sample_the_plugin_does_not_have_takes_no_sound() {
         let mut node = Node::new(&READER, SAMPLE_RATE, HANDLE);
-        for number in [0, 2] {
-            let set = node.set_sample(number, || panic!("taken for sample {number}"));
-            assert_eq!(set, Err(Rejection::UnknownTarget));
-        }
+        let set = node.set_sample(sample_number(2), || panic!("taken for sample 2"));
+        assert_eq!(set, Err(Rejection::UnknownTarget));
         let mut pool = SamplePool::new(SAMPLE_RATE);
         store(&mut pool, KICK, &[&[0.5]], 1).unwrap();
         let mut sounds = Sounds(&[Some(pool.refer(KICK))]);
-        assert!(sounds.frames(1, 0..1).is_some());
-        assert!(sounds.frames(0, 0..1).is_none());
-        assert!(sounds.frames(2, 0..1).is_none());
+        assert!(sounds.frames(sample_number(1), 0..1).is_some());
+        assert!(sounds.frames(sample_number(2), 0..1).is_none());
     }
 
     #[test]

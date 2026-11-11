@@ -7,8 +7,8 @@ use std::ops::Range;
 use crate::events::{Step, steps};
 use crate::smoothing::Smoothed;
 use crate::{
-    CHANNELS, Event, ParamDescription, Plugin, PluginDescription, ProcessContext, Scale, Unit,
-    Values, denormal,
+    CHANNELS, Event, ParamDescription, ParamNumber, Plugin, PluginDescription, ProcessContext,
+    SampleRate, Scale, Unit, Values, denormal,
 };
 
 const CUTOFF_PARAM: ParamDescription = ParamDescription {
@@ -34,7 +34,7 @@ pub const DESCRIPTION: PluginDescription = PluginDescription {
     samples: &[],
 };
 
-pub const CUTOFF: u32 = DESCRIPTION.param_number(CUTOFF_PARAM.id);
+pub const CUTOFF: ParamNumber = ParamNumber::of(DESCRIPTION.params, CUTOFF_PARAM.id);
 
 /// 1/Q of a Butterworth response: −3 dB at the cutoff.
 const DAMPING: f32 = SQRT_2;
@@ -44,8 +44,9 @@ const DAMPING: f32 = SQRT_2;
 const GAIN_STEP: usize = 16;
 
 /// The integrators' gain; it grows without bound at half the sample rate.
-fn gain(cutoff: f32, sample_rate: f32) -> f32 {
-    (PI * cutoff.min(0.49 * sample_rate) / sample_rate).tan()
+fn gain(cutoff: f32, sample_rate: SampleRate) -> f32 {
+    let hz = sample_rate.hz();
+    (PI * cutoff.min(0.49 * hz) / hz).tan()
 }
 
 #[derive(Clone, Copy)]
@@ -75,7 +76,7 @@ struct Memory {
 }
 
 struct Filter {
-    sample_rate: f32,
+    sample_rate: SampleRate,
     cutoff: Smoothed,
     /// The cutoff the gain heads for.
     heading: f32,
@@ -88,14 +89,14 @@ struct Filter {
 }
 
 impl Filter {
-    fn new(sample_rate: f32) -> Self {
+    fn new(sample_rate: SampleRate) -> Self {
         let open = gain(CUTOFF_PARAM.default, sample_rate);
         Self {
             sample_rate,
             cutoff: Smoothed::for_param(&CUTOFF_PARAM, sample_rate),
             heading: CUTOFF_PARAM.default,
             until_heading: 0,
-            gain: Smoothed::new(open, GAIN_STEP as f32 / sample_rate, sample_rate),
+            gain: Smoothed::new(open, GAIN_STEP as f32 / sample_rate.hz(), sample_rate),
             coefficients: (open, Coefficients::new(open)),
             memory: Default::default(),
         }
@@ -136,7 +137,7 @@ impl Filter {
     }
 }
 
-pub(crate) fn create(sample_rate: f32) -> Box<dyn Plugin> {
+pub(crate) fn create(sample_rate: SampleRate) -> Box<dyn Plugin> {
     Box::new(Filter::new(sample_rate))
 }
 
@@ -168,17 +169,17 @@ impl Plugin for Filter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::{SAMPLE_RATE, first_block, render, rms, sine_at};
+    use crate::testing::{SAMPLE_RATE, first_block, render, rms, seconds, sine_at};
 
     /// A steady sine's level through the filter against its own, once the filter has settled.
     fn gain_db(cutoff: f32, frequency: f32) -> f32 {
         let mut filter = create(SAMPLE_RATE);
-        let input = sine_at(frequency, SAMPLE_RATE as usize);
+        let input = sine_at(frequency, seconds(1.0));
         let first = first_block(&DESCRIPTION, &[(CUTOFF, cutoff)]);
         let [left, right] = render(&DESCRIPTION, filter.as_mut(), &first, &input);
         assert_eq!(left, right);
         // Half a second holds whole periods of every frequency here.
-        let settled = SAMPLE_RATE as usize / 2;
+        let settled = seconds(0.5);
         20.0 * (rms(&left[settled..]) / rms(&input[settled..])).log10()
     }
 

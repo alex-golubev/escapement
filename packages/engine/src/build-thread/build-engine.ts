@@ -37,7 +37,7 @@ export const checkContract = (wasm: EngineExports) => {
   } as const
   const floats = { engine_min_velocity: minVelocity, engine_max_velocity: maxVelocity } as const
   const checks = [
-    // A `u32` reaches JavaScript as a signed number.
+    // A 32-bit word reaches JavaScript as a signed number.
     ...Object.entries(words).map(([name, value]) => [name, wasm[name as keyof typeof words]() >>> 0, value] as const),
     // An `f32` as the double nearest it.
     ...Object.entries(floats).map(

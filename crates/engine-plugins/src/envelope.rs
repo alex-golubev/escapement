@@ -4,7 +4,9 @@
 //! own way through it; the knobs are the instrument's.
 
 use crate::smoothing::{Smoothed, ramp_samples};
-use crate::{BLOCK_FRAMES, ParamDescription, PluginDescription, Scale, Unit, Values};
+use crate::{
+    BLOCK_FRAMES, ParamDescription, ParamNumber, PluginDescription, SampleRate, Scale, Unit, Values,
+};
 
 /// Where a fall evenly in decibels ends, 80 dB down: it cuts to silence there, a step below the least a 16-bit sound
 /// holds.
@@ -62,12 +64,12 @@ pub const PARAMS: [ParamDescription; 6] = [DELAY, ATTACK, HOLD, DECAY, SUSTAIN, 
 /// The envelope's parameters by number in an instrument's description.
 #[derive(Clone, Copy, Debug)]
 pub struct Numbers {
-    pub delay: u32,
-    pub attack: u32,
-    pub hold: u32,
-    pub decay: u32,
-    pub sustain: u32,
-    pub release: u32,
+    pub delay: ParamNumber,
+    pub attack: ParamNumber,
+    pub hold: ParamNumber,
+    pub decay: ParamNumber,
+    pub sustain: ParamNumber,
+    pub release: ParamNumber,
 }
 
 impl Numbers {
@@ -75,17 +77,17 @@ impl Numbers {
     #[must_use]
     pub const fn of(description: &PluginDescription) -> Self {
         Self {
-            delay: description.param_number(DELAY.id),
-            attack: description.param_number(ATTACK.id),
-            hold: description.param_number(HOLD.id),
-            decay: description.param_number(DECAY.id),
-            sustain: description.param_number(SUSTAIN.id),
-            release: description.param_number(RELEASE.id),
+            delay: ParamNumber::of(description.params, DELAY.id),
+            attack: ParamNumber::of(description.params, ATTACK.id),
+            hold: ParamNumber::of(description.params, HOLD.id),
+            decay: ParamNumber::of(description.params, DECAY.id),
+            sustain: ParamNumber::of(description.params, SUSTAIN.id),
+            release: ParamNumber::of(description.params, RELEASE.id),
         }
     }
 
     #[must_use]
-    pub const fn all(self) -> [u32; PARAMS.len()] {
+    pub const fn all(self) -> [ParamNumber; PARAMS.len()] {
         [
             self.delay,
             self.attack,
@@ -182,7 +184,7 @@ impl Contour {
 /// The knobs, which every voice of an instrument follows.
 pub struct Envelope {
     numbers: Numbers,
-    sample_rate: f32,
+    sample_rate: SampleRate,
     /// In samples.
     delay: u32,
     /// Of full level, a sample.
@@ -205,7 +207,7 @@ pub struct Envelope {
 impl Envelope {
     /// At the defaults.
     #[must_use]
-    pub fn new(numbers: Numbers, sample_rate: f32) -> Self {
+    pub fn new(numbers: Numbers, sample_rate: SampleRate) -> Self {
         let samples = |seconds| f64::from(ramp_samples(seconds, sample_rate));
         let mut envelope = Self {
             numbers,
@@ -227,7 +229,7 @@ impl Envelope {
     }
 
     /// Takes the value if the parameter is one of its own.
-    pub fn set(&mut self, param: u32, value: f32) {
+    pub fn set(&mut self, param: ParamNumber, value: f32) {
         let Numbers {
             delay,
             attack,
@@ -238,13 +240,12 @@ impl Envelope {
         } = self.numbers;
         let rate = self.sample_rate;
         let samples = |seconds| f64::from(ramp_samples(seconds, rate));
-        let whole = |seconds: f32| (seconds * rate).round() as u32;
         if param == delay {
-            self.delay = whole(value);
+            self.delay = rate.frames(value);
         } else if param == attack {
             self.attack = samples(value).recip();
         } else if param == hold {
-            self.hold = whole(value);
+            self.hold = rate.frames(value);
         } else if param == decay {
             self.decay = samples(value);
         } else if param == sustain {
@@ -372,7 +373,7 @@ impl Envelope {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::{SAMPLE_RATE, largest_step};
+    use crate::testing::{SAMPLE_RATE, largest_step, seconds};
 
     const DESCRIPTION: PluginDescription = PluginDescription {
         id: 1,
@@ -383,15 +384,10 @@ mod tests {
     };
     const NUMBERS: Numbers = Numbers::of(&DESCRIPTION);
 
-    /// Samples in so many seconds.
-    fn at(seconds: f32) -> usize {
-        (seconds * SAMPLE_RATE).round() as usize
-    }
-
     /// What a voice is told: a knob turned, or its note let go of.
     #[derive(Clone, Copy)]
     enum Told {
-        Set(u32, f32),
+        Set(ParamNumber, f32),
         LetGo,
     }
 
@@ -444,7 +440,7 @@ mod tests {
 
     #[test]
     fn a_new_note_rises_at_once_in_a_straight_line_over_3_ms_and_holds_full_level() {
-        let attack = at(0.003);
+        let attack = seconds(0.003);
         let levels = sounding(&levels(&[(&[], 10 * attack)]));
         for (i, level) in levels[..attack].iter().enumerate() {
             let line = (i + 1) as f32 / attack as f32;
@@ -456,7 +452,7 @@ mod tests {
     #[test]
     fn each_parameter_is_its_own_and_in_the_envelope_s_group() {
         let numbers = NUMBERS.all();
-        let ids = numbers.map(|number| DESCRIPTION.param(number).map(|param| param.id));
+        let ids = numbers.map(|number| number.entry(DESCRIPTION.params).map(|param| param.id));
         assert_eq!(
             ids.map(Option::unwrap),
             [
@@ -473,7 +469,7 @@ mod tests {
 
     #[test]
     fn a_delay_keeps_the_note_silent_then_it_rises() {
-        let (delay, attack) = (at(0.25), at(0.003));
+        let (delay, attack) = (seconds(0.25), seconds(0.003));
         let levels = sounding(&levels(&[(
             &[Told::Set(NUMBERS.delay, 0.25)],
             delay + attack,
@@ -485,26 +481,26 @@ mod tests {
 
     #[test]
     fn an_attack_rises_in_a_straight_line_to_full_level_in_its_time_however_long() {
-        for seconds in [0.001, 0.5, 10.0] {
-            let attack = at(seconds);
+        for time in [0.001, 0.5, 10.0] {
+            let attack = seconds(time);
             let levels = sounding(&levels(&[(
-                &[Told::Set(NUMBERS.attack, seconds)],
+                &[Told::Set(NUMBERS.attack, time)],
                 attack + 10,
             )]));
             assert!(
                 near(levels[attack / 2 - 1], 0.5, 1e-3),
-                "{seconds}: {}",
+                "{time}: {}",
                 levels[attack / 2 - 1]
             );
-            assert!(levels[attack - 2] < 1.0, "{seconds}");
-            assert_eq!(levels[attack - 1], 1.0, "{seconds}");
+            assert!(levels[attack - 2] < 1.0, "{time}");
+            assert_eq!(levels[attack - 1], 1.0, "{time}");
         }
     }
 
     #[test]
     fn a_hold_keeps_full_level_then_a_decay_falls_evenly_in_decibels_to_the_sustain_level_in_its_time()
      {
-        let (attack, hold, decay) = (at(0.003), at(0.1), at(0.4));
+        let (attack, hold, decay) = (seconds(0.003), seconds(0.1), seconds(0.4));
         let knobs = [
             Told::Set(NUMBERS.hold, 0.1),
             Told::Set(NUMBERS.decay, 0.4),
@@ -526,17 +522,17 @@ mod tests {
 
     #[test]
     fn at_sustain_0_a_held_note_falls_silent_over_its_decay_and_stays_held() {
-        let decay = at(0.5);
+        let decay = seconds(0.5);
         let mut envelope = Envelope::new(NUMBERS, SAMPLE_RATE);
         envelope.set(NUMBERS.sustain, 0.0);
         let mut contour = Contour::START;
         let mut levels = Vec::new();
-        for _ in 0..(at(0.003) + decay + 1000).div_ceil(BLOCK_FRAMES) {
+        for _ in 0..(seconds(0.003) + decay + 1000).div_ceil(BLOCK_FRAMES) {
             envelope.prepare(BLOCK_FRAMES);
             levels
                 .extend((0..BLOCK_FRAMES).map(|frame| envelope.next(&mut contour, frame).unwrap()));
         }
-        let fallen = at(0.003) - 1 + decay;
+        let fallen = seconds(0.003) - 1 + decay;
         assert!(
             near(decibels(levels[fallen - 1]), -80.0, 0.01),
             "{}",
@@ -548,9 +544,9 @@ mod tests {
 
     #[test]
     fn a_release_falls_evenly_in_decibels_from_where_the_note_was_to_silence_in_its_time() {
-        let release = at(0.1);
+        let release = seconds(0.1);
         // From full level, and from half way up a 10 ms attack.
-        for (held, from) in [(at(0.05), 1.0), (at(0.005), 0.5)] {
+        for (held, from) in [(seconds(0.05), 1.0), (seconds(0.005), 0.5)] {
             let knobs = [Told::Set(NUMBERS.attack, 0.01)];
             let levels = levels(&[(&knobs, held), (&[Told::LetGo], release + 10)]);
             let falling = &levels[held..];
@@ -575,7 +571,7 @@ mod tests {
     #[test]
     fn a_note_let_go_of_during_its_delay_never_sounds() {
         let delay = [Told::Set(NUMBERS.delay, 0.1)];
-        let levels = levels(&[(&delay, 100), (&[Told::LetGo], at(0.2))]);
+        let levels = levels(&[(&delay, 100), (&[Told::LetGo], seconds(0.2))]);
         assert!(levels[..100].iter().all(|&level| level == Some(0.0)));
         assert!(levels[100..].iter().all(Option::is_none));
     }
@@ -584,16 +580,16 @@ mod tests {
     fn a_time_turned_takes_the_stretch_a_note_is_in_on_from_its_frame() {
         // Half way up a 10 ms attack, the rest of the way in 1 ms.
         let slow = [Told::Set(NUMBERS.attack, 0.01)];
-        let half = at(0.005);
+        let half = seconds(0.005);
         let rising = sounding(&levels(&[
             (&slow, half),
             (&[Told::Set(NUMBERS.attack, 0.001)], 100),
         ]));
-        let step = 1.0 / at(0.001) as f32;
+        let step = 1.0 / seconds(0.001) as f32;
         assert!(near(rising[half] - rising[half - 1], step, 1e-6));
-        assert_eq!(rising[half + at(0.0005) - 1], 1.0);
+        assert_eq!(rising[half + seconds(0.0005) - 1], 1.0);
         // Half way down a release, the rest at the pace of one ten times as long.
-        let release = at(0.1);
+        let release = seconds(0.1);
         let turned = levels(&[
             (&[] as &[Told], 1000),
             (&[Told::LetGo], release / 2),
@@ -608,7 +604,7 @@ mod tests {
 
     #[test]
     fn a_sustain_turned_while_a_note_is_held_glides_to_its_new_level() {
-        let glide = at(0.02);
+        let glide = seconds(0.02);
         let held = 1000;
         let levels = sounding(&levels(&[
             (&[], held),
@@ -630,17 +626,17 @@ mod tests {
             Told::Set(NUMBERS.decay, 2.0),
         ];
         let raised = [Told::Set(NUMBERS.sustain, 1.0)];
-        let levels = sounding(&levels(&[(&knobs, at(0.2)), (&raised, at(0.1))]));
-        let step = largest_step(&levels[at(0.003)..]);
+        let levels = sounding(&levels(&[(&knobs, seconds(0.2)), (&raised, seconds(0.1))]));
+        let step = largest_step(&levels[seconds(0.003)..]);
         // No more than the glide's own: a 20 ms one over the whole level.
-        assert!(step <= 1.0 / at(0.02) as f32 + 1e-6, "{step}");
+        assert!(step <= 1.0 / seconds(0.02) as f32 + 1e-6, "{step}");
         assert_eq!(levels[levels.len() - 1], 1.0);
     }
 
     #[test]
     fn no_stretch_moves_the_level_in_a_sample_by_more_than_the_shortest_attack() {
         // Further would click.
-        let limit = 1.0 / at(ATTACK.min) as f32 + 1e-6;
+        let limit = 1.0 / seconds(ATTACK.min) as f32 + 1e-6;
         let shortest = |param: &ParamDescription| Told::Set(NUMBERS.all()[place(param)], param.min);
         let silent = Told::Set(NUMBERS.sustain, 0.0);
         let long = |param: &ParamDescription| Told::Set(NUMBERS.all()[place(param)], param.max);
@@ -694,11 +690,11 @@ mod tests {
         assert_eq!(contour.level(), 1.0);
         contour.give_way();
         let mut levels = Vec::new();
-        for _ in 0..at(0.03).div_ceil(BLOCK_FRAMES) {
+        for _ in 0..seconds(0.03).div_ceil(BLOCK_FRAMES) {
             envelope.prepare(BLOCK_FRAMES);
             levels.extend((0..BLOCK_FRAMES).map(|frame| envelope.next(&mut contour, frame)));
         }
-        let give_way = at(GIVE_WAY_SECONDS);
+        let give_way = seconds(GIVE_WAY_SECONDS);
         assert!(near(levels[give_way / 2 - 1].unwrap(), 0.5, 1e-6));
         assert!(levels[give_way - 2].is_some());
         assert!(levels[give_way - 1..].iter().all(Option::is_none));

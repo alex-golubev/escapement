@@ -8,27 +8,28 @@ use std::mem;
 
 use flatbuffers::Vector;
 
-use engine_plugins::catalog;
+use engine_plugins::{SampleRate, catalog};
 
 use crate::graph::{Nodes, Table};
-use crate::handle::{NodeHandle, PatternHandle};
-use crate::handoff::{BuildEnd, Edit, Parcel};
-use crate::node::Node;
+use crate::handle::{NodeHandle, PatternCell, PatternHandle};
+use crate::handoff::{Batch, BuildEnd, Edit, Parcel};
+use crate::node::{Node, page_param, page_sample};
 use crate::notes::note_velocity;
 use crate::pool::SamplePool;
 use crate::schema::{self, DeviceEdit, Rejection};
 use crate::sequencer::{Arrangement, Clip, Note, Pattern, Patterns};
+use crate::strip::page_strip_param;
 use record::{Record, Removal};
 
-/// A new engine's tables of cells and of places for removed nodes, and of patterns; they double as needed.
+/// A new engine's tables of cells and of exits for removed nodes, and of patterns; they double as needed.
 pub(crate) const FIRST_CELLS: usize = 16;
-pub(crate) const FIRST_PLACES: usize = 16;
+pub(crate) const FIRST_EXITS: usize = 16;
 pub(crate) const FIRST_PATTERN_CELLS: usize = 16;
 
 /// What the build thread knows of the patterns and clips heard once every parcel sent is applied.
 struct Heard {
     /// The live patterns by cell: each one's handle, and every node its notes name, live or not.
-    patterns: BTreeMap<u32, (PatternHandle, HashSet<NodeHandle>)>,
+    patterns: BTreeMap<PatternCell, (PatternHandle, HashSet<NodeHandle>)>,
     /// Every pattern the clips name, live or not; none without clips.
     clips: HashSet<PatternHandle>,
     /// The audio thread's pattern table, once the parcels sent are applied.
@@ -72,7 +73,7 @@ impl Heard {
 }
 
 pub struct Builder {
-    sample_rate: f32,
+    sample_rate: SampleRate,
     handoff: BuildEnd,
     record: Record,
     heard: Heard,
@@ -96,11 +97,11 @@ fn pattern_note(note: &schema::PatternNote) -> Result<Note, Rejection> {
 }
 
 impl Builder {
-    pub(crate) fn new(sample_rate: f32, handoff: BuildEnd) -> Self {
+    pub(crate) fn new(sample_rate: SampleRate, handoff: BuildEnd) -> Self {
         Self {
             sample_rate,
             handoff,
-            record: Record::new(FIRST_CELLS, FIRST_PLACES),
+            record: Record::new(FIRST_CELLS, FIRST_EXITS),
             heard: Heard::new(),
             samples: SamplePool::new(sample_rate),
         }
@@ -112,7 +113,8 @@ impl Builder {
 
     /// Every batch makes a parcel, refusals and all: its marker in the ring waits for it.
     pub fn build(&mut self, batch: u32, bytes: &[u8]) {
-        let sizes = (self.record.cells(), self.record.places());
+        let batch = Batch::new(batch);
+        let sizes = (self.record.cells(), self.record.exits());
         let pattern_cells = self.heard.cells;
         let (mut edits, mut let_go) = (Vec::new(), Vec::new());
         match schema::root_as_device_batch(bytes) {
@@ -139,7 +141,7 @@ impl Builder {
         // Once, before anything the parcel puts in them: the audio thread moves every node over each time.
         let grown = [
             (Table::Cells, sizes.0, self.record.cells()),
-            (Table::Leaving, sizes.1, self.record.places()),
+            (Table::Exits, sizes.1, self.record.exits()),
         ]
         .into_iter()
         .filter(|&(_, before, after)| after > before)
@@ -180,7 +182,7 @@ impl Builder {
         &mut self,
         edits: &mut Vec<Edit>,
         let_go: &mut Vec<NodeHandle>,
-        batch: u32,
+        batch: Batch,
         edit: schema::Edit<'_>,
     ) -> Result<(), Rejection> {
         match edit.edit_type() {
@@ -250,7 +252,7 @@ impl Builder {
                 let handle = self.free_handle(create.node())?;
                 let mut node = Node::insert(self.sample_rate, handle, create.metered());
                 let refused = set_each(create.strip(), |param, value| {
-                    node.set_strip_param(param, value)
+                    node.set_strip_param(page_strip_param(param)?, value)
                 });
                 self.place(edits, node);
                 edits.extend(refused.into_iter().map(Edit::Refused));
@@ -295,14 +297,17 @@ impl Builder {
         let mut node = Node::new(entry, self.sample_rate, handle);
         // One refused value leaves its parameter at the default, and one refused sample silent; refusing the node would
         // refuse its output and knobs too.
-        let mut refused = set_each(create.params(), |param, value| node.set_param(param, value));
+        let mut refused = set_each(create.params(), |param, value| {
+            node.set_param(page_param(param)?, value)
+        });
         refused.extend(set_each(create.strip(), |param, value| {
-            node.set_strip_param(param, value)
+            node.set_strip_param(page_strip_param(param)?, value)
         }));
         let samples = &mut self.samples;
         refused.extend(create.samples().into_iter().flatten().filter_map(|sound| {
             let hash = sound.hash().into();
-            node.set_sample(sound.sample(), || samples.refer(hash))
+            page_sample(sound.sample())
+                .and_then(|number| node.set_sample(number, || samples.refer(hash)))
                 .err()
         }));
         self.place(edits, node);
@@ -367,7 +372,7 @@ impl Builder {
                 }
             })
             .collect();
-        heard.cells = heard.cells.max((cell as usize + 1).next_power_of_two());
+        heard.cells = heard.cells.max((cell.index() + 1).next_power_of_two());
         heard
             .patterns
             .insert(cell, (handle, notes.iter().map(|note| note.node).collect()));
@@ -411,10 +416,10 @@ impl Builder {
     fn remove(
         &mut self,
         edits: &mut Vec<Edit>,
-        batch: u32,
+        batch: Batch,
         handle: NodeHandle,
     ) -> Result<(), Rejection> {
-        let Removal { cell, place } = self.record.remove(handle, batch)?;
+        let Removal { cell, exit } = self.record.remove(handle, batch)?;
         let heard = &mut self.heard;
         heard.unchecked |= heard
             .patterns
@@ -422,7 +427,7 @@ impl Builder {
             .any(|(_, nodes)| nodes.contains(&handle));
         edits.push(Edit::Remove {
             cell,
-            place,
+            exit,
             node: None,
         });
         Ok(())
@@ -447,8 +452,7 @@ pub(crate) mod tests {
     use flatbuffers::{FlatBufferBuilder, UnionWIPOffset, WIPOffset};
 
     use super::*;
-    use crate::graph::{Order, Place};
-    use crate::handle::MAX_CELL;
+    use crate::graph::{Exit, Order, Seat};
     use crate::handoff::{self, Arrival, AudioEnd};
     use crate::pool::Hash;
     use crate::schema::{
@@ -460,7 +464,7 @@ pub(crate) mod tests {
     };
     use crate::schema::{DestroyPattern, DestroyPatternArgs, SetClips, SetClipsArgs};
     use crate::strip::{PAN_NUMBER, VOLUME_NUMBER};
-    use crate::testing::SAMPLE_RATE;
+    use crate::testing::{SAMPLE_RATE, cell};
 
     /// An edit as the page writes it.
     #[derive(Clone, Copy)]
@@ -686,21 +690,21 @@ pub(crate) mod tests {
         }
     }
 
-    /// What a parcel brings, without the nodes themselves.
+    /// What a parcel brings, without the nodes themselves; cells and exits by their places in their tables.
     #[derive(Debug, PartialEq)]
     enum Brought {
         Reset(u32),
         Grow(Table, usize),
-        CreateNode(u32),
+        CreateNode(usize),
         Remove {
-            cell: u32,
-            place: u32,
+            cell: usize,
+            exit: usize,
         },
         /// Each step's node with what it hears, then what the output hears.
-        Order(Vec<(Place, Vec<Place>)>, Vec<Place>),
+        Order(Vec<(Seat, Vec<Seat>)>, Vec<Seat>),
         GrowPatterns(usize),
         /// The cell, and the handle and notes of the pattern made in it.
-        Pattern(u32, Option<(u32, Vec<Played>)>),
+        Pattern(usize, Option<(u32, Vec<Played>)>),
         /// Each clip's tick, last tick, period, offset and pattern.
         Arrangement(Vec<(u32, u32, u32, u32, u32)>),
         LetGo(Vec<u32>),
@@ -711,15 +715,15 @@ pub(crate) mod tests {
         match edit {
             Edit::Reset(epoch) => Brought::Reset(*epoch),
             Edit::Grow { table, nodes } => Brought::Grow(*table, nodes.len()),
-            Edit::CreateNode { cell, .. } => Brought::CreateNode(*cell),
-            Edit::Remove { cell, place, .. } => Brought::Remove {
-                cell: *cell,
-                place: *place,
+            Edit::CreateNode { cell, .. } => Brought::CreateNode(cell.index()),
+            Edit::Remove { cell, exit, .. } => Brought::Remove {
+                cell: cell.index(),
+                exit: exit.index(),
             },
             Edit::Order(order) => brought(order),
             Edit::GrowPatterns(patterns) => Brought::GrowPatterns(patterns.len()),
             Edit::Pattern { cell, pattern } => Brought::Pattern(
-                *cell,
+                cell.index(),
                 pattern.as_ref().map(|(handle, pattern)| {
                     let notes = pattern.notes().iter().map(|note| {
                         (
@@ -760,19 +764,24 @@ pub(crate) mod tests {
     }
 
     fn wired(steps: &[(u32, &[u32])], output: &[u32]) -> Brought {
-        let cells = |cells: &[u32]| cells.iter().map(|&cell| Place::Cell(cell)).collect();
+        let seats = |handles: &[u32]| {
+            handles
+                .iter()
+                .map(|&handle| Seat::Cell(cell(handle)))
+                .collect()
+        };
         Brought::Order(
             steps
                 .iter()
-                .map(|&(cell, inputs)| (Place::Cell(cell), cells(inputs)))
+                .map(|&(handle, inputs)| (Seat::Cell(cell(handle)), seats(inputs)))
                 .collect(),
-            cells(output),
+            seats(output),
         )
     }
 
     fn brought(order: &Order) -> Brought {
-        let sources = |start: u32, end: u32| {
-            order.connections[start as usize..end as usize]
+        let sources = |range: std::ops::Range<usize>| {
+            order.connections[range]
                 .iter()
                 .map(|connection| connection.source)
                 .collect()
@@ -781,9 +790,9 @@ pub(crate) mod tests {
             order
                 .steps
                 .iter()
-                .map(|step| (step.node, sources(step.inputs.0, step.inputs.1)))
+                .map(|step| (step.node, sources(step.inputs.clone())))
                 .collect(),
-            sources(order.output, order.connections.len() as u32),
+            sources(order.output..order.connections.len()),
         )
     }
 
@@ -803,7 +812,7 @@ pub(crate) mod tests {
         bytes: &[u8],
     ) -> Box<Parcel> {
         builder.build(batch, bytes);
-        let Arrival::Here(parcel) = audio.take(batch) else {
+        let Arrival::Here(parcel) = audio.take(Batch::new(batch)) else {
             panic!("no parcel for batch {batch}");
         };
         parcel
@@ -934,7 +943,7 @@ pub(crate) mod tests {
     #[test]
     fn a_value_the_node_refuses_leaves_its_parameter_at_the_default_and_the_node_is_made() {
         let (mut builder, mut audio) = builder();
-        let volume = tone::VOLUME;
+        let volume = tone::VOLUME.get();
         let values = [(volume, f32::NAN), (volume + 1, 0.5), (volume, 0.25)];
         let edits = [tone_node(1, &values)];
         assert_eq!(
@@ -952,10 +961,10 @@ pub(crate) mod tests {
     fn a_strip_value_is_refused_on_its_own_and_the_node_is_made() {
         let (mut builder, mut audio) = builder();
         let values = [
-            (VOLUME_NUMBER, f32::NAN),
-            (PAN_NUMBER + 1, 0.5),
+            (VOLUME_NUMBER.get(), f32::NAN),
+            (PAN_NUMBER.get() + 1, 0.5),
             (0, 0.5),
-            (PAN_NUMBER, 0.5),
+            (PAN_NUMBER.get(), 0.5),
         ];
         let edits = [
             Spec::CreateNode {
@@ -997,17 +1006,17 @@ pub(crate) mod tests {
                 order(&[16, 32], &[]),
             ]
         );
-        let edits = [tone_node(63, &[]), tone_node(MAX_CELL, &[])];
+        let edits = [tone_node(63, &[]), tone_node(u32::from(u16::MAX), &[])];
         assert_eq!(
             built(&mut builder, &mut audio, 2, &batch(&edits)),
             [
-                Brought::Grow(Table::Cells, MAX_CELL as usize + 1),
+                Brought::Grow(Table::Cells, usize::from(u16::MAX) + 1),
                 Brought::CreateNode(63),
-                Brought::CreateNode(MAX_CELL),
-                order(&[16, 32, 63, MAX_CELL], &[]),
+                Brought::CreateNode(usize::from(u16::MAX)),
+                order(&[16, 32, 63, u32::from(u16::MAX)], &[]),
             ]
         );
-        // A reset of more nodes than there are places for removed ones.
+        // A reset of more nodes than there are exits for removed ones.
         let many: Vec<_> = (1..=20).map(|cell| tone_node(cell, &[])).collect();
         built(&mut builder, &mut audio, 3, &batch(&many));
         let reset = built(&mut builder, &mut audio, 4, &batch(&[Spec::Reset(1)]));
@@ -1015,8 +1024,8 @@ pub(crate) mod tests {
             .iter()
             .filter(|edit| matches!(edit, Brought::Grow(..)))
             .collect();
-        assert_eq!(grows, [&Brought::Grow(Table::Leaving, 32)]);
-        assert_eq!(reset[0], Brought::Grow(Table::Leaving, 32));
+        assert_eq!(grows, [&Brought::Grow(Table::Exits, 32)]);
+        assert_eq!(reset[0], Brought::Grow(Table::Exits, 32));
     }
 
     #[test]
@@ -1032,19 +1041,19 @@ pub(crate) mod tests {
         let removal = parcel(&mut builder, &mut audio, 2, &batch(&again));
         assert!(removal.holds);
         let edits: Vec<_> = removal.edits.iter().map(brought_edit).collect();
-        let playing_out = Place::Leaving(0);
+        let playing_out = Seat::Exit(Exit::new(0));
         assert_eq!(
             edits,
             [
-                Brought::Remove { cell: 1, place: 0 },
+                Brought::Remove { cell: 1, exit: 0 },
                 Brought::CreateNode(1),
                 Brought::Order(
-                    vec![(playing_out, vec![]), (Place::Cell(1), vec![])],
-                    vec![playing_out, Place::Cell(1)]
+                    vec![(playing_out, vec![]), (Seat::Cell(cell(1)), vec![])],
+                    vec![playing_out, Seat::Cell(cell(1))]
                 ),
             ]
         );
-        // Until the parcel is back, its place stays taken.
+        // Until the parcel is back, its exit stays taken.
         built(&mut builder, &mut audio, 3, &batch(&[]));
         audio.give_back(removal);
         assert_eq!(builder.collect(), 0);
@@ -1063,20 +1072,20 @@ pub(crate) mod tests {
         let parcel = parcel(&mut builder, &mut audio, 2, &batch(&reset));
         assert!(parcel.holds);
         let edits: Vec<_> = parcel.edits.iter().map(brought_edit).collect();
-        let [two, twenty] = [Place::Leaving(0), Place::Leaving(1)];
+        let [two, twenty] = [Seat::Exit(Exit::new(0)), Seat::Exit(Exit::new(1))];
         assert_eq!(
             edits,
             [
                 Brought::Reset(3),
-                Brought::Remove { cell: 2, place: 0 },
-                Brought::Remove { cell: 20, place: 1 },
+                Brought::Remove { cell: 2, exit: 0 },
+                Brought::Remove { cell: 20, exit: 1 },
                 Brought::Refused(Rejection::UnknownTarget),
                 Brought::CreateNode(20),
                 Brought::Order(
                     vec![
                         (two, vec![]),
                         (twenty, vec![two]),
-                        (Place::Cell(20), vec![])
+                        (Seat::Cell(cell(20)), vec![])
                     ],
                     vec![]
                 ),
@@ -1340,23 +1349,27 @@ pub(crate) mod tests {
     #[test]
     fn the_pattern_table_grows_before_the_parcel_puts_a_pattern_past_it() {
         let (mut builder, mut audio) = builder();
-        let cell = FIRST_PATTERN_CELLS as u32;
-        let edits = [Spec::SetPattern(cell + 1, &[]), Spec::SetPattern(cell, &[])];
+        let past = FIRST_PATTERN_CELLS;
+        let handle = |cell: usize| u32::try_from(cell).unwrap();
+        let edits = [
+            Spec::SetPattern(handle(past + 1), &[]),
+            Spec::SetPattern(handle(past), &[]),
+        ];
         assert_eq!(
             built(&mut builder, &mut audio, 1, &batch(&edits)),
             [
                 Brought::GrowPatterns(2 * FIRST_PATTERN_CELLS),
-                Brought::Pattern(cell + 1, Some((cell + 1, vec![]))),
-                Brought::Pattern(cell, Some((cell, vec![]))),
+                Brought::Pattern(past + 1, Some((handle(past + 1), vec![]))),
+                Brought::Pattern(past, Some((handle(past), vec![]))),
             ]
         );
-        let last = MAX_CELL;
-        let edits = [Spec::SetPattern(last, &[])];
+        let last = usize::from(u16::MAX);
+        let edits = [Spec::SetPattern(handle(last), &[])];
         assert_eq!(
             built(&mut builder, &mut audio, 2, &batch(&edits)),
             [
-                Brought::GrowPatterns(MAX_CELL as usize + 1),
-                Brought::Pattern(last, Some((last, vec![]))),
+                Brought::GrowPatterns(last + 1),
+                Brought::Pattern(last, Some((handle(last), vec![]))),
             ]
         );
     }
@@ -1482,10 +1495,13 @@ pub(crate) mod tests {
         assert_eq!(
             removed,
             [
-                Brought::Remove { cell: 2, place: 0 },
+                Brought::Remove { cell: 2, exit: 0 },
                 Brought::Refused(Rejection::UnknownTarget),
                 Brought::Order(
-                    vec![(Place::Cell(1), vec![]), (Place::Leaving(0), vec![])],
+                    vec![
+                        (Seat::Cell(cell(1)), vec![]),
+                        (Seat::Exit(Exit::new(0)), vec![])
+                    ],
                     vec![]
                 ),
             ]
@@ -1549,7 +1565,7 @@ pub(crate) mod tests {
             built(&mut builder, &mut audio, 3, &batch(&rebuild)),
             [
                 Brought::Reset(2),
-                Brought::Remove { cell: 1, place: 0 },
+                Brought::Remove { cell: 1, exit: 0 },
                 Brought::Pattern(1, None),
                 Brought::Pattern(2, None),
                 Brought::Arrangement(vec![]),
@@ -1560,7 +1576,10 @@ pub(crate) mod tests {
                 ),
                 Brought::Arrangement(vec![(0, 959, 960, 0, handle(1, 1))]),
                 Brought::Order(
-                    vec![(Place::Leaving(0), vec![]), (Place::Cell(1), vec![])],
+                    vec![
+                        (Seat::Exit(Exit::new(0)), vec![]),
+                        (Seat::Cell(cell(1)), vec![])
+                    ],
                     vec![]
                 ),
             ]

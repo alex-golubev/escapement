@@ -7,16 +7,19 @@ mod description;
 pub mod envelope;
 pub mod events;
 mod fingerprint;
+mod sample_rate;
 pub mod samples;
 pub mod smoothing;
 #[cfg(test)]
 mod testing;
 
 pub use description::{
-    Choice, ParamDescription, PluginDescription, SampleDescription, Scale, Unit, Values,
+    Choice, ParamDescription, ParamNumber, PluginDescription, SampleDescription, SampleNumber,
+    Scale, Unit, Values,
 };
-pub use events::Event;
+pub use events::{Event, NoteId};
 pub use fingerprint::fingerprint;
+pub use sample_rate::SampleRate;
 pub use samples::{Frames, SampleReader};
 
 /// The Web Audio render quantum: no block is longer.

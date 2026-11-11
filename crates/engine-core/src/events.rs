@@ -1,16 +1,17 @@
 //! What the engine reports once, unlike the telemetry.
 
 use crate::framing::{self, Frame, frame};
+use crate::handoff::Batch;
 use crate::schema::{CommandRejected, CommandStreamLost, EditRejected, EventKind, Rejection};
 
 /// Kept between takes; needn't match the event ring, since a take hands out only what fits.
 pub const EVENT_CAPACITY: usize = 64 * 1024;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum EngineEvent {
+pub(crate) enum EngineEvent {
     CommandRejected(Rejection),
     CommandStreamLost,
-    EditRejected { batch: u32, reason: Rejection },
+    EditRejected { batch: Batch, reason: Rejection },
 }
 
 /// Events waiting for the worklet to take them; allocated once.
@@ -41,7 +42,7 @@ impl EventOutput {
     /// False if the event is lost. After one is lost, later ones are too until the next take:
     /// events stay in order, and a flood doesn't cost writing events only to drop them.
     #[must_use]
-    pub fn push(&mut self, epoch: u32, event: EngineEvent) -> bool {
+    pub(crate) fn push(&mut self, epoch: u32, event: EngineEvent) -> bool {
         if self.full {
             return false;
         }
@@ -88,7 +89,7 @@ fn write(out: &mut [u8], epoch: u32, event: EngineEvent) -> Option<usize> {
         EngineEvent::EditRejected { batch, reason } => framing::write(
             out,
             EventKind::EditRejected.0,
-            &EditRejected::new(epoch, batch, reason).0,
+            &EditRejected::new(epoch, batch.get(), reason).0,
         ),
     }
 }
@@ -113,7 +114,7 @@ pub(crate) mod tests {
             }
             EventKind::EditRejected => {
                 let record = EditRejected(record.try_into().unwrap());
-                let (batch, reason) = (record.batch(), record.reason());
+                let (batch, reason) = (Batch::new(record.batch()), record.reason());
                 (record.epoch(), EngineEvent::EditRejected { batch, reason })
             }
             other => panic!("unexpected event {other:?}"),
@@ -140,7 +141,7 @@ pub(crate) mod tests {
     #[test]
     fn every_kind_of_the_schema_is_written() {
         let edit_rejected = EngineEvent::EditRejected {
-            batch: 2,
+            batch: Batch::new(2),
             reason: Rejection::CellTaken,
         };
         let written: Vec<_> = [REJECTED, EngineEvent::CommandStreamLost, edit_rejected]

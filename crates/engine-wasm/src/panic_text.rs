@@ -15,7 +15,8 @@ const CUT: &[u8] = b"...";
 /// worklet has no `TextDecoder`.
 #[repr(C)]
 pub struct PanicText {
-    len: u32,
+    /// A 32-bit word on wasm32, as the page reads it.
+    len: usize,
     bytes: [u8; PANIC_TEXT_BYTES],
 }
 
@@ -34,9 +35,9 @@ impl PanicText {
     fn set(&mut self, text: fmt::Arguments<'_>) {
         self.len = 0;
         if self.write_fmt(text).is_err() {
-            let at = (self.len as usize).min(PANIC_TEXT_BYTES - CUT.len());
+            let at = self.len.min(PANIC_TEXT_BYTES - CUT.len());
             self.bytes[at..at + CUT.len()].copy_from_slice(CUT);
-            self.len = (at + CUT.len()) as u32;
+            self.len = at + CUT.len();
         }
     }
 
@@ -58,7 +59,7 @@ impl Write for PanicText {
     /// one would read as something else.
     fn write_str(&mut self, s: &str) -> fmt::Result {
         for c in s.chars() {
-            let start = self.len as usize;
+            let start = self.len;
             let written = if matches!(c, ' '..='~') {
                 *self.bytes.get_mut(start).ok_or(fmt::Error)? = c as u8;
                 1
@@ -73,7 +74,7 @@ impl Write for PanicText {
                     .for_each(|(byte, c)| *byte = c as u8);
                 room.len()
             };
-            self.len += written as u32;
+            self.len += written;
         }
         Ok(())
     }
@@ -103,7 +104,7 @@ mod tests {
 
     impl PanicText {
         fn as_str(&self) -> &str {
-            str::from_utf8(&self.bytes[..self.len as usize]).unwrap()
+            str::from_utf8(&self.bytes[..self.len]).unwrap()
         }
     }
 

@@ -79,7 +79,10 @@ mod tests {
             ControlFlow::Continue(())
         });
         // The page's tone is node 1.
-        let tone = format!("SetParam 1 {} 0.25", engine_plugins::catalog::tone::VOLUME);
+        let tone = format!(
+            "SetParam 1 {} 0.25",
+            engine_plugins::catalog::tone::VOLUME.get()
+        );
         assert_eq!(
             read,
             [

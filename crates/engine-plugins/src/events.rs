@@ -4,28 +4,49 @@ use std::iter::{self, Peekable};
 use std::ops::Range;
 use std::slice;
 
+use crate::ParamNumber;
+
 /// Happens before the sample of its frame. At one frame, parameter changes come first, then notes pressed, then notes let
 /// go of: a note let go of at the frame it is pressed still starts.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Event {
-    /// `param` is a number from the plugin's description; `value` lies within that parameter's range.
-    Param { time: u32, param: u32, value: f32 },
-    /// `key` is a MIDI key, 0 to 127; `velocity` lies between 0 and 1. `note` names it until it is let go of: no other
-    /// note the node holds has it.
+    /// `param` is in the plugin's description; `value` lies within that parameter's range.
+    Param {
+        time: u32,
+        param: ParamNumber,
+        value: f32,
+    },
+    /// `key` is a MIDI key, 0 to 127; `velocity` lies between 0 and 1.
     NoteOn {
         time: u32,
         key: u8,
         velocity: f32,
-        note: u32,
+        note: NoteId,
     },
     /// Of the note pressed with `note`; a note no longer held, or one a plugin plays out on its own, takes no notice.
-    NoteOff { time: u32, note: u32 },
+    NoteOff { time: u32, note: NoteId },
+}
+
+/// Names a note from its press until it is let go of: no other note its node holds has it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct NoteId(u32);
+
+impl NoteId {
+    #[must_use]
+    pub const fn new(id: u32) -> Self {
+        Self(id)
+    }
+
+    #[must_use]
+    pub const fn get(self) -> u32 {
+        self.0
+    }
 }
 
 impl Event {
     /// A value given between blocks takes effect at the start of the next.
     #[must_use]
-    pub const fn param_at_start(param: u32, value: f32) -> Self {
+    pub const fn param_at_start(param: ParamNumber, value: f32) -> Self {
         Self::Param {
             time: 0,
             param,
@@ -72,11 +93,12 @@ pub fn steps(events: &[Event], frames: usize) -> impl Iterator<Item = Step> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testing::param_number;
 
     fn param(time: u32, param: u32) -> Event {
         Event::Param {
             time,
-            param,
+            param: param_number(param),
             value: 0.5,
         }
     }
