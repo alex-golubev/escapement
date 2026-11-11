@@ -15,7 +15,7 @@ use crate::schema::Rejection;
 const SMOOTHING_SECONDS: f32 = 0.02;
 
 /// Up to 5.6 dB over the sound as it is, a mixer fader's top; at the sound as it is unless something turns it.
-pub const VOLUME: ParamDescription = ParamDescription {
+pub(crate) const VOLUME: ParamDescription = ParamDescription {
     id: "volume",
     label: "Volume",
     group: None,
@@ -30,7 +30,7 @@ pub const VOLUME: ParamDescription = ParamDescription {
 };
 
 /// Equal power, the circular pan law: the middle leaves the sound as it is, a side is up to 3 dB louder.
-pub const PAN: ParamDescription = ParamDescription {
+pub(crate) const PAN: ParamDescription = ParamDescription {
     id: "pan",
     label: "Pan",
     group: None,
@@ -47,15 +47,17 @@ pub const STRIP: &[ParamDescription] = &[VOLUME, PAN];
 
 /// A parameter's number in [`STRIP`], apart from a plugin's so one never names the other; always one the strip has.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct StripNumber(ParamNumber);
+pub(crate) struct StripNumber(ParamNumber);
 
 impl StripNumber {
     const fn of(id: &str) -> Self {
         Self(ParamNumber::of(STRIP, id))
     }
 
+    /// As the page writes it.
+    #[cfg(test)]
     #[must_use]
-    pub const fn get(self) -> u32 {
+    pub(crate) const fn get(self) -> u32 {
         self.0.get()
     }
 
@@ -65,8 +67,8 @@ impl StripNumber {
 }
 
 /// Their numbers in commands, found by ID, so the order lives only in [`STRIP`].
-pub const VOLUME_NUMBER: StripNumber = StripNumber::of(VOLUME.id);
-pub const PAN_NUMBER: StripNumber = StripNumber::of(PAN.id);
+pub(crate) const VOLUME_NUMBER: StripNumber = StripNumber::of(VOLUME.id);
+pub(crate) const PAN_NUMBER: StripNumber = StripNumber::of(PAN.id);
 
 /// As the page names it: 0 and a number past [`STRIP`] are refused.
 pub(crate) fn page_strip_param(number: u32) -> Result<StripNumber, Rejection> {

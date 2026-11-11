@@ -33,7 +33,8 @@ impl Default for EventOutput {
 }
 
 impl EventOutput {
-    /// Where [`take`](Self::take) hands out events.
+    /// Where a block's events are handed out: as many bytes as [`Engine::audio_block`](crate::Engine::audio_block)
+    /// returns.
     #[must_use]
     pub fn as_ptr(&self) -> *const u8 {
         self.buf.as_ptr()
@@ -56,7 +57,7 @@ impl EventOutput {
     }
 
     /// Hands out the events that fit into `room` bytes, drops the rest and returns how many were lost.
-    pub fn take(&mut self, room: usize) -> (&[u8], usize) {
+    pub(crate) fn take(&mut self, room: usize) -> (&[u8], usize) {
         let (mut handed, mut lost, mut start) = (0, 0, 0);
         while let Frame::Whole(size) = frame(&self.buf[start..self.len]) {
             if start + size <= room {

@@ -7,17 +7,17 @@ use crate::pool::{Hash, SamplePool};
 use crate::schema::Rejection;
 
 /// [`SAMPLE_RATE`], as the page has it.
-pub const HZ: f64 = SAMPLE_RATE.get() as f64;
+pub(crate) const HZ: f64 = SAMPLE_RATE.get() as f64;
 
 /// Into a place the pool gave.
-pub fn write(place: &mut [MaybeUninit<f32>], numbers: &[f32]) {
+pub(crate) fn write(place: &mut [MaybeUninit<f32>], numbers: &[f32]) {
     for (slot, &number) in place.iter_mut().zip(numbers) {
         slot.write(number);
     }
 }
 
 /// As the build thread stores a sound: its numbers in parts of at most `part`.
-pub fn store(
+pub(crate) fn store(
     pool: &mut SamplePool,
     hash: Hash,
     channels: &[&[f32]],

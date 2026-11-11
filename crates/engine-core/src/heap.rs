@@ -44,7 +44,7 @@ unsafe impl GlobalAlloc for CountingAllocator {
 
 /// Heap calls on this thread since it started; wraps around.
 #[must_use]
-pub fn calls() -> u32 {
+pub(crate) fn calls() -> u32 {
     CALLS.get()
 }
 

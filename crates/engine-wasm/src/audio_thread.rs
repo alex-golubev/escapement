@@ -16,7 +16,7 @@ static mut TLS: Reserved<TLS_BYTES> = Reserved([0; TLS_BYTES]);
 /// Read by the worklet before its first call into the engine: a call before it takes its stack would run on the
 /// build thread's.
 #[repr(C)]
-pub struct AudioThread {
+pub(crate) struct AudioThread {
     stack_top: *mut u8,
     stack_bottom: *mut u8,
     tls: *mut u8,
@@ -28,7 +28,7 @@ unsafe impl Sync for AudioThread {}
 
 /// Exported as a global holding its address.
 #[unsafe(no_mangle)]
-pub static ENGINE_AUDIO_THREAD: AudioThread = AudioThread {
+pub(crate) static ENGINE_AUDIO_THREAD: AudioThread = AudioThread {
     // Safety: one past the end of the stack, where it starts growing down.
     stack_top: unsafe { (&raw mut STACK).cast::<u8>().add(STACK_BYTES) },
     stack_bottom: (&raw mut STACK).cast(),

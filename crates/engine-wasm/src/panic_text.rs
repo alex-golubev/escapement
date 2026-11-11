@@ -6,7 +6,7 @@ use std::panic::{self, PanicHookInfo};
 use std::sync::Once;
 
 /// Room for the text, mirrored in `packages/engine/src/panic-text.ts`.
-pub const PANIC_TEXT_BYTES: usize = 512;
+pub(crate) const PANIC_TEXT_BYTES: usize = 512;
 
 /// Ends a text cut short.
 const CUT: &[u8] = b"...";
@@ -14,7 +14,7 @@ const CUT: &[u8] = b"...";
 /// Its length in bytes, then the text: printable ASCII only, so it is one line and each byte a character — the
 /// worklet has no `TextDecoder`.
 #[repr(C)]
-pub struct PanicText {
+pub(crate) struct PanicText {
     /// A 32-bit word on wasm32, as the page reads it.
     len: usize,
     bytes: [u8; PANIC_TEXT_BYTES],
@@ -87,14 +87,14 @@ fn keep(info: &PanicHookInfo<'_>) {
 /// Once per memory: the hook is kept there, so it is the one of every thread on it. With a hook of its own, std
 /// formats a panic's message on the heap before calling it, on the audio thread too: that thread dies anyway, and
 /// waits only while the build thread holds the allocator's lock.
-pub fn install() {
+pub(crate) fn install() {
     static INSTALLED: Once = Once::new();
     INSTALLED.call_once(|| panic::set_hook(Box::new(keep)));
 }
 
 /// This thread's text, empty until it panics; read by the thread's own JavaScript after the trap.
 #[unsafe(no_mangle)]
-pub extern "C" fn engine_panic_text() -> *mut PanicText {
+pub(crate) extern "C" fn engine_panic_text() -> *mut PanicText {
     TEXT.with(RefCell::as_ptr)
 }
 

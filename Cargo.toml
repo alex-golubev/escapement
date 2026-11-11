@@ -17,6 +17,10 @@ codegen-units = 1
 [workspace.lints.rust]
 rust_2018_idioms = { level = "warn", priority = -1 }
 unused_qualifications = "warn"
+# Together they keep `pub` items to what the crate's root hands out: none that can't be seen from outside, and no type
+# seen from outside that can't be named there. A field is as visible as its type.
+unreachable_pub = "warn"
+unnameable_types = "warn"
 
 [workspace.lints.clippy]
 pedantic = { level = "warn", priority = -1 }

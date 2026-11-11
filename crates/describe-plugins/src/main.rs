@@ -1,7 +1,7 @@
 //! Prints the plugin catalog and the parameters of the engine's strip as JSON for `pnpm gen`, which writes them out
 //! for TypeScript.
 
-use engine_core::strip::STRIP;
+use engine_core::STRIP;
 use engine_plugins::catalog::{CATALOG, CatalogEntry};
 use engine_plugins::denormal;
 use engine_plugins::{

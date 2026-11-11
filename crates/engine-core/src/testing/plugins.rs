@@ -41,7 +41,7 @@ const fn param(id: &'static str, default: f32) -> ParamDescription {
     }
 }
 
-pub static RECORDER: CatalogEntry = CatalogEntry {
+pub(crate) static RECORDER: CatalogEntry = CatalogEntry {
     name: "recorder",
     description: &PluginDescription {
         id: 1,
@@ -64,7 +64,7 @@ impl Plugin for Through {
     }
 }
 
-pub static THROUGH: CatalogEntry = CatalogEntry {
+pub(crate) static THROUGH: CatalogEntry = CatalogEntry {
     name: "through",
     description: &PluginDescription {
         id: 2,
@@ -87,7 +87,7 @@ impl Plugin for Constant {
     }
 }
 
-pub static CONSTANT: CatalogEntry = CatalogEntry {
+pub(crate) static CONSTANT: CatalogEntry = CatalogEntry {
     name: "constant",
     description: &PluginDescription {
         id: 3,
@@ -119,7 +119,7 @@ impl Plugin for Reader {
     }
 }
 
-pub static READER: CatalogEntry = CatalogEntry {
+pub(crate) static READER: CatalogEntry = CatalogEntry {
     name: "reader",
     description: &PluginDescription {
         id: 4,

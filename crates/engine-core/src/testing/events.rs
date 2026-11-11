@@ -5,7 +5,7 @@ use crate::framing::{self, Frame, frame};
 use crate::handoff::Batch;
 use crate::schema::{CommandRejected, CommandStreamLost, EditRejected, EventKind};
 
-pub fn decode_one(message: &[u8]) -> (u32, EngineEvent) {
+pub(crate) fn decode_one(message: &[u8]) -> (u32, EngineEvent) {
     let (kind, record) = framing::split(message).unwrap();
     match EventKind(kind) {
         EventKind::CommandRejected => {
@@ -28,7 +28,7 @@ pub fn decode_one(message: &[u8]) -> (u32, EngineEvent) {
     }
 }
 
-pub fn decode(mut bytes: &[u8]) -> Vec<(u32, EngineEvent)> {
+pub(crate) fn decode(mut bytes: &[u8]) -> Vec<(u32, EngineEvent)> {
     let mut events = Vec::new();
     while let Frame::Whole(size) = frame(bytes) {
         let (message, rest) = bytes.split_at(size);

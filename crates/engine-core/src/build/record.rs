@@ -95,7 +95,7 @@ pub(super) struct Record {
 }
 
 impl Record {
-    pub fn new(cells: usize, exits: usize) -> Self {
+    pub(super) fn new(cells: usize, exits: usize) -> Self {
         Self {
             cells: vec![None; cells],
             free_exits: (0..exits).rev().map(Exit::new).collect(),
@@ -112,27 +112,27 @@ impl Record {
     }
 
     /// The size of the audio thread's table of cells.
-    pub fn cells(&self) -> usize {
+    pub(super) fn cells(&self) -> usize {
         self.cells.len()
     }
 
     /// The size of the audio thread's table of exits.
-    pub fn exits(&self) -> usize {
+    pub(super) fn exits(&self) -> usize {
         self.exits
     }
 
     /// Under this very handle.
-    pub fn has_live(&self, handle: NodeHandle) -> bool {
+    pub(super) fn has_live(&self, handle: NodeHandle) -> bool {
         self.live(handle).is_some()
     }
 
     /// Whatever the generation.
-    pub fn is_taken(&self, cell: NodeCell) -> bool {
+    pub(super) fn is_taken(&self, cell: NodeCell) -> bool {
         self.cells.get(cell.index()).is_some_and(Option::is_some)
     }
 
     /// Room for `cell`, doubling; the audio thread's table grows in the same parcel.
-    pub fn make_room(&mut self, cell: NodeCell) {
+    pub(super) fn make_room(&mut self, cell: NodeCell) {
         if cell.index() >= self.cells.len() {
             self.cells
                 .resize((cell.index() + 1).next_power_of_two(), None);
@@ -140,7 +140,7 @@ impl Record {
     }
 
     /// A node that hears nothing yet, in a free cell of the table.
-    pub fn add(&mut self, handle: NodeHandle) {
+    pub(super) fn add(&mut self, handle: NodeHandle) {
         debug_assert!(!self.is_taken(handle.cell()));
         let id = self.next_id;
         self.next_id += 1;
@@ -157,7 +157,7 @@ impl Record {
     }
 
     /// `to` hears `from`; a connection between them still fading out rises again from where it got to.
-    pub fn connect(&mut self, from: NodeHandle, to: NodeHandle) -> Result<(), Rejection> {
+    pub(super) fn connect(&mut self, from: NodeHandle, to: NodeHandle) -> Result<(), Rejection> {
         let (Some(from), Some(to)) = (self.live(from), self.live(to)) else {
             return Err(Rejection::UnknownTarget);
         };
@@ -187,7 +187,7 @@ impl Record {
     }
 
     /// `to` stops hearing `from`: the connection fades out until the batch's parcel comes back.
-    pub fn disconnect(
+    pub(super) fn disconnect(
         &mut self,
         from: NodeHandle,
         to: NodeHandle,
@@ -213,7 +213,7 @@ impl Record {
     }
 
     /// The output hears the node, and what it heard before fades out.
-    pub fn set_output(&mut self, handle: NodeHandle, batch: Batch) -> Result<(), Rejection> {
+    pub(super) fn set_output(&mut self, handle: NodeHandle, batch: Batch) -> Result<(), Rejection> {
         let id = self.live(handle).ok_or(Rejection::UnknownTarget)?;
         let mut found = false;
         for heard in &mut self.output {
@@ -235,7 +235,11 @@ impl Record {
 
     /// Takes the node out of its cell to play out until the batch's parcel comes back; what hears it fades it out
     /// meanwhile.
-    pub fn remove(&mut self, handle: NodeHandle, batch: Batch) -> Result<Removal, Rejection> {
+    pub(super) fn remove(
+        &mut self,
+        handle: NodeHandle,
+        batch: Batch,
+    ) -> Result<Removal, Rejection> {
         let id = self.live(handle).ok_or(Rejection::UnknownTarget)?;
         let cell = handle.cell();
         if self.free_exits.is_empty() {
@@ -260,7 +264,7 @@ impl Record {
     }
 
     /// Every live node, as a reset removes them.
-    pub fn live_handles(&self) -> Vec<NodeHandle> {
+    pub(super) fn live_handles(&self) -> Vec<NodeHandle> {
         self.cells
             .iter()
             .flatten()
@@ -269,7 +273,7 @@ impl Record {
     }
 
     /// Forgets what the batch faded out: its parcel came back, so that is silent and back on this thread.
-    pub fn finish(&mut self, batch: Batch) {
+    pub(super) fn finish(&mut self, batch: Batch) {
         let gone: HashSet<Id> = self
             .leaving
             .remove(&batch)
@@ -303,13 +307,13 @@ impl Record {
     }
 
     /// Whether the batch built since the last call started a fade.
-    pub fn take_holds(&mut self) -> bool {
+    pub(super) fn take_holds(&mut self) -> bool {
         mem::take(&mut self.holds)
     }
 
     /// What the audio thread renders, in order, what each node hears and what the output hears, if the graph changed
     /// since the last call.
-    pub fn take_changes(&mut self) -> Option<Order> {
+    pub(super) fn take_changes(&mut self) -> Option<Order> {
         if !mem::take(&mut self.changed) {
             return None;
         }

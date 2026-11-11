@@ -1,31 +1,39 @@
 //! Audio engine core: DSP, sequencer, mixer graph. No web dependencies.
 
-pub mod build;
-pub mod commands;
+mod build;
+mod commands;
 mod engine;
-pub mod events;
-pub mod framing;
+mod events;
+mod framing;
 mod graph;
 mod handle;
 mod handoff;
-pub mod heap;
+mod heap;
 mod node;
-pub mod notes;
-pub mod pool;
-pub mod schema;
+mod notes;
+mod pool;
+mod schema;
 mod sequencer;
-pub mod strip;
-pub mod telemetry;
+mod strip;
+mod telemetry;
 #[cfg(test)]
 mod testing;
-pub mod transport;
+mod transport;
 
-use engine_plugins::SampleRate;
-
-use build::Builder;
-
+pub use build::Builder;
+pub use commands::{CommandInput, INPUT_CAPACITY};
 pub use engine::Engine;
 pub use engine_plugins::{BLOCK_FRAMES, CHANNELS};
+pub use events::{EVENT_CAPACITY, EventOutput};
+pub use framing::MAX_MESSAGE;
+pub use notes::{HIGHEST_KEY, MAX_VELOCITY, MIN_VELOCITY};
+pub use pool::{Hash, SamplePool};
+pub use schema::{Rejection, SCHEMA_FINGERPRINT};
+pub use strip::STRIP;
+pub use telemetry::{METERS, MeterRecord, TELEMETRY_WORDS, Telemetry};
+pub use transport::{DEFAULT_TEMPO, MAX_TEMPO, MIN_TEMPO, TICKS_PER_QUARTER};
+
+use engine_plugins::SampleRate;
 
 /// The build thread keeps the builder and hands the engine to the audio thread. All of the engine's own memory is
 /// allocated here; what grows comes in parcels.

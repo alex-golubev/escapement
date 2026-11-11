@@ -13,23 +13,23 @@ macro_rules! handle {
         pub(crate) struct $cell(u16);
 
         impl $name {
-            pub const fn new(raw: u32) -> Self {
+            pub(crate) const fn new(raw: u32) -> Self {
                 Self(raw)
             }
 
-            pub const fn cell(self) -> $cell {
+            pub(crate) const fn cell(self) -> $cell {
                 $cell((self.0 & 0xffff) as u16)
             }
 
             /// Cell 0 is no object: a field left out reads as 0.
-            pub const fn is_none(self) -> bool {
+            pub(crate) const fn is_none(self) -> bool {
                 self.cell().0 == 0
             }
         }
 
         impl $cell {
             /// Its place in the table.
-            pub fn index(self) -> usize {
+            pub(crate) fn index(self) -> usize {
                 usize::from(self.0)
             }
         }
@@ -52,14 +52,14 @@ handle!(
 
 impl NodeHandle {
     /// As the page wrote it: what a record that names the node gives back.
-    pub const fn raw(self) -> u32 {
+    pub(crate) const fn raw(self) -> u32 {
         self.0
     }
 }
 
 impl PatternHandle {
     #[cfg(test)]
-    pub const fn raw(self) -> u32 {
+    pub(crate) const fn raw(self) -> u32 {
         self.0
     }
 }

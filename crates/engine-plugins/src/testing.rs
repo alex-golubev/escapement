@@ -10,45 +10,48 @@ use crate::{
     ProcessContext, SampleNumber, SampleRate, SampleReader,
 };
 
-pub const SAMPLE_RATE: SampleRate = SampleRate::new(48_000).unwrap();
+pub(crate) const SAMPLE_RATE: SampleRate = SampleRate::new(48_000).unwrap();
 
-pub fn rate(hz: u32) -> SampleRate {
+pub(crate) fn rate(hz: u32) -> SampleRate {
     SampleRate::new(hz).unwrap()
 }
 
 /// As a command names it.
-pub fn param_number(number: u32) -> ParamNumber {
+pub(crate) fn param_number(number: u32) -> ParamNumber {
     ParamNumber::new(number).unwrap()
 }
 
 /// As an edit names it.
-pub fn sample_number(number: u32) -> SampleNumber {
+pub(crate) fn sample_number(number: u32) -> SampleNumber {
     SampleNumber::new(number).unwrap()
 }
 
 /// The frames `seconds` take at [`SAMPLE_RATE`].
-pub const fn seconds(seconds: f32) -> usize {
+pub(crate) const fn seconds(seconds: f32) -> usize {
     SAMPLE_RATE.frames(seconds) as usize
 }
 
-pub fn silence(samples: usize) -> Vec<f32> {
+pub(crate) fn silence(samples: usize) -> Vec<f32> {
     vec![0.0; samples]
 }
 
 /// At half scale, so an effect has something to work on.
-pub fn sine(samples: usize) -> Vec<f32> {
+pub(crate) fn sine(samples: usize) -> Vec<f32> {
     sine_at(220.0, samples)
 }
 
 /// At half scale.
-pub fn sine_at(frequency: f32, samples: usize) -> Vec<f32> {
+pub(crate) fn sine_at(frequency: f32, samples: usize) -> Vec<f32> {
     (0..samples)
         .map(|i| 0.5 * (TAU * frequency * i as f32 / SAMPLE_RATE.hz()).sin())
         .collect()
 }
 
 /// A new node's first block, which starts with every parameter: at its value in `values`, or at its default.
-pub fn first_block(description: &PluginDescription, values: &[(ParamNumber, f32)]) -> Vec<Event> {
+pub(crate) fn first_block(
+    description: &PluginDescription,
+    values: &[(ParamNumber, f32)],
+) -> Vec<Event> {
     ParamNumber::each(description.params)
         .map(|(number, param)| {
             let given = values.iter().rev().find(|&&(given, _)| given == number);
@@ -59,7 +62,7 @@ pub fn first_block(description: &PluginDescription, values: &[(ParamNumber, f32)
 }
 
 /// A new node's first block with a note at its start, so an instrument sounds; an effect lets it pass.
-pub fn first_block_with_note(
+pub(crate) fn first_block_with_note(
     description: &PluginDescription,
     values: &[(ParamNumber, f32)],
 ) -> Vec<Event> {
@@ -68,27 +71,27 @@ pub fn first_block_with_note(
     events
 }
 
-pub const NOTE: Event = Event::NoteOn {
+pub(crate) const NOTE: Event = Event::NoteOn {
     time: 0,
     key: 60,
     velocity: 1.0,
     note: NOTE_NAME,
 };
 /// What [`NOTE`] is named, for letting go of it.
-pub const NOTE_NAME: NoteId = NoteId::new(0);
+pub(crate) const NOTE_NAME: NoteId = NoteId::new(0);
 
 /// A second of [`sine`]: long enough to sound through a test, short enough to leave silence after. Made once.
 static SECOND: LazyLock<Vec<f32>> = LazyLock::new(|| sine(seconds(1.0)));
 
 /// The sound every sample of a plugin names, channel by channel; as in the engine, none for a number its
 /// description doesn't have.
-pub struct Sound<C> {
+pub(crate) struct Sound<C> {
     samples: usize,
     pub channels: Vec<C>,
 }
 
 impl<C: AsRef<[f32]>> Sound<C> {
-    pub fn new(description: &PluginDescription, channels: Vec<C>) -> Self {
+    pub(crate) fn new(description: &PluginDescription, channels: Vec<C>) -> Self {
         Self {
             samples: description.samples.len(),
             channels,
@@ -97,7 +100,7 @@ impl<C: AsRef<[f32]>> Sound<C> {
 }
 
 impl Sound<&'static [f32]> {
-    pub fn second(description: &PluginDescription) -> Self {
+    pub(crate) fn second(description: &PluginDescription) -> Self {
         Self::new(description, vec![SECOND.as_slice()])
     }
 }
@@ -118,7 +121,7 @@ impl<C: AsRef<[f32]>> SampleReader for Sound<C> {
 }
 
 /// As before a sound is stored.
-pub struct NoSound;
+pub(crate) struct NoSound;
 
 impl SampleReader for NoSound {
     fn frames(&mut self, _: SampleNumber, _: Range<usize>) -> Option<Frames<'_>> {
@@ -127,7 +130,7 @@ impl SampleReader for NoSound {
 }
 
 /// [`render_with`] every sample of the plugin's `description` naming a [`Sound::second`].
-pub fn render(
+pub(crate) fn render(
     description: &PluginDescription,
     plugin: &mut dyn Plugin,
     events: &[Event],
@@ -138,7 +141,7 @@ pub fn render(
 
 /// Feeds `input` to both channels block by block, with `events` in the first block. Samples the plugin didn't write
 /// come back as NaN.
-pub fn render_with(
+pub(crate) fn render_with(
     plugin: &mut dyn Plugin,
     events: &[Event],
     input: &[f32],
@@ -165,19 +168,19 @@ pub fn render_with(
     output
 }
 
-pub fn peak(samples: &[f32]) -> f32 {
+pub(crate) fn peak(samples: &[f32]) -> f32 {
     samples
         .iter()
         .fold(0.0, |peak, sample| peak.max(sample.abs()))
 }
 
-pub fn rms(samples: &[f32]) -> f32 {
+pub(crate) fn rms(samples: &[f32]) -> f32 {
     let squares: f32 = samples.iter().map(|sample| sample * sample).sum();
     (squares / samples.len() as f32).sqrt()
 }
 
 /// Between neighbouring samples.
-pub fn largest_step(samples: &[f32]) -> f32 {
+pub(crate) fn largest_step(samples: &[f32]) -> f32 {
     samples
         .windows(2)
         .fold(0.0, |step, pair| step.max((pair[1] - pair[0]).abs()))

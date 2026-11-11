@@ -3,6 +3,10 @@
 #[allow(
     rust_2018_idioms,
     unused_qualifications,
+    unreachable_pub,
+    unnameable_types,
+    // The whole schema, of which the crate uses part.
+    dead_code,
     clippy::all,
     clippy::pedantic,
     clippy::restriction,
