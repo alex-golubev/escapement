@@ -649,27 +649,27 @@ fn a_pattern_is_made_in_a_free_cell_and_replaced_under_its_handle_and_its_cell_i
 #[test]
 fn the_pattern_table_grows_before_the_parcel_puts_a_pattern_past_it() {
     let (mut builder, mut audio) = builder();
-    let past = FIRST_PATTERN_CELLS;
-    let handle = |cell: usize| u32::try_from(cell).unwrap();
+    let (past, farther) = (FIRST_PATTERN_CELLS, 2 * FIRST_PATTERN_CELLS);
+    let raw = |cell: usize| handle(0, u32::try_from(cell).unwrap());
     let edits = [
-        Spec::SetPattern(handle(past + 1), &[]),
-        Spec::SetPattern(handle(past), &[]),
+        Spec::SetPattern(raw(farther), &[]),
+        Spec::SetPattern(raw(past), &[]),
     ];
     assert_eq!(
         built(&mut builder, &mut audio, 1, &batch(&edits)),
         [
-            Brought::GrowPatterns(2 * FIRST_PATTERN_CELLS),
-            Brought::Pattern(past + 1, Some((handle(past + 1), vec![]))),
-            Brought::Pattern(past, Some((handle(past), vec![]))),
+            Brought::GrowPatterns(4 * FIRST_PATTERN_CELLS),
+            Brought::Pattern(farther, Some((raw(farther), vec![]))),
+            Brought::Pattern(past, Some((raw(past), vec![]))),
         ]
     );
     let last = usize::from(u16::MAX);
-    let edits = [Spec::SetPattern(handle(last), &[])];
+    let edits = [Spec::SetPattern(raw(last), &[])];
     assert_eq!(
         built(&mut builder, &mut audio, 2, &batch(&edits)),
         [
             Brought::GrowPatterns(last + 1),
-            Brought::Pattern(last, Some((handle(last), vec![]))),
+            Brought::Pattern(last, Some((raw(last), vec![]))),
         ]
     );
 }

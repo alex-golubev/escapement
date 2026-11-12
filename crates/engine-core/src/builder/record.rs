@@ -649,6 +649,18 @@ mod tests {
     }
 
     #[test]
+    fn the_output_set_to_the_node_it_hears_keeps_the_batch_s_other_changes() {
+        let mut record = Record::new(4, 4);
+        record.add(node(1));
+        record.set_output(node(1), Batch::new(1)).unwrap();
+        record.take_changes();
+        record.add(node(2));
+        record.set_output(node(1), Batch::new(2)).unwrap();
+        let (turns, heard) = wiring(&record.take_changes().unwrap());
+        assert_eq!((turns.len(), heard), (2, vec![Seat::Cell(cell(1))]));
+    }
+
+    #[test]
     fn a_switched_output_fades_out_until_its_batch_comes_back_unless_heard_again() {
         let mut record = Record::new(4, 4);
         record.add(node(1));

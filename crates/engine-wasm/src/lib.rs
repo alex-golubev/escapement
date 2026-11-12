@@ -282,3 +282,16 @@ pub extern "C" fn engine_panic_text_bytes() -> usize {
 pub unsafe extern "C" fn engine_telemetry(engine: *const Engine) -> *const Telemetry {
     unsafe { (*engine).telemetry() }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_count_crosses_as_it_is_and_a_refusal_as_minus_one_less_its_code() {
+        assert_eq!(answer(Ok(0)), 0);
+        assert_eq!(answer(Ok(7)), 7);
+        assert_eq!(answer(Err(Rejection(0))), -1);
+        assert_eq!(answer(Err(Rejection(5))), -6);
+    }
+}

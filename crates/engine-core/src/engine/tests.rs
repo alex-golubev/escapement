@@ -644,6 +644,16 @@ fn hang_audio_hangs() {
 }
 
 #[test]
+fn a_block_hands_out_its_events_where_the_worklet_reads_them() {
+    let mut rig = Rig::empty();
+    rig.write(&[unknown_kind()]);
+    let len = rig.engine.audio_block(BLOCK_FRAMES, usize::MAX);
+    // Safety: a block hands out `len` bytes from there, as the worklet reads them.
+    let handed = unsafe { std::slice::from_raw_parts(rig.engine.events().as_ptr(), len) };
+    assert_eq!(decode(handed), [rejected(0, Rejection::UnknownCommand)]);
+}
+
+#[test]
 fn rejects_records_of_the_wrong_size_and_unknown_kinds() {
     let mut rig = Rig::empty();
     rig.write(&[wrong_size(), unknown_kind()]);

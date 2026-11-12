@@ -116,7 +116,8 @@ impl CommandInput {
         }
     }
 
-    /// Returns how many of `bytes` fit. The worklet writes into the input itself; tests write through this.
+    /// Returns how many of `bytes` fit. Tests write through this as the worklet writes: at the end of the waiting
+    /// bytes, then accounting for them.
     #[cfg(test)]
     #[must_use]
     pub(crate) fn write(&mut self, bytes: &[u8]) -> usize {
@@ -124,8 +125,11 @@ impl CommandInput {
             return 0;
         }
         let written = bytes.len().min(self.buf.len() - self.len);
-        self.buf[self.len..self.len + written].copy_from_slice(&bytes[..written]);
-        self.len += written;
+        // Safety: `written` bytes are within `bytes` and, from `len`, within the buffer, which `bytes` can't be.
+        unsafe {
+            std::ptr::copy_nonoverlapping(bytes.as_ptr(), self.as_mut_ptr().add(self.len), written);
+        }
+        self.received(written);
         written
     }
 
@@ -180,6 +184,14 @@ mod tests {
 
     fn drain_markers(input: &mut CommandInput) -> (Vec<u32>, Drained) {
         drain_until(input, 0)
+    }
+
+    #[test]
+    fn it_is_empty_until_something_is_written() {
+        let mut input = CommandInput::default();
+        assert!(input.is_empty());
+        assert_eq!(input.write(&unknown_kind()), unknown_kind().len());
+        assert!(!input.is_empty());
     }
 
     #[test]
