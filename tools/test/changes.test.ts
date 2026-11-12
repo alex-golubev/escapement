@@ -1,6 +1,6 @@
 import * as NodeServices from '@effect/platform-node/NodeServices'
 import { expect, layer } from '@effect/vitest'
-import { DateTime, Effect, FileSystem } from 'effect'
+import { DateTime, Effect, FileSystem, Option } from 'effect'
 import { changedRust } from '../src/changes.ts'
 import { run } from '../src/script.ts'
 
@@ -18,6 +18,13 @@ const git = (repo: string, ...args: ReadonlyArray<string>) => run('git', ['-C', 
 const write = (path: string, text: string) => FileSystem.FileSystem.use((fs) => fs.writeFileString(path, text))
 
 const lines = (...names: ReadonlyArray<string>) => names.map((name) => `fn ${name}() {}\n`).join('')
+
+/** The patch of the Rust the repository changes since `base`; none fails the test. */
+const patchSince = (repo: string, base: string) =>
+  changedRust(repo, base).pipe(
+    Effect.map(Option.getOrThrow),
+    Effect.flatMap((patch) => FileSystem.FileSystem.use((fs) => fs.readFileString(patch)))
+  )
 
 /** The files a patch changes, by their paths after, with git's usual prefix. */
 const changedIn = (patch: string) =>
@@ -81,12 +88,22 @@ layer(NodeServices.layer)('the Rust a branch changes', (it) => {
         yield* write(`${repo}/renamed.rs`, lines('a', 'b', 'c', 'd', 'e', 'f', 'g', 'renamed'))
         const status = yield* git(repo, 'status', '--porcelain')
 
-        const patch = yield* fs.readFileString(yield* changedRust(repo, 'main'))
+        const patch = yield* patchSince(repo, 'main')
 
         expect(changedIn(patch)).toEqual(['committed.rs', 'edited.rs', 'new.rs', 'renamed.rs'])
         expect(patch).toContain('rename from moved.rs')
         expect(patch).not.toContain('\u001b')
         expect(yield* git(repo, 'status', '--porcelain')).toBe(status)
       }).pipe(Effect.scoped)
+  )
+
+  it.effect('is none when only other files changed', () =>
+    Effect.gen(function* () {
+      const repo = yield* repository
+      yield* write(`${repo}/notes.md`, 'more notes\n')
+      yield* write(`${repo}/new.md`, 'new\n')
+
+      expect(yield* changedRust(repo, 'HEAD')).toEqual(Option.none())
+    }).pipe(Effect.scoped)
   )
 })
