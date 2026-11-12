@@ -111,6 +111,19 @@ mod tests {
     }
 
     #[test]
+    fn starts_at_0_and_rises() {
+        let first = first_block(&DESCRIPTION, &[]);
+        let [left, _] = render(
+            &DESCRIPTION,
+            create(SAMPLE_RATE).as_mut(),
+            &first,
+            &silence(8),
+        );
+        assert_eq!(left[0], 0.0);
+        assert!(left.windows(2).all(|pair| pair[1] > pair[0]), "{left:?}");
+    }
+
+    #[test]
     fn volume_sets_the_level() {
         let mut tone = create(SAMPLE_RATE);
         let first = first_block(&DESCRIPTION, &[(VOLUME, 0.25)]);

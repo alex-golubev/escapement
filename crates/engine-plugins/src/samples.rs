@@ -72,3 +72,15 @@ impl<'a> Frames<'a> {
         self.len() == 0
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn frames_are_empty_where_the_sound_has_ended() {
+        let numbers = [0.5, 0.25];
+        assert!(!Frames::new([&numbers[..]; CHANNELS], 1).is_empty());
+        assert!(Frames::new([&numbers[2..]; CHANNELS], 1).is_empty());
+    }
+}

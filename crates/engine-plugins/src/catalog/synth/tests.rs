@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::f32::consts::FRAC_1_SQRT_2;
 
 use super::*;
@@ -276,6 +277,28 @@ fn of_tails_the_quietest_gives_way_whichever_was_pressed_first() {
 }
 
 #[test]
+fn with_every_place_taken_a_note_takes_that_of_the_voice_giving_way_nearest_silence() {
+    let mut synth = Synth::new(SAMPLE_RATE);
+    // Sixteen held, then sixteen more a few samples apart, all in one block: those giving way to them stand at levels
+    // of their own.
+    let apart = u32::try_from(BLOCK_FRAMES / (2 * VOICES)).unwrap();
+    let notes: Vec<_> = (0..2 * voices())
+        .map(|i| on(apart * u32::from(i), 40 + i))
+        .collect();
+    render(&DESCRIPTION, &mut synth, &notes, &silence(BLOCK_FRAMES));
+    let giving_way: Vec<_> = (synth.voices.iter().enumerate())
+        .filter(|(_, voice)| voice.contour.is_giving_way())
+        .map(|(place, voice)| (voice.contour.level(), place))
+        .collect();
+    assert_eq!(giving_way.len(), VOICES);
+    let (_, quietest) = (giving_way.into_iter())
+        .min_by(|a, b| a.0.total_cmp(&b.0))
+        .unwrap();
+    render(&DESCRIPTION, &mut synth, &[EXTRA], &silence(1));
+    assert_eq!(synth.voices[quietest].note, NoteId::new(100));
+}
+
+#[test]
 fn a_note_held_fallen_silent_gives_way_before_a_tail() {
     let values = [
         (ENVELOPE.sustain, 0.0),
@@ -386,6 +409,18 @@ fn every_shape_but_noise_plays_the_key_s_pitch_at_full_level() {
 }
 
 #[test]
+fn a_sine_starts_rising() {
+    let sound = play_shaped(Shape::Sine, &[(&[on(0, A4)], 16)]);
+    assert!(sound[0] > 0.0, "{sound:?}");
+    assert!(sound.windows(2).all(|pair| pair[1] > pair[0]), "{sound:?}");
+}
+
+#[test]
+fn a_square_falls_through_0_half_way_through_its_period() {
+    assert_eq!(square(0.5, 0.01), 0.0);
+}
+
+#[test]
 fn noise_has_no_pitch_and_each_note_its_own() {
     let one = play_shaped(Shape::Noise, &[(&[on(0, A4)], seconds(1.0))]);
     // White: it rises through zero about once in four samples, whatever the key.
@@ -403,6 +438,40 @@ fn noise_has_no_pitch_and_each_note_its_own() {
     );
     let louder = rms(&two) / rms(&one);
     assert!((1.3..1.55).contains(&louder), "{louder}");
+}
+
+#[test]
+fn every_oscillator_of_every_note_starts_a_noise_of_its_own() {
+    // The page's notes, and the engine's own from 2³¹.
+    let notes = (0..500).chain(1 << 31..(1 << 31) + 500);
+    let starts: HashSet<_> = notes
+        .flat_map(|note| {
+            (0..OSCILLATORS).map(move |oscillator| Noise::of(NoteId::new(note), oscillator).0)
+        })
+        .collect();
+    assert_eq!(starts.len(), 1000 * OSCILLATORS);
+    // Nor any the start a free voice keeps.
+    assert!(!starts.contains(&FREE.noises[0].0));
+}
+
+#[test]
+fn noise_is_xorshift32_whose_period_is_every_number_but_0() {
+    let mut noise = Noise(1);
+    let states: Vec<_> = (0..3)
+        .map(|_| {
+            noise.next();
+            noise.0
+        })
+        .collect();
+    assert_eq!(states, [270_369, 67_634_689, 2_647_435_461]);
+}
+
+#[test]
+fn noise_has_no_offset() {
+    let mut noise = Noise::of(NoteId::new(1), 0);
+    let second: Vec<_> = (0..seconds(1.0)).map(|_| noise.next()).collect();
+    let mean = second.iter().sum::<f32>() / second.len() as f32;
+    assert!(mean.abs() < 0.02, "{mean}");
 }
 
 #[test]

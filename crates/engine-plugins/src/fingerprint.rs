@@ -8,6 +8,10 @@ use crate::{Choice, ParamDescription, PluginDescription, SampleDescription, Scal
 struct Fnv(u32);
 
 impl Fnv {
+    const fn new() -> Self {
+        Self(0x811c_9dc5)
+    }
+
     fn bytes(&mut self, bytes: &[u8]) {
         for &byte in bytes {
             self.0 = (self.0 ^ u32::from(byte)).wrapping_mul(0x0100_0193);
@@ -38,7 +42,7 @@ impl Fnv {
 /// every node of its own, such as its volume.
 #[must_use]
 pub fn fingerprint(catalog: &[CatalogEntry], node_params: &[ParamDescription]) -> u32 {
-    let mut hash = Fnv(0x811c_9dc5);
+    let mut hash = Fnv::new();
     hash.length(catalog.len());
     for entry in catalog {
         let CatalogEntry {
@@ -133,6 +137,18 @@ impl Fnv {
 mod tests {
     use super::*;
     use crate::catalog::tone;
+
+    #[test]
+    fn neighbouring_texts_cannot_trade_bytes() {
+        let hash = |texts: &[&str]| {
+            let mut hash = Fnv::new();
+            for text in texts {
+                hash.text(text);
+            }
+            hash.0
+        };
+        assert_ne!(hash(&["ab", "c"]), hash(&["a", "bc"]));
+    }
 
     const PARAM: ParamDescription = ParamDescription {
         id: "cutoff",
@@ -336,24 +352,5 @@ mod tests {
             assert_ne!(number, base, "change {i}");
         }
         assert_eq!(of("filter", PLUGIN), base);
-    }
-
-    #[test]
-    fn neighbouring_texts_can_not_trade_bytes() {
-        let a = of(
-            "ab",
-            PluginDescription {
-                label: "c",
-                ..PLUGIN
-            },
-        );
-        let b = of(
-            "a",
-            PluginDescription {
-                label: "bc",
-                ..PLUGIN
-            },
-        );
-        assert_ne!(a, b);
     }
 }

@@ -233,6 +233,12 @@ mod tests {
     }
 
     #[test]
+    fn shows_a_peak_on_its_floor_and_none_below() {
+        assert_eq!(PeakMeter::new(SAMPLE_RATE).update(&[FLOOR]), FLOOR);
+        assert_eq!(PeakMeter::new(SAMPLE_RATE).update(&[FLOOR / 2.0]), 0.0);
+    }
+
+    #[test]
     fn falls_to_exactly_zero() {
         let mut meter = PeakMeter::new(SAMPLE_RATE);
         meter.update(&[1.0; BLOCK_FRAMES]);

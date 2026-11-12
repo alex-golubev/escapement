@@ -593,18 +593,37 @@ mod tests {
         let step = 1.0 / seconds(0.001) as f32;
         assert!(near(rising[half] - rising[half - 1], step, 1e-6));
         assert_eq!(rising[half + seconds(0.0005) - 1], 1.0);
-        // Half way down a release, the rest at the pace of one ten times as long.
-        let release = seconds(0.1);
+        // Half way down a release from the sustain level, the rest at the pace of one ten times as long.
+        let (release, sustain) = (seconds(0.1), 0.5);
+        let held = [
+            Told::Set(NUMBERS.decay, 0.01),
+            Told::Set(NUMBERS.sustain, sustain),
+        ];
         let turned = levels(&[
-            (&[] as &[Told], 1000),
+            (&held, 1000),
             (&[Told::LetGo], release / 2),
             (&[Told::Set(NUMBERS.release, 1.0)], 10 * release),
         ]);
+        let fall = decibels(FLOOR) - decibels(sustain);
         let before = decibels(turned[1000 + release / 2 - 1].unwrap());
         let after = decibels(turned[1000 + release / 2 + release - 1].unwrap());
-        assert!(near(before, -40.0, 0.01), "{before}");
-        // A tenth of the 80 dB a release of the new length falls over its whole.
-        assert!(near(after - before, -8.0, 0.01), "{after}");
+        assert!(
+            near(before, decibels(sustain) + fall / 2.0, 0.01),
+            "{before}"
+        );
+        // A tenth of the fall a release of the new length takes over its whole.
+        assert!(near(after - before, fall / 10.0, 0.01), "{after}");
+    }
+
+    #[test]
+    fn a_note_let_go_of_at_the_floor_is_over_at_once() {
+        let envelope = Envelope::new(NUMBERS, SAMPLE_RATE);
+        let mut contour = Contour {
+            stage: Stage::Sustaining,
+            level: f64::from(FLOOR),
+        };
+        envelope.let_go(&mut contour);
+        assert!(contour.is_over());
     }
 
     #[test]
