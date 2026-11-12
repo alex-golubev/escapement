@@ -4,7 +4,7 @@ use super::*;
 use crate::graph::Nodes;
 use crate::node::{NOTE_ROOM, Node};
 use crate::testing::plugins::{GIVEN, RECORDER};
-use crate::testing::{BAR, SAMPLE_RATE, cell, note_room};
+use crate::testing::{BAR, SAMPLE_RATE, cell, handle, note_room};
 use crate::transport::Place;
 use crate::{BLOCK_FRAMES, SILENCE};
 
@@ -253,7 +253,7 @@ fn a_clip_of_a_pattern_that_is_gone_plays_nothing_even_in_its_cell() {
     let sequencer = Sequencer {
         patterns: patterns(vec![(PATTERN, vec![note(0, 1, 60)])]),
         arrangement: Arrangement::new(vec![
-            clip(0, BAR, PatternHandle::new(1 << 16 | 1)),
+            clip(0, BAR, PatternHandle::new(handle(1, 1))),
             clip(0, BAR, PatternHandle::new(3)),
             clip(0, BAR, PatternHandle::new(9)),
         ]),
@@ -345,7 +345,7 @@ fn notes_go_on_from_the_loop_s_start_within_the_block_it_ends_in_and_none_past_i
 #[test]
 fn a_note_of_a_node_that_is_gone_plays_nothing_even_in_its_cell() {
     // Generation 1 of cell 1, and a cell with no node.
-    let pattern = played(vec![note(0, 1 << 16 | 1, 60), note(0, 3, 60)]);
+    let pattern = played(vec![note(0, handle(1, 1), 60), note(0, 3, 60)]);
     let (transport, mut graph) = (playing(), graph());
     assert_eq!(
         pattern.hand_out(&mut Held::new(), &transport, &mut graph, BLOCK_FRAMES),

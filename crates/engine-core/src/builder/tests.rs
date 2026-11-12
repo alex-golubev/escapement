@@ -1,13 +1,13 @@
 use engine_plugins::catalog::tone;
 
 use super::*;
-use crate::graph::{Exit, Order, Seat};
+use crate::graph::{Exit, Seat};
 use crate::handoff::{self, Arrival, AudioEnd};
 use crate::strip::{PAN_NUMBER, VOLUME_NUMBER};
 use crate::testing::edits::{
-    NewNode, Played, Spec, batch, connect, create_insert, create_node, disconnect, handle,
+    NewNode, Played, Spec, batch, connect, create_insert, create_node, disconnect,
 };
-use crate::testing::{SAMPLE_RATE, cell};
+use crate::testing::{SAMPLE_RATE, cell, handle, wiring};
 
 /// What a parcel brings, without the nodes themselves; cells and exits by their places in their tables.
 #[derive(Debug, PartialEq)]
@@ -39,7 +39,10 @@ fn brought_edit(edit: &Edit) -> Brought {
             cell: cell.index(),
             exit: exit.index(),
         },
-        Edit::Order(order) => brought(order),
+        Edit::Order(order) => {
+            let (turns, output) = wiring(order);
+            Brought::Order(turns, output)
+        }
         Edit::GrowPatterns(patterns) => Brought::GrowPatterns(patterns.len()),
         Edit::Pattern { cell, pattern } => Brought::Pattern(
             cell.index(),
@@ -90,23 +93,6 @@ fn wired(turns: &[(u32, &[u32])], output: &[u32]) -> Brought {
             .map(|&(node, inputs)| (Seat::Cell(cell(node)), seats(inputs)))
             .collect(),
         seats(output),
-    )
-}
-
-fn brought(order: &Order) -> Brought {
-    let sources = |range: std::ops::Range<usize>| {
-        order.connections[range]
-            .iter()
-            .map(|connection| connection.source)
-            .collect()
-    };
-    Brought::Order(
-        order
-            .turns
-            .iter()
-            .map(|turn| (turn.node, sources(turn.inputs.clone())))
-            .collect(),
-        sources(order.output..order.connections.len()),
     )
 }
 

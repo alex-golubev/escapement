@@ -3,19 +3,19 @@ use engine_plugins::catalog::tone;
 use super::*;
 use crate::heap;
 use crate::testing::plugins::{CONSTANT, THROUGH};
-use crate::testing::{SAMPLE_RATE, cell};
+use crate::testing::{SAMPLE_RATE, cell, handle};
 use crate::{BLOCK_FRAMES, CHANNELS};
 
 /// 20 ms at 48 kHz.
 const FADE: usize = 960;
 
 /// Plays 1 on the left and −1 on the right.
-fn node(cell: u32) -> Box<Node> {
-    Box::new(Node::new(&CONSTANT, SAMPLE_RATE, NodeHandle::new(cell)))
+fn node(raw: u32) -> Box<Node> {
+    Box::new(Node::new(&CONSTANT, SAMPLE_RATE, NodeHandle::new(raw)))
 }
 
-fn through(cell: u32) -> Box<Node> {
-    Box::new(Node::new(&THROUGH, SAMPLE_RATE, NodeHandle::new(cell)))
+fn through(raw: u32) -> Box<Node> {
+    Box::new(Node::new(&THROUGH, SAMPLE_RATE, NodeHandle::new(raw)))
 }
 
 fn graph(cells: usize) -> Graph {
@@ -60,7 +60,7 @@ fn order(turns: Vec<(Seat, Vec<Connection>)>, heard: Vec<Connection>) -> Order {
 fn alone(handles: &[u32]) -> Order {
     let turns = handles
         .iter()
-        .map(|&handle| (Seat::Cell(cell(handle)), vec![]))
+        .map(|&raw| (Seat::Cell(cell(raw)), vec![]))
         .collect();
     order(turns, vec![full(Seat::Cell(cell(handles[0])))])
 }
@@ -121,10 +121,10 @@ fn swaps_bring_nodes_in_and_take_what_they_displace_out_without_the_heap() {
 #[test]
 fn a_handle_reaches_only_the_node_of_its_generation() {
     let mut graph = graph(4);
-    assert!(graph.insert(cell(2), &mut Some(node(1 << 16 | 2))));
-    assert!(graph.node_mut(NodeHandle::new(1 << 16 | 2)).is_some());
+    assert!(graph.insert(cell(2), &mut Some(node(handle(1, 2)))));
+    assert!(graph.node_mut(NodeHandle::new(handle(1, 2))).is_some());
     assert!(graph.node_mut(NodeHandle::new(2)).is_none());
-    assert!(graph.node_mut(NodeHandle::new(2 << 16 | 2)).is_none());
+    assert!(graph.node_mut(NodeHandle::new(handle(2, 2))).is_none());
 }
 
 #[test]
@@ -288,7 +288,7 @@ fn a_removed_node_plays_out_from_its_exit_while_its_cell_takes_another() {
     graph.reorder(&mut alone(&[1]));
     render(&mut graph);
     assert!(graph.remove(cell(1), Exit::new(0)));
-    assert!(graph.insert(cell(1), &mut Some(through(1 << 16 | 1))));
+    assert!(graph.insert(cell(1), &mut Some(through(handle(1, 1)))));
     let playing_out = Seat::Exit(Exit::new(0));
     let turns = vec![(playing_out, vec![]), (Seat::Cell(cell(1)), vec![])];
     let falling = Connection::new(playing_out, false, Start::As(0));
@@ -296,7 +296,7 @@ fn a_removed_node_plays_out_from_its_exit_while_its_cell_takes_another() {
     let out = heard(&mut graph, 8);
     assert!((out[0] - (1.0 - 1.0 / FADE as f32)).abs() < 1e-6);
     assert!(out[FADE - 1..].iter().all(|&sample| sample == 0.0));
-    assert!(graph.node_mut(NodeHandle::new(1 << 16 | 1)).is_some());
+    assert!(graph.node_mut(NodeHandle::new(handle(1, 1))).is_some());
 }
 
 #[test]

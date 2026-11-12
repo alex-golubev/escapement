@@ -199,7 +199,7 @@ impl NodeMeter {
 mod tests {
     use super::*;
     use crate::SILENCE;
-    use crate::testing::{SAMPLE_RATE, seconds};
+    use crate::testing::{SAMPLE_RATE, handle, seconds};
 
     #[test]
     fn is_a_whole_number_of_words() {
@@ -276,7 +276,7 @@ mod tests {
     fn a_record_names_its_node_and_counts_from_the_node_s_making() {
         let mut telemetry = Telemetry::default();
         let meter = |raw| NodeMeter::new(NodeHandle::new(raw), SAMPLE_RATE);
-        let (mut three, mut seven) = (meter(3), meter(1 << 16 | 7));
+        let (mut three, mut seven) = (meter(3), meter(handle(1, 7)));
         three.update(&left_at(0.5), BLOCK_FRAMES);
         seven.update(&left_at(1.5), BLOCK_FRAMES);
         seven.update(&left_at(1.5), BLOCK_FRAMES);
@@ -291,7 +291,7 @@ mod tests {
                     overs: [0, 0]
                 },
                 MeterRecord {
-                    node: 1 << 16 | 7,
+                    node: handle(1, 7),
                     peaks: [1.5, 0.0],
                     overs: [2, 0]
                 }
@@ -301,14 +301,14 @@ mod tests {
         report_all(&mut [&mut seven], &mut telemetry);
         assert_eq!(telemetry.meters[0].overs, [2, 0]);
         // A node made anew in the cell is another node: its count starts again.
-        let mut anew = meter(2 << 16 | 7);
+        let mut anew = meter(handle(2, 7));
         anew.update(&left_at(1.2), BLOCK_FRAMES);
         report_all(&mut [&mut anew], &mut telemetry);
         assert_eq!(telemetry.meters_used, 1);
         assert_eq!(
             telemetry.meters[0],
             MeterRecord {
-                node: 2 << 16 | 7,
+                node: handle(2, 7),
                 peaks: [1.2, 0.0],
                 overs: [1, 0]
             }
