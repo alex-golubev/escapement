@@ -11,9 +11,14 @@ export const jobsOf = (text: string | undefined) =>
     )
   )
 
+/** cargo-mutants' own minimum timeout, in seconds, as of the version `mutants.ts` pins. */
+const floor = 20
+
 /**
  * The timeout of one run of the tests, in whole seconds, from how long they take alone. Mutants tested at once share
- * the cores, so each run takes at most as many times as long; the timeout is twice that. A mutant that survives runs
- * all the tests: cut short, it would count as caught.
+ * the cores, so each run takes at most as many times as long; the timeout is twice that, and no less than
+ * cargo-mutants' own floor: a short run is mostly starting up, which comes and goes. A mutant that survives runs all
+ * the tests: cut short, it would count as caught.
  */
-export const testTimeout = (alone: Duration.Duration, jobs: number) => Math.ceil(Duration.toSeconds(alone) * jobs * 2)
+export const testTimeout = (alone: Duration.Duration, jobs: number) =>
+  Math.max(floor, Math.ceil(Duration.toSeconds(alone) * jobs * 2))
