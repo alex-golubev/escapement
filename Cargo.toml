@@ -17,6 +17,11 @@ flatbuffers = "=25.12.19"
 rtrb = "0.4.1"
 serde_json = "1.0.154"
 
+# The tests run DSP, tens of times slower unoptimized, and the mutation tests' timeout grows with them. Overflow checks
+# and `debug_assert` stay on.
+[profile.dev]
+opt-level = 1
+
 [profile.release]
 panic = "abort"
 lto = true
