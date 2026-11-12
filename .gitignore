@@ -7,3 +7,4 @@ playwright-report/
 blob-report/
 packages/engine/wasm/
 .DS_Store
+mutants.out*/
