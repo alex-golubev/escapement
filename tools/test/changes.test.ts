@@ -97,6 +97,24 @@ layer(NodeServices.layer)('the Rust a branch changes', (it) => {
       }).pipe(Effect.scoped)
   )
 
+  it.effect(
+    "merged onto main, as CI checks a pull request, is the branch's alone against the merge's first parent",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem
+        const repo = yield* repository
+        yield* git(repo, 'switch', '--quiet', '--create', 'merged', 'main')
+        yield* git(repo, 'merge', '--quiet', '--no-ff', '--message=Merge', 'branch')
+        // As CI checks it out: the merge and its parents, nothing further back.
+        const clone = yield* fs.makeTempDirectoryScoped({ prefix: 'escapement-clone-' })
+        yield* run('git', ['clone', '--quiet', '--depth=2', '--branch=merged', `file://${repo}`, clone], {
+          env: isolated
+        })
+
+        expect(changedIn(yield* patchSince(clone, 'HEAD^'))).toEqual(['committed.rs'])
+      }).pipe(Effect.scoped)
+  )
+
   it.effect('is none when only other files changed', () =>
     Effect.gen(function* () {
       const repo = yield* repository
