@@ -311,7 +311,36 @@ fn a_block_passes_the_ticks_from_its_position_up_to_the_next_block_s() {
 #[test]
 fn a_stopped_transport_passes_no_ticks() {
     assert_eq!(passed(&Transport::new(SAMPLE_RATE), BLOCK_FRAMES), []);
-    assert_eq!(passed(&playing(BAR), 0), []);
+}
+
+#[test]
+fn no_frames_pass_no_ticks_on_a_tick_or_between_two() {
+    let mut transport = playing(BAR);
+    assert_eq!(transport.run(0), None);
+    transport.advance(FRAMES_PER_TICK / 2);
+    assert!(transport.pace().parts > 0);
+    assert_eq!(transport.run(0), None);
+}
+
+#[test]
+fn a_block_shorter_than_a_tick_passes_it_in_the_block_that_reaches_it() {
+    let mut transport = Transport::new(rate(96_000));
+    transport.set_tempo(MIN_TEMPO as f32).unwrap();
+    transport.set(true, BAR, Place::default()).unwrap();
+    let frames_per_tick = usize::try_from(96_000 * 60 / (MIN_TEMPO * TICKS_PER_QUARTER)).unwrap();
+    assert!(frames_per_tick > BLOCK_FRAMES);
+    let passing: Vec<_> = (0..=frames_per_tick / BLOCK_FRAMES)
+        .map(|_| {
+            let run = transport.run(BLOCK_FRAMES).map(|run| (run.first, run.last));
+            transport.advance(BLOCK_FRAMES);
+            run
+        })
+        .collect();
+    let (first, rest) = passing.split_first().unwrap();
+    let (last, between) = rest.split_last().unwrap();
+    assert_eq!(*first, Some((0, 0)));
+    assert!(between.iter().all(Option::is_none), "{passing:?}");
+    assert_eq!(*last, Some((1, 1)));
 }
 
 #[test]

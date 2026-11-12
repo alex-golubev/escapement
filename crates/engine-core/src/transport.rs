@@ -154,10 +154,11 @@ impl Pace {
     /// Whole ticks from the one the block starts in to the first it passes and the last, in `frames`; none if it
     /// passes none.
     fn passes(&self, frames: usize) -> Option<(u64, u64)> {
-        // A tick the position is already past went with the block before.
-        let past = u64::from(self.parts > 0);
-        let reached = (self.parts + frames as u64 * self.step).checked_sub(1)? / self.tick;
-        (frames > 0 && past <= reached).then_some((past, reached))
+        // The block covers its position up to the next block's: a tick the position is already past went with the
+        // block before, and the one the next block starts on goes with that block.
+        let first = self.parts.div_ceil(self.tick);
+        let end = (self.parts + frames as u64 * self.step).div_ceil(self.tick);
+        (first < end).then(|| (first, end - 1))
     }
 }
 
