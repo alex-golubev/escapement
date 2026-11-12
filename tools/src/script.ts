@@ -49,28 +49,29 @@ const text = (stream: Stream.Stream<Uint8Array, PlatformError.PlatformError>) =>
 /** The parts that aren't empty, as one message. */
 const joined = (...parts: ReadonlyArray<string>) => Array.filter(parts, String.isNonEmpty).join(': ')
 
+/** A program and its arguments as a shell line, for messages. */
+export const commandLine = (file: string, args: ReadonlyArray<string>) => `${file} ${args.join(' ')}`
+
 // In the terminal's process group, as from a shell: Ctrl+C and a closed terminal reach it too.
 const spawning = { cwd: root, detached: false } as const
 
 /** Added to the environment; a variable set to `undefined` is taken out of it. */
 type Env = Readonly<Record<string, string | undefined>>
 
-/** What exit codes mean, as the messages to fail with. */
-type Failures = Readonly<Partial<Record<number, string>>>
-
-const exitedWell =
-  (what: string, failures: Failures = {}) =>
+/** Fails unless the program exited with 0. */
+export const exitedWell =
+  (what: string) =>
   <E, R>(ended: Effect.Effect<number, E, R>) =>
     ended.pipe(
       Effect.filterOrFail(
         (code) => code === 0,
-        (code) => new ScriptError({ message: failures[code] ?? `${what} exited with ${code}` })
+        (code) => new ScriptError({ message: `${what} exited with ${code}` })
       )
     )
 
 /** Interrupting it stops the program too. A program that fails fails with what it printed to stderr. */
 export const run = (file: string, args: ReadonlyArray<string>, options: { readonly env?: Env } = {}) => {
-  const what = `${file} ${args.join(' ')}`
+  const what = commandLine(file, args)
   return Effect.gen(function* () {
     const program = yield* ChildProcess.make(file, args, {
       ...spawning,
@@ -98,15 +99,10 @@ export const run = (file: string, args: ReadonlyArray<string>, options: { readon
 
 /**
  * For a program that reports as it goes: it has the terminal, and interrupting it is a Ctrl+C, after which it has
- * half a minute to clean up.
+ * half a minute to clean up. Gives its exit code, for a program whose codes mean more than well or not.
  */
-export const runInTerminal = (
-  file: string,
-  args: ReadonlyArray<string>,
-  options: { readonly env?: Env; readonly failures?: Failures } = {}
-) => {
-  const what = `${file} ${args.join(' ')}`
-  return Effect.gen(function* () {
+export const exitCodeInTerminal = (file: string, args: ReadonlyArray<string>, options: { readonly env?: Env } = {}) =>
+  Effect.gen(function* () {
     const program = yield* ChildProcess.make(file, args, {
       ...spawning,
       killSignal: 'SIGINT',
@@ -118,8 +114,11 @@ export const runInTerminal = (
       stderr: 'inherit'
     })
     return yield* program.exitCode
-  }).pipe(Effect.scoped, step(what), exitedWell(what, options.failures), Effect.asVoid)
-}
+  }).pipe(Effect.scoped, step(commandLine(file, args)))
+
+/** As `exitCodeInTerminal`, failing unless the program exits with 0. */
+export const runInTerminal = (file: string, args: ReadonlyArray<string>, options: { readonly env?: Env } = {}) =>
+  exitCodeInTerminal(file, args, options).pipe(exitedWell(commandLine(file, args)), Effect.asVoid)
 
 export const decode = <S extends Schema.Top>(
   schema: S,
