@@ -45,7 +45,7 @@ import {
 import { Boolean, Cause, Duration, Effect, FiberSet, Option } from 'effect'
 import { KeyValueStore } from 'effect/persistence'
 import { Atom, AtomRegistry } from 'effect/reactivity'
-import { options, render } from 'preact'
+import { Fragment, options, render } from 'preact'
 import { expect, test, vi } from 'vitest'
 import * as Y from 'yjs'
 import { registryOptions } from '../src/app/core'
@@ -256,7 +256,11 @@ const page = (
         const diffed = options.diffed
         options.diffed = (vnode) => {
           Option.match(
-            Option.liftPredicate(vnode.type, (type) => typeof type === 'function'),
+            Option.liftPredicate(vnode.type, (type) => typeof type === 'function').pipe(
+              // A fragment only groups what a component draws, as a tag does; Preact's minifier names it anew in each
+              // release.
+              Option.filter((component) => component !== Fragment)
+            ),
             { onNone: () => {}, onSome: (component) => void drawnComponents.list.push(component.name) }
           )
           diffed?.(vnode)
@@ -1082,7 +1086,7 @@ test("a strip's S draws its own buttons and the strips it changes the hearing of
       yield* pressCentre(target, 'Mix')
       // The Snare goes unheard, its strip drawn anew; the Kick's, heard before and after, only its buttons.
       const { components } = yield* changed(() => button('Kick: solo').click())
-      const snareStrip = ['TrackStrip', 'TrackToggles', 'StripControls', 'Knob', 'Dial', 'Fader', 'M', 'Scale']
+      const snareStrip = ['TrackStrip', 'TrackToggles', 'StripControls', 'Knob', 'Dial', 'Fader', 'Scale']
       expect([...components].sort()).toEqual([...snareStrip, 'Meter', 'Meter', 'TrackToggles'].sort())
       expect(stripOf(target, 'Snare output').getAttribute('data-unheard')).toBe('true')
     })
