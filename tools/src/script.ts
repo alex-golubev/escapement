@@ -49,12 +49,35 @@ const text = (stream: Stream.Stream<Uint8Array, PlatformError.PlatformError>) =>
 /** The parts that aren't empty, as one message. */
 const joined = (...parts: ReadonlyArray<string>) => Array.filter(parts, String.isNonEmpty).join(': ')
 
+// In the terminal's process group, as from a shell: Ctrl+C and a closed terminal reach it too.
+const spawning = { cwd: root, detached: false } as const
+
+/** Added to the environment; a variable set to `undefined` is taken out of it. */
+type Env = Readonly<Record<string, string | undefined>>
+
+/** What exit codes mean, as the messages to fail with. */
+type Failures = Readonly<Partial<Record<number, string>>>
+
+const exitedWell =
+  (what: string, failures: Failures = {}) =>
+  <E, R>(ended: Effect.Effect<number, E, R>) =>
+    ended.pipe(
+      Effect.filterOrFail(
+        (code) => code === 0,
+        (code) => new ScriptError({ message: failures[code] ?? `${what} exited with ${code}` })
+      )
+    )
+
 /** Interrupting it stops the program too. A program that fails fails with what it printed to stderr. */
-export const run = (file: string, args: ReadonlyArray<string>) => {
+export const run = (file: string, args: ReadonlyArray<string>, options: { readonly env?: Env } = {}) => {
   const what = `${file} ${args.join(' ')}`
   return Effect.gen(function* () {
-    // In the terminal's process group, as from a shell: Ctrl+C and a closed terminal reach it too.
-    const program = yield* ChildProcess.make(file, args, { cwd: root, detached: false, forceKillAfter: '3 seconds' })
+    const program = yield* ChildProcess.make(file, args, {
+      ...spawning,
+      forceKillAfter: '3 seconds',
+      env: options.env,
+      extendEnv: true
+    })
     return yield* Effect.all(
       { stdout: text(program.stdout), stderr: text(program.stderr), ended: Effect.exit(program.exitCode) },
       { concurrency: 'unbounded' }
@@ -65,15 +88,37 @@ export const run = (file: string, args: ReadonlyArray<string>) => {
     Effect.flatMap(({ stdout, stderr, ended }) =>
       ended.pipe(
         step(what),
-        Effect.filterOrFail(
-          (code) => code === 0,
-          (code) => new ScriptError({ message: `${what} exited with ${code}` })
-        ),
+        exitedWell(what),
         Effect.mapError((error) => new ScriptError({ message: joined(error.message, stderr.trim()) })),
         Effect.as(stdout.trim())
       )
     )
   )
+}
+
+/**
+ * For a program that reports as it goes: it has the terminal, and interrupting it is a Ctrl+C, after which it has
+ * half a minute to clean up.
+ */
+export const runInTerminal = (
+  file: string,
+  args: ReadonlyArray<string>,
+  options: { readonly env?: Env; readonly failures?: Failures } = {}
+) => {
+  const what = `${file} ${args.join(' ')}`
+  return Effect.gen(function* () {
+    const program = yield* ChildProcess.make(file, args, {
+      ...spawning,
+      killSignal: 'SIGINT',
+      forceKillAfter: '30 seconds',
+      env: options.env,
+      extendEnv: true,
+      stdin: 'inherit',
+      stdout: 'inherit',
+      stderr: 'inherit'
+    })
+    return yield* program.exitCode
+  }).pipe(Effect.scoped, step(what), exitedWell(what, options.failures), Effect.asVoid)
 }
 
 export const decode = <S extends Schema.Top>(

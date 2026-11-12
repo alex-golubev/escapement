@@ -56,7 +56,7 @@ own must too.
 | `crates/engine-wasm` | The engine's WebAssembly exports |
 | `crates/describe-plugins` | Prints the plugin catalog for code generation |
 | `schema` | The FlatBuffers schema of what the page and the engine send each other |
-| `tools` | Code generation and the debug samples |
+| `tools` | Code generation, the debug samples and the mutation tests |
 | `samples` | Debug drum sounds, synthesized by `tools`, CC0 |
 
 ## Development
@@ -69,6 +69,7 @@ pnpm dev        # the app on a local Vite server
 pnpm test       # lint, types, unit tests in TypeScript and Rust
 pnpm --filter @escapement/web exec playwright install chromium   # once, for the browser tests
 pnpm test:e2e   # the app in a real browser
+pnpm test:mutants   # mutation tests of the Rust this branch changes, committed or not
 ```
 
 ## Contributing

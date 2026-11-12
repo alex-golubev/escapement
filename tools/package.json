@@ -1,7 +1,7 @@
 {
   "name": "@escapement/tools",
   "version": "0.0.0",
-  "description": "Repository scripts: code generation from the engine schema and the plugin catalog, and the debug samples.",
+  "description": "Repository scripts: code generation from the engine schema and the plugin catalog, the debug samples, and the mutation tests of the Rust.",
   "license": "AGPL-3.0-only",
   "private": true,
   "type": "module",
@@ -11,6 +11,7 @@
   "scripts": {
     "gen": "node src/gen.ts",
     "samples": "node src/samples.ts",
+    "mutants": "node src/mutants.ts",
     "typecheck": "tsc",
     "test": "vitest run"
   },

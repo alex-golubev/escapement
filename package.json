@@ -25,6 +25,7 @@
     "test": "biome check --error-on-warnings && cargo fmt --check && cargo clippy --workspace --all-targets -- -D warnings && RUSTDOCFLAGS='-D warnings' cargo doc --workspace --no-deps --document-private-items && pnpm -r typecheck && pnpm -r test && pnpm --filter @escapement/placeholder build && cargo test",
     "test:e2e": "pnpm --filter @escapement/web test:e2e",
     "test:property": "pnpm --filter @escapement/engine build:wasm && pnpm --filter @escapement/compiler test:property",
+    "test:mutants": "pnpm --filter @escapement/tools mutants",
     "typecheck": "pnpm -r typecheck",
     "prepare": "effect-tsgo patch --typescript"
   },
