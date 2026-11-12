@@ -13,6 +13,8 @@ See [Development](README.md#development) in the README.
 
 - `pnpm test` passes: Biome (lint and format), rustfmt, clippy, the Rust docs, types, unit tests in TypeScript and Rust.
 - `pnpm test:e2e` passes when the change is something the page shows or plays.
+- `pnpm test:mutants` passes when the change is in Rust. A mutant that survives wants a test, unless no one could hear
+  it or no Rust test can reach it: then it goes into `.cargo/mutants.toml` with its reason.
 - After a change to `schema/engine.fbs` or to the plugin catalog, `pnpm gen` is run and its output committed.
 - `pnpm format` formats everything Biome and rustfmt cover.
 
