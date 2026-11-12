@@ -1,6 +1,6 @@
 //! Batches of edits as the page writes them.
 
-use engine_plugins::catalog::tone;
+use engine_plugins::PluginDescription;
 use flatbuffers::{FlatBufferBuilder, UnionWIPOffset, Vector, WIPOffset};
 
 use crate::pool::Hash;
@@ -16,14 +16,7 @@ use crate::schema::{
 #[derive(Clone, Copy)]
 pub(crate) enum Spec<'a> {
     Reset(u32),
-    CreateNode {
-        node: u32,
-        plugin: u32,
-        version: u32,
-        params: &'a [(u32, f32)],
-        samples: &'a [(u32, Hash)],
-        strip: &'a [(u32, f32)],
-    },
+    CreateNode(NewNode<'a>),
     SetOutput(u32),
     Connect {
         from: u32,
@@ -34,10 +27,11 @@ pub(crate) enum Spec<'a> {
     SetPattern(u32, &'a [Played]),
     DestroyPattern(u32),
     SetClips(&'a [Placed]),
-    /// The node and its strip's initial values.
-    CreateInsert(u32, &'a [(u32, f32)]),
-    /// The node and its strip's initial values, with a meter.
-    MeteredInsert(u32, &'a [(u32, f32)]),
+    CreateInsert {
+        node: u32,
+        strip: &'a [(u32, f32)],
+        metered: bool,
+    },
     Disconnect {
         from: u32,
         to: u32,
@@ -57,15 +51,68 @@ pub(crate) type Played = (u32, u32, u8, f32, u32);
 /// A clip: tick, length, period, offset and pattern.
 pub(crate) type Placed = (u32, u32, u32, u32, u32);
 
-/// The test tone with initial values.
-pub(crate) fn tone_node(node: u32, params: &[(u32, f32)]) -> Spec<'_> {
-    Spec::CreateNode {
+/// A node to create, with its initial values.
+#[derive(Clone, Copy)]
+pub(crate) struct NewNode<'a> {
+    node: u32,
+    plugin: u32,
+    version: u32,
+    params: &'a [(u32, f32)],
+    samples: &'a [(u32, Hash)],
+    strip: &'a [(u32, f32)],
+}
+
+impl<'a> NewNode<'a> {
+    /// Of the plugin `description` describes, with no initial values.
+    pub(crate) fn of(node: u32, description: &PluginDescription) -> Self {
+        Self {
+            node,
+            plugin: description.id,
+            version: description.version,
+            params: &[],
+            samples: &[],
+            strip: &[],
+        }
+    }
+
+    pub(crate) fn plugin(self, plugin: u32) -> Self {
+        Self { plugin, ..self }
+    }
+
+    pub(crate) fn version(self, version: u32) -> Self {
+        Self { version, ..self }
+    }
+
+    pub(crate) fn params(self, params: &'a [(u32, f32)]) -> Self {
+        Self { params, ..self }
+    }
+
+    pub(crate) fn samples(self, samples: &'a [(u32, Hash)]) -> Self {
+        Self { samples, ..self }
+    }
+
+    pub(crate) fn strip(self, strip: &'a [(u32, f32)]) -> Self {
+        Self { strip, ..self }
+    }
+}
+
+impl<'a> From<NewNode<'a>> for Spec<'a> {
+    fn from(node: NewNode<'a>) -> Self {
+        Self::CreateNode(node)
+    }
+}
+
+/// [`NewNode::of`], as an edit.
+pub(crate) fn create_node(node: u32, description: &PluginDescription) -> Spec<'static> {
+    Spec::CreateNode(NewNode::of(node, description))
+}
+
+/// An insert without a meter.
+pub(crate) fn create_insert(node: u32, strip: &[(u32, f32)]) -> Spec<'_> {
+    Spec::CreateInsert {
         node,
-        plugin: tone::DESCRIPTION.id,
-        version: tone::DESCRIPTION.version,
-        params,
-        samples: &[],
-        strip: &[],
+        strip,
+        metered: false,
     }
 }
 
@@ -124,14 +171,14 @@ fn table(
             DeviceEdit::Reset,
             Reset::create(fbb, &ResetArgs { epoch }).as_union_value(),
         ),
-        Spec::CreateNode {
+        Spec::CreateNode(NewNode {
             node,
             plugin,
             version,
             params,
             samples,
             strip,
-        } => {
+        }) => {
             let params = Some(param_values(fbb, params));
             let strip = Some(param_values(fbb, strip));
             let sounds: Vec<_> = samples
@@ -188,26 +235,18 @@ fn table(
             let set = SetClips::create(fbb, &SetClipsArgs { clips });
             (DeviceEdit::SetClips, set.as_union_value())
         }
-        Spec::CreateInsert(node, strip) => {
+        Spec::CreateInsert {
+            node,
+            strip,
+            metered,
+        } => {
             let strip = Some(param_values(fbb, strip));
             let create = CreateInsert::create(
                 fbb,
                 &CreateInsertArgs {
                     node,
                     strip,
-                    metered: false,
-                },
-            );
-            (DeviceEdit::CreateInsert, create.as_union_value())
-        }
-        Spec::MeteredInsert(node, strip) => {
-            let strip = Some(param_values(fbb, strip));
-            let create = CreateInsert::create(
-                fbb,
-                &CreateInsertArgs {
-                    node,
-                    strip,
-                    metered: true,
+                    metered,
                 },
             );
             (DeviceEdit::CreateInsert, create.as_union_value())

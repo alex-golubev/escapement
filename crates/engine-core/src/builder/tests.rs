@@ -4,7 +4,9 @@ use super::*;
 use crate::graph::{Exit, Order, Seat};
 use crate::handoff::{self, Arrival, AudioEnd};
 use crate::strip::{PAN_NUMBER, VOLUME_NUMBER};
-use crate::testing::edits::{Played, Spec, batch, connect, disconnect, handle, tone_node};
+use crate::testing::edits::{
+    NewNode, Played, Spec, batch, connect, create_insert, create_node, disconnect, handle,
+};
 use crate::testing::{SAMPLE_RATE, cell};
 
 /// What a parcel brings, without the nodes themselves; cells and exits by their places in their tables.
@@ -81,16 +83,11 @@ fn order(cells: &[u32], output: &[u32]) -> Brought {
 }
 
 fn wired(turns: &[(u32, &[u32])], output: &[u32]) -> Brought {
-    let seats = |handles: &[u32]| {
-        handles
-            .iter()
-            .map(|&handle| Seat::Cell(cell(handle)))
-            .collect()
-    };
+    let seats = |handles: &[u32]| handles.iter().map(|&node| Seat::Cell(cell(node))).collect();
     Brought::Order(
         turns
             .iter()
-            .map(|&(handle, inputs)| (Seat::Cell(cell(handle)), seats(inputs)))
+            .map(|&(node, inputs)| (Seat::Cell(cell(node)), seats(inputs)))
             .collect(),
         seats(output),
     )
@@ -180,28 +177,16 @@ fn hang_build_hangs() {
 #[test]
 fn edits_the_engine_cannot_make_are_refused_one_by_one() {
     let (mut builder, mut audio) = builder();
-    let unknown_version = Spec::CreateNode {
-        node: 4,
-        plugin: tone::DESCRIPTION.id,
-        version: tone::DESCRIPTION.version + 1,
-        params: &[],
-        samples: &[],
-        strip: &[],
-    };
-    let unknown_plugin = Spec::CreateNode {
-        node: 4,
-        plugin: 0,
-        version: 1,
-        params: &[],
-        samples: &[],
-        strip: &[],
-    };
+    let unknown_version = NewNode::of(4, &tone::DESCRIPTION)
+        .version(tone::DESCRIPTION.version + 1)
+        .into();
+    let unknown_plugin = NewNode::of(4, &tone::DESCRIPTION).plugin(0).into();
     let edits = [
-        tone_node(1, &[]),
-        tone_node(1, &[]),
-        tone_node(handle(1, 1), &[]),
-        tone_node(0, &[]),
-        tone_node(handle(1, 0), &[]),
+        create_node(1, &tone::DESCRIPTION),
+        create_node(1, &tone::DESCRIPTION),
+        create_node(handle(1, 1), &tone::DESCRIPTION),
+        create_node(0, &tone::DESCRIPTION),
+        create_node(handle(1, 0), &tone::DESCRIPTION),
         unknown_version,
         unknown_plugin,
         Spec::SetOutput(0),
@@ -243,7 +228,10 @@ fn bytes_that_are_not_a_batch_still_make_a_parcel() {
     assert_eq!(built(&mut builder, &mut audio, 2, &[0xff; 9]), refused);
     assert_eq!(built(&mut builder, &mut audio, 3, &batch(&[])), []);
     // A table without a kind doesn't pass the check.
-    let inconsistent = batch(&[tone_node(1, &[]), Spec::Bare(DeviceEdit::NONE)]);
+    let inconsistent = batch(&[
+        create_node(1, &tone::DESCRIPTION),
+        Spec::Bare(DeviceEdit::NONE),
+    ]);
     assert_eq!(built(&mut builder, &mut audio, 4, &inconsistent), refused);
 }
 
@@ -252,7 +240,7 @@ fn a_value_the_node_refuses_leaves_its_parameter_at_the_default_and_the_node_is_
     let (mut builder, mut audio) = builder();
     let volume = tone::VOLUME.get();
     let values = [(volume, f32::NAN), (volume + 1, 0.5), (volume, 0.25)];
-    let edits = [tone_node(1, &values)];
+    let edits = [NewNode::of(1, &tone::DESCRIPTION).params(&values).into()];
     assert_eq!(
         built(&mut builder, &mut audio, 1, &batch(&edits)),
         [
@@ -274,15 +262,8 @@ fn a_strip_value_is_refused_on_its_own_and_the_node_is_made() {
         (PAN_NUMBER.get(), 0.5),
     ];
     let edits = [
-        Spec::CreateNode {
-            node: 1,
-            plugin: tone::DESCRIPTION.id,
-            version: tone::DESCRIPTION.version,
-            params: &[],
-            samples: &[],
-            strip: &values,
-        },
-        Spec::CreateInsert(2, &values),
+        NewNode::of(1, &tone::DESCRIPTION).strip(&values).into(),
+        create_insert(2, &values),
     ];
     let refusals = || {
         [
@@ -303,7 +284,10 @@ fn a_strip_value_is_refused_on_its_own_and_the_node_is_made() {
 #[test]
 fn each_table_grows_once_per_parcel_before_anything_goes_in() {
     let (mut builder, mut audio) = builder();
-    let edits = [tone_node(16, &[]), tone_node(handle(7, 32), &[])];
+    let edits = [
+        create_node(16, &tone::DESCRIPTION),
+        create_node(handle(7, 32), &tone::DESCRIPTION),
+    ];
     assert_eq!(
         built(&mut builder, &mut audio, 1, &batch(&edits)),
         [
@@ -313,7 +297,10 @@ fn each_table_grows_once_per_parcel_before_anything_goes_in() {
             order(&[16, 32], &[]),
         ]
     );
-    let edits = [tone_node(63, &[]), tone_node(u32::from(u16::MAX), &[])];
+    let edits = [
+        create_node(63, &tone::DESCRIPTION),
+        create_node(u32::from(u16::MAX), &tone::DESCRIPTION),
+    ];
     assert_eq!(
         built(&mut builder, &mut audio, 2, &batch(&edits)),
         [
@@ -324,7 +311,9 @@ fn each_table_grows_once_per_parcel_before_anything_goes_in() {
         ]
     );
     // A reset of more nodes than there are exits for removed ones.
-    let many: Vec<_> = (1..=20).map(|cell| tone_node(cell, &[])).collect();
+    let many: Vec<_> = (1..=20)
+        .map(|cell| create_node(cell, &tone::DESCRIPTION))
+        .collect();
     built(&mut builder, &mut audio, 3, &batch(&many));
     let reset = built(&mut builder, &mut audio, 4, &batch(&[Spec::Reset(1)]));
     let grows: Vec<_> = reset
@@ -338,11 +327,11 @@ fn each_table_grows_once_per_parcel_before_anything_goes_in() {
 #[test]
 fn a_removed_node_frees_its_cell_at_once_and_plays_out_until_its_parcel_comes_back() {
     let (mut builder, mut audio) = builder();
-    let edits = [tone_node(1, &[]), Spec::SetOutput(1)];
+    let edits = [create_node(1, &tone::DESCRIPTION), Spec::SetOutput(1)];
     built(&mut builder, &mut audio, 1, &batch(&edits));
     let again = [
         Spec::DestroyNode(1),
-        tone_node(handle(1, 1), &[]),
+        create_node(handle(1, 1), &tone::DESCRIPTION),
         Spec::SetOutput(handle(1, 1)),
     ];
     let removal = parcel(&mut builder, &mut audio, 2, &batch(&again));
@@ -373,9 +362,17 @@ fn a_removed_node_frees_its_cell_at_once_and_plays_out_until_its_parcel_comes_ba
 #[test]
 fn a_reset_removes_every_node_and_starts_a_session() {
     let (mut builder, mut audio) = builder();
-    let edits = [tone_node(20, &[]), tone_node(2, &[]), connect(2, 20)];
+    let edits = [
+        create_node(20, &tone::DESCRIPTION),
+        create_node(2, &tone::DESCRIPTION),
+        connect(2, 20),
+    ];
     built(&mut builder, &mut audio, 1, &batch(&edits));
-    let reset = [Spec::Reset(3), Spec::SetOutput(20), tone_node(20, &[])];
+    let reset = [
+        Spec::Reset(3),
+        Spec::SetOutput(20),
+        create_node(20, &tone::DESCRIPTION),
+    ];
     let parcel = parcel(&mut builder, &mut audio, 2, &batch(&reset));
     assert!(parcel.holds);
     let edits: Vec<_> = parcel.edits.iter().map(brought_edit).collect();
@@ -403,7 +400,10 @@ fn a_reset_removes_every_node_and_starts_a_session() {
 #[test]
 fn the_order_comes_only_with_batches_that_change_the_graph() {
     let (mut builder, mut audio) = builder();
-    let added = batch(&[tone_node(2, &[]), tone_node(1, &[])]);
+    let added = batch(&[
+        create_node(2, &tone::DESCRIPTION),
+        create_node(1, &tone::DESCRIPTION),
+    ]);
     assert_eq!(
         built(&mut builder, &mut audio, 1, &added),
         [
@@ -412,7 +412,7 @@ fn the_order_comes_only_with_batches_that_change_the_graph() {
             order(&[2, 1], &[]),
         ]
     );
-    let output = batch(&[Spec::SetOutput(1), tone_node(1, &[])]);
+    let output = batch(&[Spec::SetOutput(1), create_node(1, &tone::DESCRIPTION)]);
     assert_eq!(
         built(&mut builder, &mut audio, 2, &output),
         [Brought::Refused(Rejection::CellTaken), order(&[2, 1], &[1]),]
@@ -434,9 +434,9 @@ fn the_order_comes_only_with_batches_that_change_the_graph() {
 fn a_node_goes_after_the_nodes_it_hears_whenever_it_was_made() {
     let (mut builder, mut audio) = builder();
     let edits = [
-        tone_node(1, &[]),
-        tone_node(2, &[]),
-        tone_node(3, &[]),
+        create_node(1, &tone::DESCRIPTION),
+        create_node(2, &tone::DESCRIPTION),
+        create_node(3, &tone::DESCRIPTION),
         connect(3, 2),
         connect(2, 1),
     ];
@@ -450,7 +450,11 @@ fn a_node_goes_after_the_nodes_it_hears_whenever_it_was_made() {
         ]
     );
     // One node can feed several, and a node hears all of its inputs.
-    let edits = [tone_node(4, &[]), connect(4, 1), connect(3, 1)];
+    let edits = [
+        create_node(4, &tone::DESCRIPTION),
+        connect(4, 1),
+        connect(3, 1),
+    ];
     assert_eq!(
         built(&mut builder, &mut audio, 2, &batch(&edits)),
         [
@@ -464,9 +468,9 @@ fn a_node_goes_after_the_nodes_it_hears_whenever_it_was_made() {
 fn connections_the_engine_cannot_make_are_refused_one_by_one() {
     let (mut builder, mut audio) = builder();
     let edits = [
-        tone_node(1, &[]),
-        tone_node(2, &[]),
-        tone_node(3, &[]),
+        create_node(1, &tone::DESCRIPTION),
+        create_node(2, &tone::DESCRIPTION),
+        create_node(3, &tone::DESCRIPTION),
         connect(1, 2),
         connect(2, 3),
         connect(3, 1),
@@ -502,10 +506,10 @@ fn connections_the_engine_cannot_make_are_refused_one_by_one() {
 fn an_insert_takes_a_handle_as_a_node_does() {
     let (mut builder, mut audio) = builder();
     let edits = [
-        Spec::CreateInsert(1, &[]),
-        Spec::CreateInsert(0, &[]),
-        Spec::CreateInsert(handle(1, 1), &[]),
-        tone_node(2, &[]),
+        create_insert(1, &[]),
+        create_insert(0, &[]),
+        create_insert(handle(1, 1), &[]),
+        create_node(2, &tone::DESCRIPTION),
         connect(2, 1),
         Spec::SetOutput(1),
     ];
@@ -525,8 +529,8 @@ fn an_insert_takes_a_handle_as_a_node_does() {
 fn only_a_connection_between_live_nodes_that_is_kept_can_be_disconnected() {
     let (mut builder, mut audio) = builder();
     let edits = [
-        tone_node(1, &[]),
-        tone_node(2, &[]),
+        create_node(1, &tone::DESCRIPTION),
+        create_node(2, &tone::DESCRIPTION),
         connect(1, 2),
         disconnect(2, 1),
         disconnect(1, 9),
@@ -554,9 +558,9 @@ fn only_a_connection_between_live_nodes_that_is_kept_can_be_disconnected() {
 fn a_removed_node_takes_its_connections_along_once_its_parcel_is_back() {
     let (mut builder, mut audio) = builder();
     let edits = [
-        tone_node(1, &[]),
-        tone_node(2, &[]),
-        tone_node(3, &[]),
+        create_node(1, &tone::DESCRIPTION),
+        create_node(2, &tone::DESCRIPTION),
+        create_node(3, &tone::DESCRIPTION),
         connect(1, 2),
         connect(2, 3),
         Spec::SetOutput(3),
@@ -583,7 +587,10 @@ fn a_pattern_comes_sorted_by_tick_with_the_notes_no_note_can_have_dropped_under_
         (240, 1, 66, 1.0, 0),
         (240, 1, 65, 0.5, 240),
     ];
-    let edits = [tone_node(1, &[]), Spec::SetPattern(1, &notes)];
+    let edits = [
+        create_node(1, &tone::DESCRIPTION),
+        Spec::SetPattern(1, &notes),
+    ];
     assert_eq!(
         built(&mut builder, &mut audio, 1, &batch(&edits)),
         [
@@ -621,7 +628,7 @@ fn a_pattern_is_made_in_a_free_cell_and_replaced_under_its_handle_and_its_cell_i
     let (mut builder, mut audio) = builder();
     let one = [(0, 1, 60, 1.0, 240)];
     let edits = [
-        tone_node(1, &[]),
+        create_node(1, &tone::DESCRIPTION),
         Spec::SetPattern(1, &[]),
         Spec::SetPattern(1, &one),
         Spec::SetPattern(handle(1, 1), &[]),
@@ -762,8 +769,8 @@ fn after_every_batch_the_clips_name_only_live_patterns_or_the_batch_gets_one_ref
 fn notes_are_let_go_of_only_for_live_nodes_in_one_edit_each_node_once() {
     let (mut builder, mut audio) = builder();
     let edits = [
-        tone_node(1, &[]),
-        tone_node(2, &[]),
+        create_node(1, &tone::DESCRIPTION),
+        create_node(2, &tone::DESCRIPTION),
         Spec::LetGoOfNotes(2),
         Spec::LetGoOfNotes(3),
         Spec::LetGoOfNotes(1),
@@ -792,8 +799,8 @@ fn after_every_batch_the_pattern_names_only_live_nodes_or_the_batch_gets_one_ref
     // The nodes may come after the pattern in its batch.
     let edits = [
         Spec::SetPattern(1, &notes),
-        tone_node(1, &[]),
-        tone_node(2, &[]),
+        create_node(1, &tone::DESCRIPTION),
+        create_node(2, &tone::DESCRIPTION),
     ];
     let made = built(&mut builder, &mut audio, 1, &batch(&edits));
     assert!(!made.contains(&Brought::Refused(Rejection::UnknownTarget)));
@@ -842,7 +849,7 @@ fn after_every_batch_the_pattern_names_only_live_nodes_or_the_batch_gets_one_ref
         5,
         &batch(&[Spec::SetPattern(1, &first)]),
     );
-    let edits = [tone_node(3, &[]), Spec::DestroyNode(3)];
+    let edits = [create_node(3, &tone::DESCRIPTION), Spec::DestroyNode(3)];
     let refusals = built(&mut builder, &mut audio, 6, &batch(&edits))
         .into_iter()
         .filter(|edit| matches!(edit, Brought::Refused(_)))
@@ -856,7 +863,7 @@ fn a_reset_takes_the_patterns_and_clips_away_and_a_rebuild_in_its_batch_brings_t
     let notes = [(0, 1, 60, 1.0, 240)];
     built(&mut builder, &mut audio, 1, &batch(&[Spec::Reset(1)]));
     let edits = [
-        tone_node(1, &[]),
+        create_node(1, &tone::DESCRIPTION),
         Spec::SetPattern(2, &notes),
         Spec::SetPattern(1, &[]),
         Spec::SetClips(&[(0, 960, 960, 0, 2)]),
@@ -864,7 +871,7 @@ fn a_reset_takes_the_patterns_and_clips_away_and_a_rebuild_in_its_batch_brings_t
     built(&mut builder, &mut audio, 2, &batch(&edits));
     let rebuild = [
         Spec::Reset(2),
-        tone_node(handle(1, 1), &[]),
+        create_node(handle(1, 1), &tone::DESCRIPTION),
         Spec::SetPattern(handle(1, 1), &[(0, handle(1, 1), 60, 1.0, 240)]),
         Spec::SetClips(&[(0, 960, 960, 0, handle(1, 1))]),
     ];

@@ -26,7 +26,8 @@ use crate::testing::commands::{
     set_strip_param, set_tempo, set_transport, unknown_kind, wrong_size,
 };
 use crate::testing::edits::{
-    Placed, Played, Spec, batch as batch_bytes, connect, disconnect, handle, tone_node,
+    NewNode, Placed, Played, Spec, batch as batch_bytes, connect, create_insert, create_node,
+    disconnect, handle,
 };
 use crate::testing::events::decode;
 use crate::testing::pool::store;
@@ -82,7 +83,10 @@ impl Rig {
     /// The test tone on the output, then `commands`.
     fn with_tone(commands: &[Vec<u8>]) -> Self {
         let mut rig = Self::empty();
-        rig.send(&[tone_node(TONE, &[]), Spec::SetOutput(TONE)], commands);
+        rig.send(
+            &[create_node(TONE, &tone::DESCRIPTION), Spec::SetOutput(TONE)],
+            commands,
+        );
         rig
     }
 
@@ -107,33 +111,16 @@ impl Rig {
     }
 }
 
-fn filter_node(node: u32, params: &[(u32, f32)]) -> Spec<'_> {
-    Spec::CreateNode {
-        node,
-        plugin: filter::DESCRIPTION.id,
-        version: filter::DESCRIPTION.version,
-        params,
-        samples: &[],
-        strip: &[],
-    }
-}
-
-fn sampler_node(node: u32, samples: &[(u32, Hash)]) -> Spec<'_> {
-    Spec::CreateNode {
-        node,
-        plugin: sampler::DESCRIPTION.id,
-        version: sampler::DESCRIPTION.version,
-        params: &[],
-        samples,
-        strip: &[],
-    }
-}
-
 /// A sampler on the output, playing nothing until a note, once the output has risen.
 fn with_sampler(samples: &[(u32, Hash)]) -> Rig {
     let mut rig = Rig::empty();
     rig.send(
-        &[sampler_node(SAMPLER, samples), Spec::SetOutput(SAMPLER)],
+        &[
+            NewNode::of(SAMPLER, &sampler::DESCRIPTION)
+                .samples(samples)
+                .into(),
+            Spec::SetOutput(SAMPLER),
+        ],
         &[],
     );
     assert!(
@@ -144,6 +131,13 @@ fn with_sampler(samples: &[(u32, Hash)]) -> Rig {
     rig
 }
 
+/// A sampler with [`KICK`] for its sound.
+fn sampler_with_kick(node: u32) -> Spec<'static> {
+    NewNode::of(node, &sampler::DESCRIPTION)
+        .samples(&[(raw::SAMPLE, KICK)])
+        .into()
+}
+
 fn kick() -> Vec<f32> {
     (0..500).map(|i| 0.001 * (i + 1) as f32).collect()
 }
@@ -151,7 +145,9 @@ fn kick() -> Vec<f32> {
 /// The filter on the output, hearing the tone.
 fn filter_on_tone(params: &[(u32, f32)]) -> [Spec<'_>; 3] {
     [
-        filter_node(FILTER, params),
+        NewNode::of(FILTER, &filter::DESCRIPTION)
+            .params(params)
+            .into(),
         connect(TONE, FILTER),
         Spec::SetOutput(FILTER),
     ]
@@ -281,7 +277,13 @@ fn initial_values_apply_from_the_first_sample() {
     // Against the tone at its default volume: a new node fades in, but alike at any volume.
     let first_block = |volume: &[(u32, f32)], commands: &[Vec<u8>]| {
         let mut rig = Rig::empty();
-        rig.send(&[tone_node(TONE, volume), Spec::SetOutput(TONE)], commands);
+        rig.send(
+            &[
+                NewNode::of(TONE, &tone::DESCRIPTION).params(volume).into(),
+                Spec::SetOutput(TONE),
+            ],
+            commands,
+        );
         peak(&mut rig.engine, 1)
     };
     let default = first_block(&[], &[]);
@@ -330,8 +332,8 @@ fn an_insert_has_a_strip_too() {
     let mut rig = Rig::empty();
     rig.send(
         &[
-            Spec::CreateInsert(INSERT, &[(raw::PAN_NUMBER, -1.0)]),
-            tone_node(TONE, &[]),
+            create_insert(INSERT, &[(raw::PAN_NUMBER, -1.0)]),
+            create_node(TONE, &tone::DESCRIPTION),
             connect(TONE, INSERT),
             Spec::SetOutput(INSERT),
         ],
@@ -350,10 +352,18 @@ fn an_insert_s_meter_measures_what_it_passes_on_under_its_node_s_handle() {
     let mut rig = Rig::empty();
     rig.send(
         &[
-            Spec::MeteredInsert(LEFT, &[(raw::PAN_NUMBER, -1.0)]),
-            Spec::MeteredInsert(HALF, &[(raw::VOLUME_NUMBER, 0.5)]),
-            Spec::CreateInsert(UNMETERED, &[]),
-            tone_node(TONE, &[]),
+            Spec::CreateInsert {
+                node: LEFT,
+                strip: &[(raw::PAN_NUMBER, -1.0)],
+                metered: true,
+            },
+            Spec::CreateInsert {
+                node: HALF,
+                strip: &[(raw::VOLUME_NUMBER, 0.5)],
+                metered: true,
+            },
+            create_insert(UNMETERED, &[]),
+            create_node(TONE, &tone::DESCRIPTION),
             connect(TONE, LEFT),
             connect(TONE, HALF),
             connect(TONE, UNMETERED),
@@ -392,14 +402,7 @@ fn an_insert_s_meter_measures_what_it_passes_on_under_its_node_s_handle() {
 fn initial_strip_values_apply_from_the_first_sample() {
     let first_block = |strip: &[(u32, f32)], commands: &[Vec<u8>]| {
         let mut rig = Rig::empty();
-        let tone = Spec::CreateNode {
-            node: TONE,
-            plugin: tone::DESCRIPTION.id,
-            version: tone::DESCRIPTION.version,
-            params: &[],
-            samples: &[],
-            strip,
-        };
+        let tone = NewNode::of(TONE, &tone::DESCRIPTION).strip(strip).into();
         rig.send(&[tone, Spec::SetOutput(TONE)], commands);
         peak(&mut rig.engine, 1)
     };
@@ -414,14 +417,9 @@ fn initial_strip_values_apply_from_the_first_sample() {
 #[test]
 fn an_initial_strip_value_refused_is_left_at_its_default_and_the_others_apply() {
     let mut rig = Rig::empty();
-    let tone = Spec::CreateNode {
-        node: TONE,
-        plugin: tone::DESCRIPTION.id,
-        version: tone::DESCRIPTION.version,
-        params: &[],
-        samples: &[],
-        strip: &[(raw::VOLUME_NUMBER, f32::NAN), (raw::PAN_NUMBER, 1.0)],
-    };
+    let tone = NewNode::of(TONE, &tone::DESCRIPTION)
+        .strip(&[(raw::VOLUME_NUMBER, f32::NAN), (raw::PAN_NUMBER, 1.0)])
+        .into();
     rig.send(&[tone, Spec::SetOutput(TONE)], &[]);
     let [left, right] = settled_sides(&mut rig.engine);
     assert_eq!(left, 0.0);
@@ -502,7 +500,7 @@ fn live_edits_behind_a_marker_wait_for_its_parcel() {
         [],
         "the volume waited for its node"
     );
-    let edits = [tone_node(TONE, &[]), Spec::SetOutput(TONE)];
+    let edits = [create_node(TONE, &tone::DESCRIPTION), Spec::SetOutput(TONE)];
     rig.builder.build(1, &batch_bytes(&edits));
     assert!((settled_peak(&mut rig.engine) - at_volume(0.25)).abs() < 1e-3);
 }
@@ -512,7 +510,11 @@ fn a_batch_does_not_overtake_live_edits_sent_before_it() {
     let mut rig = Rig::with_tone(&[]);
     // Meant for the node being replaced.
     rig.write(&[set_param(TONE, raw::VOLUME, 0.1)]);
-    let edits = [Spec::Reset(1), tone_node(TONE, &[]), Spec::SetOutput(TONE)];
+    let edits = [
+        Spec::Reset(1),
+        create_node(TONE, &tone::DESCRIPTION),
+        Spec::SetOutput(TONE),
+    ];
     rig.send(&edits, &[]);
     let expected = at_volume(DEFAULT_VOLUME);
     assert!((settled_peak(&mut rig.engine) - expected).abs() < 1e-3);
@@ -522,7 +524,10 @@ fn a_batch_does_not_overtake_live_edits_sent_before_it() {
 fn a_marker_for_another_batch_than_the_next_is_rejected_at_once() {
     let mut rig = Rig::empty();
     rig.write(&[after_batch(2)]);
-    rig.send(&[tone_node(TONE, &[]), Spec::SetOutput(TONE)], &[]);
+    rig.send(
+        &[create_node(TONE, &tone::DESCRIPTION), Spec::SetOutput(TONE)],
+        &[],
+    );
     assert!(peak(&mut rig.engine, 1) > 0.0);
     // Batch 1 again and one far ahead, with nothing in line: neither may hold the live edit behind them.
     rig.write(&[
@@ -605,9 +610,9 @@ fn an_insert_passes_on_the_sum_of_what_it_hears_and_takes_no_parameter() {
     let mut rig = Rig::empty();
     rig.send(
         &[
-            Spec::CreateInsert(INSERT, &[]),
-            tone_node(TONE, &[]),
-            tone_node(TONE + 10, &[]),
+            create_insert(INSERT, &[]),
+            create_node(TONE, &tone::DESCRIPTION),
+            create_node(TONE + 10, &tone::DESCRIPTION),
             connect(TONE, INSERT),
             connect(TONE + 10, INSERT),
             Spec::SetOutput(INSERT),
@@ -655,18 +660,11 @@ fn rejects_records_of_the_wrong_size_and_unknown_kinds() {
 #[test]
 fn edits_the_build_thread_refused_come_back_with_their_batch_and_session() {
     let mut rig = Rig::with_tone(&[]);
-    let unknown_plugin = Spec::CreateNode {
-        node: 2,
-        plugin: 0,
-        version: 1,
-        params: &[],
-        samples: &[],
-        strip: &[],
-    };
+    let unknown_plugin = NewNode::of(2, &tone::DESCRIPTION).plugin(0).into();
     // The tone's number is taken; after the reset there is no node to hear.
     let edits = [
         unknown_plugin,
-        tone_node(TONE, &[]),
+        create_node(TONE, &tone::DESCRIPTION),
         Spec::Reset(5),
         Spec::SetOutput(TONE),
     ];
@@ -708,7 +706,7 @@ fn events_carry_the_session_they_happened_in() {
 #[test]
 fn reset_removes_every_node_and_starts_a_session() {
     let mut rig = Rig::with_tone(&[]);
-    rig.send(&[tone_node(40, &[])], &[]);
+    rig.send(&[create_node(40, &tone::DESCRIPTION)], &[]);
     assert!(peak(&mut rig.engine, 1) > 0.0);
     rig.send(&[Spec::Reset(3)], &[set_param(TONE, raw::VOLUME, 0.5)]);
     assert_eq!(
@@ -725,7 +723,10 @@ fn reset_removes_every_node_and_starts_a_session() {
     );
     // Every parcel is back, with the nodes it took out, and each cell is free again.
     assert_eq!(rig.builder.collect(), 0);
-    rig.send(&[tone_node(TONE, &[]), Spec::SetOutput(TONE)], &[]);
+    rig.send(
+        &[create_node(TONE, &tone::DESCRIPTION), Spec::SetOutput(TONE)],
+        &[],
+    );
     assert!(peak(&mut rig.engine, 1) > 0.0);
     assert_eq!(events(&mut rig.engine), []);
 }
@@ -795,10 +796,15 @@ fn a_tone_connected_to_a_playing_filter_rises_without_a_click() {
             // The filter on the output, hearing nothing yet.
             let params = [(raw::CUTOFF, cutoff)];
             rig.send(
-                &[filter_node(FILTER, &params), Spec::SetOutput(FILTER)],
+                &[
+                    NewNode::of(FILTER, &filter::DESCRIPTION)
+                        .params(&params)
+                        .into(),
+                    Spec::SetOutput(FILTER),
+                ],
                 &[],
             );
-            let edits = [tone_node(TONE, &[]), connect(TONE, FILTER)];
+            let edits = [create_node(TONE, &tone::DESCRIPTION), connect(TONE, FILTER)];
             let heard = heard_across(&mut rig, blocks, &edits);
             assert_smooth(&heard, &format!("{cutoff} Hz after {blocks} blocks"));
         }
@@ -811,7 +817,7 @@ fn the_output_goes_over_between_two_playing_nodes_without_a_click() {
         let mut rig = Rig::with_tone(&[]);
         // A tone of its own phase, playing unheard.
         peak(&mut rig.engine, blocks);
-        rig.send(&[tone_node(2, &[])], &[]);
+        rig.send(&[create_node(2, &tone::DESCRIPTION)], &[]);
         let heard = heard_across(&mut rig, blocks, &[Spec::SetOutput(2)]);
         assert_smooth(&heard, &format!("after {blocks} blocks"));
     }
@@ -822,7 +828,7 @@ fn a_reset_while_playing_fades_out_and_a_rebuild_in_the_same_batch_fades_in() {
     let [filter, connect, output] = filter_on_tone(&[(raw::CUTOFF, 300.0)]);
     let rebuild = [
         Spec::Reset(1),
-        tone_node(TONE, &[]),
+        create_node(TONE, &tone::DESCRIPTION),
         filter,
         connect,
         output,
@@ -843,7 +849,9 @@ fn a_reset_while_playing_fades_out_and_a_rebuild_in_the_same_batch_fades_in() {
 #[test]
 fn quick_changes_inside_the_fade_never_click() {
     let refilter = [
-        filter_node(handle(1, FILTER), &[(raw::CUTOFF, 200.0)]),
+        NewNode::of(handle(1, FILTER), &filter::DESCRIPTION)
+            .params(&[(raw::CUTOFF, 200.0)])
+            .into(),
         connect(TONE, handle(1, FILTER)),
         Spec::SetOutput(handle(1, FILTER)),
     ];
@@ -851,7 +859,7 @@ fn quick_changes_inside_the_fade_never_click() {
         // A tone added, then removed while it rises.
         (
             &[],
-            &[tone_node(TONE, &[]), Spec::SetOutput(TONE)],
+            &[create_node(TONE, &tone::DESCRIPTION), Spec::SetOutput(TONE)],
             &[Spec::DestroyNode(TONE)],
         ),
         // A filter taken out, then put back while the tone comes back.
@@ -890,9 +898,9 @@ fn quick_changes_inside_the_fade_never_click() {
 fn a_connection_that_closes_a_loop_only_through_a_node_playing_out_is_made() {
     let mut rig = Rig::with_tone(&[]);
     let chain = [
-        filter_node(2, &[]),
-        filter_node(3, &[]),
-        filter_node(4, &[]),
+        create_node(2, &filter::DESCRIPTION),
+        create_node(3, &filter::DESCRIPTION),
+        create_node(4, &filter::DESCRIPTION),
         connect(TONE, 2),
         connect(2, 3),
         connect(3, 4),
@@ -912,7 +920,7 @@ fn a_connection_that_closes_a_loop_only_through_a_node_playing_out_is_made() {
 #[test]
 fn an_effect_made_earlier_and_heard_later_goes_in_without_a_dip() {
     let mut rig = Rig::with_tone(&[]);
-    rig.send(&[filter_node(FILTER, &[])], &[]);
+    rig.send(&[create_node(FILTER, &filter::DESCRIPTION)], &[]);
     peak(&mut rig.engine, FADE_BLOCKS);
     let edits = [connect(TONE, FILTER), Spec::SetOutput(FILTER)];
     let heard = heard_across(&mut rig, 2, &edits);
@@ -930,7 +938,7 @@ fn a_cell_freed_in_a_batch_takes_a_new_node_and_the_old_handle_reaches_nothing()
     let new = handle(1, TONE);
     let edits = [
         Spec::DestroyNode(TONE),
-        tone_node(new, &[]),
+        create_node(new, &tone::DESCRIPTION),
         Spec::SetOutput(new),
     ];
     let heard = heard_across(&mut rig, 3, &edits);
@@ -961,7 +969,7 @@ fn removals_faster_than_they_fade_out_wait_and_never_touch_the_audio_thread_heap
         let node = cell % 2000 + 1;
         rig.send(
             &[
-                tone_node(node, &[]),
+                create_node(node, &tone::DESCRIPTION),
                 Spec::SetOutput(node),
                 Spec::DestroyNode(node),
             ],
@@ -1038,15 +1046,17 @@ fn the_audio_thread_never_touches_the_heap() {
     ]);
     let past = u32::try_from(FIRST_PATTERN_CELLS).unwrap();
     let edits = [
-        tone_node(TONE, &[(raw::VOLUME, 0.3), (raw::VOLUME, f32::NAN)]),
-        tone_node(TONE, &[]),
-        tone_node(40, &[]),
+        NewNode::of(TONE, &tone::DESCRIPTION)
+            .params(&[(raw::VOLUME, 0.3), (raw::VOLUME, f32::NAN)])
+            .into(),
+        create_node(TONE, &tone::DESCRIPTION),
+        create_node(40, &tone::DESCRIPTION),
         Spec::SetPattern(PATTERN, &notes),
         Spec::SetClips(&WHOLE),
         Spec::SetOutput(40),
         Spec::DestroyNode(40),
         Spec::Reset(2),
-        tone_node(TONE, &[]),
+        create_node(TONE, &tone::DESCRIPTION),
         Spec::SetOutput(TONE),
         Spec::SetPattern(PATTERN, &notes),
         Spec::SetPattern(PATTERN, &notes),
@@ -1072,7 +1082,7 @@ fn the_audio_thread_never_touches_the_heap() {
             from: FILTER,
             to: TONE,
         },
-        Spec::CreateInsert(
+        create_insert(
             INSERT,
             &[(raw::VOLUME_NUMBER, 0.5), (raw::PAN_NUMBER, f32::NAN)],
         ),
@@ -1187,7 +1197,7 @@ fn parcels_cross_between_two_threads_in_order_and_the_audio_thread_never_touches
         let notes = [(0, node, 60, 1.0, 240), (4, node, 62, 1.0, 240)];
         let edits = [
             Spec::Reset(batch),
-            tone_node(node, &volume),
+            NewNode::of(node, &tone::DESCRIPTION).params(&volume).into(),
             Spec::SetOutput(node),
             Spec::SetPattern(PATTERN, &notes),
             Spec::SetClips(&WHOLE),
@@ -1226,16 +1236,7 @@ fn a_reset_leaves_the_sounds_stored() {
 
 #[test]
 fn a_note_from_the_ring_plays_the_sampler_s_sound() {
-    let mut rig = Rig::empty();
-    store(rig.builder.samples(), KICK, &[&kick()], 128).unwrap();
-    rig.send(
-        &[
-            sampler_node(SAMPLER, &[(raw::SAMPLE, KICK)]),
-            Spec::SetOutput(SAMPLER),
-        ],
-        &[],
-    );
-    left(&mut rig.engine, FADE_BLOCKS);
+    let mut rig = kick_sampler();
     rig.write(&[note_on(SAMPLER, 60, 0.5)]);
     let heard = left(&mut rig.engine, 5);
     let expected: Vec<_> = kick().iter().map(|number| number * 0.5).collect();
@@ -1278,7 +1279,7 @@ fn a_sample_the_plugin_does_not_have_is_refused_and_the_node_is_made() {
 #[test]
 fn an_empty_place_goes_with_the_last_node_that_waited_for_its_sound() {
     let mut rig = with_sampler(&[(raw::SAMPLE, KICK)]);
-    rig.send(&[sampler_node(4, &[(raw::SAMPLE, KICK)])], &[]);
+    rig.send(&[sampler_with_kick(4)], &[]);
     rig.send(&[Spec::DestroyNode(SAMPLER)], &[]);
     left(&mut rig.engine, FADE_BLOCKS + 1);
     rig.builder.collect();
@@ -1296,16 +1297,7 @@ fn an_empty_place_goes_with_the_last_node_that_waited_for_its_sound() {
 #[test]
 fn an_evicted_sound_plays_on_in_the_nodes_that_hold_it_and_the_build_thread_frees_it_after_the_last()
  {
-    let mut rig = Rig::empty();
-    store(rig.builder.samples(), KICK, &[&kick()], 128).unwrap();
-    rig.send(
-        &[
-            sampler_node(SAMPLER, &[(raw::SAMPLE, KICK)]),
-            Spec::SetOutput(SAMPLER),
-        ],
-        &[],
-    );
-    left(&mut rig.engine, FADE_BLOCKS);
+    let mut rig = kick_sampler();
     rig.write(&[note_on(SAMPLER, 60, 1.0)]);
     let mut heard = left(&mut rig.engine, 2);
     let freed = Arc::downgrade(rig.builder.samples().get(&KICK).unwrap());
@@ -1315,7 +1307,7 @@ fn an_evicted_sound_plays_on_in_the_nodes_that_hold_it_and_the_build_thread_free
     // A node made after the eviction gets the same sound.
     rig.send(
         &[
-            sampler_node(4, &[(raw::SAMPLE, KICK)]),
+            sampler_with_kick(4),
             Spec::DestroyNode(SAMPLER),
             Spec::SetOutput(4),
         ],
@@ -1363,13 +1355,7 @@ fn rejects_notes_a_node_can_not_take() {
 fn a_sampler_plays_while_another_sound_is_stored_and_the_audio_thread_never_touches_the_heap() {
     let mut rig = Rig::empty();
     store(rig.builder.samples(), KICK, &[&[0.25; 4000]], 1000).unwrap();
-    rig.send(
-        &[
-            sampler_node(SAMPLER, &[(raw::SAMPLE, KICK)]),
-            Spec::SetOutput(SAMPLER),
-        ],
-        &[],
-    );
+    rig.send(&[sampler_with_kick(SAMPLER), Spec::SetOutput(SAMPLER)], &[]);
     let Rig {
         mut builder,
         mut engine,
@@ -1457,7 +1443,11 @@ fn events_without_room_in_the_ring_are_lost_and_counted() {
 fn reports_blocks_session_and_levels() {
     let mut rig = Rig::with_tone(&[]);
     rig.send(
-        &[Spec::Reset(5), tone_node(TONE, &[]), Spec::SetOutput(TONE)],
+        &[
+            Spec::Reset(5),
+            create_node(TONE, &tone::DESCRIPTION),
+            Spec::SetOutput(TONE),
+        ],
         &[],
     );
     let peak = settled_peak(&mut rig.engine);
@@ -1583,7 +1573,11 @@ fn a_reset_leaves_the_transport_playing_on() {
     rig.write(&[set_tempo(140.0), set_transport(true, BAR)]);
     playheads(&mut rig.engine, 10);
     rig.send(
-        &[Spec::Reset(1), tone_node(TONE, &[]), Spec::SetOutput(TONE)],
+        &[
+            Spec::Reset(1),
+            create_node(TONE, &tone::DESCRIPTION),
+            Spec::SetOutput(TONE),
+        ],
         &[set_transport(true, BAR)],
     );
     rig.engine.process(BLOCK_FRAMES);
@@ -1623,13 +1617,7 @@ fn kicks(ticks: &[u32]) -> Vec<Played> {
 fn kick_sampler() -> Rig {
     let mut rig = Rig::empty();
     store(rig.builder.samples(), KICK, &[&kick()], 128).unwrap();
-    rig.send(
-        &[
-            sampler_node(SAMPLER, &[(raw::SAMPLE, KICK)]),
-            Spec::SetOutput(SAMPLER),
-        ],
-        &[],
-    );
+    rig.send(&[sampler_with_kick(SAMPLER), Spec::SetOutput(SAMPLER)], &[]);
     left(&mut rig.engine, FADE_BLOCKS);
     rig
 }
@@ -1748,7 +1736,7 @@ fn a_rebuild_while_playing_keeps_the_pattern_on_its_beat() {
     rig.send(
         &[
             Spec::Reset(1),
-            sampler_node(again, &[(raw::SAMPLE, KICK)]),
+            sampler_with_kick(again),
             Spec::SetOutput(again),
             Spec::SetPattern(handle(1, PATTERN), &rebuilt),
             Spec::SetClips(&[(0, u32::MAX, u32::MAX, 0, handle(1, PATTERN))]),
@@ -1773,7 +1761,7 @@ fn notes_of_a_removed_node_reach_no_node_that_takes_its_cell_and_the_batch_is_to
     rig.send(
         &[
             Spec::DestroyNode(SAMPLER),
-            sampler_node(again, &[(raw::SAMPLE, KICK)]),
+            sampler_with_kick(again),
             Spec::SetOutput(again),
         ],
         &[],
@@ -1804,14 +1792,7 @@ fn synth_heard() -> Rig {
     let mut rig = Rig::empty();
     rig.send(
         &[
-            Spec::CreateNode {
-                node: SYNTH,
-                plugin: synth::DESCRIPTION.id,
-                version: synth::DESCRIPTION.version,
-                params: &[],
-                samples: &[],
-                strip: &[],
-            },
+            create_node(SYNTH, &synth::DESCRIPTION),
             Spec::SetOutput(SYNTH),
         ],
         &[],
