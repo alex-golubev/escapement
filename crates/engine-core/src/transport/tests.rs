@@ -282,13 +282,18 @@ fn counts_the_finest_tempos_at_rates_a_tick_has_no_whole_frames_in() {
     }
 }
 
-/// Each tick the next block passes, with the frame it falls in.
+/// Each tick the next block passes, with the frame it falls in. Taken up to one more than the block's run has, so
+/// stretches that don't end can't fill memory.
 fn passed(transport: &Transport, frames: usize) -> Vec<(u32, u32)> {
+    let ticks = transport
+        .run(frames)
+        .map_or(0, |run| run.last - run.first + 1);
     transport
         .stretches(frames)
         .flat_map(|stretch| {
             (stretch.first..=stretch.last).map(move |tick| (tick, stretch.frame(tick)))
         })
+        .take(usize::try_from(ticks + 1).unwrap())
         .collect()
 }
 
@@ -348,11 +353,13 @@ fn where_the_loop_ends_within_a_block_the_ticks_go_on_from_its_start() {
     let mut transport = playing(1000);
     // At 998.4.
     play_blocks(&mut transport, 195);
+    let expected = [(999, 999), (0, 3)];
     let stretches: Vec<_> = transport
         .stretches(BLOCK_FRAMES)
         .map(|stretch| (stretch.first, stretch.last))
+        .take(expected.len() + 1)
         .collect();
-    assert_eq!(stretches, [(999, 999), (0, 3)]);
+    assert_eq!(stretches, expected);
     assert_eq!(
         passed(&transport, BLOCK_FRAMES),
         [(999, 15), (0, 40), (1, 65), (2, 90), (3, 115)]
@@ -409,18 +416,19 @@ fn the_run_passes_the_stretches_ticks_by_their_count_from_the_start_of_play_at_t
             transport
                 .set_tempo(tempos[block / 3 % tempos.len()])
                 .unwrap();
+            let by_run: Vec<_> = transport.run(BLOCK_FRAMES).map_or_default(|run| {
+                (run.first..=run.last)
+                    .map(|count| (count, run.frame(count)))
+                    .collect()
+            });
             let by_stretch: Vec<_> = transport
                 .stretches(BLOCK_FRAMES)
                 .flat_map(|stretch| {
                     (stretch.first..=stretch.last)
                         .map(move |tick| (stretch.count(tick), stretch.frame(tick)))
                 })
+                .take(by_run.len() + 1)
                 .collect();
-            let by_run: Vec<_> = transport.run(BLOCK_FRAMES).map_or_default(|run| {
-                (run.first..=run.last)
-                    .map(|count| (count, run.frame(count)))
-                    .collect()
-            });
             assert_eq!(by_run, by_stretch, "{sample_rate} {block}");
             for (count, _) in by_run {
                 assert_eq!(count, next, "{sample_rate} {block}");
