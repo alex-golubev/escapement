@@ -1,8 +1,8 @@
 import { execPath } from 'node:process'
 import * as NodeServices from '@effect/platform-node/NodeServices'
 import { describe, expect, it, layer } from '@effect/vitest'
-import { Console, DateTime, Deferred, Effect, Fiber, FileSystem, Option, Ref } from 'effect'
-import { report, run, ScriptError, stagingOf, updateFromStaging } from '../src/script.ts'
+import { Console, DateTime, Deferred, Effect, Fiber, FileSystem, Option, Ref, Schedule } from 'effect'
+import { report, run, runInTerminal, ScriptError, stagingOf, updateFromStaging } from '../src/script.ts'
 
 /** A folder of files, each by its name holding its text. */
 const folder = (path: string, files: Readonly<Record<string, string>>) =>
@@ -189,6 +189,39 @@ layer(NodeServices.layer)('running a program', (it) => {
       const error = yield* Effect.flip(run('escapement-no-such-program', ['--version']))
       expect(error.message).toMatch(/^escapement-no-such-program --version: NotFound/)
     })
+  )
+})
+
+// Not in a layer: the interrupted program is awaited by the real clock.
+describe('running a program in the terminal', () => {
+  it.effect('fails with what its exit code means, or else with the code', () =>
+    Effect.gen(function* () {
+      const exit = (code: number) =>
+        runInTerminal(execPath, ['-e', `process.exit(${code})`], { failures: { 2: 'Two' } })
+      yield* exit(0)
+      expect((yield* Effect.flip(exit(2))).message).toBe('Two')
+      expect((yield* Effect.flip(exit(3))).message).toBe(`${execPath} -e process.exit(3) exited with 3`)
+    }).pipe(Effect.provide(NodeServices.layer))
+  )
+
+  it.live('interrupted, it gets a Ctrl+C and is waited for while it cleans up', () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem
+      const dir = yield* fs.makeTempDirectoryScoped({ prefix: 'escapement-script-' })
+      const [ready, cleaned] = [`${dir}/ready`, `${dir}/cleaned`].map((path) => JSON.stringify(path))
+      const script = [
+        "const fs = require('fs')",
+        `process.on('SIGINT', () => setTimeout(() => { fs.writeFileSync(${cleaned}, ''); process.exit(130) }, 200))`,
+        `fs.writeFileSync(${ready}, '')`,
+        'setInterval(() => {}, 1000)'
+      ].join('; ')
+      const running = yield* Effect.forkChild(runInTerminal(execPath, ['-e', script]))
+      yield* fs
+        .exists(`${dir}/ready`)
+        .pipe(Effect.repeat({ until: (found) => found, schedule: Schedule.spaced('10 millis') }))
+      yield* Fiber.interrupt(running)
+      expect(yield* fs.exists(`${dir}/cleaned`)).toBe(true)
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer))
   )
 })
 
