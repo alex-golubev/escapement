@@ -267,7 +267,7 @@ mod tests {
         let output = through(&mut strip);
         let left = output[0];
         // The ramp takes 960 samples.
-        assert!(left[0] > 0.49, "{}", left[0]);
+        assert!(0.49 < left[0] && left[0] < 0.5, "{}", left[0]);
         assert!(left.windows(2).all(|pair| pair[1] < pair[0]));
         assert!(left[BLOCK_FRAMES - 1] > 0.4, "{}", left[BLOCK_FRAMES - 1]);
         let ramp = seconds(SMOOTHING_SECONDS);
