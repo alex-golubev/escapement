@@ -1,11 +1,9 @@
-# Run by `pnpm test:mutants`, with the cargo-mutants version it pins and the timeout it measures.
+# Run by `pnpm test:mutants`, with the cargo-mutants version it pins and the timeout it measures. Run by hand,
+# cargo-mutants times only the mutated packages' tests, though each mutant runs the workspace's: its 20 s floor covers
+# them while they stay quick.
 
 # A plugin's mutant is caught by the engine's tests too.
 test_workspace = true
-# For cargo-mutants run by hand, as when looking into a survivor; `pnpm test:mutants` sets its own from a run of the
-# tests. The automatic timeout comes from a run of only the mutated packages' tests, though each mutant runs the
-# workspace's: for a package with quick tests, it cuts them short. Under 4 jobs the workspace's tests take up to 48 s.
-minimum_test_timeout = 120
 # Each job's copy of the tree leaves out what git ignores, such as `node_modules`.
 gitignore = true
 

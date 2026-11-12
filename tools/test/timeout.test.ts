@@ -8,6 +8,11 @@ it('a run of the tests may take twice as long as alone times the mutants tested 
   expect(testTimeout(Duration.millis(21_801), 4)).toBe(175)
 })
 
+it('a run of the tests may take no less than 20 seconds', () => {
+  expect(testTimeout(Duration.millis(1500), 4)).toBe(20)
+  expect(testTimeout(Duration.millis(2600), 4)).toBe(21)
+})
+
 it.effect('the mutants tested at once are 4 unless set, and only a whole number above 0', () =>
   Effect.gen(function* () {
     expect(yield* jobsOf(undefined)).toBe(4)
