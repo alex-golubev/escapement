@@ -990,12 +990,11 @@ fn removals_faster_than_they_fade_out_wait_and_never_touch_the_audio_thread_heap
             calls += audio_block(&mut rig.engine, EVENT_CAPACITY);
         }
     }
-    let mut blocks = 0;
-    while rig.builder.collect() > 0 {
+    // The last removals are back once their fade is over.
+    for _ in 0..FADE_BLOCKS {
         calls += audio_block(&mut rig.engine, EVENT_CAPACITY);
-        blocks += 1;
-        assert!(blocks < 10_000, "parcels stopped coming back");
     }
+    assert_eq!(rig.builder.collect(), 0);
     assert_eq!(calls, 0);
     assert_eq!(events(&mut rig.engine), []);
     assert_eq!(peak(&mut rig.engine, 2), 0.0);
@@ -1007,6 +1006,12 @@ fn audio_block(engine: &mut Engine, room: usize) -> u32 {
     let before = heap::calls();
     engine.audio_block(BLOCK_FRAMES, room);
     heap::calls().wrapping_sub(before)
+}
+
+/// Ten seconds from now, for waiting on another thread: past them, the check fails with what never came.
+fn ten_seconds() -> impl Fn(&str) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    move |what| assert!(Instant::now() < deadline, "{what}")
 }
 
 /// Each kind of edit the schema has that `edits` leave out.
@@ -1186,7 +1191,9 @@ fn parcels_cross_between_two_threads_in_order_and_the_audio_thread_never_touches
         assert_eq!(engine.input().write(&play), play.len());
         let mut message = [0; 9];
         // Every batch starts a session numbered after it, so the last one ends the run once its fade is over.
+        let in_time = ten_seconds();
         while engine.telemetry().epoch != BATCHES {
+            in_time("the last batch never came");
             while let Ok(batch) = ring.pop() {
                 let record = AfterBatch::new(batch).0;
                 framing::write(&mut message, CommandKind::AfterBatch.0, &record);
@@ -1216,13 +1223,15 @@ fn parcels_cross_between_two_threads_in_order_and_the_audio_thread_never_touches
         markers.push(batch).unwrap();
         builder.collect();
     }
-    // Parcels the queue had no room for go out as returned ones are freed.
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while builder.collect() > 0 {
-        assert!(Instant::now() < deadline, "parcels stopped coming back");
+    // Parcels the queue had no room for go out as returned ones are freed; once the audio thread is over, `join` says
+    // how.
+    let in_time = ten_seconds();
+    while builder.collect() > 0 && !audio.is_finished() {
+        in_time("parcels stopped coming back");
         thread::yield_now();
     }
     let (mut engine, calls) = audio.join().unwrap();
+    assert_eq!(builder.collect(), 0);
     assert_eq!(calls, 0);
     // A marker out of order would have been rejected.
     assert_eq!(events(&mut engine), []);
@@ -1392,9 +1401,9 @@ fn a_sampler_plays_while_another_sound_is_stored_and_the_audio_thread_never_touc
         (heap::calls().wrapping_sub(before), loudest)
     });
     let wait_for = |count: u32| {
-        let deadline = Instant::now() + Duration::from_secs(10);
+        let in_time = ten_seconds();
         while blocks.load(Ordering::Acquire) < count {
-            assert!(Instant::now() < deadline, "the audio thread stopped");
+            in_time("the audio thread stopped");
             thread::yield_now();
         }
     };

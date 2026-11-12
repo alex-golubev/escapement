@@ -177,9 +177,11 @@ mod tests {
                 (small_size..large_size).contains(&((EVENT_CAPACITY - n * small_size) % large_size))
             })
             .unwrap();
+        let larges = (EVENT_CAPACITY - smalls * small_size) / large_size;
         let mut output = EventOutput::default();
         assert!((0..smalls).all(|_| output.push(1, small)));
-        while output.push(1, large) {}
+        assert!((0..larges).all(|_| output.push(1, large)));
+        assert!(!output.push(1, large));
         assert!(
             !output.push(1, small),
             "a later event would come out of order"

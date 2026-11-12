@@ -103,8 +103,9 @@ mod tests {
         }
     }
 
+    /// The steps, up to one more than there can be: each event and a stretch of frames on either side of it.
     fn walk(events: &[Event], frames: usize) -> Vec<Step> {
-        steps(events, frames).collect()
+        steps(events, frames).take(2 * events.len() + 2).collect()
     }
 
     #[test]
