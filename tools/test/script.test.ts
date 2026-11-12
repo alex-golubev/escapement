@@ -2,7 +2,15 @@ import { execPath } from 'node:process'
 import * as NodeServices from '@effect/platform-node/NodeServices'
 import { describe, expect, it, layer } from '@effect/vitest'
 import { Console, DateTime, Deferred, Effect, Fiber, FileSystem, Option, Ref, Schedule } from 'effect'
-import { report, run, runInTerminal, ScriptError, stagingOf, updateFromStaging } from '../src/script.ts'
+import {
+  exitCodeInTerminal,
+  report,
+  run,
+  runInTerminal,
+  ScriptError,
+  stagingOf,
+  updateFromStaging
+} from '../src/script.ts'
 
 /** A folder of files, each by its name holding its text. */
 const folder = (path: string, files: Readonly<Record<string, string>>) =>
@@ -194,13 +202,13 @@ layer(NodeServices.layer)('running a program', (it) => {
 
 // Not in a layer: the interrupted program is awaited by the real clock.
 describe('running a program in the terminal', () => {
-  it.effect('fails with what its exit code means, or else with the code', () =>
+  it.effect('gives its exit code, or fails unless it is 0', () =>
     Effect.gen(function* () {
-      const exit = (code: number) =>
-        runInTerminal(execPath, ['-e', `process.exit(${code})`], { failures: { 2: 'Two' } })
-      yield* exit(0)
-      expect((yield* Effect.flip(exit(2))).message).toBe('Two')
-      expect((yield* Effect.flip(exit(3))).message).toBe(`${execPath} -e process.exit(3) exited with 3`)
+      const exit = ['-e', 'process.exit(3)']
+      expect(yield* exitCodeInTerminal(execPath, exit)).toBe(3)
+      const failed = yield* Effect.flip(runInTerminal(execPath, exit))
+      expect(failed.message).toBe(`${execPath} -e process.exit(3) exited with 3`)
+      yield* runInTerminal(execPath, ['-e', 'process.exit(0)'])
     }).pipe(Effect.provide(NodeServices.layer))
   )
 
