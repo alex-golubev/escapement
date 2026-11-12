@@ -305,6 +305,33 @@ mod tests {
     }
 
     #[test]
+    fn the_note_that_gives_way_is_the_oldest() {
+        let mut plugin = create(SAMPLE_RATE);
+        // Rising, so each voice sounds where it has got to in it.
+        let at = |position: usize| 0.001 + 0.001 * position as f32;
+        let mut sound = Sound::new(&DESCRIPTION, vec![ramp(seconds(1.0), at(0), 0.001)]);
+        let notes = a_note_a_frame(VOICES);
+        render_with(plugin.as_mut(), &notes, &silence(BLOCK_FRAMES), &mut sound);
+        let past = ramp_samples(GIVE_WAY_SECONDS, SAMPLE_RATE) as usize + 1;
+        let [left, _] = render_with(
+            plugin.as_mut(),
+            &[note(0, 1.0)],
+            &silence(past + 1),
+            &mut sound,
+        );
+        // Past its fade: the others where they have got to, the first pressed gone, and the new note.
+        let others: f32 = (1..VOICES)
+            .map(|pressed| at(BLOCK_FRAMES - pressed + past))
+            .sum();
+        let expected = others + at(past);
+        assert!(
+            (left[past] - expected).abs() < 1e-4,
+            "{} {expected}",
+            left[past]
+        );
+    }
+
+    #[test]
     fn a_silent_note_pushes_no_voice_out() {
         let mut plugin = create(SAMPLE_RATE);
         let mut sound = level();

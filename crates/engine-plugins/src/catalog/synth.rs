@@ -400,16 +400,7 @@ struct Synth {
 }
 
 pub(crate) fn create(sample_rate: SampleRate) -> Box<dyn Plugin> {
-    Box::new(Synth {
-        voices: [FREE; 2 * VOICES],
-        oscillators: OSCILLATOR_PARAMS.map(|params| Oscillator::new(params, sample_rate)),
-        parts: [[[0.0; BLOCK_FRAMES]; Shape::ALL.len()]; OSCILLATORS],
-        heard: [[false; Shape::ALL.len()]; OSCILLATORS],
-        ratios: [[1.0; BLOCK_FRAMES]; OSCILLATORS],
-        sample_rate,
-        envelope: Envelope::new(ENVELOPE, sample_rate),
-        notes: 0,
-    })
+    Box::new(Synth::new(sample_rate))
 }
 
 impl Plugin for Synth {
@@ -512,6 +503,19 @@ impl Noise {
 }
 
 impl Synth {
+    fn new(sample_rate: SampleRate) -> Self {
+        Self {
+            voices: [FREE; 2 * VOICES],
+            oscillators: OSCILLATOR_PARAMS.map(|params| Oscillator::new(params, sample_rate)),
+            parts: [[[0.0; BLOCK_FRAMES]; Shape::ALL.len()]; OSCILLATORS],
+            heard: [[false; Shape::ALL.len()]; OSCILLATORS],
+            ratios: [[1.0; BLOCK_FRAMES]; OSCILLATORS],
+            sample_rate,
+            envelope: Envelope::new(ENVELOPE, sample_rate),
+            notes: 0,
+        }
+    }
+
     fn set(&mut self, param: ParamNumber, value: f32) {
         for (oscillator, params) in self.oscillators.iter_mut().zip(OSCILLATOR_PARAMS) {
             if param == params.shape {

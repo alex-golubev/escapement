@@ -20,7 +20,7 @@ mod tests {
         for silent in [1e-20, -1e-20, f32::MIN_POSITIVE / 2.0] {
             assert_eq!(flush(silent), 0.0, "{silent}");
         }
-        for kept in [1e-6, -0.5, 0.0] {
+        for kept in [THRESHOLD, -THRESHOLD, 1e-6, -0.5, 0.0] {
             assert_eq!(flush(kept), kept);
         }
     }
