@@ -676,7 +676,7 @@ fn each_oscillator_plays_its_shape_at_the_key_s_pitch_moved_by_its_tuning() {
 }
 
 #[test]
-fn a_mix_takes_its_share_from_the_oscillators_before_as_in_fl() {
+fn a_mix_takes_its_share_from_the_oscillators_before_it() {
     // Sines octaves apart, each heard at its own pitch: Osc 2 at a half and Osc 3 at a third share alike.
     let sines = OSCILLATOR_PARAMS.map(|osc| (osc.shape, SINE));
     let mixes = [(OSC2.mix.unwrap(), 0.5), (OSC3.mix.unwrap(), 1.0 / 3.0)];
