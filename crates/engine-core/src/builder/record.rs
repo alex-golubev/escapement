@@ -475,26 +475,10 @@ fn sort<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::cell;
+    use crate::testing::{cell, handle, wiring};
 
-    fn handle(cell: u32) -> NodeHandle {
+    fn node(cell: u32) -> NodeHandle {
         NodeHandle::new(cell)
-    }
-
-    /// Each turn's node with its inputs as seats, and the output's.
-    fn wiring(order: &Order) -> (Vec<(Seat, Vec<Seat>)>, Vec<Seat>) {
-        let sources = |range: std::ops::Range<usize>| {
-            order.connections[range]
-                .iter()
-                .map(|connection| connection.source)
-                .collect::<Vec<_>>()
-        };
-        let turns = order
-            .turns
-            .iter()
-            .map(|turn| (turn.node, sources(turn.inputs.clone())))
-            .collect();
-        (turns, sources(order.output..order.connections.len()))
     }
 
     /// Each connection's source, whether it rises and where it starts.
@@ -530,28 +514,28 @@ mod tests {
     fn only_a_change_brings_an_order() {
         let mut record = Record::new(4, 4);
         assert_eq!(record.take_changes(), None);
-        record.add(handle(1));
-        record.add(handle(2));
+        record.add(node(1));
+        record.add(node(2));
         assert_eq!(
             record.take_changes().map(|order| order.turns.len()),
             Some(2)
         );
         assert_eq!(record.take_changes(), None);
         assert_eq!(
-            record.connect(handle(1), handle(3)),
+            record.connect(node(1), node(3)),
             Err(Rejection::UnknownTarget)
         );
-        assert_eq!(record.connect(handle(2), handle(2)), Err(Rejection::Loop));
+        assert_eq!(record.connect(node(2), node(2)), Err(Rejection::Loop));
         assert_eq!(
-            record.set_output(handle(3), Batch::new(1)),
+            record.set_output(node(3), Batch::new(1)),
             Err(Rejection::UnknownTarget)
         );
         assert_eq!(
-            record.remove(handle(3), Batch::new(1)),
+            record.remove(node(3), Batch::new(1)),
             Err(Rejection::UnknownTarget)
         );
         assert_eq!(record.take_changes(), None, "refusals change nothing");
-        assert_eq!(record.connect(handle(2), handle(1)), Ok(()));
+        assert_eq!(record.connect(node(2), node(1)), Ok(()));
         let (turns, _) = wiring(&record.take_changes().unwrap());
         assert_eq!(
             turns,
@@ -560,9 +544,9 @@ mod tests {
                 (Seat::Cell(cell(1)), vec![Seat::Cell(cell(2))])
             ]
         );
-        record.set_output(handle(1), Batch::new(1)).unwrap();
+        record.set_output(node(1), Batch::new(1)).unwrap();
         assert!(record.take_changes().is_some());
-        record.set_output(handle(1), Batch::new(2)).unwrap();
+        record.set_output(node(1), Batch::new(2)).unwrap();
         assert_eq!(record.take_changes(), None, "the output already hears it");
         assert!(!record.take_holds());
     }
@@ -570,16 +554,13 @@ mod tests {
     #[test]
     fn a_handle_of_an_older_generation_reaches_nothing() {
         let mut record = Record::new(4, 4);
-        let (old, new) = (handle(1), NodeHandle::new(1 << 16 | 1));
+        let (old, new) = (node(1), NodeHandle::new(handle(1, 1)));
         record.add(old);
-        record.add(handle(2));
+        record.add(node(2));
         record.remove(old, Batch::new(1)).unwrap();
         assert!(!record.is_taken(cell(1)), "the cell is free at once");
         record.add(new);
-        assert_eq!(
-            record.connect(old, handle(2)),
-            Err(Rejection::UnknownTarget)
-        );
+        assert_eq!(record.connect(old, node(2)), Err(Rejection::UnknownTarget));
         assert_eq!(
             record.set_output(old, Batch::new(2)),
             Err(Rejection::UnknownTarget)
@@ -588,7 +569,7 @@ mod tests {
             record.remove(old, Batch::new(2)),
             Err(Rejection::UnknownTarget)
         );
-        assert_eq!(record.connect(new, handle(2)), Ok(()));
+        assert_eq!(record.connect(new, node(2)), Ok(()));
         assert!(record.is_taken(cell(1)));
     }
 
@@ -596,15 +577,15 @@ mod tests {
     fn a_new_connection_starts_silent_where_it_is_heard_and_full_where_it_is_not() {
         let mut record = Record::new(8, 4);
         for cell in 1..=3 {
-            record.add(handle(cell));
+            record.add(node(cell));
         }
-        record.set_output(handle(1), Batch::new(1)).unwrap();
+        record.set_output(node(1), Batch::new(1)).unwrap();
         // Before any order, nothing is heard; the output always is.
         let first = record.take_changes().unwrap();
         assert_eq!(fades(&first), [(Seat::Cell(cell(1)), true, Start::Silent)]);
         // 1 is heard, 3 isn't.
-        record.connect(handle(2), handle(1)).unwrap();
-        record.connect(handle(2), handle(3)).unwrap();
+        record.connect(node(2), node(1)).unwrap();
+        record.connect(node(2), node(3)).unwrap();
         let second = record.take_changes().unwrap();
         let (turns, _) = wiring(&second);
         assert_eq!(
@@ -624,7 +605,7 @@ mod tests {
             ]
         );
         // Each connection carries on from its place in the order before, but where no one hears it.
-        record.add(handle(4));
+        record.add(node(4));
         let third = record.take_changes().unwrap();
         let starts: Vec<_> = fades(&third)
             .into_iter()
@@ -637,16 +618,14 @@ mod tests {
     fn where_no_one_heard_a_node_its_inputs_start_where_they_head() {
         let mut record = Record::new(8, 4);
         for cell in 1..=3 {
-            record.add(handle(cell));
+            record.add(node(cell));
         }
-        record.connect(handle(1), handle(2)).unwrap();
+        record.connect(node(1), node(2)).unwrap();
         record.take_changes();
         // Made and cut in one batch while no one heard 3, which then comes to be heard: 3 never hears 1.
-        record.connect(handle(1), handle(3)).unwrap();
-        record
-            .disconnect(handle(1), handle(3), Batch::new(1))
-            .unwrap();
-        record.set_output(handle(3), Batch::new(1)).unwrap();
+        record.connect(node(1), node(3)).unwrap();
+        record.disconnect(node(1), node(3), Batch::new(1)).unwrap();
+        record.set_output(node(3), Batch::new(1)).unwrap();
         assert_eq!(
             fades(&record.take_changes().unwrap()),
             [
@@ -656,8 +635,8 @@ mod tests {
             ]
         );
         // 2 heard 1 in full while no one heard 2; 1 goes as 2 comes to be heard, so 2 never hears it.
-        record.remove(handle(1), Batch::new(2)).unwrap();
-        record.set_output(handle(2), Batch::new(2)).unwrap();
+        record.remove(node(1), Batch::new(2)).unwrap();
+        record.set_output(node(2), Batch::new(2)).unwrap();
         assert_eq!(
             fades(&record.take_changes().unwrap()),
             [
@@ -672,12 +651,12 @@ mod tests {
     #[test]
     fn a_switched_output_fades_out_until_its_batch_comes_back_unless_heard_again() {
         let mut record = Record::new(4, 4);
-        record.add(handle(1));
-        record.add(handle(2));
-        record.set_output(handle(1), Batch::new(1)).unwrap();
+        record.add(node(1));
+        record.add(node(2));
+        record.set_output(node(1), Batch::new(1)).unwrap();
         record.take_changes();
         assert!(!record.take_holds(), "nothing faded out");
-        record.set_output(handle(2), Batch::new(2)).unwrap();
+        record.set_output(node(2), Batch::new(2)).unwrap();
         assert!(record.take_holds());
         let switched = record.take_changes().unwrap();
         assert_eq!(
@@ -692,8 +671,8 @@ mod tests {
         assert_eq!(heard, [Seat::Cell(cell(2))]);
 
         // Back before the fade is over: the earlier batch's return no longer takes it away.
-        record.set_output(handle(1), Batch::new(3)).unwrap();
-        record.set_output(handle(2), Batch::new(4)).unwrap();
+        record.set_output(node(1), Batch::new(3)).unwrap();
+        record.set_output(node(2), Batch::new(4)).unwrap();
         record.finish(Batch::new(3));
         let (_, heard) = wiring(&record.take_changes().unwrap());
         assert_eq!(heard, [Seat::Cell(cell(2)), Seat::Cell(cell(1))]);
@@ -706,15 +685,13 @@ mod tests {
     fn a_disconnected_connection_fades_out_until_its_batch_comes_back_unless_connected_again() {
         let mut record = Record::new(4, 4);
         for cell in 1..=3 {
-            record.add(handle(cell));
+            record.add(node(cell));
         }
-        record.connect(handle(1), handle(3)).unwrap();
-        record.connect(handle(2), handle(3)).unwrap();
-        record.set_output(handle(3), Batch::new(1)).unwrap();
+        record.connect(node(1), node(3)).unwrap();
+        record.connect(node(2), node(3)).unwrap();
+        record.set_output(node(3), Batch::new(1)).unwrap();
         record.take_changes();
-        record
-            .disconnect(handle(1), handle(3), Batch::new(2))
-            .unwrap();
+        record.disconnect(node(1), node(3), Batch::new(2)).unwrap();
         assert!(record.take_holds());
         assert_eq!(
             fades(&record.take_changes().unwrap()),
@@ -729,11 +706,9 @@ mod tests {
         assert_eq!(turns[2], (Seat::Cell(cell(3)), vec![Seat::Cell(cell(2))]));
 
         // Back before the fade is over: it rises from where it got, and the batch's return no longer takes it away.
-        record
-            .disconnect(handle(2), handle(3), Batch::new(3))
-            .unwrap();
+        record.disconnect(node(2), node(3), Batch::new(3)).unwrap();
         record.take_changes();
-        record.connect(handle(2), handle(3)).unwrap();
+        record.connect(node(2), node(3)).unwrap();
         assert_eq!(
             fades(&record.take_changes().unwrap()),
             [
@@ -748,15 +723,13 @@ mod tests {
     #[test]
     fn a_fading_connection_neither_closes_a_loop_nor_orders_its_listener() {
         let mut record = Record::new(4, 4);
-        record.add(handle(1));
-        record.add(handle(2));
-        record.connect(handle(1), handle(2)).unwrap();
+        record.add(node(1));
+        record.add(node(2));
+        record.connect(node(1), node(2)).unwrap();
         record.take_changes();
-        record
-            .disconnect(handle(1), handle(2), Batch::new(1))
-            .unwrap();
+        record.disconnect(node(1), node(2), Batch::new(1)).unwrap();
         // As the page sees it, 2 no longer hears 1; while it fades, 2 hears 1 a block late.
-        record.connect(handle(2), handle(1)).unwrap();
+        record.connect(node(2), node(1)).unwrap();
         let (turns, _) = wiring(&record.take_changes().unwrap());
         assert_eq!(
             turns,
@@ -766,7 +739,7 @@ mod tests {
             ]
         );
         assert_eq!(
-            record.connect(handle(1), handle(2)),
+            record.connect(node(1), node(2)),
             Err(Rejection::Loop),
             "connected again, the fading one would close a loop"
         );
@@ -776,13 +749,13 @@ mod tests {
     fn a_removed_node_plays_out_with_its_inputs_until_its_batch_comes_back() {
         let mut record = Record::new(4, 1);
         for cell in 1..=3 {
-            record.add(handle(cell));
+            record.add(node(cell));
         }
-        record.connect(handle(1), handle(2)).unwrap();
-        record.connect(handle(2), handle(3)).unwrap();
-        record.set_output(handle(3), Batch::new(1)).unwrap();
+        record.connect(node(1), node(2)).unwrap();
+        record.connect(node(2), node(3)).unwrap();
+        record.set_output(node(3), Batch::new(1)).unwrap();
         record.take_changes();
-        let removal = record.remove(handle(2), Batch::new(2)).unwrap();
+        let removal = record.remove(node(2), Batch::new(2)).unwrap();
         assert_eq!(
             removal,
             Removal {
@@ -801,7 +774,7 @@ mod tests {
             ]
         );
         // The exits double for a second node playing out.
-        let next = record.remove(handle(3), Batch::new(3)).unwrap();
+        let next = record.remove(node(3), Batch::new(3)).unwrap();
         assert_eq!(
             next,
             Removal {
@@ -821,7 +794,7 @@ mod tests {
         );
         assert_eq!(heard, [Seat::Exit(Exit::new(1))]);
         assert_eq!(
-            record.remove(handle(1), Batch::new(4)).unwrap().exit,
+            record.remove(node(1), Batch::new(4)).unwrap().exit,
             Exit::new(0),
             "freed"
         );
@@ -833,14 +806,14 @@ mod tests {
     {
         let mut record = Record::new(8, 4);
         for cell in 1..=3 {
-            record.add(handle(cell));
+            record.add(node(cell));
         }
-        record.connect(handle(1), handle(2)).unwrap();
-        record.connect(handle(2), handle(3)).unwrap();
+        record.connect(node(1), node(2)).unwrap();
+        record.connect(node(2), node(3)).unwrap();
         record.take_changes();
-        record.remove(handle(2), Batch::new(1)).unwrap();
+        record.remove(node(2), Batch::new(1)).unwrap();
         // The page sees no 2 any more, so no loop.
-        assert_eq!(record.connect(handle(3), handle(1)), Ok(()));
+        assert_eq!(record.connect(node(3), node(1)), Ok(()));
         let (turns, _) = wiring(&record.take_changes().unwrap());
         assert_eq!(
             turns,
@@ -850,6 +823,6 @@ mod tests {
                 (Seat::Exit(Exit::new(0)), vec![Seat::Cell(cell(1))]),
             ]
         );
-        assert_eq!(record.connect(handle(1), handle(3)), Err(Rejection::Loop));
+        assert_eq!(record.connect(node(1), node(3)), Err(Rejection::Loop));
     }
 }

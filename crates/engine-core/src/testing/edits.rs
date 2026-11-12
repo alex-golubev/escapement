@@ -124,11 +124,6 @@ pub(crate) fn disconnect(from: u32, to: u32) -> Spec<'static> {
     Spec::Disconnect { from, to }
 }
 
-/// The handle of a cell in its `generation`.
-pub(crate) const fn handle(generation: u32, cell: u32) -> u32 {
-    generation << 16 | cell
-}
-
 pub(crate) fn batch(specs: &[Spec<'_>]) -> Vec<u8> {
     let mut fbb = FlatBufferBuilder::new();
     let edits: Vec<_> = specs

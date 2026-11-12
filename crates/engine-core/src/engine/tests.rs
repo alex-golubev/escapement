@@ -27,11 +27,11 @@ use crate::testing::commands::{
 };
 use crate::testing::edits::{
     NewNode, Placed, Played, Spec, batch as batch_bytes, connect, create_insert, create_node,
-    disconnect, handle,
+    disconnect,
 };
 use crate::testing::events::decode;
 use crate::testing::pool::store;
-use crate::testing::{BAR, FRAMES_PER_TICK, SAMPLE_RATE, note_room, seconds, ticks_in};
+use crate::testing::{BAR, FRAMES_PER_TICK, SAMPLE_RATE, handle, note_room, seconds, ticks_in};
 use crate::transport::TICKS_PER_QUARTER;
 use crate::{CHANNELS, new, strip};
 
@@ -346,7 +346,7 @@ fn an_insert_has_a_strip_too() {
 
 #[test]
 fn an_insert_s_meter_measures_what_it_passes_on_under_its_node_s_handle() {
-    const LEFT: u32 = 1 << 16 | 3;
+    const LEFT: u32 = handle(1, 3);
     const HALF: u32 = 4;
     const UNMETERED: u32 = 5;
     let mut rig = Rig::empty();
