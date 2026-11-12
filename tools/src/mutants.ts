@@ -1,8 +1,8 @@
 /**
  * Mutation tests of the Rust changed since the branch left `main`, committed or not: cargo-mutants breaks each changed
- * line in turn, and a test should fail. `CARGO_MUTANTS_JOBS` sets how many mutants are tested at once, and the timeout
- * goes by it. Arguments go on to cargo-mutants; those the timeout depends on are set here, and giving them again is an
- * error.
+ * line in turn, and a test should fail. `MUTANTS_BASE` names another base: CI, which checks a pull request merged onto
+ * `main`, gives `HEAD^`. `CARGO_MUTANTS_JOBS` sets how many mutants are tested at once, and the timeout goes by it.
+ * Arguments go on to cargo-mutants; those the timeout depends on are set here, and giving them again is an error.
  */
 import { arch, argv, env, platform } from 'node:process'
 import { Boolean, Console, Effect, Option, String } from 'effect'
@@ -16,7 +16,7 @@ const version = '27.1.0'
 // Keyed by platform too: node_modules may be shared with a container.
 const folder = `${root}node_modules/.cache/cargo-mutants/${version}-${platform}-${arch}`
 const cargoMutants = `${folder}/bin/cargo-mutants`
-const base = 'origin/main'
+const base = env.MUTANTS_BASE ?? 'origin/main'
 
 const install = Console.log(`Building cargo-mutants ${version}, once for this version: it takes a minute or so`).pipe(
   Effect.andThen(
