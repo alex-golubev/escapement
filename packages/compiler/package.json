@@ -14,15 +14,15 @@
     "test:property": "PROPERTY_RUNS=1000 vitest run test/steps.test.ts"
   },
   "devDependencies": {
-    "@effect/vitest": "4.1.1",
-    "@types/node": "^26.6.5",
-    "vitest": "^5.0.2",
+    "@effect/vitest": "4.1.4",
+    "@types/node": "^26.6.6",
+    "vitest": "^5.1.0",
     "yjs": "13.6.33"
   },
   "dependencies": {
     "@escapement/engine": "workspace:*",
     "@escapement/engine-description": "workspace:*",
     "@escapement/model": "workspace:*",
-    "effect": "4.1.1"
+    "effect": "4.1.4"
   }
 }

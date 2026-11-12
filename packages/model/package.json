@@ -13,12 +13,12 @@
     "test": "vitest run"
   },
   "devDependencies": {
-    "@types/node": "^26.6.5",
-    "vitest": "^5.0.2"
+    "@types/node": "^26.6.6",
+    "vitest": "^5.1.0"
   },
   "dependencies": {
     "@escapement/engine-description": "workspace:*",
-    "effect": "4.1.1",
+    "effect": "4.1.4",
     "fractional-indexing": "4.0.0",
     "yjs": "13.6.33"
   }

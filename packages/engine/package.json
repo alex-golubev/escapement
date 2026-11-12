@@ -16,17 +16,17 @@
     "test": "pnpm build:wasm && vitest run"
   },
   "devDependencies": {
-    "@effect/vitest": "4.1.1",
+    "@effect/vitest": "4.1.4",
     "@escapement/tools": "workspace:*",
-    "@types/audioworklet": "0.0.100",
-    "@types/node": "^26.6.5",
+    "@types/audioworklet": "0.0.101",
+    "@types/node": "^26.6.6",
     "binaryen": "132.0.0",
-    "vite": "^8.3.1",
-    "vitest": "^5.0.2"
+    "vite": "^8.3.8",
+    "vitest": "^5.1.0"
   },
   "dependencies": {
     "@escapement/engine-description": "workspace:*",
-    "effect": "4.1.1",
+    "effect": "4.1.4",
     "flatbuffers": "25.9.23",
     "ringbuf.js": "0.4.0"
   }

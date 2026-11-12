@@ -14,32 +14,32 @@
     "test:e2e": "playwright test"
   },
   "dependencies": {
-    "@effect/atom-react": "4.1.1",
-    "@effect/platform-browser": "4.1.1",
+    "@effect/atom-react": "4.1.4",
+    "@effect/platform-browser": "4.1.4",
     "@escapement/compiler": "workspace:*",
     "@escapement/engine": "workspace:*",
     "@escapement/engine-description": "workspace:*",
     "@escapement/model": "workspace:*",
     "@fontsource-variable/jetbrains-mono": "5.3.0",
-    "effect": "4.1.1",
-    "lib0": "0.2.119",
-    "lucide-preact": "1.70.0",
-    "preact": "11.1.0",
+    "effect": "4.1.4",
+    "lib0": "0.2.120",
+    "lucide-preact": "1.72.0",
+    "preact": "11.2.0",
     "react": "npm:@preact/compat@18.3.2",
     "react-dom": "npm:@preact/compat@18.3.2",
-    "react-resizable-panels": "4.19.1",
+    "react-resizable-panels": "4.21.0",
     "scheduler": "0.28.0",
     "y-indexeddb": "9.0.12",
     "y-protocols": "1.0.7",
     "yjs": "13.6.33"
   },
   "devDependencies": {
-    "@effect/vitest": "4.1.1",
-    "@playwright/test": "1.64.1",
-    "@types/node": "^26.6.5",
-    "fake-indexeddb": "6.2.6",
+    "@effect/vitest": "4.1.4",
+    "@playwright/test": "1.65.0",
+    "@types/node": "^26.6.6",
+    "fake-indexeddb": "6.2.8",
     "happy-dom": "21.0.4",
-    "vite": "^8.3.1",
-    "vitest": "^5.0.2"
+    "vite": "^8.3.8",
+    "vitest": "^5.1.0"
   }
 }
