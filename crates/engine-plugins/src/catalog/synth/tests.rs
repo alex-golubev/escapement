@@ -2,12 +2,12 @@ use std::collections::HashSet;
 use std::f32::consts::FRAC_1_SQRT_2;
 
 use super::*;
-use crate::envelope::GIVE_WAY_SECONDS;
 use crate::smoothing::ramp_samples;
 use crate::testing::{
     SAMPLE_RATE, decibels, difference, first_block, largest_step, note_off, note_on, peak, rate,
     render, rising_at, rising_crossings, rms, seconds, silence,
 };
+use crate::voices::{GIVE_WAY_SECONDS, VOICES};
 
 const A4: u8 = 69;
 
@@ -149,8 +149,10 @@ fn a_note_past_the_voices_makes_the_oldest_give_way() {
     let rest = play_parts(&[(&chord[1..], 1000), (&extra, 4000)]);
     let give_way = ramp_samples(GIVE_WAY_SECONDS, SAMPLE_RATE) as usize;
     // Up to half way, the oldest is still fading rather than gone at once: its low sawtooth needs that long to
-    // show its depth. Past its fade, it is gone.
+    // show its depth. It is still heard in the last quarter of its fade; past it, it is gone.
     assert!(difference(&over, &rest, 1000..1000 + give_way / 2) > 0.25 * VOICE_GAIN);
+    let last_quarter = 1000 + 3 * give_way / 4..1000 + give_way;
+    assert!(difference(&over, &rest, last_quarter) > 0.1 * VOICE_GAIN);
     assert!(difference(&over, &rest, 1000 + give_way + 1..over.len()) < 1e-5);
 }
 
@@ -254,7 +256,7 @@ fn with_every_place_taken_a_note_takes_that_of_the_voice_giving_way_nearest_sile
         .map(|i| on(apart * u32::from(i), 40 + i))
         .collect();
     render(&DESCRIPTION, &mut synth, &notes, &silence(BLOCK_FRAMES));
-    let giving_way: Vec<_> = (synth.voices.iter().enumerate())
+    let giving_way: Vec<_> = (synth.voices.places().iter().enumerate())
         .filter(|(_, voice)| voice.contour.is_giving_way())
         .map(|(place, voice)| (voice.contour.level(), place))
         .collect();
@@ -263,7 +265,7 @@ fn with_every_place_taken_a_note_takes_that_of_the_voice_giving_way_nearest_sile
         .min_by(|a, b| a.0.total_cmp(&b.0))
         .unwrap();
     render(&DESCRIPTION, &mut synth, &[EXTRA], &silence(1));
-    assert_eq!(synth.voices[quietest].note, NoteId::new(100));
+    assert_eq!(synth.voices.places()[quietest].note, NoteId::new(100));
 }
 
 #[test]

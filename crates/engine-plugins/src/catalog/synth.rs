@@ -7,6 +7,7 @@ use std::f32::consts::TAU;
 use crate::description::listed;
 use crate::envelope::{self, Contour, Envelope};
 use crate::smoothing::Smoothed;
+use crate::voices::{self, Level, Standing, Voices};
 use crate::{
     BLOCK_FRAMES, Choice, Event, NoteId, ParamDescription, ParamNumber, Plugin, PluginDescription,
     ProcessContext, SampleRate, Scale, Step, Unit, Values, steps,
@@ -252,8 +253,6 @@ pub const OSCILLATOR_PARAMS: [OscillatorParams; OSCILLATORS] = {
 
 pub const ENVELOPE: envelope::Numbers = envelope::Numbers::of(&DESCRIPTION);
 
-/// Notes that sound at once; one more makes the one heard least give way, as `Voice::room` has it.
-pub const VOICES: usize = 16;
 /// A voice's peak at full velocity: a sawtooth is loud, and chords add up.
 pub const VOICE_GAIN: f32 = 0.2;
 
@@ -268,8 +267,6 @@ struct Voice {
     /// Of the key's period a sample moves on; an oscillator's tuning moves it.
     increment: f32,
     gain: f32,
-    /// Notes started before it.
-    order: u64,
     noises: [Noise; OSCILLATORS],
 }
 
@@ -279,25 +276,36 @@ const FREE: Voice = Voice {
     phases: [0.0; OSCILLATORS],
     increment: 0.0,
     gain: 0.0,
-    order: 0,
     noises: [Noise(1); OSCILLATORS],
 };
 
-impl Voice {
-    /// Heard as a note, held or let go of, not on its way out to make room.
-    fn is_playing(&self) -> bool {
-        !self.contour.is_over() && !self.contour.is_giving_way()
+impl voices::Voice for Voice {
+    /// One fallen silent while held first, then a tail, the quietest first, then one held, as a note on its way up or
+    /// waiting out its delay is about to sound.
+    type Room = (u8, Level);
+    type Distance = Level;
+
+    fn standing(&self) -> Standing<Self::Room, Self::Distance> {
+        let contour = &self.contour;
+        if self.is_free() {
+            Standing::Free
+        } else if contour.is_giving_way() {
+            Standing::GivingWay(Level(contour.level()))
+        } else {
+            Standing::Playing(match (contour.has_fallen_silent(), contour.is_held()) {
+                (true, _) => (0, Level(0.0)),
+                (false, false) => (1, Level(contour.level())),
+                (false, true) => (2, Level(0.0)),
+            })
+        }
     }
 
-    /// How readily it makes room for a new note, lowest first: one fallen silent while held, then a tail, the quietest
-    /// first, then one held, the oldest first, as a note on its way up or waiting out its delay is about to sound.
-    fn room(&self) -> (u8, f64, u64) {
-        let contour = &self.contour;
-        match (contour.has_fallen_silent(), contour.is_held()) {
-            (true, _) => (0, 0.0, self.order),
-            (false, false) => (1, contour.level(), self.order),
-            (false, true) => (2, 0.0, self.order),
-        }
+    fn is_free(&self) -> bool {
+        self.contour.is_over()
+    }
+
+    fn give_way(&mut self, samples: u32) {
+        self.contour.give_way(samples);
     }
 }
 
@@ -370,8 +378,7 @@ fn below_half_the_sample_rate(increment: f32) -> f32 {
 type Signal = [f32; BLOCK_FRAMES];
 
 struct Synth {
-    /// Half of them for voices giving way.
-    voices: [Voice; 2 * VOICES],
+    voices: Voices<Voice>,
     oscillators: [Oscillator; OSCILLATORS],
     /// For each oscillator over the block: each shape's part of the sound, and whether it is heard.
     parts: [[Signal; Shape::ALL.len()]; OSCILLATORS],
@@ -380,7 +387,6 @@ struct Synth {
     ratios: [Signal; OSCILLATORS],
     sample_rate: SampleRate,
     envelope: Envelope,
-    notes: u64,
 }
 
 pub(crate) fn create(sample_rate: SampleRate) -> Box<dyn Plugin> {
@@ -489,14 +495,13 @@ impl Noise {
 impl Synth {
     fn new(sample_rate: SampleRate) -> Self {
         Self {
-            voices: [FREE; 2 * VOICES],
+            voices: Voices::new(FREE, sample_rate),
             oscillators: OSCILLATOR_PARAMS.map(|params| Oscillator::new(params, sample_rate)),
             parts: [[[0.0; BLOCK_FRAMES]; Shape::ALL.len()]; OSCILLATORS],
             heard: [[false; Shape::ALL.len()]; OSCILLATORS],
             ratios: [[1.0; BLOCK_FRAMES]; OSCILLATORS],
             sample_rate,
             envelope: Envelope::new(ENVELOPE, sample_rate),
-            notes: 0,
         }
     }
 
@@ -517,66 +522,23 @@ impl Synth {
         self.envelope.set(param, value);
     }
 
+    /// A note too high to sound still takes a voice: its oscillators may be tuned down while it is held.
     fn start(&mut self, key: u8, velocity: f32, note: NoteId) {
         let increment = frequency(key) / self.sample_rate.hz();
-        // A silent note takes no voice: it would only push one that is heard out. One too high to sound does, as its
-        // oscillators may be tuned down while it is held.
-        if velocity == 0.0 {
-            return;
-        }
-        if self
-            .voices
-            .iter()
-            .filter(|voice| voice.is_playing())
-            .count()
-            == VOICES
-        {
-            let least = self
-                .voices
-                .iter_mut()
-                .filter(|voice| voice.is_playing())
-                .min_by(|a, b| {
-                    let ((a_class, a_level, a_order), (b_class, b_level, b_order)) =
-                        (a.room(), b.room());
-                    (a_class.cmp(&b_class))
-                        .then(a_level.total_cmp(&b_level))
-                        .then(a_order.cmp(&b_order))
-                });
-            if let Some(least) = least {
-                least.contour.give_way();
-            }
-        }
-        // A free place, or else the voice giving way nearest silence.
-        let place = self.voices.iter_mut().max_by(|a, b| {
-            let rank =
-                |voice: &Voice| match (voice.contour.is_over(), voice.contour.is_giving_way()) {
-                    (true, _) => (2, 0.0),
-                    (false, true) => (1, -voice.contour.level()),
-                    (false, false) => (0, 0.0),
-                };
-            let ((a_rank, a_level), (b_rank, b_level)) = (rank(a), rank(b));
-            a_rank.cmp(&b_rank).then(a_level.total_cmp(&b_level))
+        self.voices.start(velocity, || Voice {
+            contour: Contour::START,
+            note,
+            phases: [0.0; OSCILLATORS],
+            increment,
+            gain: VOICE_GAIN * velocity,
+            noises: std::array::from_fn(|oscillator| Noise::of(note, oscillator)),
         });
-        if let Some(place) = place {
-            *place = Voice {
-                contour: Contour::START,
-                note,
-                phases: [0.0; OSCILLATORS],
-                increment,
-                gain: VOICE_GAIN * velocity,
-                order: self.notes,
-                noises: std::array::from_fn(|oscillator| Noise::of(note, oscillator)),
-            };
-            self.notes += 1;
-        }
     }
 
     /// A voice that gave way to another note no longer holds its own.
     fn let_go(&mut self, note: NoteId) {
-        let held = self
-            .voices
-            .iter_mut()
-            .find(|voice| voice.contour.is_held() && voice.note == note);
+        let held =
+            (self.voices.in_use()).find(|voice| voice.contour.is_held() && voice.note == note);
         if let Some(voice) = held {
             self.envelope.let_go(&mut voice.contour);
         }
