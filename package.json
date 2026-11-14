@@ -30,7 +30,7 @@
     "prepare": "effect-tsgo patch --typescript"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.14",
+    "@biomejs/biome": "2.6.7",
     "@effect/tsgo": "0.63.0",
     "typescript": "7.0.2"
   }
