@@ -83,7 +83,8 @@ pub struct SampleDescription {
     pub label: &'static str,
 }
 
-/// An enum with the list of all its variants, so the page gets every one, used or not.
+/// An enum with the list of all its variants in their order, for code that goes through every one, used or not: the
+/// page gets every unit and scale, the synth plays every shape.
 macro_rules! listed {
     ($(#[$meta:meta])* pub enum $name:ident { $($(#[$variant_meta:meta])* $variant:ident,)* }) => {
         $(#[$meta])*
@@ -93,10 +94,11 @@ macro_rules! listed {
         }
 
         impl $name {
-            pub const ALL: &[Self] = &[$(Self::$variant),*];
+            pub const ALL: [Self; [$($name::$variant),*].len()] = [$(Self::$variant),*];
         }
     };
 }
+pub(crate) use listed;
 
 listed! {
     /// The page writes a value out by its unit, so units come from this list rather than free text.
@@ -248,22 +250,7 @@ const fn same(a: &str, b: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::{param_number, sample_number};
-
-    const fn param(id: &'static str) -> ParamDescription {
-        ParamDescription {
-            id,
-            label: "Knob",
-            group: None,
-            unit: None,
-            scale: Scale::Linear,
-            values: Values::Any,
-            min: 0.0,
-            max: 1.0,
-            default: 0.5,
-            smoothing_seconds: 0.0,
-        }
-    }
+    use crate::testing::{param, param_number, sample_number};
 
     const fn sample(id: &'static str) -> SampleDescription {
         SampleDescription { id, label: "Sound" }

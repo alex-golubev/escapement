@@ -35,6 +35,4 @@ exclude_re = [
   'engine-plugins/src/catalog/synth\.rs:.*: replace \|\| with && in Synth::render$',
   # Another mix as good: the seeds still differ, and xorshift goes through every one.
   'engine-plugins/src/catalog/synth\.rs:.*: replace >> with << in Noise::of$',
-  # Over the frames a fade has left, nearest silence ranks the voices the same either way.
-  'engine-plugins/src/catalog/sampler\.rs:.*: replace - with / in Sampler::start$',
 ]

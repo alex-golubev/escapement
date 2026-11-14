@@ -6,8 +6,8 @@ use std::ops::Range;
 use std::sync::LazyLock;
 
 use crate::{
-    BLOCK_FRAMES, CHANNELS, Event, Frames, NoteId, ParamNumber, Plugin, PluginDescription,
-    ProcessContext, SampleNumber, SampleRate, SampleReader,
+    BLOCK_FRAMES, CHANNELS, Event, Frames, NoteId, ParamDescription, ParamNumber, Plugin,
+    PluginDescription, ProcessContext, SampleNumber, SampleRate, SampleReader, Scale, Values,
 };
 
 pub(crate) const SAMPLE_RATE: SampleRate = SampleRate::new(48_000).unwrap();
@@ -71,14 +71,43 @@ pub(crate) fn first_block_with_note(
     events
 }
 
-pub(crate) const NOTE: Event = Event::NoteOn {
-    time: 0,
-    key: 60,
-    velocity: 1.0,
-    note: NOTE_NAME,
-};
+pub(crate) const NOTE: Event = note_on(0, 60, 1.0, NOTE_NAME);
 /// What [`NOTE`] is named, for letting go of it.
-pub(crate) const NOTE_NAME: NoteId = NoteId::new(0);
+pub(crate) const NOTE_NAME: u32 = 0;
+
+/// `key` pressed at `time`, the note named `note`.
+pub(crate) const fn note_on(time: u32, key: u8, velocity: f32, note: u32) -> Event {
+    Event::NoteOn {
+        time,
+        key,
+        velocity,
+        note: NoteId::new(note),
+    }
+}
+
+/// The note named `note` let go of at `time`.
+pub(crate) const fn note_off(time: u32, note: u32) -> Event {
+    Event::NoteOff {
+        time,
+        note: NoteId::new(note),
+    }
+}
+
+/// A plain knob from 0 to 1, at 0.5 and unsmoothed: a test sets what it needs over it.
+pub(crate) const fn param(id: &'static str) -> ParamDescription {
+    ParamDescription {
+        id,
+        label: "Knob",
+        group: None,
+        unit: None,
+        scale: Scale::Linear,
+        values: Values::Any,
+        min: 0.0,
+        max: 1.0,
+        default: 0.5,
+        smoothing_seconds: 0.0,
+    }
+}
 
 /// A second of [`sine`]: long enough to sound through a test, short enough to leave silence after. Made once.
 static SECOND: LazyLock<Vec<f32>> = LazyLock::new(|| sine(seconds(1.0)));
@@ -184,4 +213,32 @@ pub(crate) fn largest_step(samples: &[f32]) -> f32 {
     samples
         .windows(2)
         .fold(0.0, |step, pair| step.max((pair[1] - pair[0]).abs()))
+}
+
+/// A level, full scale being 1, in decibels.
+pub(crate) fn decibels(level: f32) -> f32 {
+    20.0 * level.log10()
+}
+
+/// The largest difference between the two over `range`.
+pub(crate) fn difference(a: &[f32], b: &[f32], range: Range<usize>) -> f32 {
+    a[range.clone()]
+        .iter()
+        .zip(&b[range])
+        .map(|(a, b)| (a - b).abs())
+        .fold(0.0, f32::max)
+}
+
+/// Where the sound rises through 0, from below it to 0 or above, between samples.
+pub(crate) fn rising_at(samples: &[f32]) -> Vec<f64> {
+    let rising = samples.windows(2).enumerate();
+    rising
+        .filter(|(_, pair)| pair[0] < 0.0 && pair[1] >= 0.0)
+        .map(|(i, pair)| i as f64 + f64::from(pair[0] / (pair[0] - pair[1])))
+        .collect()
+}
+
+/// How often the sound rises through 0, as [`rising_at`] has it.
+pub(crate) fn rising_crossings(samples: &[f32]) -> usize {
+    rising_at(samples).len()
 }

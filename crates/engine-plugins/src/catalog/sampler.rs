@@ -1,12 +1,10 @@
 //! A one-shot sampler: each note plays its sample's sound once, from start to end, frame for frame. Notes overlap, each
 //! in a voice of its own. No volume of its own: its channel's sets how loud.
 
-use crate::envelope::GIVE_WAY_SECONDS;
-use crate::events::{Step, steps};
-use crate::smoothing::ramp_samples;
+use crate::voices::{self, Standing, Voices};
 use crate::{
     Event, Plugin, PluginDescription, ProcessContext, SampleDescription, SampleNumber, SampleRate,
-    SampleReader,
+    SampleReader, Step, steps,
 };
 
 const SAMPLE_SOUND: SampleDescription = SampleDescription {
@@ -24,15 +22,15 @@ pub const DESCRIPTION: PluginDescription = PluginDescription {
 
 pub const SAMPLE: SampleNumber = SampleNumber::of(DESCRIPTION.samples, SAMPLE_SOUND.id);
 
-/// Notes that sound at once; one more fades the oldest out.
-pub const VOICES: usize = 16;
-
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum State {
     Free,
     Playing,
-    /// Samples left until it is silent.
-    Fading(u32),
+    /// Samples `remaining` until it is silent, of a fade `length` long.
+    Fading {
+        remaining: u32,
+        length: u32,
+    },
 }
 
 #[derive(Clone, Copy)]
@@ -41,23 +39,38 @@ struct Voice {
     /// The sound's next frame.
     position: usize,
     velocity: f32,
-    /// Notes started before it.
-    order: u64,
 }
 
 const FREE: Voice = Voice {
     state: State::Free,
     position: 0,
     velocity: 0.0,
-    order: 0,
 };
 
+impl voices::Voice for Voice {
+    /// Every note alike, so the oldest gives way first.
+    type Room = ();
+    /// Samples left.
+    type Distance = u32;
+
+    fn standing(&self) -> Standing<Self::Room, Self::Distance> {
+        match self.state {
+            State::Free => Standing::Free,
+            State::Playing => Standing::Playing(()),
+            State::Fading { remaining, .. } => Standing::GivingWay(remaining),
+        }
+    }
+
+    fn give_way(&mut self, samples: u32) {
+        self.state = State::Fading {
+            remaining: samples,
+            length: samples,
+        };
+    }
+}
+
 struct Sampler {
-    /// Half of them for voices fading out.
-    voices: [Voice; 2 * VOICES],
-    /// Samples a voice takes to give way.
-    give_way: u32,
-    notes: u64,
+    voices: Voices<Voice>,
 }
 
 pub(crate) fn create(sample_rate: SampleRate) -> Box<dyn Plugin> {
@@ -87,61 +100,27 @@ impl Plugin for Sampler {
 impl Sampler {
     fn new(sample_rate: SampleRate) -> Self {
         Self {
-            voices: [FREE; 2 * VOICES],
-            give_way: ramp_samples(GIVE_WAY_SECONDS, sample_rate),
-            notes: 0,
+            voices: Voices::new(FREE, sample_rate),
         }
     }
 
     fn start(&mut self, samples: &mut dyn SampleReader, velocity: f32) {
-        // A silent note takes no voice: it would only push one that is heard out.
-        if velocity == 0.0 {
-            return;
-        }
         // Without its sound the note is lost: starting later would be out of time, and joining midway would click.
         if samples.frames(SAMPLE, 0..0).is_none() {
             return;
         }
-        let playing = |voice: &&mut Voice| voice.state == State::Playing;
-        if self.voices.iter_mut().filter(playing).count() == VOICES {
-            let oldest = self
-                .voices
-                .iter_mut()
-                .filter(playing)
-                .min_by_key(|voice| voice.order);
-            if let Some(oldest) = oldest {
-                oldest.state = State::Fading(self.give_way);
-            }
-        }
-        // A free place, or else the fading voice nearest silence.
-        let place = self
-            .voices
-            .iter_mut()
-            .max_by_key(|voice| match voice.state {
-                State::Free => (2, 0),
-                State::Fading(left) => (1, u32::MAX - left),
-                State::Playing => (0, 0),
-            });
-        if let Some(place) = place {
-            *place = Voice {
-                state: State::Playing,
-                position: 0,
-                velocity,
-                order: self.notes,
-            };
-            self.notes += 1;
-        }
+        self.voices.start(velocity, || Voice {
+            state: State::Playing,
+            position: 0,
+            velocity,
+        });
     }
 
     fn render(&mut self, samples: &mut dyn SampleReader, left: &mut [f32], right: &mut [f32]) {
         left.fill(0.0);
         right.fill(0.0);
         let wanted = left.len();
-        let give_way = self.give_way as f32;
-        for voice in &mut self.voices {
-            if voice.state == State::Free {
-                continue;
-            }
+        for voice in self.voices.in_use() {
             let start = voice.position;
             let Some(frames) = samples.frames(SAMPLE, start..start + wanted) else {
                 voice.state = State::Free;
@@ -157,11 +136,12 @@ impl Sampler {
                 .take(frames.len())
             {
                 let gain = match voice.state {
-                    State::Fading(0) => break,
+                    State::Fading { remaining: 0, .. } => break,
                     // A step down on the first sample, silent on the last, as the engine's fades.
-                    State::Fading(remaining) => {
-                        voice.state = State::Fading(remaining - 1);
-                        voice.velocity * (remaining - 1) as f32 / give_way
+                    State::Fading { remaining, length } => {
+                        let remaining = remaining - 1;
+                        voice.state = State::Fading { remaining, length };
+                        voice.velocity * remaining as f32 / length as f32
                     }
                     _ => voice.velocity,
                 };
@@ -169,7 +149,7 @@ impl Sampler {
                 *r += last[i] * gain;
             }
             voice.position += frames.len();
-            if frames.len() < wanted || voice.state == State::Fading(0) {
+            if frames.len() < wanted || matches!(voice.state, State::Fading { remaining: 0, .. }) {
                 voice.state = State::Free;
             }
         }
@@ -180,18 +160,15 @@ impl Sampler {
 mod tests {
     use super::*;
     use crate::BLOCK_FRAMES;
-    use crate::NoteId;
+    use crate::smoothing::ramp_samples;
     use crate::testing::{
-        NoSound, SAMPLE_RATE, Sound, largest_step, render_with, seconds, silence,
+        NoSound, SAMPLE_RATE, Sound, largest_step, note_on, render_with, seconds, silence,
     };
+    use crate::voices::{GIVE_WAY_SECONDS, VOICES};
 
+    /// Named by its time.
     fn note(time: u32, velocity: f32) -> Event {
-        Event::NoteOn {
-            time,
-            key: 60,
-            velocity,
-            note: NoteId::new(time),
-        }
+        note_on(time, 60, velocity, time)
     }
 
     /// One at full velocity on each of the first `count` frames.
@@ -344,16 +321,28 @@ mod tests {
 
     #[test]
     fn a_burst_of_notes_past_every_place_cuts_the_voice_nearest_silence() {
-        let mut plugin = create(SAMPLE_RATE);
+        let mut sampler = Sampler::new(SAMPLE_RATE);
         let mut sound = level();
         let notes = a_note_a_frame(3 * VOICES);
-        let [left, _] = render_with(plugin.as_mut(), &notes, &silence(BLOCK_FRAMES), &mut sound);
+        let [left, _] = render_with(&mut sampler, &notes, &silence(BLOCK_FRAMES), &mut sound);
         // Every note came in, and never more than the voices sound at full.
         assert!(
             left.iter()
                 .all(|&heard| heard.is_finite() && heard <= 0.01 * 2.0 * VOICES as f32)
         );
-        let heard = render_with(plugin.as_mut(), &[], &silence(2048), &mut sound);
+        // Each of the last sixteen took the place of the first to fade: still fading are the second sixteen pressed,
+        // as far into their sound as they were pressed before the block's end.
+        let mut fading: Vec<_> = (sampler.voices.places().iter())
+            .filter(|voice| matches!(voice.state, State::Fading { .. }))
+            .map(|voice| voice.position)
+            .collect();
+        fading.sort_unstable();
+        let second: Vec<_> = (VOICES..2 * VOICES)
+            .rev()
+            .map(|pressed| BLOCK_FRAMES - pressed)
+            .collect();
+        assert_eq!(fading, second);
+        let heard = render_with(&mut sampler, &[], &silence(2048), &mut sound);
         assert!(
             (heard[0][2047] - 0.01 * VOICES as f32).abs() < 1e-6,
             "the newest voices play on"
@@ -366,12 +355,7 @@ mod tests {
         let notes = a_note_a_frame(VOICES);
         let mut short = Sound::new(&DESCRIPTION, vec![vec![0.5; 200]]);
         render_with(&mut sampler, &notes, &silence(512), &mut short);
-        assert!(
-            sampler
-                .voices
-                .iter()
-                .all(|voice| voice.state == State::Free)
-        );
+        assert!((sampler.voices.places().iter()).all(|voice| voice.state == State::Free));
     }
 
     #[test]

@@ -15,9 +15,6 @@ pub const FLOOR: f32 = 1e-4;
 /// How near a level counts as there, so rounding over a long stretch adds no sample.
 const HAIR: f64 = 1e-9;
 
-/// How long a voice that gives way takes to fall silent, rather than one sample.
-pub const GIVE_WAY_SECONDS: f32 = 0.02;
-
 pub const GROUP: &str = "Envelope";
 
 const fn time(id: &'static str, label: &'static str, min: f32, default: f32) -> ParamDescription {
@@ -115,8 +112,8 @@ enum Stage {
     /// Let go of, down from the level `from` to silence over the release: by `fall` a sample, as worked out for a
     /// release of `release` samples.
     Releasing { from: f64, fall: f64, release: f64 },
-    /// Making room for another note: down to silence quickly, in a straight line.
-    GivingWay,
+    /// Making room for another note: down to silence in a straight line, by `fall` a sample.
+    GivingWay { fall: f64 },
     /// Silent for good.
     Over,
 }
@@ -154,7 +151,7 @@ impl Contour {
 
     #[must_use]
     pub fn is_giving_way(&self) -> bool {
-        self.stage == Stage::GivingWay
+        matches!(self.stage, Stage::GivingWay { .. })
     }
 
     #[must_use]
@@ -173,12 +170,19 @@ impl Contour {
         self.stage == Stage::Sustaining && self.level == 0.0
     }
 
-    /// Wherever it is, unless over.
-    pub fn give_way(&mut self) {
+    /// Wherever it is, unless over: down to silence at the pace of a fall from full level over `samples`.
+    pub fn give_way(&mut self, samples: u32) {
         if !self.is_over() {
-            self.stage = Stage::GivingWay;
+            self.stage = Stage::GivingWay {
+                fall: f64::from(samples).recip(),
+            };
         }
     }
+}
+
+/// A stretch a level walks, which is divided by: at least a sample, unlike a delay or a hold.
+fn samples(seconds: f32, sample_rate: SampleRate) -> f64 {
+    f64::from(ramp_samples(seconds, sample_rate))
 }
 
 /// The knobs, which every voice of an instrument follows.
@@ -196,8 +200,6 @@ pub struct Envelope {
     sustain: Smoothed,
     /// In samples.
     release: f64,
-    /// Of full level, a sample.
-    give_way: f64,
     /// Over the stretch of frames `prepare` walked: the sustain level at each, and what a decaying level is multiplied
     /// by there.
     sustains: [f32; BLOCK_FRAMES],
@@ -208,7 +210,6 @@ impl Envelope {
     /// At the defaults.
     #[must_use]
     pub fn new(numbers: Numbers, sample_rate: SampleRate) -> Self {
-        let samples = |seconds| f64::from(ramp_samples(seconds, sample_rate));
         let mut envelope = Self {
             numbers,
             sample_rate,
@@ -218,7 +219,6 @@ impl Envelope {
             decay: 0.0,
             sustain: Smoothed::for_param(&SUSTAIN, sample_rate),
             release: 0.0,
-            give_way: samples(GIVE_WAY_SECONDS).recip(),
             sustains: [0.0; BLOCK_FRAMES],
             falls: [1.0; BLOCK_FRAMES],
         };
@@ -239,19 +239,18 @@ impl Envelope {
             release,
         } = self.numbers;
         let rate = self.sample_rate;
-        let samples = |seconds| f64::from(ramp_samples(seconds, rate));
         if param == delay {
             self.delay = rate.frames(value);
         } else if param == attack {
-            self.attack = samples(value).recip();
+            self.attack = samples(value, rate).recip();
         } else if param == hold {
             self.hold = rate.frames(value);
         } else if param == decay {
-            self.decay = samples(value);
+            self.decay = samples(value, rate);
         } else if param == sustain {
             self.sustain.set(value);
         } else if param == release {
-            self.release = samples(value);
+            self.release = samples(value, rate);
         }
     }
 
@@ -335,8 +334,8 @@ impl Envelope {
                     }
                     break;
                 }
-                Stage::GivingWay => {
-                    *level -= self.give_way;
+                Stage::GivingWay { fall } => {
+                    *level -= *fall;
                     if *level <= HAIR {
                         *contour = Contour::OVER;
                         return None;
@@ -378,7 +377,7 @@ impl Envelope {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::{SAMPLE_RATE, largest_step, seconds};
+    use crate::testing::{SAMPLE_RATE, decibels, largest_step, seconds};
 
     const DESCRIPTION: PluginDescription = PluginDescription {
         id: 1,
@@ -425,10 +424,6 @@ mod tests {
 
     fn sounding(levels: &[Option<f32>]) -> Vec<f32> {
         levels.iter().map(|level| level.unwrap_or(0.0)).collect()
-    }
-
-    fn decibels(level: f32) -> f32 {
-        20.0 * level.log10()
     }
 
     fn near(a: f32, b: f32, by: f32) -> bool {
@@ -712,13 +707,13 @@ mod tests {
             (0..BLOCK_FRAMES).for_each(|frame| _ = envelope.next(&mut contour, frame));
         }
         assert_eq!(contour.level(), 1.0);
-        contour.give_way();
+        let give_way = seconds(0.02);
+        contour.give_way(u32::try_from(give_way).unwrap());
         let mut levels = Vec::new();
         for _ in 0..seconds(0.03).div_ceil(BLOCK_FRAMES) {
             envelope.prepare(BLOCK_FRAMES);
             levels.extend((0..BLOCK_FRAMES).map(|frame| envelope.next(&mut contour, frame)));
         }
-        let give_way = seconds(GIVE_WAY_SECONDS);
         assert!(near(levels[give_way / 2 - 1].unwrap(), 0.5, 1e-6));
         assert!(levels[give_way - 2].is_some());
         assert!(levels[give_way - 1..].iter().all(Option::is_none));

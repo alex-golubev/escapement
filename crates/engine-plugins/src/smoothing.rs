@@ -27,7 +27,7 @@ pub fn ramp_samples(ramp_seconds: f32, sample_rate: SampleRate) -> u32 {
 }
 
 impl Smoothed {
-    /// Evenly in the value; also for values derived from a parameter, such as filter coefficients.
+    /// Evenly in the value; also for values derived from a parameter, such as a filter's gain.
     #[must_use]
     pub fn new(value: f32, ramp_seconds: f32, sample_rate: SampleRate) -> Self {
         Self::over(value, ramp_samples(ramp_seconds, sample_rate))
@@ -93,13 +93,10 @@ impl Smoothed {
         self.sounded = true;
         (self.remaining == 0).then_some(self.current)
     }
-}
 
-impl Iterator for Smoothed {
-    type Item = f32;
-
+    /// The next sample's value.
     #[inline]
-    fn next(&mut self) -> Option<f32> {
+    pub fn advance(&mut self) -> f32 {
         self.sounded = true;
         if self.remaining > 0 {
             self.remaining -= 1;
@@ -118,15 +115,32 @@ impl Iterator for Smoothed {
                 value.clamp(self.low, self.high)
             };
         }
-        Some(self.current)
+        self.current
+    }
+
+    /// The values of as many next samples as `over` holds. As [`Self::steady`] does, it counts as a sample taken, even
+    /// for none.
+    pub fn fill(&mut self, over: &mut [f32]) {
+        match self.steady() {
+            Some(steady) => over.fill(steady),
+            None => over.iter_mut().for_each(|at| *at = self.advance()),
+        }
+    }
+}
+
+impl Iterator for Smoothed {
+    type Item = f32;
+
+    #[inline]
+    fn next(&mut self) -> Option<f32> {
+        Some(self.advance())
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::{SAMPLE_RATE, rate};
-    use crate::{Unit, Values};
+    use crate::testing::{SAMPLE_RATE, param, rate};
 
     fn take(smoothed: &mut Smoothed, samples: usize) -> Vec<f32> {
         smoothed.take(samples).collect()
@@ -135,7 +149,7 @@ mod tests {
     /// Already sounding, so changes are smoothed.
     fn sounding(value: f32) -> Smoothed {
         let mut smoothed = Smoothed::new(value, 0.02, SAMPLE_RATE);
-        smoothed.next();
+        smoothed.advance();
         smoothed
     }
 
@@ -153,9 +167,21 @@ mod tests {
         // Asked, it has sounded: a change glides.
         volume.set(1.0);
         assert_eq!(volume.steady(), None);
-        assert!(volume.next().unwrap() < 0.51);
+        assert!(volume.advance() < 0.51);
         take(&mut volume, 959);
         assert_eq!(volume.steady(), Some(1.0));
+    }
+
+    #[test]
+    fn fills_what_it_would_take_one_by_one_steady_or_on_its_way() {
+        let (mut filled, mut taken) = (sounding(0.2), sounding(0.2));
+        let mut over = [0.0; 1000];
+        filled.fill(&mut over);
+        assert_eq!(over.to_vec(), take(&mut taken, 1000));
+        filled.set(0.8);
+        taken.set(0.8);
+        filled.fill(&mut over);
+        assert_eq!(over.to_vec(), take(&mut taken, 1000));
     }
 
     #[test]
@@ -167,19 +193,11 @@ mod tests {
 
     #[test]
     fn a_parameter_starts_at_its_default_and_ramps_for_its_smoothing_time() {
-        let param = ParamDescription {
-            id: "volume",
-            label: "Volume",
-            group: None,
-            unit: None,
-            scale: Scale::Linear,
-            values: Values::Any,
-            min: 0.0,
-            max: 1.0,
-            default: 0.5,
+        let knob = ParamDescription {
             smoothing_seconds: 0.02,
+            ..param("volume")
         };
-        let mut volume = Smoothed::for_param(&param, SAMPLE_RATE);
+        let mut volume = Smoothed::for_param(&knob, SAMPLE_RATE);
         assert_eq!(volume.ramp_samples, 960);
         assert_eq!(take(&mut volume, 3), [0.5; 3]);
     }
@@ -210,20 +228,14 @@ mod tests {
 
     #[test]
     fn a_volume_moves_evenly_in_the_value_from_silence_and_back() {
-        let param = ParamDescription {
-            id: "volume",
-            label: "Volume",
-            group: None,
-            unit: Some(Unit::Gain),
+        let knob = ParamDescription {
             scale: Scale::Volume,
-            values: Values::Any,
-            min: 0.0,
-            max: 1.0,
             default: 0.0,
             smoothing_seconds: 0.02,
+            ..param("volume")
         };
-        let mut volume = Smoothed::for_param(&param, SAMPLE_RATE);
-        volume.next();
+        let mut volume = Smoothed::for_param(&knob, SAMPLE_RATE);
+        volume.advance();
         volume.set(0.6);
         let up = take(&mut volume, 960);
         assert!((up[479] - 0.3).abs() < 1e-6, "{}", up[479]);
@@ -236,20 +248,16 @@ mod tests {
 
     /// Already sounding at its default.
     fn cutoff(smoothing_seconds: f32) -> Smoothed {
-        let param = ParamDescription {
-            id: "cutoff",
-            label: "Cutoff",
-            group: None,
-            unit: Some(Unit::Hertz),
+        let knob = ParamDescription {
             scale: Scale::Logarithmic,
-            values: Values::Any,
             min: 20.0,
             max: 20_000.0,
             default: 20_000.0,
             smoothing_seconds,
+            ..param("cutoff")
         };
-        let mut cutoff = Smoothed::for_param(&param, SAMPLE_RATE);
-        cutoff.next();
+        let mut cutoff = Smoothed::for_param(&knob, SAMPLE_RATE);
+        cutoff.advance();
         cutoff
     }
 
