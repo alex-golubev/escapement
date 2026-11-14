@@ -2,7 +2,7 @@
 //! crate and its number: when the two differ, the page and the engine come from different builds.
 
 use crate::catalog::CatalogEntry;
-use crate::{Choice, ParamDescription, PluginDescription, SampleDescription, Scale, Unit, Values};
+use crate::{Choice, ParamDescription, PluginDescription, SampleDescription, Values};
 
 /// 32-bit FNV-1a: simple and the same on every build, unlike the standard library's hashers.
 struct Fnv(u32);
@@ -26,7 +26,7 @@ impl Fnv {
         self.number(float.to_bits());
     }
 
-    /// As the page counts it: a description's lists and texts are short.
+    /// In 32 bits, so a 64-bit build counts as wasm does: a description's lists and texts are short.
     fn length(&mut self, length: usize) {
         self.number(u32::try_from(length).expect("a length below 2³²"));
     }
@@ -35,6 +35,51 @@ impl Fnv {
     fn text(&mut self, text: &str) {
         self.length(text.len());
         self.bytes(text.as_bytes());
+    }
+
+    fn params(&mut self, params: &[ParamDescription]) {
+        self.length(params.len());
+        for param in params {
+            let ParamDescription {
+                id,
+                label,
+                group,
+                unit,
+                scale,
+                values,
+                min,
+                max,
+                default,
+                smoothing_seconds,
+            } = param;
+            self.text(id);
+            self.text(label);
+            match group {
+                None => self.number(0),
+                Some(group) => {
+                    self.number(1);
+                    self.text(group);
+                }
+            }
+            // A unit or a scale by its place in its list, a unit's after 0 for none.
+            self.number(unit.map_or(0, |unit| unit as u32 + 1));
+            self.number(*scale as u32);
+            match values {
+                Values::Any => self.number(0),
+                Values::Whole => self.number(2),
+                Values::Choices(choices) => {
+                    self.number(1);
+                    self.length(choices.len());
+                    for Choice { id, label } in *choices {
+                        self.text(id);
+                        self.text(label);
+                    }
+                }
+            }
+            for number in [min, max, default, smoothing_seconds] {
+                self.float(*number);
+            }
+        }
     }
 }
 
@@ -73,70 +118,11 @@ pub fn fingerprint(catalog: &[CatalogEntry], node_params: &[ParamDescription]) -
     hash.0
 }
 
-impl Fnv {
-    fn params(&mut self, params: &[ParamDescription]) {
-        self.length(params.len());
-        for param in params {
-            let ParamDescription {
-                id,
-                label,
-                group,
-                unit,
-                scale,
-                values,
-                min,
-                max,
-                default,
-                smoothing_seconds,
-            } = param;
-            self.text(id);
-            self.text(label);
-            match group {
-                None => self.number(0),
-                Some(group) => {
-                    self.number(1);
-                    self.text(group);
-                }
-            }
-            self.number(match unit {
-                None => 0,
-                Some(Unit::Hertz) => 1,
-                Some(Unit::Pan) => 2,
-                Some(Unit::Gain) => 3,
-                Some(Unit::Semitones) => 4,
-                Some(Unit::Cents) => 5,
-                Some(Unit::Percent) => 6,
-                Some(Unit::Seconds) => 7,
-            });
-            self.number(match scale {
-                Scale::Linear => 0,
-                Scale::Logarithmic => 1,
-                Scale::Volume => 2,
-                Scale::Time => 3,
-            });
-            match values {
-                Values::Any => self.number(0),
-                Values::Whole => self.number(2),
-                Values::Choices(choices) => {
-                    self.number(1);
-                    self.length(choices.len());
-                    for Choice { id, label } in *choices {
-                        self.text(id);
-                        self.text(label);
-                    }
-                }
-            }
-            for number in [min, max, default, smoothing_seconds] {
-                self.float(*number);
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::catalog::tone;
+    use crate::{Scale, Unit};
 
     #[test]
     fn neighbouring_texts_cannot_trade_bytes() {
@@ -221,7 +207,7 @@ mod tests {
         )
     }
 
-    fn with_param(change: fn(&mut ParamDescription)) -> PluginDescription {
+    fn with_param(change: impl FnOnce(&mut ParamDescription)) -> PluginDescription {
         let mut param = PARAM;
         change(&mut param);
         PluginDescription {
@@ -240,10 +226,9 @@ mod tests {
     }
 
     #[test]
-    #[expect(clippy::too_many_lines, reason = "every field there is")]
     fn every_field_changes_the_number() {
         let base = of("filter", PLUGIN);
-        let changed = [
+        let mut changed = vec![
             of("filters", PLUGIN),
             of("filter", PluginDescription { id: 3, ..PLUGIN }),
             of(
@@ -279,7 +264,6 @@ mod tests {
             of("filter", with_param(|param| param.group = Some("Osc 1"))),
             of("filter", with_param(|param| param.group = Some(""))),
             of("filter", with_param(|param| param.unit = None)),
-            of("filter", with_param(|param| param.scale = Scale::Linear)),
             of("filter", with_param(|param| param.min = 21.0)),
             of("filter", with_param(|param| param.max = 19_000.0)),
             of("filter", with_param(|param| param.default = 1001.0)),
@@ -300,23 +284,6 @@ mod tests {
             ),
             of("filter", with_sample(|sample| sample.id = "hiss")),
             of("filter", with_sample(|sample| sample.label = "Hiss")),
-            of("filter", with_param(|param| param.unit = Some(Unit::Pan))),
-            of("filter", with_param(|param| param.unit = Some(Unit::Gain))),
-            of(
-                "filter",
-                with_param(|param| param.unit = Some(Unit::Semitones)),
-            ),
-            of("filter", with_param(|param| param.unit = Some(Unit::Cents))),
-            of(
-                "filter",
-                with_param(|param| param.unit = Some(Unit::Percent)),
-            ),
-            of(
-                "filter",
-                with_param(|param| param.unit = Some(Unit::Seconds)),
-            ),
-            of("filter", with_param(|param| param.scale = Scale::Volume)),
-            of("filter", with_param(|param| param.scale = Scale::Time)),
             of("filter", with_param(|param| param.values = Values::Whole)),
             of(
                 "filter",
@@ -348,6 +315,13 @@ mod tests {
                 }],
             ),
         ];
+        // Every other unit and scale.
+        let units = Unit::ALL
+            .into_iter()
+            .filter(|&unit| Some(unit) != PARAM.unit);
+        changed.extend(units.map(|unit| of("filter", with_param(|param| param.unit = Some(unit)))));
+        let scales = Scale::ALL.into_iter().filter(|&scale| scale != PARAM.scale);
+        changed.extend(scales.map(|scale| of("filter", with_param(|param| param.scale = scale))));
         for (i, number) in changed.into_iter().enumerate() {
             assert_ne!(number, base, "change {i}");
         }
