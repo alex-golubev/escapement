@@ -18,6 +18,7 @@ rustflags = [
   "-C", "link-arg=--export=__tls_align",
 ]
 
-# Only builds with `--target` rebuild std: every wasm build, never the native tests.
-[unstable]
-build-std = ["panic_abort", "std"]
+# Shared memory links only against a std built with atomics, and cargo can't rebuild std for one target alone: each
+# wasm build takes `-Zbuild-std`, as this one does, and native builds keep rustup's std.
+[alias]
+wasm = ["build", "--release", "-p", "engine-wasm", "--target", "wasm32-unknown-unknown", "-Zbuild-std=panic_abort,std"]
