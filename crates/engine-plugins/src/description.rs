@@ -83,7 +83,8 @@ pub struct SampleDescription {
     pub label: &'static str,
 }
 
-/// An enum with the list of all its variants, so the page gets every one, used or not.
+/// An enum with the list of all its variants in their order, for code that goes through every one, used or not: the
+/// page gets every unit and scale, the synth plays every shape.
 macro_rules! listed {
     ($(#[$meta:meta])* pub enum $name:ident { $($(#[$variant_meta:meta])* $variant:ident,)* }) => {
         $(#[$meta])*
@@ -93,10 +94,11 @@ macro_rules! listed {
         }
 
         impl $name {
-            pub const ALL: &[Self] = &[$(Self::$variant),*];
+            pub const ALL: [Self; [$($name::$variant),*].len()] = [$(Self::$variant),*];
         }
     };
 }
+pub(crate) use listed;
 
 listed! {
     /// The page writes a value out by its unit, so units come from this list rather than free text.

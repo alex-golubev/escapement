@@ -4,6 +4,7 @@
 
 use std::f32::consts::TAU;
 
+use crate::description::listed;
 use crate::envelope::{self, Contour, Envelope};
 use crate::smoothing::Smoothed;
 use crate::{
@@ -11,25 +12,18 @@ use crate::{
     ProcessContext, SampleRate, Scale, Step, Unit, Values, steps,
 };
 
-/// From the smoothest to the brightest. Projects keep them by place.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Shape {
-    Sine,
-    Triangle,
-    Square,
-    Saw,
-    Noise,
+listed! {
+    /// From the smoothest to the brightest. Projects keep them by place.
+    pub enum Shape {
+        Sine,
+        Triangle,
+        Square,
+        Saw,
+        Noise,
+    }
 }
 
 impl Shape {
-    pub const ALL: [Self; 5] = [
-        Self::Sine,
-        Self::Triangle,
-        Self::Square,
-        Self::Saw,
-        Self::Noise,
-    ];
-
     /// As its parameter's value.
     const fn value(self) -> f32 {
         Choice::value(self as usize)
