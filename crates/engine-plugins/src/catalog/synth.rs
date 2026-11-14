@@ -372,17 +372,6 @@ fn below_half_the_sample_rate(increment: f32) -> f32 {
     ((0.5 - increment) / (0.5 - FADE_FROM)).clamp(0.0, 1.0)
 }
 
-/// The smoothed value at each frame.
-fn fill(smoothed: &mut Smoothed, over: &mut [f32]) {
-    match smoothed.steady() {
-        Some(steady) => over.fill(steady),
-        None => over
-            .iter_mut()
-            .zip(smoothed)
-            .for_each(|(at, value)| *at = value),
-    }
-}
-
 /// A value for each of a block's frames.
 type Signal = [f32; BLOCK_FRAMES];
 
@@ -618,7 +607,7 @@ impl Synth {
         for osc in (0..OSCILLATORS).rev() {
             let oscillator = &mut oscillators[osc];
             let mut taken = [0.0; BLOCK_FRAMES];
-            fill(&mut oscillator.mix, &mut taken[..frames]);
+            oscillator.mix.fill(&mut taken[..frames]);
             for (taken, left_to) in taken[..frames].iter_mut().zip(&mut left_to) {
                 let mix = *taken;
                 *taken = mix * *left_to;
@@ -632,7 +621,7 @@ impl Synth {
                     continue;
                 }
                 let part = &mut parts[osc][shape as usize][..frames];
-                fill(share, part);
+                share.fill(part);
                 if taken_heard {
                     part.iter_mut()
                         .zip(&taken)

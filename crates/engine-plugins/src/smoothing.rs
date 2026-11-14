@@ -27,7 +27,7 @@ pub fn ramp_samples(ramp_seconds: f32, sample_rate: SampleRate) -> u32 {
 }
 
 impl Smoothed {
-    /// Evenly in the value; also for values derived from a parameter, such as filter coefficients.
+    /// Evenly in the value; also for values derived from a parameter, such as a filter's gain.
     #[must_use]
     pub fn new(value: f32, ramp_seconds: f32, sample_rate: SampleRate) -> Self {
         Self::over(value, ramp_samples(ramp_seconds, sample_rate))
@@ -93,13 +93,10 @@ impl Smoothed {
         self.sounded = true;
         (self.remaining == 0).then_some(self.current)
     }
-}
 
-impl Iterator for Smoothed {
-    type Item = f32;
-
+    /// The next sample's value.
     #[inline]
-    fn next(&mut self) -> Option<f32> {
+    pub fn advance(&mut self) -> f32 {
         self.sounded = true;
         if self.remaining > 0 {
             self.remaining -= 1;
@@ -118,7 +115,25 @@ impl Iterator for Smoothed {
                 value.clamp(self.low, self.high)
             };
         }
-        Some(self.current)
+        self.current
+    }
+
+    /// The values of as many next samples as `over` holds. As [`Self::steady`] does, it counts as a sample taken, even
+    /// for none.
+    pub fn fill(&mut self, over: &mut [f32]) {
+        match self.steady() {
+            Some(steady) => over.fill(steady),
+            None => over.iter_mut().for_each(|at| *at = self.advance()),
+        }
+    }
+}
+
+impl Iterator for Smoothed {
+    type Item = f32;
+
+    #[inline]
+    fn next(&mut self) -> Option<f32> {
+        Some(self.advance())
     }
 }
 
@@ -135,7 +150,7 @@ mod tests {
     /// Already sounding, so changes are smoothed.
     fn sounding(value: f32) -> Smoothed {
         let mut smoothed = Smoothed::new(value, 0.02, SAMPLE_RATE);
-        smoothed.next();
+        smoothed.advance();
         smoothed
     }
 
@@ -153,9 +168,21 @@ mod tests {
         // Asked, it has sounded: a change glides.
         volume.set(1.0);
         assert_eq!(volume.steady(), None);
-        assert!(volume.next().unwrap() < 0.51);
+        assert!(volume.advance() < 0.51);
         take(&mut volume, 959);
         assert_eq!(volume.steady(), Some(1.0));
+    }
+
+    #[test]
+    fn fills_what_it_would_take_one_by_one_steady_or_on_its_way() {
+        let (mut filled, mut taken) = (sounding(0.2), sounding(0.2));
+        let mut over = [0.0; 1000];
+        filled.fill(&mut over);
+        assert_eq!(over.to_vec(), take(&mut taken, 1000));
+        filled.set(0.8);
+        taken.set(0.8);
+        filled.fill(&mut over);
+        assert_eq!(over.to_vec(), take(&mut taken, 1000));
     }
 
     #[test]
