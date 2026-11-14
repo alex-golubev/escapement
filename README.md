@@ -43,21 +43,21 @@ own must too.
 
 ## Repository layout
 
-| Path | What it is |
-|---|---|
-| `apps/web` | The web app |
-| `apps/placeholder` | The page escapement.run shows until the app is out |
-| `packages/model` | The project document on Yjs: how it is stored, read and edited, with undo |
-| `packages/compiler` | Turns the project into what the engine plays, sending only what changed |
-| `packages/engine` | Runs the engine in the browser: the build thread, the AudioWorklet and the shared memory between them |
-| `packages/engine-description` | What the engine and the page agree on: time, notes, the plugin catalog and its parameters |
-| `crates/engine-core` | The engine: DSP, sequencer, mixer graph |
-| `crates/engine-plugins` | What a plugin sees, and the built-in plugins |
-| `crates/engine-wasm` | The engine's WebAssembly exports |
-| `crates/describe-plugins` | Prints the plugin catalog for code generation |
-| `schema` | The FlatBuffers schema of what the page and the engine send each other |
-| `tools` | Code generation, the debug samples and the mutation tests |
-| `samples` | Debug drum sounds, synthesized by `tools`, CC0 |
+| Path                          | What it is                                                                                            |
+| ----------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `apps/web`                    | The web app                                                                                           |
+| `apps/placeholder`            | The page escapement.run shows until the app is out                                                    |
+| `packages/model`              | The project document on Yjs: how it is stored, read and edited, with undo                             |
+| `packages/compiler`           | Turns the project into what the engine plays, sending only what changed                               |
+| `packages/engine`             | Runs the engine in the browser: the build thread, the AudioWorklet and the shared memory between them |
+| `packages/engine-description` | What the engine and the page agree on: time, notes, the plugin catalog and its parameters             |
+| `crates/engine-core`          | The engine: DSP, sequencer, mixer graph                                                               |
+| `crates/engine-plugins`       | What a plugin sees, and the built-in plugins                                                          |
+| `crates/engine-wasm`          | The engine's WebAssembly exports                                                                      |
+| `crates/describe-plugins`     | Prints the plugin catalog for code generation                                                         |
+| `schema`                      | The FlatBuffers schema of what the page and the engine send each other                                |
+| `tools`                       | Code generation, the debug samples and the mutation tests                                             |
+| `samples`                     | Debug drum sounds, synthesized by `tools`, CC0                                                        |
 
 ## Development
 
