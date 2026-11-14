@@ -43,13 +43,15 @@ const DAMPING: f32 = SQRT_2;
 const GAIN_STEP: u32 = 16;
 
 /// The integrators' gain; it grows without bound at half the sample rate.
-fn gain(cutoff: f32, sample_rate: SampleRate) -> f32 {
+fn integrator_gain(cutoff: f32, sample_rate: SampleRate) -> f32 {
     let hz = sample_rate.hz();
     (PI * cutoff.min(0.49 * hz) / hz).tan()
 }
 
+/// Made from the integrators' gain, which they keep, so a change of it shows.
 #[derive(Clone, Copy)]
 struct Coefficients {
+    gain: f32,
     a1: f32,
     a2: f32,
     a3: f32,
@@ -60,6 +62,7 @@ impl Coefficients {
         let a1 = 1.0 / (1.0 + gain * (gain + DAMPING));
         let a2 = gain * a1;
         Self {
+            gain,
             a1,
             a2,
             a3: gain * a2,
@@ -82,21 +85,20 @@ struct Filter {
     /// Samples until the gain heads for the cutoff again; a turn starts the count anew, so it is heard at once.
     until_heading: u32,
     gain: Smoothed,
-    /// For the gain they were made from.
-    coefficients: (f32, Coefficients),
+    coefficients: Coefficients,
     memory: [Memory; CHANNELS],
 }
 
 impl Filter {
     fn new(sample_rate: SampleRate) -> Self {
-        let open = gain(CUTOFF_PARAM.default, sample_rate);
+        let open = integrator_gain(CUTOFF_PARAM.default, sample_rate);
         Self {
             sample_rate,
             cutoff: Smoothed::for_param(&CUTOFF_PARAM, sample_rate),
             heading: CUTOFF_PARAM.default,
             until_heading: 0,
             gain: Smoothed::over(open, GAIN_STEP),
-            coefficients: (open, Coefficients::new(open)),
+            coefficients: Coefficients::new(open),
             memory: Default::default(),
         }
     }
@@ -114,16 +116,16 @@ impl Filter {
                 #[expect(clippy::float_cmp, reason = "any change of the cutoff counts")]
                 if cutoff != self.heading {
                     self.heading = cutoff;
-                    self.gain.set(gain(cutoff, self.sample_rate));
+                    self.gain.set(integrator_gain(cutoff, self.sample_rate));
                 }
             }
             self.until_heading -= 1;
             let gain = self.gain.advance();
             #[expect(clippy::float_cmp, reason = "any change of the gain counts")]
-            if gain != self.coefficients.0 {
-                self.coefficients = (gain, Coefficients::new(gain));
+            if gain != self.coefficients.gain {
+                self.coefficients = Coefficients::new(gain);
             }
-            let Coefficients { a1, a2, a3 } = self.coefficients.1;
+            let Coefficients { a1, a2, a3, .. } = self.coefficients;
             for (channel, memory) in self.memory.iter_mut().enumerate() {
                 let v3 = input[channel][i] - memory.ic2eq;
                 let v1 = a1 * memory.ic1eq + a2 * v3;
@@ -184,7 +186,7 @@ mod tests {
 
     #[test]
     fn a_cutoff_past_half_the_sample_rate_is_held_below_it() {
-        let held = gain(20_000.0, rate(8000));
+        let held = integrator_gain(20_000.0, rate(8000));
         assert!((held - (0.49 * PI).tan()).abs() < 1e-3 * held, "{held}");
     }
 
