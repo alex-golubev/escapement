@@ -181,6 +181,11 @@ impl Contour {
     }
 }
 
+/// A stretch a level walks, which is divided by: at least a sample, unlike a delay or a hold.
+fn samples(seconds: f32, sample_rate: SampleRate) -> f64 {
+    f64::from(ramp_samples(seconds, sample_rate))
+}
+
 /// The knobs, which every voice of an instrument follows.
 pub struct Envelope {
     numbers: Numbers,
@@ -208,7 +213,6 @@ impl Envelope {
     /// At the defaults.
     #[must_use]
     pub fn new(numbers: Numbers, sample_rate: SampleRate) -> Self {
-        let samples = |seconds| f64::from(ramp_samples(seconds, sample_rate));
         let mut envelope = Self {
             numbers,
             sample_rate,
@@ -218,7 +222,7 @@ impl Envelope {
             decay: 0.0,
             sustain: Smoothed::for_param(&SUSTAIN, sample_rate),
             release: 0.0,
-            give_way: samples(GIVE_WAY_SECONDS).recip(),
+            give_way: samples(GIVE_WAY_SECONDS, sample_rate).recip(),
             sustains: [0.0; BLOCK_FRAMES],
             falls: [1.0; BLOCK_FRAMES],
         };
@@ -239,19 +243,18 @@ impl Envelope {
             release,
         } = self.numbers;
         let rate = self.sample_rate;
-        let samples = |seconds| f64::from(ramp_samples(seconds, rate));
         if param == delay {
             self.delay = rate.frames(value);
         } else if param == attack {
-            self.attack = samples(value).recip();
+            self.attack = samples(value, rate).recip();
         } else if param == hold {
             self.hold = rate.frames(value);
         } else if param == decay {
-            self.decay = samples(value);
+            self.decay = samples(value, rate);
         } else if param == sustain {
             self.sustain.set(value);
         } else if param == release {
-            self.release = samples(value);
+            self.release = samples(value, rate);
         }
     }
 
