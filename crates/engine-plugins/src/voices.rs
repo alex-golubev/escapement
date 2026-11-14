@@ -124,10 +124,6 @@ impl<V: Voice> Voices<V> {
         (self.places.iter_mut()).filter(|voice| !voice.is_free())
     }
 
-    pub(crate) fn iter_mut(&mut self) -> impl Iterator<Item = &mut V> {
-        self.places.iter_mut()
-    }
-
     #[cfg(test)]
     pub(crate) fn places(&self) -> &[V] {
         &self.places
