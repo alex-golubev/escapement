@@ -4,11 +4,10 @@
 use std::f32::consts::{PI, SQRT_2};
 use std::ops::Range;
 
-use crate::events::{Step, steps};
 use crate::smoothing::Smoothed;
 use crate::{
     CHANNELS, Event, ParamDescription, ParamNumber, Plugin, PluginDescription, ProcessContext,
-    SampleRate, Scale, Unit, Values, denormal,
+    SampleRate, Scale, Step, Unit, Values, denormal, steps,
 };
 
 const CUTOFF_PARAM: ParamDescription = ParamDescription {

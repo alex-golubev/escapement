@@ -2,11 +2,10 @@
 //! in a voice of its own. No volume of its own: its channel's sets how loud.
 
 use crate::envelope::GIVE_WAY_SECONDS;
-use crate::events::{Step, steps};
 use crate::smoothing::ramp_samples;
 use crate::{
     Event, Plugin, PluginDescription, ProcessContext, SampleDescription, SampleNumber, SampleRate,
-    SampleReader,
+    SampleReader, Step, steps,
 };
 
 const SAMPLE_SOUND: SampleDescription = SampleDescription {

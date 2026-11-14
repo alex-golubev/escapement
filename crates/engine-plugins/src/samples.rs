@@ -9,8 +9,7 @@ use crate::{CHANNELS, SampleNumber};
 /// have. Two stretches at once don't compile:
 ///
 /// ```compile_fail,E0499
-/// # use engine_plugins::SampleNumber;
-/// # use engine_plugins::samples::SampleReader;
+/// # use engine_plugins::{SampleNumber, SampleReader};
 /// fn both(reader: &mut dyn SampleReader, sample: SampleNumber) {
 ///     let first = reader.frames(sample, 0..64);
 ///     let second = reader.frames(sample, 64..128);
@@ -21,8 +20,7 @@ use crate::{CHANNELS, SampleNumber};
 /// One after the other do:
 ///
 /// ```
-/// # use engine_plugins::SampleNumber;
-/// # use engine_plugins::samples::SampleReader;
+/// # use engine_plugins::{SampleNumber, SampleReader};
 /// fn in_turn(reader: &mut dyn SampleReader, sample: SampleNumber) -> usize {
 ///     let first = reader.frames(sample, 0..64).map_or(0, |frames| frames.len());
 ///     let second = reader.frames(sample, 64..128).map_or(0, |frames| frames.len());

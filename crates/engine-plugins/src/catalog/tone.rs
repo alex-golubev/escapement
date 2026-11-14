@@ -2,11 +2,10 @@
 
 use std::f32::consts::TAU;
 
-use crate::events::{Step, steps};
 use crate::smoothing::Smoothed;
 use crate::{
     Event, ParamDescription, ParamNumber, Plugin, PluginDescription, ProcessContext, SampleRate,
-    Scale, Unit, Values,
+    Scale, Step, Unit, Values, steps,
 };
 
 const VOLUME_PARAM: ParamDescription = ParamDescription {
