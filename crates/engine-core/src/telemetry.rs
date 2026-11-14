@@ -82,6 +82,8 @@ const FALL_DB: f32 = 20.0;
 const FALL_SECONDS: f32 = 1.7;
 /// −120 dB. Without a floor the level would never reach zero.
 const FLOOR: f32 = 1e-6;
+/// What a broken sample reads as: the least over full scale.
+const JUST_OVER: f32 = 1.0f32.next_up();
 
 /// Rises at once, falls slowly: a page that looks only now and then still sees short peaks. Counts the blocks that go
 /// over full scale, which the falling level can't tell, until whoever keeps the count takes them.
@@ -101,12 +103,19 @@ impl PeakMeter {
         }
     }
 
-    /// Returns the level after `block`, at most [`BLOCK_FRAMES`] long.
+    /// Returns the level after `block`, at most [`BLOCK_FRAMES`] long. A sample that is no number or infinite is a
+    /// broken signal: it reads as [`JUST_OVER`], so its block counts as over and the meter stands at the top, then falls
+    /// as after any peak.
     pub(crate) fn update(&mut self, block: &[f32]) -> f32 {
         debug_assert!(block.len() <= BLOCK_FRAMES);
-        let peak = block
-            .iter()
-            .fold(0.0f32, |peak, sample| peak.max(sample.abs()));
+        // One maximum and no early exit, so it runs in SIMD lanes.
+        let peak = block.iter().fold(0.0f32, |peak, &sample| {
+            peak.max(if sample.is_finite() {
+                sample.abs()
+            } else {
+                JUST_OVER
+            })
+        });
         self.overs = self.overs.wrapping_add((peak > 1.0).into());
         #[expect(
             clippy::cast_possible_truncation,
@@ -261,6 +270,40 @@ mod tests {
         meter.update(&[0.0; BLOCK_FRAMES]);
         assert_eq!(meter.take_overs(), 2);
         assert_eq!(meter.take_overs(), 0);
+    }
+
+    #[test]
+    fn a_broken_sample_reads_just_over_full_scale() {
+        for broken in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            let mut meter = PeakMeter::new(SAMPLE_RATE);
+            let mut block = [0.25; BLOCK_FRAMES];
+            block[BLOCK_FRAMES / 2] = broken;
+            assert_eq!(
+                meter.update(&block),
+                JUST_OVER,
+                "{broken} among whole samples"
+            );
+            assert_eq!(
+                meter.update(&[broken; BLOCK_FRAMES]),
+                JUST_OVER,
+                "{broken} alone"
+            );
+            assert_eq!(meter.take_overs(), 2, "{broken}");
+            // A whole sample louder than that still reads as itself.
+            block[0] = 1.5;
+            assert_eq!(meter.update(&block), 1.5, "{broken}");
+        }
+    }
+
+    #[test]
+    fn falls_as_usual_once_the_sound_is_whole_again() {
+        let mut meter = PeakMeter::new(SAMPLE_RATE);
+        meter.update(&[f32::INFINITY; BLOCK_FRAMES]);
+        let fallen = meter.update(&[0.0; BLOCK_FRAMES]);
+        assert!(fallen < 1.0, "{fallen}");
+        let blocks = seconds(11.0) / BLOCK_FRAMES;
+        let level = (0..blocks).fold(fallen, |_, _| meter.update(&[0.0; BLOCK_FRAMES]));
+        assert_eq!(level, 0.0);
     }
 
     /// A block's records: `meters`, in their order.
