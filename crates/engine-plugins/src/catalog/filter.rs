@@ -170,7 +170,7 @@ impl Plugin for Filter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::{SAMPLE_RATE, first_block, rate, render, rms, seconds, sine_at};
+    use crate::testing::{SAMPLE_RATE, decibels, first_block, rate, render, rms, seconds, sine_at};
 
     /// A steady sine's level through the filter against its own, once the filter has settled.
     fn gain_db(cutoff: f32, frequency: f32) -> f32 {
@@ -181,7 +181,7 @@ mod tests {
         assert_eq!(left, right);
         // Half a second holds whole periods of every frequency here.
         let settled = seconds(0.5);
-        20.0 * (rms(&left[settled..]) / rms(&input[settled..])).log10()
+        decibels(rms(&left[settled..]) / rms(&input[settled..]))
     }
 
     #[test]

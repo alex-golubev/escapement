@@ -88,7 +88,9 @@ impl Plugin for Tone {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::{SAMPLE_RATE, first_block, peak, render, seconds, silence};
+    use crate::testing::{
+        SAMPLE_RATE, first_block, peak, render, rising_crossings, seconds, silence,
+    };
 
     #[test]
     fn plays_a_440_hz_sine_at_the_default_volume() {
@@ -102,10 +104,7 @@ mod tests {
             "peak {level}"
         );
         // The first period starts at zero and isn't counted as a crossing.
-        let crossings = left
-            .windows(2)
-            .filter(|pair| pair[0] < 0.0 && pair[1] >= 0.0)
-            .count();
+        let crossings = rising_crossings(&left);
         assert!((439..=440).contains(&crossings), "crossings {crossings}");
     }
 

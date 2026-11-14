@@ -250,22 +250,7 @@ const fn same(a: &str, b: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::{param_number, sample_number};
-
-    const fn param(id: &'static str) -> ParamDescription {
-        ParamDescription {
-            id,
-            label: "Knob",
-            group: None,
-            unit: None,
-            scale: Scale::Linear,
-            values: Values::Any,
-            min: 0.0,
-            max: 1.0,
-            default: 0.5,
-            smoothing_seconds: 0.0,
-        }
-    }
+    use crate::testing::{param, param_number, sample_number};
 
     const fn sample(id: &'static str) -> SampleDescription {
         SampleDescription { id, label: "Sound" }

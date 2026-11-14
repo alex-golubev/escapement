@@ -381,7 +381,7 @@ impl Envelope {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::{SAMPLE_RATE, largest_step, seconds};
+    use crate::testing::{SAMPLE_RATE, decibels, largest_step, seconds};
 
     const DESCRIPTION: PluginDescription = PluginDescription {
         id: 1,
@@ -428,10 +428,6 @@ mod tests {
 
     fn sounding(levels: &[Option<f32>]) -> Vec<f32> {
         levels.iter().map(|level| level.unwrap_or(0.0)).collect()
-    }
-
-    fn decibels(level: f32) -> f32 {
-        20.0 * level.log10()
     }
 
     fn near(a: f32, b: f32, by: f32) -> bool {
