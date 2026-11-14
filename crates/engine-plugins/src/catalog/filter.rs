@@ -118,7 +118,7 @@ impl Filter {
                 }
             }
             self.until_heading -= 1;
-            let gain = self.gain.next().unwrap_or(self.coefficients.0);
+            let gain = self.gain.advance();
             #[expect(clippy::float_cmp, reason = "any change of the gain counts")]
             if gain != self.coefficients.0 {
                 self.coefficients = (gain, Coefficients::new(gain));
