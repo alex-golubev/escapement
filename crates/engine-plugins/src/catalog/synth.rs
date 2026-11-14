@@ -51,15 +51,17 @@ impl Shape {
         Choice { id, label }
     }
 
-    /// From -1 to 1 at `phase`, of the period.
-    fn wave(self, phase: f32, increment: f32, noise: &mut Noise) -> f32 {
-        match self {
+    /// At `phase`, of the period, within -1 to 1: a pitched wave times `pitched`, as [`below_half_the_sample_rate`]
+    /// has it; noise, which has no pitch to alias, whole.
+    fn wave(self, phase: f32, increment: f32, pitched: f32, noise: &mut Noise) -> f32 {
+        let wave = match self {
             Self::Sine => (TAU * phase).sin(),
             Self::Triangle => triangle(phase, increment),
             Self::Square => square(phase, increment),
             Self::Saw => saw(phase, increment),
-            Self::Noise => noise.next(),
-        }
+            Self::Noise => return noise.next(),
+        };
+        pitched * wave
     }
 }
 
@@ -662,11 +664,7 @@ impl Synth {
                     let pitched = below_half_the_sample_rate(increment);
                     for ((shape, parts), &heard) in Shape::ALL.into_iter().zip(parts).zip(heard) {
                         if heard {
-                            let sample = match shape {
-                                Shape::Noise => noise.next(),
-                                _ => pitched * shape.wave(*phase, increment, noise),
-                            };
-                            wave += parts[frame] * sample;
+                            wave += parts[frame] * shape.wave(*phase, increment, pitched, noise);
                         }
                     }
                 }
