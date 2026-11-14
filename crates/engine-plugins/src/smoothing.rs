@@ -140,8 +140,7 @@ impl Iterator for Smoothed {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::{SAMPLE_RATE, rate};
-    use crate::{Unit, Values};
+    use crate::testing::{SAMPLE_RATE, param, rate};
 
     fn take(smoothed: &mut Smoothed, samples: usize) -> Vec<f32> {
         smoothed.take(samples).collect()
@@ -194,19 +193,11 @@ mod tests {
 
     #[test]
     fn a_parameter_starts_at_its_default_and_ramps_for_its_smoothing_time() {
-        let param = ParamDescription {
-            id: "volume",
-            label: "Volume",
-            group: None,
-            unit: None,
-            scale: Scale::Linear,
-            values: Values::Any,
-            min: 0.0,
-            max: 1.0,
-            default: 0.5,
+        let knob = ParamDescription {
             smoothing_seconds: 0.02,
+            ..param("volume")
         };
-        let mut volume = Smoothed::for_param(&param, SAMPLE_RATE);
+        let mut volume = Smoothed::for_param(&knob, SAMPLE_RATE);
         assert_eq!(volume.ramp_samples, 960);
         assert_eq!(take(&mut volume, 3), [0.5; 3]);
     }
@@ -237,20 +228,14 @@ mod tests {
 
     #[test]
     fn a_volume_moves_evenly_in_the_value_from_silence_and_back() {
-        let param = ParamDescription {
-            id: "volume",
-            label: "Volume",
-            group: None,
-            unit: Some(Unit::Gain),
+        let knob = ParamDescription {
             scale: Scale::Volume,
-            values: Values::Any,
-            min: 0.0,
-            max: 1.0,
             default: 0.0,
             smoothing_seconds: 0.02,
+            ..param("volume")
         };
-        let mut volume = Smoothed::for_param(&param, SAMPLE_RATE);
-        volume.next();
+        let mut volume = Smoothed::for_param(&knob, SAMPLE_RATE);
+        volume.advance();
         volume.set(0.6);
         let up = take(&mut volume, 960);
         assert!((up[479] - 0.3).abs() < 1e-6, "{}", up[479]);
@@ -263,20 +248,16 @@ mod tests {
 
     /// Already sounding at its default.
     fn cutoff(smoothing_seconds: f32) -> Smoothed {
-        let param = ParamDescription {
-            id: "cutoff",
-            label: "Cutoff",
-            group: None,
-            unit: Some(Unit::Hertz),
+        let knob = ParamDescription {
             scale: Scale::Logarithmic,
-            values: Values::Any,
             min: 20.0,
             max: 20_000.0,
             default: 20_000.0,
             smoothing_seconds,
+            ..param("cutoff")
         };
-        let mut cutoff = Smoothed::for_param(&param, SAMPLE_RATE);
-        cutoff.next();
+        let mut cutoff = Smoothed::for_param(&knob, SAMPLE_RATE);
+        cutoff.advance();
         cutoff
     }
 

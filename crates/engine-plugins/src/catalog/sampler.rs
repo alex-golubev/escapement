@@ -179,18 +179,13 @@ impl Sampler {
 mod tests {
     use super::*;
     use crate::BLOCK_FRAMES;
-    use crate::NoteId;
     use crate::testing::{
-        NoSound, SAMPLE_RATE, Sound, largest_step, render_with, seconds, silence,
+        NoSound, SAMPLE_RATE, Sound, largest_step, note_on, render_with, seconds, silence,
     };
 
+    /// Named by its time.
     fn note(time: u32, velocity: f32) -> Event {
-        Event::NoteOn {
-            time,
-            key: 60,
-            velocity,
-            note: NoteId::new(time),
-        }
+        note_on(time, 60, velocity, time)
     }
 
     /// One at full velocity on each of the first `count` frames.

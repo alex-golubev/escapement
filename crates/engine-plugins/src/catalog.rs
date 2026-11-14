@@ -43,7 +43,8 @@ mod tests {
     use super::*;
     use crate::smoothing::ramp_samples;
     use crate::testing::{
-        NOTE_NAME, SAMPLE_RATE, first_block_with_note, largest_step, render, seconds, silence, sine,
+        NOTE_NAME, SAMPLE_RATE, difference, first_block_with_note, largest_step, note_off, render,
+        seconds, silence, sine,
     };
     use crate::{BLOCK_FRAMES, CHANNELS, Event, ParamDescription, ParamNumber};
 
@@ -143,10 +144,7 @@ mod tests {
                     // over, as a turn by a wave's jump smooths it half for one pitch and half for the other.
                     let limits: [f32; CHANNELS] = std::array::from_fn(|channel| {
                         let (at_from, at_to) = (&at_from[channel], &at_to[channel]);
-                        let change = at_from
-                            .iter()
-                            .zip(at_to)
-                            .fold(0.0f32, |change, (a, b)| change.max((b - a).abs()));
+                        let change = difference(at_from, at_to, 0..at_from.len());
                         largest_step(at_from).max(largest_step(at_to)) * 1.001
                             + change * share
                             + 1e-6
@@ -192,10 +190,7 @@ mod tests {
         let time = BLOCK_FRAMES / 2 + 7;
         let at = before.len() + time;
         // Early in its first block, so its release is under way by the change.
-        let let_go = Event::NoteOff {
-            time: u32::try_from(BLOCK_FRAMES / 2).unwrap(),
-            note: NOTE_NAME,
-        };
+        let let_go = note_off(u32::try_from(BLOCK_FRAMES / 2).unwrap(), NOTE_NAME);
         for entry in CATALOG {
             let params = || ParamNumber::each(entry.description.params);
             for (number, param) in params() {

@@ -5,7 +5,8 @@ use super::*;
 use crate::envelope::GIVE_WAY_SECONDS;
 use crate::smoothing::ramp_samples;
 use crate::testing::{
-    SAMPLE_RATE, first_block, largest_step, peak, rate, render, rms, seconds, silence,
+    SAMPLE_RATE, decibels, difference, first_block, largest_step, note_off, note_on, peak, rate,
+    render, rising_at, rising_crossings, rms, seconds, silence,
 };
 
 const A4: u8 = 69;
@@ -18,23 +19,7 @@ fn release() -> usize {
 
 /// Named by its key.
 fn on(time: u32, key: u8) -> Event {
-    named(time, key, u32::from(key), 1.0)
-}
-
-fn named(time: u32, key: u8, note: u32, velocity: f32) -> Event {
-    Event::NoteOn {
-        time,
-        key,
-        velocity,
-        note: NoteId::new(note),
-    }
-}
-
-fn off(time: u32, note: u32) -> Event {
-    Event::NoteOff {
-        time,
-        note: NoteId::new(note),
-    }
+    note_on(time, key, 1.0, u32::from(key))
 }
 
 const A: u32 = A4 as u32;
@@ -81,22 +66,6 @@ fn play(notes: &[Event], samples: usize) -> Vec<f32> {
     play_parts(&[(notes, samples)])
 }
 
-/// The largest difference between the two over `range`.
-fn difference(a: &[f32], b: &[f32], range: std::ops::Range<usize>) -> f32 {
-    a[range.clone()]
-        .iter()
-        .zip(&b[range])
-        .map(|(a, b)| (a - b).abs())
-        .fold(0.0, f32::max)
-}
-
-fn rising_crossings(samples: &[f32]) -> usize {
-    samples
-        .windows(2)
-        .filter(|pair| pair[0] < 0.0 && pair[1] >= 0.0)
-        .count()
-}
-
 #[test]
 fn is_silent_until_a_note() {
     assert_eq!(peak(&play(&[], 1000)), 0.0);
@@ -109,7 +78,7 @@ fn plays_the_key_s_pitch_at_its_velocity() {
     assert!((439..=441).contains(&rising_crossings(&second)));
     let level = peak(&second);
     assert!((level - VOICE_GAIN).abs() < 0.02, "peak {level}");
-    let quiet = named(0, A4, 1, 0.5);
+    let quiet = note_on(0, A4, 0.5, 1);
     let half = peak(&play(&[quiet], seconds(0.1)));
     assert!((half - VOICE_GAIN / 2.0).abs() < 0.01, "peak {half}");
     assert_eq!(frequency(A4 + 12), 880.0);
@@ -129,11 +98,11 @@ fn rises_without_a_click() {
 fn holds_until_let_go_of_then_falls_silent_over_its_release() {
     let release = release();
     let held = 2000;
-    let sound = play_parts(&[(&[on(0, A4)], held), (&[off(0, A)], 3 * release)]);
+    let sound = play_parts(&[(&[on(0, A4)], held), (&[note_off(0, A)], 3 * release)]);
     assert!(peak(&sound[held - 200..held]) > 0.9 * VOICE_GAIN);
     // Half way through the release, 40 dB down, as it falls evenly in decibels to 80 down; over a period up to it.
     let middle = held + release / 2;
-    let half_way = 20.0 * (peak(&sound[middle - 110..middle]) / VOICE_GAIN).log10();
+    let half_way = decibels(peak(&sound[middle - 110..middle]) / VOICE_GAIN);
     assert!((-41.0..-37.5).contains(&half_way), "{half_way} dB");
     assert!(peak(&sound[held + release - 100..held + release - 1]) > 0.0);
     assert_eq!(peak(&sound[held + release - 1..]), 0.0);
@@ -144,31 +113,31 @@ fn letting_go_of_a_note_lets_go_of_it_and_no_other_even_of_its_key() {
     let release = release();
     let tail = 2 * release;
     let alone = play(&[on(0, A4), on(0, A4 + 7)], 3 * release);
-    let both = play(&[on(0, A4), on(0, A4 + 7), off(0, A)], 3 * release);
+    let both = play(&[on(0, A4), on(0, A4 + 7), note_off(0, A)], 3 * release);
     // The fifth goes on as it was.
     let fifth = play(&[on(0, A4 + 7)], 3 * release);
     assert!(peak(&alone[tail..]) > 1.5 * VOICE_GAIN);
     assert!((peak(&both[tail..]) - peak(&fifth[tail..])).abs() < 1e-6);
     // Of a loud and a quiet note of one key, the quiet one let go of leaves the loud one.
-    let loud = named(0, A4, 1, 1.0);
-    let quiet = named(0, A4, 2, 0.5);
-    let left = play(&[loud, quiet, off(0, 2)], 3 * release);
+    let loud = note_on(0, A4, 1.0, 1);
+    let quiet = note_on(0, A4, 0.5, 2);
+    let left = play(&[loud, quiet, note_off(0, 2)], 3 * release);
     assert!((peak(&left[tail..]) - VOICE_GAIN).abs() < 0.02);
-    let none = play(&[loud, quiet, off(0, 2), off(0, 1)], 3 * release);
+    let none = play(&[loud, quiet, note_off(0, 2), note_off(0, 1)], 3 * release);
     assert_eq!(peak(&none[tail..]), 0.0);
 }
 
 #[test]
 fn a_note_let_go_of_as_it_is_pressed_is_not_left_held() {
-    assert_eq!(peak(&play(&[on(0, A4), off(0, A)], 1000)), 0.0);
+    assert_eq!(peak(&play(&[on(0, A4), note_off(0, A)], 1000)), 0.0);
 }
 
 #[test]
 fn a_silent_note_or_a_key_not_held_changes_nothing() {
-    let silent = named(0, A4, 1, 0.0);
+    let silent = note_on(0, A4, 0.0, 1);
     assert_eq!(peak(&play(&[silent], 1000)), 0.0);
     let held = play(&[on(0, A4)], 1000);
-    assert_eq!(play(&[on(0, A4), off(0, A + 1)], 1000), held);
+    assert_eq!(play(&[on(0, A4), note_off(0, A + 1)], 1000), held);
 }
 
 #[test]
@@ -224,19 +193,14 @@ fn minus(a: &[f32], b: &[f32]) -> Vec<f32> {
     a.iter().zip(b).map(|(a, b)| a - b).collect()
 }
 
-const EXTRA: Event = Event::NoteOn {
-    time: 0,
-    key: 100,
-    velocity: 1.0,
-    note: NoteId::new(100),
-};
+const EXTRA: Event = note_on(0, 100, 1.0, 100);
 
 #[test]
 fn a_tail_gives_way_before_a_note_held_however_old() {
     // The oldest held, then one let go of with a long release, then fourteen more held: sixteen sounding.
     let long = [(ENVELOPE.release, 10.0)];
     let first = [on(0, 40), on(0, 90)];
-    let more: Vec<_> = [off(0, 90)]
+    let more: Vec<_> = [note_off(0, 90)]
         .into_iter()
         .chain((41..55).map(|key| on(0, key)))
         .collect();
@@ -246,7 +210,11 @@ fn a_tail_gives_way_before_a_note_held_however_old() {
         &[EXTRA],
     );
     // The extra note heard in place of the tail.
-    let tail = alone_past_the_fade(&long, &[(&[on(0, 90)], 1000), (&[off(0, 90)], 5000)], 2000);
+    let tail = alone_past_the_fade(
+        &long,
+        &[(&[on(0, 90)], 1000), (&[note_off(0, 90)], 5000)],
+        2000,
+    );
     let extra = alone_past_the_fade(&long, &[(&[], 2000), (&[EXTRA], 4000)], 2000);
     let differs = difference(&traded, &minus(&extra, &tail), 0..traded.len());
     assert!(differs < 1e-5, "{differs}");
@@ -258,18 +226,18 @@ fn of_tails_the_quietest_gives_way_whichever_was_pressed_first() {
     // Pressed first and let go of last, the loud one; the other well on its way down.
     let (loud, quiet) = (on(0, 90), on(0, 95));
     let first = [on(0, 40), loud, quiet];
-    let more: Vec<_> = [off(0, 90)]
+    let more: Vec<_> = [note_off(0, 90)]
         .into_iter()
         .chain((41..54).map(|key| on(0, key)))
         .collect();
     let parts: [(&[Event], usize); 4] = [
         (&first, 1000),
-        (&[off(0, 95)], 2000),
+        (&[note_off(0, 95)], 2000),
         (&more, 1000),
         (&[], 4000),
     ];
     let traded = traded_for(&values, &parts, &[EXTRA]);
-    let quiet_alone = [(&[quiet][..], 1000), (&[off(0, 95)], 7000)];
+    let quiet_alone = [(&[quiet][..], 1000), (&[note_off(0, 95)], 7000)];
     let quiet = alone_past_the_fade(&values, &quiet_alone, 4000);
     let extra = alone_past_the_fade(&values, &[(&[], 4000), (&[EXTRA], 4000)], 4000);
     let differs = difference(&traded, &minus(&extra, &quiet), 0..traded.len());
@@ -307,7 +275,7 @@ fn a_note_held_fallen_silent_gives_way_before_a_tail() {
     ];
     // Sixteen held; one let go of half way down its decay, still heard as the others fall silent.
     let chord: Vec<_> = (40..56).map(|key| on(0, key)).collect();
-    let parts: [(&[Event], usize); 3] = [(&chord, 1000), (&[off(0, 40)], 3000), (&[], 4000)];
+    let parts: [(&[Event], usize); 3] = [(&chord, 1000), (&[note_off(0, 40)], 3000), (&[], 4000)];
     let traded = traded_for(&values, &parts, &[EXTRA]);
     // The extra note heard, and nothing gone.
     let extra = alone_past_the_fade(&values, &[(&[], 4000), (&[EXTRA], 4000)], 4000);
@@ -347,9 +315,9 @@ fn each_note_goes_through_the_envelope_from_its_own_press() {
 fn a_note_that_gave_way_is_let_go_of_without_touching_the_one_it_gave_way_to() {
     let chord: Vec<_> = (0..voices()).map(|i| on(0, 40 + i)).collect();
     // Key 40 again, as another note: the first 40 gives way to it.
-    let again = [named(0, 40, 99, 1.0)];
+    let again = [note_on(0, 40, 1.0, 99)];
     let held = play_parts(&[(&chord, 1000), (&again, 1000), (&[], 2000)]);
-    let let_go = play_parts(&[(&chord, 1000), (&again, 1000), (&[off(0, 40)], 2000)]);
+    let let_go = play_parts(&[(&chord, 1000), (&again, 1000), (&[note_off(0, 40)], 2000)]);
     assert_eq!(held, let_go);
 }
 
@@ -484,7 +452,7 @@ fn noise_has_no_offset() {
 #[test]
 fn two_synths_layered_on_the_same_steps_play_noises_of_their_own() {
     // The engine names each note of a pattern anew, whichever node plays it.
-    let noise = |note| play_shaped(Shape::Noise, &[(&[named(0, A4, note, 1.0)], 4800)]);
+    let noise = |note| play_shaped(Shape::Noise, &[(&[note_on(0, A4, 1.0, note)], 4800)]);
     assert_eq!(noise(1), noise(1));
     let (one, other) = (noise(1), noise(2));
     let together: Vec<f32> = one.iter().zip(&other).map(|(a, b)| a + b).collect();
@@ -618,15 +586,6 @@ fn alone(osc: OscillatorParams) -> Vec<(ParamNumber, f32)> {
     let mut values = vec![(osc.shape, SINE)];
     values.extend(osc.mix.map(|mix| (mix, 1.0)));
     values
-}
-
-/// Where the sound rises through 0, between samples.
-fn rising_at(samples: &[f32]) -> Vec<f64> {
-    let rising = samples.windows(2).enumerate();
-    rising
-        .filter(|(_, pair)| pair[0] < 0.0 && pair[1] >= 0.0)
-        .map(|(i, pair)| i as f64 + f64::from(pair[0] / (pair[0] - pair[1])))
-        .collect()
 }
 
 #[test]
