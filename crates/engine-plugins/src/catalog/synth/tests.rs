@@ -388,15 +388,22 @@ fn a_pitched_wave_fades_out_below_half_the_sample_rate_and_is_silent_from_it() {
 
 #[test]
 fn shapes_are_kept_by_their_place_and_a_new_synth_plays_a_saw() {
-    for (place, shape) in Shape::ALL.into_iter().enumerate() {
-        assert_eq!(shape as usize, place);
-    }
+    // A shape moved would play another in every project.
+    let ids = SHAPES.map(|choice| choice.id);
+    assert_eq!(ids, ["sine", "triangle", "square", "saw", "noise"]);
     assert_eq!(Shape::of(PARAMS[0].default).unwrap(), Shape::Saw);
+}
+
+/// Every shape with a pitch: all but noise.
+fn pitched() -> impl Iterator<Item = Shape> {
+    Shape::ALL
+        .into_iter()
+        .filter(|&shape| shape != Shape::Noise)
 }
 
 #[test]
 fn every_shape_but_noise_plays_the_key_s_pitch_at_full_level() {
-    for shape in [Shape::Sine, Shape::Triangle, Shape::Square, Shape::Saw] {
+    for shape in pitched() {
         let second = play_shaped(shape, &[(&[on(0, A4)], seconds(1.0))]);
         let crossings = rising_crossings(&second);
         assert!((439..=441).contains(&crossings), "{shape:?}: {crossings}");
@@ -770,7 +777,7 @@ fn coarse_moves_a_sounding_note_at_once_and_fine_glides_over_its_smoothing() {
 #[test]
 fn a_coarse_turn_on_a_sounding_note_does_not_click() {
     let turn = 90 * BLOCK_FRAMES;
-    for shape in [Shape::Sine, Shape::Triangle, Shape::Square, Shape::Saw] {
+    for shape in pitched() {
         for (from, to) in [(-24.0, 24.0), (24.0, -24.0)] {
             let at = |coarse| [(SHAPE, shape.value()), (OSC1.coarse, coarse)];
             let steady = |coarse| largest_step(&a_second(&at(coarse)));
