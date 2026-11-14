@@ -5,11 +5,10 @@
 use std::f32::consts::TAU;
 
 use crate::envelope::{self, Contour, Envelope};
-use crate::events::{Step, steps};
 use crate::smoothing::Smoothed;
 use crate::{
     BLOCK_FRAMES, Choice, Event, NoteId, ParamDescription, ParamNumber, Plugin, PluginDescription,
-    ProcessContext, SampleRate, Scale, Unit, Values,
+    ProcessContext, SampleRate, Scale, Step, Unit, Values, steps,
 };
 
 /// From the smoothest to the brightest. Projects keep them by place.

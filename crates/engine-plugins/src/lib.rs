@@ -5,10 +5,10 @@ pub mod catalog;
 pub mod denormal;
 mod description;
 pub mod envelope;
-pub mod events;
+mod events;
 mod fingerprint;
 mod sample_rate;
-pub mod samples;
+mod samples;
 pub mod smoothing;
 #[cfg(test)]
 mod testing;
@@ -17,7 +17,7 @@ pub use description::{
     Choice, ParamDescription, ParamNumber, PluginDescription, SampleDescription, SampleNumber,
     Scale, Unit, Values,
 };
-pub use events::{Event, NoteId};
+pub use events::{Event, NoteId, Step, steps};
 pub use fingerprint::fingerprint;
 pub use sample_rate::SampleRate;
 pub use samples::{Frames, SampleReader};
@@ -33,7 +33,7 @@ pub struct ProcessContext<'a> {
     pub input: [&'a [f32]; CHANNELS],
     /// As long as the input; the plugin writes every sample.
     pub output: [&'a mut [f32]; CHANNELS],
-    /// What happens during the block, in time order: [`events::steps`] walks through it.
+    /// What happens during the block, in time order: [`steps`] walks through it.
     pub events: &'a [Event],
     pub samples: &'a mut dyn SampleReader,
 }
