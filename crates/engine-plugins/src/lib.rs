@@ -12,6 +12,7 @@ mod samples;
 pub mod smoothing;
 #[cfg(test)]
 mod testing;
+mod voices;
 
 pub use description::{
     Choice, ParamDescription, ParamNumber, PluginDescription, SampleDescription, SampleNumber,
