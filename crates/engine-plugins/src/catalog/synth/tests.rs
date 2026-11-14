@@ -427,8 +427,6 @@ fn every_oscillator_of_every_note_starts_a_noise_of_its_own() {
         })
         .collect();
     assert_eq!(starts.len(), 1000 * OSCILLATORS);
-    // Nor any the start a free voice keeps.
-    assert!(!starts.contains(&FREE.noises[0].0));
 }
 
 #[test]

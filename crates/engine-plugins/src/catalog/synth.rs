@@ -588,10 +588,9 @@ impl Synth {
             oscillator.tune(&mut ratios[osc][..frames]);
         }
         let sounding = heard.map(|shapes| shapes.contains(&true));
-        for voice in voices.iter_mut() {
+        for voice in voices.in_use() {
             for (frame, (l, r)) in left.iter_mut().zip(right.iter_mut()).enumerate() {
                 let Some(level) = envelope.next(&mut voice.contour, frame) else {
-                    *voice = FREE;
                     break;
                 };
                 let mut wave = 0.0;
