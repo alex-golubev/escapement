@@ -12,7 +12,7 @@ use crate::graph::{Graph, Nodes};
 use crate::handle::NodeHandle;
 use crate::handoff::{Arrival, AudioEnd, Batch, Edit, Parcel};
 use crate::heap;
-use crate::node::page_param;
+use crate::node::{Node, page_param};
 use crate::notes::page_note;
 use crate::schema::Rejection;
 use crate::sequencer::{Arrangement, Held, Patterns, Sequencer};
@@ -144,25 +144,15 @@ impl Engine {
         } = self;
         let drained = input.drain(|command| {
             let applied = match command {
-                Ok(Command::SetParam(set)) => graph
-                    .node_mut(NodeHandle::new(set.node()))
-                    .ok_or(Rejection::UnknownTarget)
+                Ok(Command::SetParam(set)) => target(graph, set.node())
                     .and_then(|node| node.set_param(page_param(set.param())?, set.value())),
-                Ok(Command::SetStripParam(set)) => graph
-                    .node_mut(NodeHandle::new(set.node()))
-                    .ok_or(Rejection::UnknownTarget)
-                    .and_then(|node| {
-                        node.set_strip_param(page_strip_param(set.param())?, set.value())
-                    }),
-                Ok(Command::NoteOn(note)) => graph
-                    .node_mut(NodeHandle::new(note.node()))
-                    .ok_or(Rejection::UnknownTarget)
-                    .and_then(|node| {
-                        node.note_on(0, note.key(), note.velocity(), page_note(note.note())?)
-                    }),
-                Ok(Command::NoteOff(note)) => graph
-                    .node_mut(NodeHandle::new(note.node()))
-                    .ok_or(Rejection::UnknownTarget)
+                Ok(Command::SetStripParam(set)) => target(graph, set.node()).and_then(|node| {
+                    node.set_strip_param(page_strip_param(set.param())?, set.value())
+                }),
+                Ok(Command::NoteOn(note)) => target(graph, note.node()).and_then(|node| {
+                    node.note_on(0, note.key(), note.velocity(), page_note(note.note())?)
+                }),
+                Ok(Command::NoteOff(note)) => target(graph, note.node())
                     .and_then(|node| node.note_off(0, page_note(note.note())?)),
                 Ok(Command::SetTempo(tempo)) => transport.set_tempo(tempo.bpm()),
                 Ok(Command::SetTransport(state)) => transport.set(
@@ -205,6 +195,13 @@ impl Engine {
         }
         telemetry.stream_lost = input.is_lost().into();
     }
+}
+
+/// The live node a command names.
+fn target(graph: &mut Graph, node: u32) -> Result<&mut Node, Rejection> {
+    graph
+        .node_mut(NodeHandle::new(node))
+        .ok_or(Rejection::UnknownTarget)
 }
 
 /// Swaps every edit in; the parcel then holds what they displaced.
