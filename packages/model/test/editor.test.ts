@@ -225,6 +225,7 @@ describe('an editor', () => {
             .map(({ id }) => id)
         ),
       (editor) => editor.setMute(track.id, true),
+      (editor) => editor.setInstrumentOn(track.id, false),
       (editor) => editor.setTempo(150),
       (editor) => editor.setTrackParam(synth.id, 'osc1.shape', 0),
       (editor) => editor.setTrackStrip(track.id, 'pan', -0.6),

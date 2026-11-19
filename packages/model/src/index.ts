@@ -29,6 +29,7 @@ export {
   type NewNote,
   renameTrack,
   resizeClip,
+  setInstrumentOn,
   setMasterParam,
   setMasterStrip,
   setMute,

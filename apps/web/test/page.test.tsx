@@ -35,6 +35,7 @@ import {
   readProjectId,
   renameTrack,
   resizeClip,
+  setInstrumentOn,
   setTrackStrip,
   stepTicks,
   stretchNote,
@@ -1822,9 +1823,14 @@ test("a track's name shows it below: the devices its sound goes through, a sampl
       expect(devicesIn(kick)).toEqual(['Sampler'])
       // No pan or volume either: the track's head and strip have them.
       expect(knobsIn(kick)).toEqual([])
-      // Its head alone: its name, and how many notes it sounds at once.
+      // Its head alone: its square, its name, and how many notes it sounds at once.
       expect(Array.from(kick.querySelectorAll('.device > *'), (part) => part.className)).toEqual(['device__head'])
-      expect(Array.from(kick.querySelectorAll('.device__head > *'), (part) => part.textContent)).toEqual([
+      expect(Array.from(kick.querySelectorAll('.device__head > *'), (part) => part.className)).toEqual([
+        'device__on',
+        'cap device__name',
+        'cap device__note'
+      ])
+      expect(Array.from(kick.querySelectorAll('.device__head .cap'), (part) => part.textContent)).toEqual([
         'Sampler',
         '16 voices'
       ])
@@ -1842,15 +1848,53 @@ test('a device that plays no notes, as the test tone, has nothing by its name at
         nameButton(grid, 'Tone').click()
         yield* drawn(50)
         const tone = Option.getOrThrow(trackBelow(target, 'Tone'))
-        expect(Array.from(tone.querySelectorAll('.device__head > *'), (part) => part.textContent)).toEqual([
-          'Test tone'
+        expect(Array.from(tone.querySelectorAll('.device__head > *'), (part) => part.className)).toEqual([
+          'device__on',
+          'cap device__name'
         ])
+        expect(tone.querySelector('.device__name')?.textContent).toBe('Test tone')
       }),
     {},
     {},
     { doc }
   )
 })
+
+test("an instrument's square turns it off in the project, for everyone, dimming its face; Cmd+Z turns it on again", () =>
+  page(({ doc, grid, target, button }) =>
+    Effect.gen(function* () {
+      button('Add a track').click()
+      yield* drawn()
+      nameButton(grid, 'Synth').click()
+      yield* drawn(50)
+      const hint = () => target.querySelector('.hint')?.textContent
+      const square = () => button('Synth synth: on')
+      const shown = () => [
+        square().getAttribute('aria-pressed'),
+        target.querySelector('.device')?.getAttribute('data-off')
+      ]
+      const synth = () => Option.getOrThrow(Option.fromUndefinedOr(readProject(doc).value.tracks.at(-1)))
+      const on = () => Option.map(synth().instrument, ({ on }) => on)
+      expect(on()).toEqual(Option.some(true))
+      expect(shown()).toEqual(['true', 'false'])
+      square().dispatchEvent(new PointerEvent('pointerover', { bubbles: true }))
+      yield* drawn()
+      expect(hint()).toBe('Turn Synth synth off in the project, for everyone: the track falls silent')
+      square().click()
+      yield* drawn()
+      expect(on()).toEqual(Option.some(false))
+      expect(shown()).toEqual(['false', 'true'])
+      expect(hint()).toBe('Synth synth is off in the project, for everyone: the track is silent')
+      press(document.body, { key: 'z', metaKey: true })
+      yield* drawn()
+      expect(on()).toEqual(Option.some(true))
+      expect(shown()).toEqual(['true', 'false'])
+      // Turned off elsewhere, it shows off here too.
+      setInstrumentOn(doc, elsewhere, synth().id, false)
+      yield* drawn()
+      expect(shown()).toEqual(['false', 'true'])
+    })
+  ))
 
 test("a click on another track's name shows that one in its place, its head marked; one more leaves it shown", () =>
   page(({ grid, target }) =>
@@ -2007,7 +2051,7 @@ test("a synth's track below: its card, with an oscillator's controls to a row an
       yield* drawn(50)
       const synth = Option.getOrThrow(trackBelow(target, 'Synth'))
       expect(devicesIn(synth)).toEqual(['Synth'])
-      expect(Array.from(synth.querySelectorAll('.device__head > *'), (part) => part.textContent)).toEqual([
+      expect(Array.from(synth.querySelectorAll('.device__head .cap'), (part) => part.textContent)).toEqual([
         'Synth',
         '16 voices'
       ])

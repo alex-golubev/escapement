@@ -49,6 +49,8 @@ export interface MetaFields {
 /** A plugin and its state: a track's instrument or a slot of the master's. Each parameter merges on its own. */
 export interface PluginFields {
   readonly plugin: { readonly id: number; readonly version: number }
+  /** Off, it is left out of what plays: an instrument falls silent, an effect lets its input through. */
+  readonly on: boolean
   /** By parameter ID; one left out is at its default. */
   readonly params: Stored<Record<string, number>>
   /** By sample ID; one left out has no sound. */

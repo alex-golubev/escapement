@@ -35,6 +35,7 @@ import {
   resizeClip,
   setMasterParam,
   setMasterStrip,
+  setInstrumentOn,
   setMute,
   setTempo,
   setTrackColour,
@@ -505,6 +506,21 @@ test('a track is muted and unmuted; one not there is refused', () => {
   expect(updatesDuring(doc, () => expect(setMute(doc, by, Id('nobody'), true)).toBe(false))).toBe(0)
 })
 
+test("a track's instrument is turned off and on; on a track not there, refused", () => {
+  const doc = newProject()
+  const { track } = parts(doc)
+  const on = () => Option.map(projectOf(doc).tracks[0].instrument, ({ on }) => on)
+  expect(on()).toEqual(Option.some(true))
+  expect(setInstrumentOn(doc, by, track.id, false)).toBe(true)
+  expect(on()).toEqual(Option.some(false))
+  expect(setInstrumentOn(doc, by, track.id, true)).toBe(true)
+  expect(on()).toEqual(Option.some(true))
+  expect(updatesDuring(doc, () => expect(setInstrumentOn(doc, by, Id('nobody'), false)).toBe(false))).toBe(0)
+  // One this build can't play, which the track reads as none, is refused.
+  rawMap(doc, 'tracks', track.id, 'instrument').set('plugin', { id: 99, version: 1 })
+  expect(updatesDuring(doc, () => expect(setInstrumentOn(doc, by, track.id, false)).toBe(false))).toBe(0)
+})
+
 test('a value the document already holds is not written again', () => {
   const doc = newProjectWithSynth()
   const { track, slot } = parts(doc)
@@ -522,6 +538,7 @@ test('a value the document already holds is not written again', () => {
     expect(setTempo(doc, by, maxTempo)).toBe(true)
     expect(setTempo(doc, by, 2000)).toBe(true)
     expect(setMute(doc, by, track.id, false)).toBe(true)
+    expect(setInstrumentOn(doc, by, track.id, true)).toBe(true)
     expect(renameTrack(doc, by, track.id, ' Kick ')).toBe(true)
     expect(setTrackColour(doc, by, track.id, firstColour)).toBe(true)
   }
@@ -533,12 +550,14 @@ test('nor is the value a document reads where it holds none: an edit that change
   const { track } = parts(doc)
   const synth = synthOf(doc)
   ;['mute', 'volume', 'pan', 'colour'].forEach((key) => rawMap(doc, 'tracks', track.id).delete(key))
+  rawMap(doc, 'tracks', track.id, 'instrument').delete('on')
   rawMap(doc, 'meta').delete('bpm')
   const none = () => {
     expect(setTrackParam(doc, by, synth.id, 'osc1.shape', plugins.synth.params[0].default)).toBe(true)
     expect(setTrackStrip(doc, by, track.id, 'volume', defaultTrackStrip.volume)).toBe(true)
     expect(setTrackStrip(doc, by, track.id, 'pan', 0)).toBe(true)
     expect(setMute(doc, by, track.id, false)).toBe(true)
+    expect(setInstrumentOn(doc, by, track.id, true)).toBe(true)
     expect(setTrackColour(doc, by, track.id, firstColour)).toBe(true)
     expect(setTempo(doc, by, defaultTempo)).toBe(true)
   }
@@ -552,8 +571,10 @@ test('a broken value is written over even when it reads as the one written', () 
   const { track } = parts(doc)
   rawMap(doc, 'tracks', track.id).set('mute', 'no')
   rawMap(doc, 'tracks', track.id).set('colour', 'teal')
+  rawMap(doc, 'tracks', track.id, 'instrument').set('on', 'yes')
   expect(projectOf(doc).tracks[0]).toMatchObject({ mute: false, colour: firstColour })
   expect(updatesDuring(doc, () => expect(setMute(doc, by, track.id, false)).toBe(true))).toBe(1)
+  expect(updatesDuring(doc, () => expect(setInstrumentOn(doc, by, track.id, true)).toBe(true))).toBe(1)
   expect(updatesDuring(doc, () => expect(setTrackColour(doc, by, track.id, firstColour)).toBe(true))).toBe(1)
   expect(replacementsOf(doc)).toEqual([])
 })

@@ -21,12 +21,45 @@
   background: var(--s-raise);
 }
 
-/* Its name, and at the right a word on how it plays. */
+/* Its square and name, and at the right a word on how it plays. */
 .device__head {
   display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: calc(var(--u) * 4);
+  align-items: center;
+  gap: calc(var(--u) * 2);
+}
+
+.device__note {
+  margin-left: auto;
+  padding-left: calc(var(--u) * 2);
+}
+
+/* A small square, lit while the device plays; the button round it is easier to hit, the square at the card's edge. */
+.device__on {
+  display: grid;
+  place-items: center;
+  width: var(--toggle);
+  height: var(--toggle);
+  flex: none;
+  margin-left: calc((0.5rem - var(--toggle)) / 2);
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+}
+
+.device__on::before {
+  content: "";
+  width: 0.5rem;
+  height: 0.5rem;
+  background: var(--t-lo);
+}
+
+.device__on:hover:not([aria-pressed="true"])::before {
+  background: var(--t-mid);
+}
+
+.device__on[aria-pressed="true"]::before {
+  background: var(--shared);
 }
 
 /* A knob's name and number beside it, not under: a row of knobs as high as a knob. */
@@ -96,7 +129,7 @@
   grid-row: 1 / span 3;
 }
 
-/* A track not heard dims what sounds, as its head does. */
-.chain[data-unheard="true"] :is(.param, .choices) {
+/* A track not heard dims what sounds, as its head does; a device off, its own. */
+:is(.chain[data-unheard="true"], .device[data-off="true"]) :is(.param, .choices) {
   opacity: 0.4;
 }

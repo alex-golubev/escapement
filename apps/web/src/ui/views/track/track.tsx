@@ -35,6 +35,33 @@ export const voicesNote = (voices: number): Option.Option<string> =>
     (voices) => `${voices} ${Boolean.match(voices === 1, { onTrue: () => 'voice', onFalse: () => 'voices' })}`
   )
 
+/** Whose a device's controls are, as their hints say: the track's name and the device's. */
+const ownerOf = (track: string, { plugin }: PluginInstance) => `${track} ${plugin.label.toLowerCase()}`
+
+/** An instrument's square, lit while it plays: a click turns it off or on in the project, for everyone. */
+const OnSquare = ({ track, owner, on }: { readonly track: Id; readonly owner: string; readonly on: boolean }) => {
+  const { registry, session, ops } = useCore()
+  return (
+    <button
+      type='button'
+      class='device__on'
+      aria-label={`${owner}: on`}
+      aria-pressed={on}
+      data-hint={Boolean.match(on, {
+        onTrue: () => `Turn ${owner} off in the project, for everyone: the track falls silent`,
+        onFalse: () => `${owner} is off in the project, for everyone: the track is silent`
+      })}
+      // The document's now, which may be ahead of the one drawn.
+      onClick={() =>
+        Option.map(
+          Option.flatMap(registry.get(session.project.track(track)), ({ instrument }) => instrument),
+          (now) => ops.setInstrumentOn(track, !now.on)
+        )
+      }
+    />
+  )
+}
+
 /** What of the track its chain shows, read alone: its volume, pan and mute change it not. */
 const useChainOf = (track: Id) => {
   const { session } = useCore()
@@ -59,15 +86,16 @@ export const TrackChain = ({ track }: { readonly track: Id }) => {
         {Option.match(instrument, {
           onNone: () => null,
           onSome: (played) => (
-            <section class='device' aria-label={played.plugin.label}>
+            <section class='device' aria-label={played.plugin.label} data-off={!played.on}>
               <header class='device__head'>
+                <OnSquare track={track} owner={ownerOf(name, played)} on={played.on} />
                 <span class='cap device__name'>{played.plugin.label}</span>
                 {Option.match(voicesNote(played.plugin.voices), {
                   onNone: () => null,
-                  onSome: (note) => <span class='cap'>{note}</span>
+                  onSome: (note) => <span class='cap device__note'>{note}</span>
                 })}
               </header>
-              <Face owner={`${name} ${played.plugin.label.toLowerCase()}`} track={track} instrument={played} />
+              <Face owner={ownerOf(name, played)} track={track} instrument={played} />
             </section>
           )
         })}

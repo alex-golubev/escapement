@@ -52,6 +52,7 @@ import {
   resizeClip,
   setMasterParam,
   setMasterStrip,
+  setInstrumentOn,
   setMute,
   setTempo,
   setTrackColour,
@@ -1069,6 +1070,82 @@ describe('the compiler', () => {
           }
         ])
         expect(run.evicted).toEqual([])
+      })
+    )
+  )
+
+  it.effect("turns a track's instrument off as a mute does, keeping its node and sound, and a solo hears it not", () =>
+    compiled((run) =>
+      Effect.sync(() => {
+        const { doc, tracks, clip } = run
+        addNote(doc, by, clip, step(0))
+        const kick = { tick: Tick(0), node: kickNode, key: MidiKey(60), velocity: 1, length: stepTicks }
+        const off = {
+          edits: [
+            DeviceEdit.Disconnect({ from: kickNode, to: kickFader }),
+            DeviceEdit.SetPattern({ pattern: firstPattern, notes: [] }),
+            DeviceEdit.LetGoOfNotes({ node: kickNode })
+          ],
+          commands: []
+        }
+        expect(changes(run, () => setInstrumentOn(doc, by, tracks[0], false))).toEqual([off])
+        // In solo, still silent: the snare, left out, is cut off, and the kick isn't joined.
+        expect(changes(run, () => run.solo(tracks[0]))).toEqual([
+          {
+            edits: [
+              DeviceEdit.Disconnect({ from: snareNode, to: snareFader }),
+              DeviceEdit.LetGoOfNotes({ node: snareNode })
+            ],
+            commands: []
+          }
+        ])
+        expect(changes(run, () => run.solo(tracks[0]))).toEqual([
+          { edits: [DeviceEdit.Connect({ from: snareNode, to: snareFader })], commands: [] }
+        ])
+        // On again, the same node, joined, with its notes.
+        expect(changes(run, () => setInstrumentOn(doc, by, tracks[0], true))).toEqual([
+          {
+            edits: [
+              DeviceEdit.Connect({ from: kickNode, to: kickFader }),
+              DeviceEdit.SetPattern({ pattern: firstPattern, notes: [kick] })
+            ],
+            commands: []
+          }
+        ])
+        // Muted and off, it takes both back to be heard.
+        setMute(doc, by, tracks[0], true)
+        expect(changes(run, () => setInstrumentOn(doc, by, tracks[0], false))).toEqual([])
+        expect(changes(run, () => setMute(doc, by, tracks[0], false))).toEqual([])
+        expect(run.evicted).toEqual([])
+      })
+    )
+  )
+
+  it.effect('goes past a slot that is off, which keeps its node, and through it once it is on again', () =>
+    compiled((run) =>
+      Effect.sync(() => {
+        const { doc } = run
+        const turned = (on: boolean) => () => doc.transact(() => slotMap(doc).get(run.slot)?.set('on', on))
+        expect(changes(run, turned(false))).toEqual([
+          {
+            edits: [
+              DeviceEdit.Disconnect({ from: master, to: filter }),
+              DeviceEdit.Disconnect({ from: filter, to: masterFader }),
+              DeviceEdit.Connect({ from: master, to: masterFader })
+            ],
+            commands: []
+          }
+        ])
+        expect(changes(run, turned(true))).toEqual([
+          {
+            edits: [
+              DeviceEdit.Disconnect({ from: master, to: masterFader }),
+              DeviceEdit.Connect({ from: master, to: filter }),
+              DeviceEdit.Connect({ from: filter, to: masterFader })
+            ],
+            commands: []
+          }
+        ])
       })
     )
   )

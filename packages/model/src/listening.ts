@@ -36,7 +36,10 @@ export const heardTracks = (tracks: ReadonlyArray<Track>, { solo }: Listening): 
   }).map(({ id }) => id)
 }
 
-/** The tracks heard as the project and the listening change; what draws a track and what builds it agree. */
+/**
+ * The tracks heard as the project and the listening change: what draws a track and what builds it agree. An instrument
+ * off is its card's to show, and the compiler's to silence.
+ */
 export const heardOf = (project: ProjectAtoms, listening: Atom.Atom<Listening>): Atom.Atom<ReadonlyArray<Id>> =>
   byContent((get) =>
     heardTracks(

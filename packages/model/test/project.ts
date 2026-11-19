@@ -38,6 +38,7 @@ export const putFilterOnMaster = (doc: Y.Doc) =>
     const slot = new Y.Map<unknown>(
       Object.entries({
         plugin: { id: plugins.filter.id, version: plugins.filter.version },
+        on: true,
         params: new Y.Map(),
         samples: new Y.Map(),
         order: 'a0',

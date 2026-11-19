@@ -20,6 +20,7 @@ import {
   resizeClip,
   setMasterParam,
   setMasterStrip,
+  setInstrumentOn,
   setMute,
   setTempo,
   setTrackColour,
@@ -41,6 +42,7 @@ export interface Editor {
   readonly stretchNote: (clip: Id, note: Id, length: number) => boolean
   readonly eraseNotes: (clip: Id, notes: ReadonlyArray<Id>) => boolean
   readonly setMute: (track: Id, mute: boolean) => boolean
+  readonly setInstrumentOn: (track: Id, on: boolean) => boolean
   readonly setTrackParam: (track: Id, param: ParamId<Plugin>, value: number) => boolean
   readonly setTrackStrip: (track: Id, param: StripParamId, value: number) => boolean
   readonly setMasterParam: (slot: Id, param: ParamId<Plugin>, value: number) => boolean
@@ -119,6 +121,7 @@ export const editorOf = Effect.fnUntraced(function* (doc: Y.Doc, by: Writer) {
     stretchNote: step(stretchNote),
     eraseNotes: step(eraseNotes),
     setMute: step(setMute),
+    setInstrumentOn: step(setInstrumentOn),
     setTrackParam: step(setTrackParam),
     setTrackStrip: step(setTrackStrip),
     setMasterParam: step(setMasterParam),

@@ -111,8 +111,9 @@ export interface Transport {
 
 /**
  * What the engine plays for a project: for each track with an instrument a node and its fader, the master and its
- * slots, by the document ID of what they play, and how they join; and whether it plays. A track not heard keeps its
- * nodes, the instrument joined to nothing, and presses no notes.
+ * slots, by the document ID of what they play, and how they join; and whether it plays. A track not heard, or whose
+ * instrument is off, keeps its nodes, the instrument joined to nothing, and presses no notes; a slot off keeps its
+ * node, joined to nothing, and the chain goes past it.
  */
 export interface Picture {
   readonly nodes: Readonly<Record<string, NodePicture>>
@@ -234,14 +235,17 @@ interface MasterChain {
   readonly connections: ReadonlyArray<readonly [from: string, to: string]>
 }
 
-/** The master's sum, its slots in their order, then its fader, as held over the document's; its meter is the output. */
+/**
+ * The master's sum, its slots that are on in their order, then its fader, as held over the document's; its meter is the
+ * output.
+ */
 const masterChain = (
   values: StripValues,
   faderHeld: NodeHeld,
   slots: ReadonlyArray<Slot>,
   slotsHeld: Holds
 ): MasterChain => {
-  const chain = [masterNode, ...slots.map((slot) => slotNode(slot.id)), masterFaderNode]
+  const chain = [masterNode, ...slots.filter(({ on }) => on).map((slot) => slotNode(slot.id)), masterFaderNode]
   return {
     nodes: {
       [masterNode]: passing(defaultStrip),
@@ -284,9 +288,9 @@ const pictureClip = ({ tick, track, length, period, offset, pattern }: PlayedCli
  * their atoms, which are written in batches (`batchedState`): read by more than one way, a change half of the way would
  * reach the engine as two. What plays is the arrangement. Each part is cut off by content, so turning a track's volume
  * doesn't read a pattern again, and a note changed reads only its own pattern. A track not heard, muted or left out of
- * a solo, presses no notes, by hand neither, and its instrument is cut off from its fader, so what it sounds falls
- * silent at once, its notes let go of, and its meter with it. Notes played by hand sound only while the arrangement
- * doesn't play.
+ * a solo, or whose instrument is off, solo or not, presses no notes, by hand neither, and its instrument is cut off
+ * from its fader, so what it sounds falls silent at once, its notes let go of, and its meter with it. Notes played by
+ * hand sound only while the arrangement doesn't play.
  */
 export const pictureOf = (
   project: ProjectAtoms,
@@ -321,12 +325,21 @@ export const pictureOf = (
       )
     )
   )
+  /** Whether the track's instrument is on, read alone: turning it off or on makes no node again. */
+  const isOn = Atom.family((id: Id) =>
+    byContent((get) =>
+      Option.exists(
+        Option.flatMap(get(project.track(id)), ({ instrument }) => instrument),
+        ({ on }) => on
+      )
+    )
+  )
   const heard = heardOf(project, listening)
   const sounding = byContent((get) => {
     const into = new Set(get(heard))
     return get(tracks)
       .map(([id]) => id)
-      .filter((id) => into.has(id))
+      .filter((id) => into.has(id) && get(isOn(id)))
   })
   const played = playedOf(project)
   /** The notes of a pattern a clip plays on a track: none while the track isn't heard. Keyed by the pair, as equal. */

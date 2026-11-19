@@ -22,6 +22,7 @@ import {
   resizeClip,
   setMasterParam,
   setMasterStrip,
+  setInstrumentOn,
   setMute,
   setTempo,
   setTrackParam,
@@ -96,6 +97,8 @@ const DocumentEdit = Schema.Union([
   }),
   Schema.TaggedStruct('DeleteClip', { clip: which, remove: Schema.Boolean }),
   Schema.TaggedStruct('SetMute', { track: which, mute: Schema.Boolean }),
+  Schema.TaggedStruct('SetInstrumentOn', { track: which, on: Schema.Boolean }),
+  Schema.TaggedStruct('SetSlotOn', { slot: which, on: Schema.Boolean }),
   Schema.TaggedStruct('SetMasterStrip', { param: stripParam, position: tenths }),
   Schema.TaggedStruct('HoldMasterStrip', { param: stripParam, position: tenths }),
   Schema.TaggedStruct('ToggleSolo', { track: which }),
@@ -138,8 +141,9 @@ const mapOf = (fields: Record<string, unknown>) => new Y.Map<unknown>(Object.ent
 /** A sampler playing the sound, or a synth: only a synth has a parameter of its own to set or hold. */
 const instrumentOf = (hash: Sha256, synth: boolean) =>
   Boolean.match(synth, {
-    onTrue: () => mapOf({ plugin: plugin(plugins.synth), params: mapOf({}), samples: mapOf({}) }),
-    onFalse: () => mapOf({ plugin: plugin(plugins.sampler), params: mapOf({}), samples: mapOf({ sample: hash }) })
+    onTrue: () => mapOf({ plugin: plugin(plugins.synth), on: true, params: mapOf({}), samples: mapOf({}) }),
+    onFalse: () =>
+      mapOf({ plugin: plugin(plugins.sampler), on: true, params: mapOf({}), samples: mapOf({ sample: hash }) })
   })
 
 const trackOf = (hash: Sha256, at: number, synth: boolean) =>
@@ -148,6 +152,7 @@ const trackOf = (hash: Sha256, at: number, synth: boolean) =>
 const slotOf = (at: number, position: number) =>
   mapOf({
     plugin: plugin(plugins.filter),
+    on: true,
     params: mapOf({ cutoff: paramValue(cutoff, position / 10) }),
     samples: mapOf({}),
     order: ordered(at),
@@ -323,6 +328,10 @@ const applied = (
       ),
     DeleteClip: (edit) => Option.map(clip(edit.clip), (id) => gone(doc.getMap('clips'), id, edit.remove)),
     SetMute: (edit) => Option.map(track(edit.track), (id) => setMute(doc, by, id, edit.mute)),
+    SetInstrumentOn: (edit) => Option.map(track(edit.track), (id) => setInstrumentOn(doc, by, id, edit.on)),
+    // As a client with the master's cards writes it.
+    SetSlotOn: (edit) =>
+      Option.map(slot(edit.slot), (id) => doc.transact(() => mapIn(slots(doc), id).set('on', edit.on))),
     ToggleSolo: (edit) => Option.map(track(edit.track), local.solo),
     SetMasterStrip: (edit) =>
       setMasterStrip(doc, by, strip[edit.param].id, paramValue(strip[edit.param], edit.position / 10)),
