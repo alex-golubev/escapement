@@ -205,9 +205,11 @@ impl NodeMeter {
 
 #[cfg(test)]
 mod tests {
+    use engine_plugins::testing::{SAMPLE_RATE, seconds};
+
     use super::*;
     use crate::SILENCE;
-    use crate::testing::{SAMPLE_RATE, handle, seconds};
+    use crate::testing::handle;
 
     #[test]
     fn is_a_whole_number_of_words() {

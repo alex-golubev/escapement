@@ -1,4 +1,5 @@
 use engine_plugins::catalog::CATALOG;
+use engine_plugins::testing::{SAMPLE_RATE, note_off, note_on, param_number, sample_number};
 
 use super::*;
 use crate::BLOCK_FRAMES;
@@ -6,7 +7,7 @@ use crate::heap;
 use crate::pool::SamplePool;
 use crate::testing::plugins::{CONSTANT, GIVEN, READER, RECORDER};
 use crate::testing::pool::store;
-use crate::testing::{SAMPLE_RATE, param_number, ramp, sample_number};
+use crate::testing::ramp;
 
 const HANDLE: NodeHandle = NodeHandle::new(1);
 
@@ -91,14 +92,9 @@ fn a_later_change_to_a_parameter_replaces_the_earlier_one_of_the_block() {
     );
 }
 
-/// Named by its key.
-fn note(key: u8, velocity: f32) -> Event {
-    Event::NoteOn {
-        time: 0,
-        key,
-        velocity,
-        note: NoteId::new(key.into()),
-    }
+/// Pressed at `time`, named by its key.
+fn note(time: u32, key: u8, velocity: f32) -> Event {
+    note_on(time, key, velocity, key.into())
 }
 
 #[test]
@@ -113,8 +109,8 @@ fn notes_reach_the_plugin_after_the_block_s_parameter_values() {
     node.process(&SILENCE, BLOCK_FRAMES);
     let given = [
         Event::param_at_start(param_number(1), 0.2),
-        note(60, 1.0),
-        note(62, 0.5),
+        note(0, 60, 1.0),
+        note(0, 62, 0.5),
     ];
     assert_eq!(GIVEN.take(), given);
     node.process(&SILENCE, BLOCK_FRAMES);
@@ -130,15 +126,9 @@ fn a_note_reaches_the_plugin_at_its_frame() {
     assert_eq!(node.note_on(37, 62, 0.5, NoteId::new(62)), Ok(()));
     assert_eq!(node.note_on(37, 64, 0.25, NoteId::new(64)), Ok(()));
     node.process(&SILENCE, BLOCK_FRAMES);
-    let at = |time, key: u8, velocity| Event::NoteOn {
-        time,
-        key,
-        velocity,
-        note: NoteId::new(key.into()),
-    };
     assert_eq!(
         GIVEN.take(),
-        [at(0, 60, 1.0), at(37, 62, 0.5), at(37, 64, 0.25)]
+        [note(0, 60, 1.0), note(37, 62, 0.5), note(37, 64, 0.25)]
     );
 }
 
@@ -147,16 +137,7 @@ fn notes_reach_the_plugin_in_time_order_whatever_order_they_come_in() {
     let mut node = Node::new(&RECORDER, SAMPLE_RATE, HANDLE);
     node.process(&SILENCE, BLOCK_FRAMES);
     GIVEN.take();
-    let off = |time, note| Event::NoteOff {
-        time,
-        note: NoteId::new(note),
-    };
-    let on = |time, key: u8| Event::NoteOn {
-        time,
-        key,
-        velocity: 1.0,
-        note: NoteId::new(key.into()),
-    };
+    let on = |time, key| note(time, key, 1.0);
     assert_eq!(node.note_off(90, NoteId::new(60)), Ok(()));
     assert_eq!(node.note_on(90, 62, 1.0, NoteId::new(62)), Ok(()));
     assert_eq!(node.note_on(10, 60, 1.0, NoteId::new(60)), Ok(()));
@@ -166,7 +147,13 @@ fn notes_reach_the_plugin_in_time_order_whatever_order_they_come_in() {
     // At one frame, pressed before let go of; otherwise in the order they came.
     assert_eq!(
         GIVEN.take(),
-        [on(10, 60), on(10, 64), off(10, 64), on(90, 62), off(90, 60)]
+        [
+            on(10, 60),
+            on(10, 64),
+            note_off(10, 64),
+            on(90, 62),
+            note_off(90, 60)
+        ]
     );
 }
 
@@ -210,7 +197,7 @@ fn only_notes_a_plugin_can_play_reach_it() {
     assert_eq!(node.note_on(0, 127, 2.0, NoteId::new(127)), Ok(()));
     assert_eq!(node.note_on(0, 0, -1.0, NoteId::new(0)), Ok(()));
     node.process(&SILENCE, BLOCK_FRAMES);
-    assert_eq!(GIVEN.take(), [note(127, 1.0), note(0, 0.0)]);
+    assert_eq!(GIVEN.take(), [note(0, 127, 1.0), note(0, 0, 0.0)]);
 }
 
 #[test]

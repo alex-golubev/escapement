@@ -3,12 +3,10 @@
 use std::cell::RefCell;
 
 use engine_plugins::catalog::CatalogEntry;
+use engine_plugins::testing::{param, sample_number};
 use engine_plugins::{
-    Event, ParamDescription, Plugin, PluginDescription, ProcessContext, SampleDescription, Scale,
-    Values,
+    Event, ParamDescription, Plugin, PluginDescription, ProcessContext, SampleDescription,
 };
-
-use super::sample_number;
 
 thread_local! {
     pub(crate) static GIVEN: RefCell<Vec<Event>> = const { RefCell::new(Vec::new()) };
@@ -26,18 +24,10 @@ impl Plugin for Recorder {
     }
 }
 
-const fn param(id: &'static str, default: f32) -> ParamDescription {
+const fn knob(id: &'static str, default: f32) -> ParamDescription {
     ParamDescription {
-        id,
-        label: id,
-        group: None,
-        unit: None,
-        scale: Scale::Linear,
-        values: Values::Any,
-        min: 0.0,
-        max: 1.0,
         default,
-        smoothing_seconds: 0.0,
+        ..param(id)
     }
 }
 
@@ -47,7 +37,7 @@ pub(crate) static RECORDER: CatalogEntry = CatalogEntry {
         id: 1,
         version: 1,
         label: "Recorder",
-        params: &[param("low", 0.25), param("high", 0.75)],
+        params: &[knob("low", 0.25), knob("high", 0.75)],
         samples: &[],
     },
     create: |_| Box::new(Recorder),

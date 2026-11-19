@@ -1,10 +1,11 @@
 use engine_plugins::Event;
+use engine_plugins::testing::{SAMPLE_RATE, note_off, note_on};
 
 use super::*;
 use crate::graph::{Exits, Nodes};
 use crate::node::{NOTE_ROOM, Node};
 use crate::testing::plugins::{GIVEN, RECORDER};
-use crate::testing::{BAR, SAMPLE_RATE, cell, handle, note_room};
+use crate::testing::{BAR, cell, handle, note_room};
 use crate::transport::Place;
 use crate::{BLOCK_FRAMES, SILENCE};
 
@@ -21,12 +22,7 @@ fn note(tick: u32, node: u32, key: u8) -> Note {
 
 /// The pattern's `n`th note pressed since its `Held` was made.
 fn at(time: u32, key: u8, n: u32) -> Event {
-    Event::NoteOn {
-        time,
-        key,
-        velocity: 1.0,
-        note: NoteId::new(PAGE_NOTES | n),
-    }
+    note_on(time, key, 1.0, PAGE_NOTES | n)
 }
 
 /// Recorders in cells 1 and 2, of generation 0.
@@ -41,10 +37,7 @@ fn graph() -> Graph {
 
 /// Of the pattern's `n`th note pressed.
 fn off(time: u32, n: u32) -> Event {
-    Event::NoteOff {
-        time,
-        note: NoteId::new(PAGE_NOTES | n),
-    }
+    note_off(time, PAGE_NOTES | n)
 }
 
 /// The notes the node got in the block, after its first block's parameter values.
@@ -375,13 +368,7 @@ fn notes_past_the_node_s_room_are_counted_and_the_rest_play() {
     );
     let heard = given(&mut graph, 1);
     assert_eq!(heard.len(), NOTE_ROOM);
-    let live = Event::NoteOn {
-        time: 0,
-        key: 100,
-        velocity: 1.0,
-        note: NoteId::new(100),
-    };
-    assert_eq!(heard[0], live);
+    assert_eq!(heard[0], note_on(0, 100, 1.0, 100));
     let last = note_room() - 2;
     assert_eq!(heard[NOTE_ROOM - 1], at(0, last, last.into()));
 }

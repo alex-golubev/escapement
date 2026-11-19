@@ -7,5 +7,10 @@ publish.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+# The test helpers, for the engine's tests too. Only their dev-dependency turns it on: the engine's wasm and docs build
+# without them, so the engine's own code can't come to need them.
+testing = []
+
 [lints]
 workspace = true

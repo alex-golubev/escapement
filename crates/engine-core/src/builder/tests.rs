@@ -1,4 +1,5 @@
 use engine_plugins::catalog::tone;
+use engine_plugins::testing::SAMPLE_RATE;
 
 use super::*;
 use crate::graph::{Exit, Seat};
@@ -7,7 +8,7 @@ use crate::strip::{PAN_NUMBER, VOLUME_NUMBER};
 use crate::testing::edits::{
     NewNode, Played, Spec, batch, connect, create_insert, create_node, disconnect,
 };
-use crate::testing::{SAMPLE_RATE, cell, handle, wiring};
+use crate::testing::{cell, handle, wiring};
 
 /// What a parcel brings, without the nodes themselves; cells and exits by their places in their tables.
 #[derive(Debug, PartialEq)]

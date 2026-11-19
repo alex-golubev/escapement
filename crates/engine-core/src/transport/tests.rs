@@ -1,5 +1,7 @@
+use engine_plugins::testing::{SAMPLE_RATE, rate};
+
 use super::*;
-use crate::testing::{BAR, FRAMES_PER_TICK, SAMPLE_RATE, rate, ticks_in};
+use crate::testing::{BAR, FRAMES_PER_TICK, ticks_in};
 
 fn playing(loop_ticks: u32) -> Transport {
     let mut transport = Transport::new(SAMPLE_RATE);

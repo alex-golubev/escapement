@@ -6,15 +6,13 @@ pub(crate) mod events;
 pub(crate) mod plugins;
 pub(crate) mod pool;
 
-use engine_plugins::{ParamNumber, SampleNumber, SampleRate};
+use engine_plugins::testing::SAMPLE_RATE;
 
 use crate::BLOCK_FRAMES;
 use crate::graph::{Order, Seat};
 use crate::handle::{NodeCell, NodeHandle};
 use crate::node::NOTE_ROOM;
 use crate::transport::{DEFAULT_TEMPO, TICKS_PER_QUARTER};
-
-pub(crate) const SAMPLE_RATE: SampleRate = SampleRate::new(48_000).unwrap();
 
 /// At the default tempo and `SAMPLE_RATE`.
 pub(crate) const FRAMES_PER_TICK: usize = 25;
@@ -25,25 +23,6 @@ const _: () = assert!(
 );
 
 pub(crate) const BAR: u32 = 4 * TICKS_PER_QUARTER;
-
-pub(crate) fn rate(hz: u32) -> SampleRate {
-    SampleRate::new(hz).unwrap()
-}
-
-/// The frames `seconds` take at [`SAMPLE_RATE`].
-pub(crate) const fn seconds(seconds: f32) -> usize {
-    SAMPLE_RATE.frames(seconds) as usize
-}
-
-/// As a command names it.
-pub(crate) fn param_number(number: u32) -> ParamNumber {
-    ParamNumber::new(number).unwrap()
-}
-
-/// As an edit names it.
-pub(crate) fn sample_number(number: u32) -> SampleNumber {
-    SampleNumber::new(number).unwrap()
-}
 
 /// [`NOTE_ROOM`] as keys count.
 pub(crate) fn note_room() -> u8 {
