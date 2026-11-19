@@ -134,17 +134,22 @@ fn decimal(value: f32) -> f64 {
 mod tests {
     use super::*;
 
-    /// Each plugin's and the strip's, as the page gets them, with where each is.
-    fn every_param() -> impl Iterator<Item = (String, &'static ParamDescription)> {
-        let plugins = DESCRIPTIONS.catalog.iter().flat_map(|entry| {
-            let params = entry.description.params.iter();
-            params.map(move |param| (format!("{} {:?}", entry.name, param.id), param))
-        });
-        let strip = DESCRIPTIONS
-            .node_params
+    /// Each plugin's parameters and the strip's, as the page gets them, by whose they are.
+    fn owners() -> impl Iterator<Item = (&'static str, &'static [ParamDescription])> {
+        let plugins = DESCRIPTIONS
+            .catalog
             .iter()
-            .map(|param| (format!("strip {:?}", param.id), param));
-        plugins.chain(strip)
+            .map(|entry| (entry.name, entry.description.params));
+        plugins.chain([("strip", DESCRIPTIONS.node_params)])
+    }
+
+    /// Every parameter there, with where it is.
+    fn every_param() -> impl Iterator<Item = (String, &'static ParamDescription)> {
+        owners().flat_map(|(owner, params)| {
+            params
+                .iter()
+                .map(move |param| (format!("{owner} {:?}", param.id), param))
+        })
     }
 
     #[test]
@@ -185,42 +190,41 @@ mod tests {
             if param.unit == Some(Unit::Percent) {
                 assert!(param.min >= 0.0 && param.max <= 1.0, "{at}: of the whole");
             }
-            assert_ne!(param.group, Some(""), "{at}: a group without a name");
-            match param.values {
-                Values::Any | Values::Whole => {}
-                Values::Choices(choices) => {
-                    assert!(choices.len() >= 2, "{at}: a choice of one is none");
-                    assert_eq!(param.min, 0.0, "{at}: the first choice is 0");
-                    assert_eq!(
-                        param.max,
-                        Choice::value(choices.len() - 1),
-                        "{at}: the last"
-                    );
-                    assert_eq!(param.unit, None, "{at}: a choice reads as its label");
-                    for choice in choices {
-                        let at = format!("{at} {:?}", choice.id);
-                        assert!(!choice.id.is_empty() && !choice.label.is_empty(), "{at}");
-                        let holders = choices.iter().filter(|other| other.id == choice.id);
-                        assert_eq!(holders.count(), 1, "{at}: the ID is taken twice");
-                    }
-                }
+        }
+    }
+
+    #[test]
+    fn a_choice_parameter_numbers_two_or_more_named_choices_from_0() {
+        for (at, param) in every_param() {
+            let Values::Choices(choices) = param.values else {
+                continue;
+            };
+            assert!(choices.len() >= 2, "{at}: a choice of one is none");
+            assert_eq!(param.min, 0.0, "{at}: the first choice is 0");
+            assert_eq!(
+                param.max,
+                Choice::value(choices.len() - 1),
+                "{at}: the last"
+            );
+            assert_eq!(param.unit, None, "{at}: a choice reads as its label");
+            for choice in choices {
+                let at = format!("{at} {:?}", choice.id);
+                assert!(!choice.id.is_empty() && !choice.label.is_empty(), "{at}");
+                let holders = choices.iter().filter(|other| other.id == choice.id);
+                assert_eq!(holders.count(), 1, "{at}: the ID is taken twice");
             }
         }
     }
 
     #[test]
-    fn a_group_s_parameters_stand_together() {
-        for entry in DESCRIPTIONS.catalog {
-            let mut runs: Vec<_> = entry
-                .description
-                .params
-                .iter()
-                .map(|param| param.group)
-                .collect();
+    fn a_group_has_a_name_and_its_parameters_stand_together() {
+        for (owner, params) in owners() {
+            let mut runs: Vec<_> = params.iter().map(|param| param.group).collect();
             runs.dedup();
             for group in runs.iter().flatten() {
+                assert_ne!(*group, "", "{owner}: a group without a name");
                 let count = runs.iter().filter(|other| **other == Some(*group)).count();
-                assert_eq!(count, 1, "{} {group:?}: apart", entry.name);
+                assert_eq!(count, 1, "{owner} {group:?}: apart");
             }
         }
     }
