@@ -13,7 +13,8 @@ use crate::testing::{SAMPLE_RATE, cell, handle, wiring};
 #[derive(Debug, PartialEq)]
 enum Brought {
     Reset(u32),
-    Grow(Table, usize),
+    GrowCells(usize),
+    GrowExits(usize),
     CreateNode(usize),
     Remove {
         cell: usize,
@@ -33,7 +34,8 @@ enum Brought {
 fn brought_edit(edit: &Edit) -> Brought {
     match edit {
         Edit::Reset(epoch) => Brought::Reset(*epoch),
-        Edit::Grow { table, nodes } => Brought::Grow(*table, nodes.len()),
+        Edit::GrowCells(nodes) => Brought::GrowCells(nodes.len()),
+        Edit::GrowExits(nodes) => Brought::GrowExits(nodes.len()),
         Edit::CreateNode { cell, .. } => Brought::CreateNode(cell.index()),
         Edit::Remove { cell, exit, .. } => Brought::Remove {
             cell: cell.index(),
@@ -277,7 +279,7 @@ fn each_table_grows_once_per_parcel_before_anything_goes_in() {
     assert_eq!(
         built(&mut builder, &mut audio, 1, &batch(&edits)),
         [
-            Brought::Grow(Table::Cells, 64),
+            Brought::GrowCells(64),
             Brought::CreateNode(16),
             Brought::CreateNode(32),
             order(&[16, 32], &[]),
@@ -290,7 +292,7 @@ fn each_table_grows_once_per_parcel_before_anything_goes_in() {
     assert_eq!(
         built(&mut builder, &mut audio, 2, &batch(&edits)),
         [
-            Brought::Grow(Table::Cells, usize::from(u16::MAX) + 1),
+            Brought::GrowCells(usize::from(u16::MAX) + 1),
             Brought::CreateNode(63),
             Brought::CreateNode(usize::from(u16::MAX)),
             order(&[16, 32, 63, u32::from(u16::MAX)], &[]),
@@ -304,10 +306,10 @@ fn each_table_grows_once_per_parcel_before_anything_goes_in() {
     let reset = built(&mut builder, &mut audio, 4, &batch(&[Spec::Reset(1)]));
     let grows: Vec<_> = reset
         .iter()
-        .filter(|edit| matches!(edit, Brought::Grow(..)))
+        .filter(|edit| matches!(edit, Brought::GrowCells(_) | Brought::GrowExits(_)))
         .collect();
-    assert_eq!(grows, [&Brought::Grow(Table::Exits, 32)]);
-    assert_eq!(reset[0], Brought::Grow(Table::Exits, 32));
+    assert_eq!(grows, [&Brought::GrowExits(32)]);
+    assert_eq!(reset[0], Brought::GrowExits(32));
 }
 
 #[test]

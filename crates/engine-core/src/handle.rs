@@ -33,6 +33,12 @@ macro_rules! handle {
                 usize::from(self.0)
             }
         }
+
+        impl From<$cell> for usize {
+            fn from(cell: $cell) -> Self {
+                cell.index()
+            }
+        }
     };
 }
 

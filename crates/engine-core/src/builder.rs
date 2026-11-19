@@ -10,7 +10,7 @@ use flatbuffers::Vector;
 
 use engine_plugins::{SampleRate, catalog};
 
-use crate::graph::{Nodes, Table};
+use crate::graph::{Exits, Nodes};
 use crate::handle::{NodeHandle, PatternCell, PatternHandle};
 use crate::handoff::{Batch, BuildEnd, Edit, Parcel};
 use crate::node::{Node, page_param, page_sample};
@@ -138,20 +138,15 @@ impl Builder {
         if let Some(order) = self.record.take_changes() {
             edits.push(Edit::Order(order));
         }
-        // Once, before anything the parcel puts in them: the audio thread moves every node over each time.
+        // Once, before anything the parcel puts in them: the audio thread moves everything over each time.
+        let record = &self.record;
         let grown = [
-            (Table::Cells, cells, self.record.cells()),
-            (Table::Exits, exits, self.record.exits()),
-        ]
-        .into_iter()
-        .filter(|&(_, before, after)| after > before)
-        .map(|(table, _, len)| Edit::Grow {
-            table,
-            nodes: Nodes::new(len),
-        });
-        let patterns_grown = (self.heard.cells > pattern_cells)
-            .then(|| Edit::GrowPatterns(Patterns::new(self.heard.cells)));
-        let edits = grown.chain(patterns_grown).chain(edits).collect();
+            (record.cells() > cells).then(|| Edit::GrowCells(Nodes::new(record.cells()))),
+            (record.exits() > exits).then(|| Edit::GrowExits(Exits::new(record.exits()))),
+            (self.heard.cells > pattern_cells)
+                .then(|| Edit::GrowPatterns(Patterns::new(self.heard.cells))),
+        ];
+        let edits = grown.into_iter().flatten().chain(edits).collect();
         let holds = self.record.take_holds();
         self.handoff.send(Parcel {
             batch,

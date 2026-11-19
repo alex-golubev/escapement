@@ -7,7 +7,7 @@ use std::collections::VecDeque;
 
 use rtrb::{Consumer, Producer, PushError, RingBuffer};
 
-use crate::graph::{Exit, Nodes, Order, Table};
+use crate::graph::{Exit, Exits, Nodes, Order};
 use crate::handle::{NodeCell, NodeHandle, PatternCell};
 use crate::node::Node;
 use crate::schema::Rejection;
@@ -46,8 +46,10 @@ pub(crate) struct Parcel {
 pub(crate) enum Edit {
     /// Starts a session; the nodes go in removals that follow.
     Reset(u32),
-    /// A larger empty table for the nodes to move over to.
-    Grow { table: Table, nodes: Nodes },
+    /// A larger empty table for the live nodes to move over to.
+    GrowCells(Nodes),
+    /// A larger empty table for the nodes playing out to move over to.
+    GrowExits(Exits),
     CreateNode {
         cell: NodeCell,
         node: Option<Box<Node>>,

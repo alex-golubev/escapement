@@ -1,6 +1,7 @@
 //! Audio engine core: DSP, sequencer, mixer graph. No web dependencies.
 
 mod builder;
+mod cells;
 mod commands;
 mod engine;
 mod events;

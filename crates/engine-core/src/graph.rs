@@ -8,6 +8,7 @@ use std::ops::Range;
 use engine_plugins::SampleRate;
 use engine_plugins::smoothing::ramp_samples;
 
+use crate::cells::Cells;
 use crate::handle::{NodeCell, NodeHandle};
 use crate::node::Node;
 use crate::telemetry::Telemetry;
@@ -15,26 +16,11 @@ use crate::{Block, SILENCE};
 
 pub(crate) const FADE_SECONDS: f32 = 0.02;
 
-/// Live nodes by cell, or removed ones by their exit while they play out. Cell 0 stays empty: 0 is no node.
-pub(crate) struct Nodes(Box<[Option<Box<Node>>]>);
+/// Live nodes by cell. Cell 0 stays empty: 0 is no node.
+pub(crate) type Nodes = Cells<NodeCell, Box<Node>>;
 
-impl Nodes {
-    /// Allocates, so only on the build thread.
-    pub(crate) fn new(len: usize) -> Self {
-        Self(std::iter::repeat_with(|| None).take(len).collect())
-    }
-
-    #[cfg(test)]
-    pub(crate) fn len(&self) -> usize {
-        self.0.len()
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Table {
-    Cells,
-    Exits,
-}
+/// Removed nodes by their exit, while they play out.
+pub(crate) type Exits = Cells<Exit, Box<Node>>;
 
 /// Where a removed node plays out, in the table of exits: its cell is free at once.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -47,6 +33,12 @@ impl Exit {
 
     pub(crate) fn index(self) -> usize {
         self.0
+    }
+}
+
+impl From<Exit> for usize {
+    fn from(exit: Exit) -> Self {
+        exit.index()
     }
 }
 
@@ -143,7 +135,7 @@ pub(crate) struct Order {
 
 pub(crate) struct Graph {
     cells: Nodes,
-    exits: Nodes,
+    exits: Exits,
     order: Order,
     /// Samples a connection takes to rise or fall.
     fade: u32,
@@ -152,7 +144,7 @@ pub(crate) struct Graph {
 }
 
 impl Graph {
-    pub(crate) fn new(cells: Nodes, exits: Nodes, sample_rate: SampleRate) -> Self {
+    pub(crate) fn new(cells: Nodes, exits: Exits, sample_rate: SampleRate) -> Self {
         Self {
             cells,
             exits,
@@ -168,55 +160,37 @@ impl Graph {
 
     /// Only a live node under this very handle: one of an older generation is gone.
     pub(crate) fn node_mut(&mut self, handle: NodeHandle) -> Option<&mut Node> {
-        let node = self
-            .cells
-            .0
-            .get_mut(handle.cell().index())?
-            .as_deref_mut()?;
-        (node.handle() == handle).then_some(node)
+        let node = self.cells.get_mut(handle.cell())?;
+        (node.handle() == handle).then_some(&mut **node)
     }
 
     /// Moves the nodes over to `larger`, an empty table, and swaps it in; the old one comes back empty.
-    pub(crate) fn grow(&mut self, table: Table, larger: &mut Nodes) {
-        let nodes = match table {
-            Table::Cells => &mut self.cells,
-            Table::Exits => &mut self.exits,
-        };
-        for (old, new) in nodes.0.iter_mut().zip(larger.0.iter_mut()) {
-            mem::swap(old, new);
-        }
-        mem::swap(nodes, larger);
+    pub(crate) fn grow_cells(&mut self, larger: &mut Nodes) {
+        self.cells.grow(larger);
+    }
+
+    /// As [`Self::grow_cells`], of the exits.
+    pub(crate) fn grow_exits(&mut self, larger: &mut Exits) {
+        self.exits.grow(larger);
     }
 
     /// Swaps `slot` into the cell; what was there, nothing as the build thread keeps track, comes back in it. False
     /// past the table: the node stays in `slot`.
     #[must_use]
     pub(crate) fn insert(&mut self, cell: NodeCell, slot: &mut Option<Box<Node>>) -> bool {
-        let Some(cell) = self.cells.0.get_mut(cell.index()) else {
-            return false;
-        };
-        mem::swap(cell, slot);
-        true
+        self.cells.swap(cell, slot)
     }
 
     /// Moves the node out of its cell to play out at `exit`, so the cell is free at once. False past either table.
     #[must_use]
     pub(crate) fn remove(&mut self, cell: NodeCell, exit: Exit) -> bool {
-        let (Some(cell), Some(exit)) = (
-            self.cells.0.get_mut(cell.index()),
-            self.exits.0.get_mut(exit.index()),
-        ) else {
-            return false;
-        };
-        mem::swap(cell, exit);
-        true
+        self.cells.swap_with(cell, &mut self.exits, exit)
     }
 
-    /// Swaps the node that played out at `exit` into `slot`, to go back to the build thread.
+    /// Swaps the node that played out at `exit` into `slot`, to go back to the build thread; past the table, nothing
+    /// comes back.
     pub(crate) fn take_back(&mut self, exit: Exit, slot: &mut Option<Box<Node>>) {
-        if let Some(exit) = self.exits.0.get_mut(exit.index()) {
-            mem::swap(exit, slot);
-        }
+        let _ = self.exits.swap(exit, slot);
     }
 
     /// Swaps in `order`, which comes back holding the old one; each connection starts as it says.
@@ -237,10 +211,7 @@ impl Graph {
         let Self { cells, order, .. } = self;
         for turn in &order.turns {
             if let Seat::Cell(cell) = turn.node
-                && let Some(node) = cells
-                    .0
-                    .get_mut(cell.index())
-                    .and_then(|node| node.as_deref_mut())
+                && let Some(node) = cells.get_mut(cell)
             {
                 node.report_meter(telemetry);
             }
@@ -282,24 +253,26 @@ impl Graph {
     }
 }
 
-fn node<'a>(cells: &'a Nodes, exits: &'a Nodes, seat: Seat) -> Option<&'a Node> {
+fn node<'a>(cells: &'a Nodes, exits: &'a Exits, seat: Seat) -> Option<&'a Node> {
     match seat {
-        Seat::Cell(cell) => cells.0.get(cell.index())?.as_deref(),
-        Seat::Exit(exit) => exits.0.get(exit.index())?.as_deref(),
+        Seat::Cell(cell) => cells.get(cell),
+        Seat::Exit(exit) => exits.get(exit),
     }
+    .map(Box::as_ref)
 }
 
-fn node_mut<'a>(cells: &'a mut Nodes, exits: &'a mut Nodes, seat: Seat) -> Option<&'a mut Node> {
+fn node_mut<'a>(cells: &'a mut Nodes, exits: &'a mut Exits, seat: Seat) -> Option<&'a mut Node> {
     match seat {
-        Seat::Cell(cell) => cells.0.get_mut(cell.index())?.as_deref_mut(),
-        Seat::Exit(exit) => exits.0.get_mut(exit.index())?.as_deref_mut(),
+        Seat::Cell(cell) => cells.get_mut(cell),
+        Seat::Exit(exit) => exits.get_mut(exit),
     }
+    .map(Box::as_mut)
 }
 
 /// Sums the sources' last blocks into `sum`, each at its connection's gain.
 fn mix(
     cells: &Nodes,
-    exits: &Nodes,
+    exits: &Exits,
     connections: &mut [Connection],
     fade: u32,
     frames: usize,

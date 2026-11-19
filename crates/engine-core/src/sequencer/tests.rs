@@ -1,7 +1,7 @@
 use engine_plugins::Event;
 
 use super::*;
-use crate::graph::Nodes;
+use crate::graph::{Exits, Nodes};
 use crate::node::{NOTE_ROOM, Node};
 use crate::testing::plugins::{GIVEN, RECORDER};
 use crate::testing::{BAR, SAMPLE_RATE, cell, handle, note_room};
@@ -31,7 +31,7 @@ fn at(time: u32, key: u8, n: u32) -> Event {
 
 /// Recorders in cells 1 and 2, of generation 0.
 fn graph() -> Graph {
-    let mut graph = Graph::new(Nodes::new(4), Nodes::new(4), SAMPLE_RATE);
+    let mut graph = Graph::new(Nodes::new(4), Exits::new(4), SAMPLE_RATE);
     for handle in [1, 2] {
         let node = Node::new(&RECORDER, SAMPLE_RATE, NodeHandle::new(handle));
         assert!(graph.insert(cell(handle), &mut Some(Box::new(node))));
@@ -76,7 +76,7 @@ fn patterns(made: Vec<(PatternHandle, Vec<Note>)>) -> Patterns {
     let mut patterns = Patterns::new(4);
     for (handle, notes) in made {
         let mut slot = Some((handle, Pattern::new(notes)));
-        assert!(patterns.put(handle.cell(), &mut slot));
+        assert!(patterns.swap(handle.cell(), &mut slot));
     }
     patterns
 }
@@ -292,17 +292,24 @@ fn the_clips_found_for_a_stretch_are_those_that_play_a_tick_of_it_however_long_t
 fn a_larger_table_keeps_every_pattern_in_its_cell_and_one_past_it_is_left_out() {
     let mut patterns = patterns(vec![(PATTERN, vec![note(0, 1, 60)])]);
     let mut slot = Some((PatternHandle::new(4), Pattern::default()));
-    assert!(!patterns.put(PatternHandle::new(4).cell(), &mut slot));
+    assert!(!patterns.swap(PatternHandle::new(4).cell(), &mut slot));
     assert!(slot.is_some());
     let mut larger = Patterns::new(8);
     patterns.grow(&mut larger);
     assert_eq!((patterns.len(), larger.len()), (8, 4));
     assert_eq!(
-        patterns.get(PATTERN).map(Pattern::notes),
-        Some(&[note(0, 1, 60)][..])
+        patterns
+            .get(PATTERN.cell())
+            .map(|(made, pattern)| (*made, pattern.notes())),
+        Some((PATTERN, &[note(0, 1, 60)][..]))
     );
-    assert!(patterns.put(PatternHandle::new(4).cell(), &mut slot));
-    assert!(patterns.get(PatternHandle::new(4)).is_some());
+    assert!(patterns.swap(PatternHandle::new(4).cell(), &mut slot));
+    assert_eq!(
+        patterns
+            .get(PatternHandle::new(4).cell())
+            .map(|(made, _)| *made),
+        Some(PatternHandle::new(4))
+    );
 }
 
 #[test]
