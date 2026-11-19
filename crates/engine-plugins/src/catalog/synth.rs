@@ -46,17 +46,32 @@ impl Shape {
         Choice { id, label }
     }
 
-    /// At `phase`, of the period, within -1 to 1: a pitched wave times `pitched`, as [`below_half_the_sample_rate`]
-    /// has it; noise, which has no pitch to alias, whole.
-    fn wave(self, phase: f32, increment: f32, pitched: f32, noise: &mut Noise) -> f32 {
-        let wave = match self {
-            Self::Sine => (TAU * phase).sin(),
-            Self::Triangle => triangle(phase, increment),
-            Self::Square => square(phase, increment),
-            Self::Saw => saw(phase, increment),
-            Self::Noise => return noise.next(),
-        };
-        pitched * wave
+    /// Adds its `part` of an oscillator's sound to `wave` at each frame: a pitched wave, within -1 to 1, as
+    /// [`below_half_the_sample_rate`] has it; noise, which has no pitch to alias, whole, drawn only where `levels` is
+    /// heard.
+    fn add(self, part: &Signal, path: &Path, levels: &[f32], noise: &mut Noise, wave: &mut [f32]) {
+        match self {
+            Self::Sine => add_pitched(|phase, _| (TAU * phase).sin(), part, path, wave),
+            Self::Triangle => add_pitched(triangle, part, path, wave),
+            Self::Square => add_pitched(square, part, path, wave),
+            Self::Saw => add_pitched(saw, part, path, wave),
+            Self::Noise => {
+                for ((wave, part), &level) in wave.iter_mut().zip(part).zip(levels) {
+                    if level != 0.0 {
+                        *wave += part * noise.next();
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// `shape`, of the phase and the increment, in a pass of its own over the frames: the compiler takes several at once,
+/// but for a sine, whose `sin` the library works out one at a time.
+fn add_pitched(shape: impl Fn(f32, f32) -> f32, part: &Signal, path: &Path, wave: &mut [f32]) {
+    let each = (wave.iter_mut().zip(part)).zip(path.phases.iter().zip(&path.increments));
+    for ((wave, part), (&phase, &increment)) in each {
+        *wave += part * (below_half_the_sample_rate(increment) * shape(phase, increment));
     }
 }
 
@@ -256,6 +271,20 @@ pub const ENVELOPE: envelope::Numbers = envelope::Numbers::of(&DESCRIPTION);
 /// A voice's peak at full velocity: a sawtooth is loud, and chords add up.
 pub const VOICE_GAIN: f32 = 0.2;
 
+/// An oscillator's way through a block in a voice: its phase at each frame and the increment that took it there.
+#[derive(Clone, Copy)]
+struct Path {
+    phases: Signal,
+    increments: Signal,
+}
+
+/// A voice's way through a block: its level at each frame, each oscillator's path, and its wave before the level.
+struct Course {
+    levels: Signal,
+    paths: [Path; OSCILLATORS],
+    wave: Signal,
+}
+
 #[derive(Clone, Copy)]
 struct Voice {
     /// Over once the voice is free.
@@ -309,6 +338,62 @@ impl voices::Voice for Voice {
     }
 }
 
+impl Voice {
+    /// Adds its sound over the block's frames to `out`, as far as it sounds, its oscillators walked on with it.
+    fn play(
+        &mut self,
+        envelope: &Envelope,
+        oscillators: &[Oscillator; OSCILLATORS],
+        course: &mut Course,
+        out: &mut [f32],
+    ) {
+        let Course {
+            levels,
+            paths,
+            wave,
+        } = course;
+        let sounds = envelope.fill(&mut self.contour, levels);
+        self.walk(oscillators, paths, sounds);
+        let levels = &levels[..sounds];
+        // A voice at none all through, such as one waiting out its delay, would only multiply its wave by 0.
+        if levels.iter().all(|&level| level == 0.0) {
+            return;
+        }
+        let wave = &mut wave[..sounds];
+        wave.fill(0.0);
+        for ((oscillator, path), noise) in oscillators.iter().zip(&*paths).zip(&mut self.noises) {
+            let each = Shape::ALL.into_iter().zip(&oscillator.parts);
+            for ((shape, part), &heard) in each.zip(&oscillator.heard) {
+                if heard {
+                    shape.add(part, path, levels, noise, wave);
+                }
+            }
+        }
+        for ((out, wave), level) in out.iter_mut().zip(&*wave).zip(levels) {
+            *out += wave * level * self.gain;
+        }
+    }
+
+    /// Each oscillator on over the first `frames` by its increment at each, heard or not: a change of pitch is heard
+    /// from its frame, and an oscillator mixed in later is where the note's time has taken it.
+    fn walk(
+        &mut self,
+        oscillators: &[Oscillator; OSCILLATORS],
+        paths: &mut [Path; OSCILLATORS],
+        frames: usize,
+    ) {
+        for frame in 0..frames {
+            let each = self.phases.iter_mut().zip(&mut *paths).zip(oscillators);
+            for ((phase, path), oscillator) in each {
+                let increment = self.increment * oscillator.ratios[frame];
+                *phase = (*phase + increment).fract();
+                path.phases[frame] = *phase;
+                path.increments[frame] = increment;
+            }
+        }
+    }
+}
+
 /// What an oscillator plays, in every voice.
 struct Oscillator {
     /// Each shape's share of its sound: the chosen one's rises to 1 as the others fall to 0, so a change glides.
@@ -320,6 +405,11 @@ struct Oscillator {
     fine: Smoothed,
     /// Of the sound left to it and those before it. Osc 1's stays at 1: it takes what the others leave.
     mix: Smoothed,
+    /// Over the block `prepare` walked: each shape's part of the sound at each frame, and whether it is heard.
+    parts: [Signal; Shape::ALL.len()],
+    heard: [bool; Shape::ALL.len()],
+    /// Over that block: how much faster than the key's its pitch runs at each frame.
+    ratios: Signal,
 }
 
 impl Oscillator {
@@ -338,6 +428,9 @@ impl Oscillator {
                 Some(mix) => Smoothed::for_param(param(mix), sample_rate),
                 None => Smoothed::over(1.0, 1),
             },
+            parts: [[0.0; BLOCK_FRAMES]; Shape::ALL.len()],
+            heard: [false; Shape::ALL.len()],
+            ratios: [1.0; BLOCK_FRAMES],
         }
     }
 
@@ -351,9 +444,41 @@ impl Oscillator {
         }
     }
 
-    /// How much faster than the key's its pitch runs at each frame.
-    fn tune(&mut self, over: &mut [f32]) {
+    /// Walks its knobs over the next `frames`, taking its mix of the sound `left_to` it and those before it.
+    fn prepare(&mut self, left_to: &mut Signal, frames: usize) {
+        let mut taken = [0.0; BLOCK_FRAMES];
+        self.mix.fill(&mut taken[..frames]);
+        for (taken, left_to) in taken[..frames].iter_mut().zip(left_to) {
+            let mix = *taken;
+            *taken = mix * *left_to;
+            *left_to *= 1.0 - mix;
+        }
+        let taken_heard = taken[..frames].iter().any(|taken| *taken != 0.0);
+        let each = (self.shares.iter_mut())
+            .zip(&mut self.parts)
+            .zip(&mut self.heard);
+        for ((share, part), heard) in each {
+            *heard = false;
+            // A share at none stays so; one on its way is walked, heard or not, to be where it should.
+            if share.steady() == Some(0.0) {
+                continue;
+            }
+            let part = &mut part[..frames];
+            share.fill(part);
+            if taken_heard {
+                part.iter_mut()
+                    .zip(&taken)
+                    .for_each(|(part, taken)| *part *= taken);
+                *heard = true;
+            }
+        }
+        self.tune(frames);
+    }
+
+    /// How much faster than the key's its pitch runs at each of the next `frames`.
+    fn tune(&mut self, frames: usize) {
         let ratio = |semitones: f32, cents: f32| ((semitones + cents / 100.0) / 12.0).exp2();
+        let over = &mut self.ratios[..frames];
         match (self.coarse.steady(), self.fine.steady()) {
             (Some(semitones), Some(cents)) => over.fill(ratio(semitones, cents)),
             _ => {
@@ -380,11 +505,8 @@ type Signal = [f32; BLOCK_FRAMES];
 struct Synth {
     voices: Voices<Voice>,
     oscillators: [Oscillator; OSCILLATORS],
-    /// For each oscillator over the block: each shape's part of the sound, and whether it is heard.
-    parts: [[Signal; Shape::ALL.len()]; OSCILLATORS],
-    heard: [[bool; Shape::ALL.len()]; OSCILLATORS],
-    /// For each oscillator over the block: as `Oscillator::tune` has it.
-    ratios: [Signal; OSCILLATORS],
+    /// The way of the voice playing.
+    course: Course,
     sample_rate: SampleRate,
     envelope: Envelope,
 }
@@ -497,9 +619,14 @@ impl Synth {
         Self {
             voices: Voices::new(FREE, sample_rate),
             oscillators: OSCILLATOR_PARAMS.map(|params| Oscillator::new(params, sample_rate)),
-            parts: [[[0.0; BLOCK_FRAMES]; Shape::ALL.len()]; OSCILLATORS],
-            heard: [[false; Shape::ALL.len()]; OSCILLATORS],
-            ratios: [[1.0; BLOCK_FRAMES]; OSCILLATORS],
+            course: Course {
+                levels: [0.0; BLOCK_FRAMES],
+                paths: [Path {
+                    phases: [0.0; BLOCK_FRAMES],
+                    increments: [0.0; BLOCK_FRAMES],
+                }; OSCILLATORS],
+                wave: [0.0; BLOCK_FRAMES],
+            },
             sample_rate,
             envelope: Envelope::new(ENVELOPE, sample_rate),
         }
@@ -544,79 +671,20 @@ impl Synth {
         }
     }
 
+    /// Voice by voice, each over the block as far as it sounds.
     fn render(&mut self, left: &mut [f32], right: &mut [f32]) {
-        left.fill(0.0);
-        right.fill(0.0);
         let frames = left.len();
-        let Self {
-            voices,
-            oscillators,
-            parts,
-            heard,
-            ratios,
-            envelope,
-            ..
-        } = self;
-        envelope.prepare(frames);
+        self.envelope.prepare(frames);
         // Of the sound, what is left to the oscillators before, from the last one back: each takes its mix of it.
         let mut left_to = [1.0; BLOCK_FRAMES];
-        for osc in (0..OSCILLATORS).rev() {
-            let oscillator = &mut oscillators[osc];
-            let mut taken = [0.0; BLOCK_FRAMES];
-            oscillator.mix.fill(&mut taken[..frames]);
-            for (taken, left_to) in taken[..frames].iter_mut().zip(&mut left_to) {
-                let mix = *taken;
-                *taken = mix * *left_to;
-                *left_to *= 1.0 - mix;
-            }
-            let taken_heard = taken[..frames].iter().any(|taken| *taken != 0.0);
-            for (shape, share) in Shape::ALL.into_iter().zip(&mut oscillator.shares) {
-                heard[osc][shape as usize] = false;
-                // A share at none stays so; one on its way is walked, heard or not, to be where it should.
-                if share.steady() == Some(0.0) {
-                    continue;
-                }
-                let part = &mut parts[osc][shape as usize][..frames];
-                share.fill(part);
-                if taken_heard {
-                    part.iter_mut()
-                        .zip(&taken)
-                        .for_each(|(part, taken)| *part *= taken);
-                    heard[osc][shape as usize] = true;
-                }
-            }
-            oscillator.tune(&mut ratios[osc][..frames]);
+        for oscillator in self.oscillators.iter_mut().rev() {
+            oscillator.prepare(&mut left_to, frames);
         }
-        let sounding = heard.map(|shapes| shapes.contains(&true));
-        for voice in voices.in_use() {
-            for (frame, (l, r)) in left.iter_mut().zip(right.iter_mut()).enumerate() {
-                let Some(level) = envelope.next(&mut voice.contour, frame) else {
-                    break;
-                };
-                let mut wave = 0.0;
-                let each = (voice.phases.iter_mut().zip(&mut voice.noises))
-                    .zip(parts.iter().zip(&*heard).zip(&sounding).zip(&*ratios));
-                for ((phase, noise), (((parts, heard), &sounding), ratios)) in each {
-                    let increment = voice.increment * ratios[frame];
-                    // On by this sample's own increment, heard or not: a change of pitch is heard from its frame, and
-                    // an oscillator mixed in later is where the note's time has taken it.
-                    *phase = (*phase + increment).fract();
-                    // A voice at none, such as one waiting out its delay, would only multiply its wave by 0.
-                    if !sounding || level == 0.0 {
-                        continue;
-                    }
-                    let pitched = below_half_the_sample_rate(increment);
-                    for ((shape, parts), &heard) in Shape::ALL.into_iter().zip(parts).zip(heard) {
-                        if heard {
-                            wave += parts[frame] * shape.wave(*phase, increment, pitched, noise);
-                        }
-                    }
-                }
-                let sample = wave * level * voice.gain;
-                *l += sample;
-                *r += sample;
-            }
+        left.fill(0.0);
+        for voice in self.voices.in_use() {
+            voice.play(&self.envelope, &self.oscillators, &mut self.course, left);
         }
+        right.copy_from_slice(left);
     }
 }
 
