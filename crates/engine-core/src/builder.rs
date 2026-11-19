@@ -249,14 +249,7 @@ impl Builder {
             }
             DeviceEdit::CreateInsert => {
                 let create = edit.edit_as_create_insert().ok_or(Rejection::Malformed)?;
-                let handle = self.free_handle(create.node())?;
-                let mut node = Node::insert(self.sample_rate, handle, create.metered());
-                let refused = set_each(create.strip(), |param, value| {
-                    node.set_strip_param(page_strip_param(param)?, value)
-                });
-                self.place(edits, node);
-                edits.extend(refused.into_iter().map(Edit::Refused));
-                Ok(())
+                self.create_insert(edits, create)
             }
             DeviceEdit::Disconnect => {
                 let disconnect = edit.edit_as_disconnect().ok_or(Rejection::Malformed)?;
@@ -300,9 +293,7 @@ impl Builder {
         let mut refused = set_each(create.params(), |param, value| {
             node.set_param(page_param(param)?, value)
         });
-        refused.extend(set_each(create.strip(), |param, value| {
-            node.set_strip_param(page_strip_param(param)?, value)
-        }));
+        refused.extend(set_strip(&mut node, create.strip()));
         let samples = &mut self.samples;
         refused.extend(create.samples().into_iter().flatten().filter_map(|sound| {
             let hash = sound.hash().into();
@@ -310,8 +301,19 @@ impl Builder {
                 .and_then(|number| node.set_sample(number, || samples.refer(hash)))
                 .err()
         }));
-        self.place(edits, node);
-        edits.extend(refused.into_iter().map(Edit::Refused));
+        self.place(edits, node, refused);
+        Ok(())
+    }
+
+    fn create_insert(
+        &mut self,
+        edits: &mut Vec<Edit>,
+        create: schema::CreateInsert<'_>,
+    ) -> Result<(), Rejection> {
+        let handle = self.free_handle(create.node())?;
+        let mut node = Node::insert(self.sample_rate, handle, create.metered());
+        let refused = set_strip(&mut node, create.strip());
+        self.place(edits, node, refused);
         Ok(())
     }
 
@@ -327,8 +329,8 @@ impl Builder {
         Ok(handle)
     }
 
-    /// Into its cell, hearing nothing yet.
-    fn place(&mut self, edits: &mut Vec<Edit>, node: Node) {
+    /// Into its cell, hearing nothing yet; the initial values it refused follow it.
+    fn place(&mut self, edits: &mut Vec<Edit>, node: Node, refused: Vec<Rejection>) {
         let handle = node.handle();
         let cell = handle.cell();
         self.record.make_room(cell);
@@ -337,6 +339,7 @@ impl Builder {
             cell,
             node: Some(Box::new(node)),
         });
+        edits.extend(refused.into_iter().map(Edit::Refused));
     }
 
     /// Made in a free cell, or in place of the pattern of the same handle. Notes with values no note can have are dropped
@@ -444,6 +447,13 @@ fn set_each(
         .flatten()
         .filter_map(|value| set(value.param(), value.value()).err())
         .collect()
+}
+
+/// As [`set_each`], of the node's strip.
+fn set_strip(node: &mut Node, values: Option<Vector<'_, schema::ParamValue>>) -> Vec<Rejection> {
+    set_each(values, |param, value| {
+        node.set_strip_param(page_strip_param(param)?, value)
+    })
 }
 
 #[cfg(test)]
