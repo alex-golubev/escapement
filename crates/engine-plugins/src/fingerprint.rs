@@ -226,6 +226,12 @@ mod tests {
         })
     }
 
+    fn with_plugin(change: impl FnOnce(&mut PluginDescription)) -> PluginDescription {
+        let mut plugin = PLUGIN;
+        change(&mut plugin);
+        plugin
+    }
+
     fn with_param(change: impl FnOnce(&mut ParamDescription)) -> PluginDescription {
         let mut param = PARAM;
         change(&mut param);
@@ -249,34 +255,13 @@ mod tests {
         let base = of("filter", PLUGIN);
         let mut changed = vec![
             of("filters", PLUGIN),
-            of("filter", PluginDescription { id: 3, ..PLUGIN }),
+            of("filter", with_plugin(|plugin| plugin.id = 3)),
+            of("filter", with_plugin(|plugin| plugin.version = 2)),
+            of("filter", with_plugin(|plugin| plugin.label = "Low-pass")),
+            of("filter", with_plugin(|plugin| plugin.params = &[])),
             of(
                 "filter",
-                PluginDescription {
-                    version: 2,
-                    ..PLUGIN
-                },
-            ),
-            of(
-                "filter",
-                PluginDescription {
-                    label: "Low-pass",
-                    ..PLUGIN
-                },
-            ),
-            of(
-                "filter",
-                PluginDescription {
-                    params: &[],
-                    ..PLUGIN
-                },
-            ),
-            of(
-                "filter",
-                PluginDescription {
-                    params: &[PARAM, PARAM],
-                    ..PLUGIN
-                },
+                with_plugin(|plugin| plugin.params = &[PARAM, PARAM]),
             ),
             of("filter", with_param(|param| param.id = "frequency")),
             of("filter", with_param(|param| param.label = "Frequency")),
@@ -287,19 +272,10 @@ mod tests {
             of("filter", with_param(|param| param.max = 19_000.0)),
             of("filter", with_param(|param| param.default = 1001.0)),
             of("filter", with_param(|param| param.smoothing_seconds = 0.03)),
+            of("filter", with_plugin(|plugin| plugin.samples = &[])),
             of(
                 "filter",
-                PluginDescription {
-                    samples: &[],
-                    ..PLUGIN
-                },
-            ),
-            of(
-                "filter",
-                PluginDescription {
-                    samples: &[SAMPLE, SAMPLE],
-                    ..PLUGIN
-                },
+                with_plugin(|plugin| plugin.samples = &[SAMPLE, SAMPLE]),
             ),
             of("filter", with_sample(|sample| sample.id = "hiss")),
             of("filter", with_sample(|sample| sample.label = "Hiss")),
