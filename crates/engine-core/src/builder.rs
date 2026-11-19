@@ -114,7 +114,7 @@ impl Builder {
     /// Every batch makes a parcel, refusals and all: its marker in the ring waits for it.
     pub fn build(&mut self, batch: u32, bytes: &[u8]) {
         let batch = Batch::new(batch);
-        let sizes = (self.record.cells(), self.record.exits());
+        let (cells, exits) = (self.record.cells(), self.record.exits());
         let pattern_cells = self.heard.cells;
         let (mut edits, mut let_go) = (Vec::new(), Vec::new());
         match schema::root_as_device_batch(bytes) {
@@ -140,8 +140,8 @@ impl Builder {
         }
         // Once, before anything the parcel puts in them: the audio thread moves every node over each time.
         let grown = [
-            (Table::Cells, sizes.0, self.record.cells()),
-            (Table::Exits, sizes.1, self.record.exits()),
+            (Table::Cells, cells, self.record.cells()),
+            (Table::Exits, exits, self.record.exits()),
         ]
         .into_iter()
         .filter(|&(_, before, after)| after > before)

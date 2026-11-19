@@ -21,18 +21,9 @@ pub(crate) fn page_note(note: u32) -> Result<NoteId, Rejection> {
     Ok(NoteId::new(note))
 }
 
-/// A key past MIDI's is refused.
-pub(crate) fn note_key(key: u8) -> Result<u8, Rejection> {
-    if key > HIGHEST_KEY {
-        return Err(Rejection::InvalidValue);
-    }
-    Ok(key)
-}
-
 /// The velocity a plugin gets for a note. A key past MIDI's or a velocity not a number is refused.
 pub(crate) fn note_velocity(key: u8, velocity: f32) -> Result<f32, Rejection> {
-    note_key(key)?;
-    if !velocity.is_finite() {
+    if key > HIGHEST_KEY || !velocity.is_finite() {
         return Err(Rejection::InvalidValue);
     }
     Ok(velocity.clamp(MIN_VELOCITY, MAX_VELOCITY))
