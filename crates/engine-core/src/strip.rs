@@ -42,7 +42,7 @@ pub(crate) const PAN: ParamDescription = ParamDescription {
     smoothing_seconds: SMOOTHING_SECONDS,
 };
 
-pub const STRIP: &[ParamDescription] = &[VOLUME, PAN];
+pub(crate) const STRIP: &[ParamDescription] = &[VOLUME, PAN];
 
 /// A parameter's number in [`STRIP`], apart from a plugin's so one never names the other; always one the strip has.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

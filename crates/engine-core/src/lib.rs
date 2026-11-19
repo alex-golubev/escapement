@@ -30,11 +30,19 @@ pub use framing::MAX_MESSAGE;
 pub use notes::{HIGHEST_KEY, MAX_VELOCITY, MIN_VELOCITY};
 pub use pool::{Hash, SamplePool};
 pub use schema::{Rejection, SCHEMA_FINGERPRINT};
-pub use strip::STRIP;
 pub use telemetry::{METERS, MeterRecord, TELEMETRY_WORDS, Telemetry};
 pub use transport::{DEFAULT_TEMPO, MAX_TEMPO, MIN_TEMPO, TICKS_PER_QUARTER};
 
-use engine_plugins::SampleRate;
+use engine_plugins::catalog::CATALOG;
+use engine_plugins::{Descriptions, SampleRate, denormal};
+use strip::STRIP;
+
+/// What the page holds a copy of: the plugins, every node's strip, and where silence starts.
+pub static DESCRIPTIONS: Descriptions<'static> = Descriptions {
+    catalog: CATALOG,
+    node_params: STRIP,
+    silence: denormal::THRESHOLD,
+};
 
 /// A block of stereo sound, by channel.
 pub(crate) type Block = [[f32; BLOCK_FRAMES]; CHANNELS];

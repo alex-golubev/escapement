@@ -12,11 +12,10 @@ mod panic_text;
 use std::ptr;
 
 use engine_core::{
-    BLOCK_FRAMES, Builder, CHANNELS, DEFAULT_TEMPO, EVENT_CAPACITY, Engine, HIGHEST_KEY, Hash,
-    INPUT_CAPACITY, MAX_MESSAGE, MAX_TEMPO, MAX_VELOCITY, METERS, MIN_TEMPO, MIN_VELOCITY,
-    Rejection, SCHEMA_FINGERPRINT, STRIP, TELEMETRY_WORDS, TICKS_PER_QUARTER, Telemetry,
+    BLOCK_FRAMES, Builder, CHANNELS, DEFAULT_TEMPO, DESCRIPTIONS, EVENT_CAPACITY, Engine,
+    HIGHEST_KEY, Hash, INPUT_CAPACITY, MAX_MESSAGE, MAX_TEMPO, MAX_VELOCITY, METERS, MIN_TEMPO,
+    MIN_VELOCITY, Rejection, SCHEMA_FINGERPRINT, TELEMETRY_WORDS, TICKS_PER_QUARTER, Telemetry,
 };
-use engine_plugins::catalog::CATALOG;
 use engine_plugins::{SampleRate, fingerprint};
 
 // Native builds (`cargo test`) have no WebAssembly features.
@@ -159,8 +158,8 @@ macro_rules! constants {
 // The page checks each against its own copy: a page and an engine from different builds stop before they play.
 constants! {
     engine_schema_fingerprint: u32 = SCHEMA_FINGERPRINT;
-    /// Of every plugin description and the strip's.
-    engine_plugins_fingerprint: u32 = fingerprint(CATALOG, STRIP);
+    /// Of the engine's descriptions: the plugins, the strip and silence.
+    engine_plugins_fingerprint: u32 = fingerprint(&DESCRIPTIONS);
     /// The render quantum.
     engine_block_frames: usize = BLOCK_FRAMES;
     /// Output channels.

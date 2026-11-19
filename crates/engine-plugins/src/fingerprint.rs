@@ -1,5 +1,5 @@
-//! One number for every description in a catalog. The page holds a copy of the descriptions generated from this
-//! crate and its number: when the two differ, the page and the engine come from different builds.
+//! One number for the descriptions the page holds a copy of, [`Descriptions`]: when the page's number and the engine's
+//! differ, they come from different builds.
 
 use crate::catalog::CatalogEntry;
 use crate::{Choice, ParamDescription, PluginDescription, SampleDescription, Values};
@@ -83,10 +83,24 @@ impl Fnv {
     }
 }
 
-/// Takes every field by name, so a new one doesn't compile until it counts. `node_params` are the ones the engine gives
-/// every node of its own, such as its volume.
+/// What the engine plays by and the page holds a copy of. `describe-plugins` prints it and [`fingerprint`] counts it,
+/// both field by field.
+pub struct Descriptions<'a> {
+    pub catalog: &'a [CatalogEntry],
+    /// The ones the engine gives every node of its own, such as its volume.
+    pub node_params: &'a [ParamDescription],
+    /// Below it a level is silence.
+    pub silence: f32,
+}
+
+/// Takes every field by name, so a new one doesn't compile until it counts.
 #[must_use]
-pub fn fingerprint(catalog: &[CatalogEntry], node_params: &[ParamDescription]) -> u32 {
+pub fn fingerprint(descriptions: &Descriptions<'_>) -> u32 {
+    let Descriptions {
+        catalog,
+        node_params,
+        silence,
+    } = *descriptions;
     let mut hash = Fnv::new();
     hash.length(catalog.len());
     for entry in catalog {
@@ -115,6 +129,7 @@ pub fn fingerprint(catalog: &[CatalogEntry], node_params: &[ParamDescription]) -
         }
     }
     hash.params(node_params);
+    hash.float(silence);
     hash.0
 }
 
@@ -188,23 +203,27 @@ mod tests {
         samples: &[SAMPLE],
     };
 
+    const SILENCE: f32 = 1e-15;
+
     fn of(name: &'static str, description: PluginDescription) -> u32 {
-        with_node_params(name, description, &[PARAM])
+        with(name, description, &[PARAM], SILENCE)
     }
 
-    fn with_node_params(
+    fn with(
         name: &'static str,
         description: PluginDescription,
         node_params: &[ParamDescription],
+        silence: f32,
     ) -> u32 {
-        fingerprint(
-            &[CatalogEntry {
+        fingerprint(&Descriptions {
+            catalog: &[CatalogEntry {
                 name,
                 description: Box::leak(Box::new(description)),
                 create: tone::create,
             }],
             node_params,
-        )
+            silence,
+        })
     }
 
     fn with_param(change: impl FnOnce(&mut ParamDescription)) -> PluginDescription {
@@ -305,15 +324,17 @@ mod tests {
                 "filter",
                 with_param(|param| param.values = Values::Choices(RENAMED)),
             ),
-            with_node_params("filter", PLUGIN, &[]),
-            with_node_params(
+            with("filter", PLUGIN, &[], SILENCE),
+            with(
                 "filter",
                 PLUGIN,
                 &[ParamDescription {
                     default: 1001.0,
                     ..PARAM
                 }],
+                SILENCE,
             ),
+            with("filter", PLUGIN, &[PARAM], 1e-14),
         ];
         // Every other unit and scale.
         let units = Unit::ALL

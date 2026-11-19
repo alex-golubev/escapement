@@ -285,7 +285,7 @@ export const scales = ${JSON.stringify(scales)} as const
 /** The engine takes a smaller value as 0: far below hearing, and no denormal reaches a sample. */
 export const silenceBelow = ${JSON.stringify(silence)}
 
-/** The engine computes it from its own catalog and strip; the page and the engine must match. */
+/** The engine computes it from its own plugins, strip and silence; the page and the engine must match. */
 export const descriptionsFingerprint = ${hex(fingerprint)}
 `
   }
