@@ -19,6 +19,11 @@ rustflags = [
 ]
 
 # Shared memory links only against a std built with atomics, and cargo can't rebuild std for one target alone: each
-# wasm build takes `-Zbuild-std`, as this one does, and native builds keep rustup's std.
+# wasm build takes `-Zbuild-std`, as this one does, and native builds keep rustup's std. Panic locations in std and in
+# crates from the registry would name where they lie on the machine that built the module: `trim-paths` puts
+# placeholders there, and the workspace's own stay relative to it.
 [alias]
-wasm = ["build", "--release", "-p", "engine-wasm", "--target", "wasm32-unknown-unknown", "-Zbuild-std=panic_abort,std"]
+wasm = [
+  "build", "--release", "-p", "engine-wasm", "--target", "wasm32-unknown-unknown", "-Zbuild-std=panic_abort,std",
+  "-Ztrim-paths", '--config=profile.release.trim-paths="object"',
+]
