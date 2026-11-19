@@ -37,10 +37,11 @@ import { createEngineBlock } from '../src/worklet/engine-block'
 import engineWasm from '../wasm/engine.wasm?inline'
 
 // The release build: 32-bit, unlike `cargo test`. Vite hands it over as a data URL.
-export const module = new WebAssembly.Module(
+export const moduleBytes =
   // A copy is an `ArrayBuffer`'s, as `BufferSource` wants; the decoder's may sit on any buffer.
   Result.getOrThrow(Base64.decode(engineWasm.slice(engineWasm.indexOf(',') + 1))).slice()
-)
+
+export const module = new WebAssembly.Module(moduleBytes)
 
 export const sampleRate = 48_000
 
