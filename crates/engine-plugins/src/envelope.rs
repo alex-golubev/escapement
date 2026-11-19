@@ -180,6 +180,12 @@ impl Contour {
     }
 }
 
+/// As heard: worked out in `f64`, so a long fall doesn't drift.
+#[expect(clippy::cast_possible_truncation, reason = "heard as an f32")]
+fn heard(level: f64) -> f32 {
+    level as f32
+}
+
 /// A stretch a level walks, which is divided by: at least a sample, unlike a delay or a hold.
 fn samples(seconds: f32, sample_rate: SampleRate) -> f64 {
     f64::from(ramp_samples(seconds, sample_rate))
@@ -281,91 +287,105 @@ impl Envelope {
     /// The voice's levels over the prepared frames, a sample apart: how many it sounds, all unless it is over first.
     pub fn fill(&self, contour: &mut Contour, levels: &mut [f32; BLOCK_FRAMES]) -> usize {
         let levels = &mut levels[..self.prepared];
-        for (frame, at) in levels.iter_mut().enumerate() {
-            let Some(level) = self.next(contour, frame) else {
-                return frame;
-            };
-            *at = level;
+        let mut frame = 0;
+        while frame < levels.len() && !contour.is_over() {
+            frame += self.walk(contour, &mut levels[frame..], frame);
         }
-        levels.len()
+        frame
     }
 
-    /// The voice's level at the prepared stretch's `frame`, a sample on from the last; none once it is over.
-    fn next(&self, contour: &mut Contour, frame: usize) -> Option<f32> {
+    /// The level through the stage the voice is in, from the prepared `frame` on, as far as the stage lasts within
+    /// `levels`: how many frames it took.
+    fn walk(&self, contour: &mut Contour, levels: &mut [f32], frame: usize) -> usize {
         let Contour { stage, level } = contour;
-        loop {
-            match stage {
-                Stage::Waiting(waited) => {
-                    if *waited < self.delay {
-                        *waited += 1;
-                        return Some(0.0);
+        match stage {
+            Stage::Waiting(waited) => {
+                for (walked, at) in levels.iter_mut().enumerate() {
+                    if *waited >= self.delay {
+                        *stage = Stage::Rising;
+                        return walked;
                     }
-                    *stage = Stage::Rising;
+                    *waited += 1;
+                    *at = 0.0;
                 }
-                Stage::Rising => {
+            }
+            Stage::Rising => {
+                for (walked, at) in levels.iter_mut().enumerate() {
                     *level += self.attack;
                     if *level >= 1.0 - HAIR {
                         *level = 1.0;
                         *stage = Stage::Holding(0);
+                        *at = 1.0;
+                        return walked + 1;
                     }
-                    break;
+                    *at = heard(*level);
                 }
-                Stage::Holding(held) => {
-                    if *held < self.hold {
-                        *held += 1;
-                        break;
+            }
+            Stage::Holding(held) => {
+                for (walked, at) in levels.iter_mut().enumerate() {
+                    if *held >= self.hold {
+                        *stage = Stage::Decaying;
+                        return walked;
                     }
-                    *stage = Stage::Decaying;
+                    *held += 1;
+                    *at = heard(*level);
                 }
-                Stage::Decaying => {
-                    let sustain = self.sustains[frame];
-                    *level *= self.falls[frame];
-                    // Below the floor, where the fall ends, it cuts to the sustain level.
+            }
+            Stage::Decaying => {
+                let each = levels
+                    .iter_mut()
+                    .zip(&self.sustains[frame..])
+                    .zip(&self.falls[frame..]);
+                for (walked, ((at, &sustain), fall)) in each.enumerate() {
+                    *level *= fall;
+                    // Below the floor, where the fall ends, it cuts to the sustain level, which takes the frame.
                     if *level <= f64::from(sustain.max(FLOOR)) * (1.0 + HAIR) {
-                        *level = sustain.into();
                         *stage = Stage::Sustaining;
+                        return walked;
                     }
-                    break;
+                    *at = heard(*level);
                 }
-                Stage::Sustaining => {
-                    *level = self.sustains[frame].into();
-                    break;
+            }
+            Stage::Sustaining => {
+                let sustains = &self.sustains[frame..frame + levels.len()];
+                levels.copy_from_slice(sustains);
+                if let Some(&last) = sustains.last() {
+                    *level = last.into();
                 }
-                Stage::Releasing {
-                    from,
-                    fall,
-                    release,
-                } => {
-                    // A turn of the release takes the rest of the fall on at its own pace.
-                    #[expect(clippy::float_cmp, reason = "any turn of the release counts")]
-                    if *release != self.release {
-                        *release = self.release;
-                        *fall = (f64::from(FLOOR) / *from).powf(release.recip());
-                    }
+            }
+            Stage::Releasing {
+                from,
+                fall,
+                release,
+            } => {
+                // A turn of the release takes the rest of the fall on at its own pace.
+                #[expect(clippy::float_cmp, reason = "any turn of the release counts")]
+                if *release != self.release {
+                    *release = self.release;
+                    *fall = (f64::from(FLOOR) / *from).powf(release.recip());
+                }
+                for (walked, at) in levels.iter_mut().enumerate() {
                     *level *= *fall;
                     if *level <= f64::from(FLOOR) * (1.0 + HAIR) {
                         *contour = Contour::OVER;
-                        return None;
+                        return walked;
                     }
-                    break;
+                    *at = heard(*level);
                 }
-                Stage::GivingWay { fall } => {
+            }
+            Stage::GivingWay { fall } => {
+                for (walked, at) in levels.iter_mut().enumerate() {
                     *level -= *fall;
                     if *level <= HAIR {
                         *contour = Contour::OVER;
-                        return None;
+                        return walked;
                     }
-                    break;
+                    *at = heard(*level);
                 }
-                Stage::Over => return None,
             }
+            Stage::Over => return 0,
         }
-        #[expect(
-            clippy::cast_possible_truncation,
-            reason = "worked out in f64, so a long fall doesn't drift; heard as an f32"
-        )]
-        let heard = *level as f32;
-        Some(heard)
+        levels.len()
     }
 
     /// From where it is, unless it isn't held: one still silent, or at the floor, is over at once.
@@ -429,12 +449,21 @@ mod tests {
             let mut left = samples;
             while left > 0 {
                 let frames = left.min(BLOCK_FRAMES);
-                envelope.prepare(frames);
-                levels.extend((0..frames).map(|frame| envelope.next(&mut contour, frame)));
+                levels.extend(block(&mut envelope, &mut contour, frames));
                 left -= frames;
             }
         }
         levels
+    }
+
+    /// A note's levels over the next `frames`, as a voice takes them: none from the frame it is over at. A frame
+    /// counted but not written shows as not a number.
+    fn block(envelope: &mut Envelope, contour: &mut Contour, frames: usize) -> Vec<Option<f32>> {
+        envelope.prepare(frames);
+        let mut levels = [f32::NAN; BLOCK_FRAMES];
+        let sounds = envelope.fill(contour, &mut levels);
+        let (sounded, over) = (levels[..sounds].iter().copied().map(Some), frames - sounds);
+        sounded.chain(std::iter::repeat_n(None, over)).collect()
     }
 
     fn sounding(levels: &[Option<f32>]) -> Vec<f32> {
@@ -543,9 +572,8 @@ mod tests {
         let mut contour = Contour::START;
         let mut levels = Vec::new();
         for _ in 0..(seconds(0.003) + decay + 1000).div_ceil(BLOCK_FRAMES) {
-            envelope.prepare(BLOCK_FRAMES);
-            levels
-                .extend((0..BLOCK_FRAMES).map(|frame| envelope.next(&mut contour, frame).unwrap()));
+            let block = block(&mut envelope, &mut contour, BLOCK_FRAMES);
+            levels.extend(block.into_iter().map(Option::unwrap));
         }
         let fallen = seconds(0.003) - 1 + decay;
         assert!(
@@ -654,6 +682,21 @@ mod tests {
     }
 
     #[test]
+    fn a_note_let_go_of_after_a_sustain_turn_falls_from_the_level_it_glided_to() {
+        let glide = seconds(0.02);
+        let levels = levels(&[
+            (&[], 1000),
+            (&[Told::Set(NUMBERS.sustain, 0.5)], 2 * glide),
+            (&[Told::LetGo], 100),
+        ]);
+        let let_go = 1000 + 2 * glide;
+        assert_eq!(levels[let_go - 1], Some(0.5));
+        // On down from there at the release's pace.
+        let fall = levels[let_go].unwrap() / 0.5;
+        assert!(fall > 0.99 && fall < 1.0, "{fall}");
+    }
+
+    #[test]
     fn a_sustain_raised_past_a_decaying_note_takes_it_on_without_a_jump() {
         let knobs = [
             Told::Set(NUMBERS.sustain, 0.0),
@@ -718,16 +761,14 @@ mod tests {
         let mut contour = Contour::START;
         // Past the attack, at full level.
         for _ in 0..2 {
-            envelope.prepare(BLOCK_FRAMES);
-            (0..BLOCK_FRAMES).for_each(|frame| _ = envelope.next(&mut contour, frame));
+            block(&mut envelope, &mut contour, BLOCK_FRAMES);
         }
         assert_eq!(contour.level(), 1.0);
         let give_way = seconds(0.02);
         contour.give_way(u32::try_from(give_way).unwrap());
         let mut levels = Vec::new();
         for _ in 0..seconds(0.03).div_ceil(BLOCK_FRAMES) {
-            envelope.prepare(BLOCK_FRAMES);
-            levels.extend((0..BLOCK_FRAMES).map(|frame| envelope.next(&mut contour, frame)));
+            levels.extend(block(&mut envelope, &mut contour, BLOCK_FRAMES));
         }
         assert!(near(levels[give_way / 2 - 1].unwrap(), 0.5, 1e-6));
         assert!(levels[give_way - 2].is_some());
