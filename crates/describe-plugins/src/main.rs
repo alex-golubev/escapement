@@ -1,30 +1,34 @@
-//! Prints the plugin catalog and the parameters of the engine's strip as JSON for `pnpm gen`, which writes them out
+//! Prints what the page holds a copy of, the engine's [`DESCRIPTIONS`], as JSON for `pnpm gen`, which writes them out
 //! for TypeScript.
 
-use engine_core::STRIP;
-use engine_plugins::catalog::{CATALOG, CatalogEntry};
-use engine_plugins::denormal;
+use engine_core::DESCRIPTIONS;
+use engine_plugins::catalog::CatalogEntry;
 use engine_plugins::{
-    Choice, ParamDescription, PluginDescription, SampleDescription, Scale, Unit, Values,
-    fingerprint,
+    Choice, Descriptions, ParamDescription, PluginDescription, SampleDescription, Scale, Unit,
+    Values, fingerprint,
 };
 use serde_json::{Value, json};
 
 fn main() {
-    let plugins: Vec<_> = CATALOG.iter().map(plugin).collect();
-    let strip: Vec<_> = STRIP.iter().map(param).collect();
+    let Descriptions {
+        catalog,
+        node_params,
+        silence,
+    } = DESCRIPTIONS;
+    let plugins: Vec<_> = catalog.iter().map(plugin).collect();
+    let strip: Vec<_> = node_params.iter().map(param).collect();
     // Every unit and scale, used or not, so the page handles each one there is.
     let units: Vec<_> = Unit::ALL.iter().copied().map(unit_name).collect();
     let scales: Vec<_> = Scale::ALL.iter().copied().map(scale_name).collect();
     println!(
         "{}",
         json!({
-            "fingerprint": fingerprint(CATALOG, STRIP),
+            "fingerprint": fingerprint(&DESCRIPTIONS),
             "units": units,
             "scales": scales,
             "plugins": plugins,
             "strip": strip,
-            "silence": decimal(denormal::THRESHOLD),
+            "silence": decimal(silence),
         })
     );
 }
@@ -132,11 +136,12 @@ mod tests {
 
     /// Each plugin's and the strip's, as the page gets them, with where each is.
     fn every_param() -> impl Iterator<Item = (String, &'static ParamDescription)> {
-        let plugins = CATALOG.iter().flat_map(|entry| {
+        let plugins = DESCRIPTIONS.catalog.iter().flat_map(|entry| {
             let params = entry.description.params.iter();
             params.map(move |param| (format!("{} {:?}", entry.name, param.id), param))
         });
-        let strip = STRIP
+        let strip = DESCRIPTIONS
+            .node_params
             .iter()
             .map(|param| (format!("strip {:?}", param.id), param));
         plugins.chain(strip)
@@ -205,7 +210,7 @@ mod tests {
 
     #[test]
     fn a_group_s_parameters_stand_together() {
-        for entry in CATALOG {
+        for entry in DESCRIPTIONS.catalog {
             let mut runs: Vec<_> = entry
                 .description
                 .params

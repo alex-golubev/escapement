@@ -50,7 +50,7 @@ export const checkContract = (wasm: EngineExports) => {
       const show = (number: number) => (name.endsWith('_fingerprint') ? `0x${number.toString(16)}` : String(number))
       throw new Error(
         `The engine's ${name}() is ${show(actual)}, this page expects ${show(value)}: they come from different ` +
-          'builds. Run `pnpm gen` if the schema or a plugin changed, then rebuild the engine.'
+          "builds. Run `pnpm gen` if the schema or the engine's descriptions changed, then rebuild the engine."
       )
     }
   }

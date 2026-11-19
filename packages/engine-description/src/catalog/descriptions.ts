@@ -336,5 +336,5 @@ export const scales = ['linear', 'logarithmic', 'volume', 'time'] as const
 /** The engine takes a smaller value as 0: far below hearing, and no denormal reaches a sample. */
 export const silenceBelow = 1e-15
 
-/** The engine computes it from its own catalog and strip; the page and the engine must match. */
-export const descriptionsFingerprint = 0x8f59_b831
+/** The engine computes it from its own plugins, strip and silence; the page and the engine must match. */
+export const descriptionsFingerprint = 0xb662_0b35

@@ -19,7 +19,7 @@ pub use description::{
     Scale, Unit, Values,
 };
 pub use events::{Event, NoteId, Step, steps};
-pub use fingerprint::fingerprint;
+pub use fingerprint::{Descriptions, fingerprint};
 pub use sample_rate::SampleRate;
 pub use samples::{Frames, SampleReader};
 

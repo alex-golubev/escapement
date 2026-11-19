@@ -54,7 +54,7 @@ own must too.
 | `crates/engine-core`          | The engine: DSP, sequencer, mixer graph                                                               |
 | `crates/engine-plugins`       | What a plugin sees, and the built-in plugins                                                          |
 | `crates/engine-wasm`          | The engine's WebAssembly exports                                                                      |
-| `crates/describe-plugins`     | Prints the plugin catalog for code generation                                                         |
+| `crates/describe-plugins`     | Prints the engine's descriptions for code generation                                                  |
 | `schema`                      | The FlatBuffers schema of what the page and the engine send each other                                |
 | `tools`                       | Code generation, the debug samples and the mutation tests                                             |
 | `samples`                     | Debug drum sounds, synthesized by `tools`, CC0                                                        |
