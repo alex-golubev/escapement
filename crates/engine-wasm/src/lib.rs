@@ -146,78 +146,47 @@ pub unsafe extern "C" fn engine_collect(build: *mut BuildThread) -> usize {
     unsafe { (*build).builder.collect() }
 }
 
-/// Must match the page's.
-#[unsafe(no_mangle)]
-pub extern "C" fn engine_schema_fingerprint() -> u32 {
-    SCHEMA_FINGERPRINT
+/// Exports each constant as a function that returns it: a `static` would cross as its address.
+macro_rules! constants {
+    ($($(#[$doc:meta])* $name:ident: $type:ty = $value:expr;)*) => {
+        $(
+            $(#[$doc])*
+            #[unsafe(no_mangle)]
+            pub extern "C" fn $name() -> $type {
+                $value
+            }
+        )*
+    };
 }
 
-/// Of every plugin description and the strip's; must match the page's copy.
-#[unsafe(no_mangle)]
-pub extern "C" fn engine_plugins_fingerprint() -> u32 {
-    fingerprint(CATALOG, STRIP)
+// The page checks each against its own copy: a page and an engine from different builds stop before they play.
+constants! {
+    engine_schema_fingerprint: u32 = SCHEMA_FINGERPRINT;
+    /// Of every plugin description and the strip's.
+    engine_plugins_fingerprint: u32 = fingerprint(CATALOG, STRIP);
+    /// The render quantum.
+    engine_block_frames: usize = BLOCK_FRAMES;
+    /// Output channels.
+    engine_channels: usize = CHANNELS;
+    /// Size prefix included.
+    engine_max_message: usize = MAX_MESSAGE;
+    engine_telemetry_words: usize = TELEMETRY_WORDS;
+    engine_meters: usize = METERS;
+    engine_panic_text_bytes: usize = panic_text::PANIC_TEXT_BYTES;
+    engine_ticks_per_quarter: u32 = TICKS_PER_QUARTER;
+    engine_min_tempo: u32 = MIN_TEMPO;
+    engine_max_tempo: u32 = MAX_TEMPO;
+    /// What a new engine plays at until the page sends a tempo.
+    engine_default_tempo: u32 = DEFAULT_TEMPO;
+    engine_highest_key: u32 = u32::from(HIGHEST_KEY);
+    engine_min_velocity: f32 = MIN_VELOCITY;
+    engine_max_velocity: f32 = MAX_VELOCITY;
 }
 
-/// The render quantum must match.
-#[unsafe(no_mangle)]
-pub extern "C" fn engine_block_frames() -> usize {
-    BLOCK_FRAMES
-}
-
-/// Output channels; the worklet's must match.
-#[unsafe(no_mangle)]
-pub extern "C" fn engine_channels() -> usize {
-    CHANNELS
-}
-
-/// Size prefix included.
-#[unsafe(no_mangle)]
-pub extern "C" fn engine_max_message() -> usize {
-    MAX_MESSAGE
-}
-
-/// The page's pattern notes and loops are in these.
-#[unsafe(no_mangle)]
-pub extern "C" fn engine_ticks_per_quarter() -> u32 {
-    TICKS_PER_QUARTER
-}
-
-/// The page's tempo control must not go past what the engine plays.
-#[unsafe(no_mangle)]
-pub extern "C" fn engine_min_tempo() -> u32 {
-    MIN_TEMPO
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn engine_max_tempo() -> u32 {
-    MAX_TEMPO
-}
-
-/// What a new engine plays at until the page sends a tempo.
-#[unsafe(no_mangle)]
-pub extern "C" fn engine_default_tempo() -> u32 {
-    DEFAULT_TEMPO
-}
-
-/// The page's notes must not go past what the engine plays.
-#[unsafe(no_mangle)]
-pub extern "C" fn engine_highest_key() -> u32 {
-    u32::from(HIGHEST_KEY)
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn engine_min_velocity() -> f32 {
-    MIN_VELOCITY
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn engine_max_velocity() -> f32 {
-    MAX_VELOCITY
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn engine_input_capacity() -> usize {
-    INPUT_CAPACITY
+// The page sizes its views of the engine's buffers by these.
+constants! {
+    engine_input_capacity: usize = INPUT_CAPACITY;
+    engine_event_capacity: usize = EVENT_CAPACITY;
 }
 
 /// Never moves.
@@ -251,30 +220,10 @@ pub unsafe extern "C" fn engine_output(engine: *const Engine, channel: usize) ->
     unsafe { (*engine).output(channel).as_ptr() }
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn engine_event_capacity() -> usize {
-    EVENT_CAPACITY
-}
-
 /// Never moves.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn engine_events(engine: *const Engine) -> *const u8 {
     unsafe { (*engine).events().as_ptr() }
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn engine_telemetry_words() -> usize {
-    TELEMETRY_WORDS
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn engine_meters() -> usize {
-    METERS
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn engine_panic_text_bytes() -> usize {
-    panic_text::PANIC_TEXT_BYTES
 }
 
 /// Never moves; updated every block.
