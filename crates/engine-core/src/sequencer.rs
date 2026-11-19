@@ -1,10 +1,9 @@
 //! The clips heard: the notes each block passes, of the patterns they play, go to their nodes, each at the frame that
 //! passes its tick, and each is let go of at the frame that passes its end.
 
-use std::mem;
-
 use engine_plugins::NoteId;
 
+use crate::cells::Cells;
 use crate::graph::Graph;
 use crate::handle::{NodeHandle, PatternCell, PatternHandle};
 use crate::notes::PAGE_NOTES;
@@ -58,47 +57,9 @@ impl Pattern {
 /// A cell of the pattern table: the pattern made there, under its handle.
 pub(crate) type Made = Option<(PatternHandle, Pattern)>;
 
-/// The patterns by their cells. Parcels bring a larger table when they need one, as they do the nodes'.
-#[derive(Debug, Default)]
-pub(crate) struct Patterns(Box<[Made]>);
-
-impl Patterns {
-    /// Allocates, so only on the build thread, or before the audio thread starts.
-    pub(crate) fn new(cells: usize) -> Self {
-        Self((0..cells).map(|_| None).collect())
-    }
-
-    #[cfg(test)]
-    pub(crate) fn len(&self) -> usize {
-        self.0.len()
-    }
-
-    /// None for a handle of another generation, or past the table.
-    fn get(&self, handle: PatternHandle) -> Option<&Pattern> {
-        match self.0.get(handle.cell().index()) {
-            Some(Some((made, pattern))) if *made == handle => Some(pattern),
-            _ => None,
-        }
-    }
-
-    /// Swaps `slot` into the cell; what was there comes back in it. False past the table: `slot` stays as it was.
-    #[must_use]
-    pub(crate) fn put(&mut self, cell: PatternCell, slot: &mut Made) -> bool {
-        let Some(cell) = self.0.get_mut(cell.index()) else {
-            return false;
-        };
-        mem::swap(cell, slot);
-        true
-    }
-
-    /// Every pattern moves over to `larger`, which takes this table's place; this one, empty, is left in it.
-    pub(crate) fn grow(&mut self, larger: &mut Patterns) {
-        for (old, new) in self.0.iter_mut().zip(larger.0.iter_mut()) {
-            mem::swap(old, new);
-        }
-        mem::swap(self, larger);
-    }
-}
+/// The patterns by their cells, each under its handle. Parcels bring a larger table when they need one, as they do the
+/// nodes'.
+pub(crate) type Patterns = Cells<PatternCell, (PatternHandle, Pattern)>;
 
 /// A pattern played from a tick of the loop, round and round, as the build thread checked it.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -174,7 +135,7 @@ impl Sequencer {
         let loop_ticks = transport.loop_ticks().unwrap_or(0);
         for stretch in transport.stretches(frames) {
             for clip in self.arrangement.playing(stretch.first, stretch.last) {
-                let Some(pattern) = self.patterns.get(clip.pattern) else {
+                let Some(pattern) = self.pattern(clip.pattern) else {
                     continue;
                 };
                 // The ticks of the stretch the clip plays, counted from the start of the round it starts in.
@@ -227,6 +188,12 @@ impl Sequencer {
         }
         held.let_go(transport, graph, frames);
         lost
+    }
+
+    /// None for a handle of another generation, or past the table.
+    fn pattern(&self, handle: PatternHandle) -> Option<&Pattern> {
+        let (made, pattern) = self.patterns.get(handle.cell())?;
+        (*made == handle).then_some(pattern)
     }
 }
 

@@ -8,7 +8,7 @@ use engine_plugins::SampleRate;
 use crate::builder::{FIRST_CELLS, FIRST_EXITS, FIRST_PATTERN_CELLS};
 use crate::commands::{Command, CommandInput, Drained};
 use crate::events::{EngineEvent, EventOutput};
-use crate::graph::{Graph, Nodes};
+use crate::graph::{Exits, Graph, Nodes};
 use crate::handle::NodeHandle;
 use crate::handoff::{Arrival, AudioEnd, Batch, Edit, Parcel};
 use crate::heap;
@@ -45,7 +45,7 @@ impl Engine {
         Self {
             graph: Graph::new(
                 Nodes::new(FIRST_CELLS),
-                Nodes::new(FIRST_EXITS),
+                Exits::new(FIRST_EXITS),
                 sample_rate,
             ),
             parcels,
@@ -219,8 +219,12 @@ fn apply(
                 telemetry.epoch = *epoch;
                 None
             }
-            Edit::Grow { table, nodes } => {
-                graph.grow(*table, nodes);
+            Edit::GrowCells(larger) => {
+                graph.grow_cells(larger);
+                None
+            }
+            Edit::GrowExits(larger) => {
+                graph.grow_exits(larger);
                 None
             }
             // Only if the build thread's record went wrong.
@@ -240,7 +244,7 @@ fn apply(
             }
             // Only if the build thread's record went wrong.
             Edit::Pattern { cell, pattern } => {
-                (!sequencer.patterns.put(*cell, pattern)).then_some(Rejection::InvalidHandle)
+                (!sequencer.patterns.swap(*cell, pattern)).then_some(Rejection::InvalidHandle)
             }
             Edit::Arrangement(heard) => {
                 mem::swap(&mut sequencer.arrangement, heard);

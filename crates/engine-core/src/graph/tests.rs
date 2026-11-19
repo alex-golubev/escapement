@@ -19,7 +19,7 @@ fn through(raw: u32) -> Box<Node> {
 }
 
 fn graph(cells: usize) -> Graph {
-    Graph::new(Nodes::new(cells), Nodes::new(4), SAMPLE_RATE)
+    Graph::new(Nodes::new(cells), Exits::new(4), SAMPLE_RATE)
 }
 
 /// Cells holding a node.
@@ -84,14 +84,14 @@ fn heard(graph: &mut Graph, blocks: usize) -> Vec<f32> {
 fn swaps_bring_nodes_in_and_take_what_they_displace_out_without_the_heap() {
     let mut graph = graph(4);
     let (mut first, mut second, mut far) = (Some(node(1)), Some(node(9)), Some(node(16)));
-    let (mut larger, mut exits) = (Nodes::new(16), Nodes::new(8));
+    let (mut larger, mut exits) = (Nodes::new(16), Exits::new(8));
     let mut new_order = alone(&[9, 1]);
     let mut back = None;
 
     let before = heap::calls();
     assert!(graph.insert(cell(1), &mut first));
-    graph.grow(Table::Cells, &mut larger);
-    graph.grow(Table::Exits, &mut exits);
+    graph.grow_cells(&mut larger);
+    graph.grow_exits(&mut exits);
     assert!(graph.insert(cell(9), &mut second));
     let past_the_table = graph.insert(cell(16), &mut far);
     graph.reorder(&mut new_order);
@@ -111,8 +111,9 @@ fn swaps_bring_nodes_in_and_take_what_they_displace_out_without_the_heap() {
     assert_eq!(output, [[1.0; BLOCK_FRAMES], [-1.0; BLOCK_FRAMES]]);
     // The old tables came back empty.
     assert_eq!(larger.len(), 4);
-    assert!(larger.0.iter().all(Option::is_none));
+    assert!((0..4).all(|raw| larger.get(cell(raw)).is_none()));
     assert_eq!(exits.len(), 4);
+    assert!((0..4).all(|index| exits.get(Exit::new(index)).is_none()));
     assert!(removed && !past_the_exits);
     assert_eq!(back.map(|node| node.handle()), Some(NodeHandle::new(1)));
     assert_eq!(cells(&mut graph), [9]);
@@ -134,8 +135,8 @@ fn growing_keeps_every_node_where_it_was() {
         assert!(graph.insert(cell(handle), &mut Some(node(handle))));
     }
     assert!(graph.remove(cell(3), Exit::new(2)));
-    graph.grow(Table::Cells, &mut Nodes::new(8));
-    graph.grow(Table::Exits, &mut Nodes::new(8));
+    graph.grow_cells(&mut Nodes::new(8));
+    graph.grow_exits(&mut Exits::new(8));
     assert_eq!(cells(&mut graph), [1, 2]);
     let mut back = None;
     graph.take_back(Exit::new(2), &mut back);
