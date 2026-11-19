@@ -242,12 +242,7 @@ impl Record {
     ) -> Result<Removal, Rejection> {
         let id = self.live(handle).ok_or(Rejection::UnknownTarget)?;
         let cell = handle.cell();
-        if self.free_exits.is_empty() {
-            self.grow_exits();
-        }
-        let Some(exit) = self.free_exits.pop() else {
-            unreachable!("the exits just grew");
-        };
+        let exit = self.free_exit();
         self.cells[cell.index()] = None;
         if let Some(entry) = self.entries.get_mut(&id) {
             entry.state = State::Leaving { exit };
@@ -412,12 +407,16 @@ impl Record {
         seen
     }
 
-    /// Doubles the table of exits; the audio thread's grows in the same parcel.
-    fn grow_exits(&mut self) {
-        let exits = (self.exits * 2).max(1);
-        self.free_exits
-            .extend((self.exits..exits).rev().map(Exit::new));
-        self.exits = exits;
+    /// A free exit; without one, the table of exits doubles and its first new exit is taken. The audio thread's table
+    /// grows in the same parcel.
+    fn free_exit(&mut self) -> Exit {
+        self.free_exits.pop().unwrap_or_else(|| {
+            let (first, exits) = (self.exits, (self.exits * 2).max(1));
+            self.free_exits
+                .extend((first + 1..exits).rev().map(Exit::new));
+            self.exits = exits;
+            Exit::new(first)
+        })
     }
 }
 
@@ -811,6 +810,19 @@ mod tests {
             "freed"
         );
         assert_eq!(record.live_handles(), []);
+    }
+
+    #[test]
+    fn removed_nodes_play_out_each_at_an_exit_of_its_own_as_the_exits_double() {
+        let mut record = Record::new(16, 1);
+        for cell in 1..=8 {
+            record.add(node(cell));
+        }
+        let exits: Vec<_> = (1..=8)
+            .map(|cell| record.remove(node(cell), Batch::new(cell)).unwrap().exit)
+            .collect();
+        assert_eq!(exits, (0..8).map(Exit::new).collect::<Vec<_>>());
+        assert_eq!(record.exits(), 8);
     }
 
     #[test]
