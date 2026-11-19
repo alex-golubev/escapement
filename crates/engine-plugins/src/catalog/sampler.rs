@@ -18,6 +18,7 @@ pub const DESCRIPTION: PluginDescription = PluginDescription {
     label: "Sampler",
     params: &[],
     samples: &[SAMPLE_SOUND],
+    voices: voices::VOICES,
 };
 
 pub const SAMPLE: SampleNumber = SampleNumber::of(DESCRIPTION.samples, SAMPLE_SOUND.id);

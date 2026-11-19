@@ -230,6 +230,7 @@ pub const DESCRIPTION: PluginDescription = PluginDescription {
     label: "Synth",
     params: &PARAMS,
     samples: &[],
+    voices: voices::VOICES,
 };
 
 /// An oscillator's parameters, by number.

@@ -1,6 +1,6 @@
 import { useAtomValue } from '@effect/atom-react'
 import { byContent, HoldTarget, type Id, type PluginInstance } from '@escapement/model'
-import { Match, Option } from 'effect'
+import { Boolean, Match, Option } from 'effect'
 import { Atom } from 'effect/reactivity'
 import { useMemo } from 'preact/hooks'
 import { useCore } from '../../core-context'
@@ -28,6 +28,13 @@ const Face = ({
     })
   )
 
+/** How many notes a device sounds at once, as its head says it; none for one that plays none. */
+export const voicesNote = (voices: number): Option.Option<string> =>
+  Option.map(
+    Option.liftPredicate(voices, (voices) => voices > 0),
+    (voices) => `${voices} ${Boolean.match(voices === 1, { onTrue: () => 'voice', onFalse: () => 'voices' })}`
+  )
+
 /** What of the track its chain shows, read alone: its volume, pan and mute change it not. */
 const useChainOf = (track: Id) => {
   const { session } = useCore()
@@ -53,7 +60,13 @@ export const TrackChain = ({ track }: { readonly track: Id }) => {
           onNone: () => null,
           onSome: (played) => (
             <section class='device' aria-label={played.plugin.label}>
-              <span class='cap device__name'>{played.plugin.label}</span>
+              <header class='device__head'>
+                <span class='cap device__name'>{played.plugin.label}</span>
+                {Option.match(voicesNote(played.plugin.voices), {
+                  onNone: () => null,
+                  onSome: (note) => <span class='cap'>{note}</span>
+                })}
+              </header>
               <Face owner={`${name} ${played.plugin.label.toLowerCase()}`} track={track} instrument={played} />
             </section>
           )

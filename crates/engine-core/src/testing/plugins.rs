@@ -39,6 +39,7 @@ pub(crate) static RECORDER: CatalogEntry = CatalogEntry {
         label: "Recorder",
         params: &[knob("low", 0.25), knob("high", 0.75)],
         samples: &[],
+        voices: 0,
     },
     create: |_| Box::new(Recorder),
 };
@@ -62,6 +63,7 @@ pub(crate) static THROUGH: CatalogEntry = CatalogEntry {
         label: "Through",
         params: &[],
         samples: &[],
+        voices: 0,
     },
     create: |_| Box::new(Through),
 };
@@ -85,6 +87,7 @@ pub(crate) static CONSTANT: CatalogEntry = CatalogEntry {
         label: "Constant",
         params: &[],
         samples: &[],
+        voices: 0,
     },
     create: |_| Box::new(Constant),
 };
@@ -120,6 +123,7 @@ pub(crate) static READER: CatalogEntry = CatalogEntry {
             id: "sound",
             label: "Sound",
         }],
+        voices: 0,
     },
     create: |_| Box::new(Reader),
 };

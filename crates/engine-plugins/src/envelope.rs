@@ -420,6 +420,7 @@ mod tests {
         label: "An envelope",
         params: &PARAMS,
         samples: &[],
+        voices: 0,
     };
     const NUMBERS: Numbers = Numbers::of(&DESCRIPTION);
 

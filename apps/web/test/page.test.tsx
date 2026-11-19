@@ -1811,7 +1811,7 @@ const knobsIn = (element: Element) =>
 const devicesIn = (body: Element) =>
   Array.from(body.querySelectorAll('.device'), (card) => card.getAttribute('aria-label'))
 
-test("a track's name shows it below: the devices its sound goes through, a sampler's card its name alone", () =>
+test("a track's name shows it below: the devices its sound goes through, a sampler's card its head alone", () =>
   page(({ grid, target }) =>
     Effect.gen(function* () {
       nameButton(grid, 'Kick').click()
@@ -1822,9 +1822,35 @@ test("a track's name shows it below: the devices its sound goes through, a sampl
       expect(devicesIn(kick)).toEqual(['Sampler'])
       // No pan or volume either: the track's head and strip have them.
       expect(knobsIn(kick)).toEqual([])
-      expect(kick.querySelector('.device')?.textContent).toBe('Sampler')
+      // Its head alone: its name, and how many notes it sounds at once.
+      expect(Array.from(kick.querySelectorAll('.device > *'), (part) => part.className)).toEqual(['device__head'])
+      expect(Array.from(kick.querySelectorAll('.device__head > *'), (part) => part.textContent)).toEqual([
+        'Sampler',
+        '16 voices'
+      ])
     })
   ))
+
+test('a device that plays no notes, as the test tone, has nothing by its name at its head', () => {
+  const doc = tracksDoc()
+  Option.map(addTrack(doc, elsewhere, { plugin: plugins.tone, sounds: {} }), (track) =>
+    renameTrack(doc, elsewhere, track, 'Tone')
+  )
+  return page(
+    ({ grid, target }) =>
+      Effect.gen(function* () {
+        nameButton(grid, 'Tone').click()
+        yield* drawn(50)
+        const tone = Option.getOrThrow(trackBelow(target, 'Tone'))
+        expect(Array.from(tone.querySelectorAll('.device__head > *'), (part) => part.textContent)).toEqual([
+          'Test tone'
+        ])
+      }),
+    {},
+    {},
+    { doc }
+  )
+})
 
 test("a click on another track's name shows that one in its place, its head marked; one more leaves it shown", () =>
   page(({ grid, target }) =>
@@ -1981,6 +2007,10 @@ test("a synth's track below: its card, with an oscillator's controls to a row an
       yield* drawn(50)
       const synth = Option.getOrThrow(trackBelow(target, 'Synth'))
       expect(devicesIn(synth)).toEqual(['Synth'])
+      expect(Array.from(synth.querySelectorAll('.device__head > *'), (part) => part.textContent)).toEqual([
+        'Synth',
+        '16 voices'
+      ])
       // Osc 2 an octave down and Osc 3 two, unmixed; the envelope's stages in order, a short note at full level.
       expect(knobsIn(synth)).toEqual([
         ['Coarse', '0 st'],

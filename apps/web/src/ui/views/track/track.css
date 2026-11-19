@@ -8,7 +8,7 @@
   width: max-content;
 }
 
-/* A device's card, as high as the others: its name, then its face, the knobs small, so more of them stand in a row. */
+/* A device's card, as high as the others: its head, then its face, the knobs small, so more of them stand in a row. */
 .device {
   --knob-d: 1.875rem;
   display: flex;
@@ -19,6 +19,14 @@
   border: 1px solid var(--line);
   border-radius: var(--r-md);
   background: var(--s-raise);
+}
+
+/* Its name, and at the right a word on how it plays. */
+.device__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: calc(var(--u) * 4);
 }
 
 /* A knob's name and number beside it, not under: a row of knobs as high as a knob. */

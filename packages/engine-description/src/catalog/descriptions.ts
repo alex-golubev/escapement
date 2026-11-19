@@ -24,7 +24,8 @@ export const plugins = {
         smoothingSeconds: 0.02
       }
     ],
-    samples: []
+    samples: [],
+    voices: 0
   },
   filter: {
     id: 2,
@@ -45,9 +46,17 @@ export const plugins = {
         smoothingSeconds: 0.02
       }
     ],
-    samples: []
+    samples: [],
+    voices: 0
   },
-  sampler: { id: 3, version: 1, label: 'Sampler', params: [], samples: [{ id: 'sample', label: 'Sample' }] },
+  sampler: {
+    id: 3,
+    version: 1,
+    label: 'Sampler',
+    params: [],
+    samples: [{ id: 'sample', label: 'Sample' }],
+    voices: 16
+  },
   synth: {
     id: 4,
     version: 1,
@@ -293,7 +302,8 @@ export const plugins = {
         smoothingSeconds: 0
       }
     ],
-    samples: []
+    samples: [],
+    voices: 16
   }
 } as const
 
@@ -337,4 +347,4 @@ export const scales = ['linear', 'logarithmic', 'volume', 'time'] as const
 export const silenceBelow = 1e-15
 
 /** The engine computes it from its own plugins, strip and silence; the page and the engine must match. */
-export const descriptionsFingerprint = 0xb662_0b35
+export const descriptionsFingerprint = 0x8de3_ad45

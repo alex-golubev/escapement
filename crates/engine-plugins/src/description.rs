@@ -14,6 +14,8 @@ pub struct PluginDescription {
     pub label: &'static str,
     pub params: &'static [ParamDescription],
     pub samples: &'static [SampleDescription],
+    /// Notes it sounds at once: 0 for one that plays none.
+    pub voices: usize,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -262,6 +264,7 @@ mod tests {
         label: "Two knobs, two sounds",
         params: &[param("first"), param("second")],
         samples: &[sample("low"), sample("high")],
+        voices: 0,
     };
 
     #[test]
