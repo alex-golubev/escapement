@@ -10,8 +10,8 @@ mod fingerprint;
 mod sample_rate;
 mod samples;
 pub mod smoothing;
-#[cfg(test)]
-mod testing;
+#[cfg(any(test, feature = "testing"))]
+pub mod testing;
 mod voices;
 
 pub use description::{

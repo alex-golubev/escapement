@@ -263,10 +263,12 @@ impl SamplePool {
 
 #[cfg(test)]
 mod tests {
+    use engine_plugins::testing::SAMPLE_RATE;
+
     use super::*;
     use crate::heap;
     use crate::testing::pool::{HZ, store, write};
-    use crate::testing::{SAMPLE_RATE, ramp};
+    use crate::testing::ramp;
 
     const KICK: Hash = [1; 32];
     const SNARE: Hash = [2; 32];

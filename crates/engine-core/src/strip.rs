@@ -142,8 +142,9 @@ fn gains(values: StripValues) -> [f32; CHANNELS] {
 
 #[cfg(test)]
 mod tests {
+    use engine_plugins::testing::{SAMPLE_RATE, seconds};
+
     use super::*;
-    use crate::testing::{SAMPLE_RATE, seconds};
     use crate::{BLOCK_FRAMES, SILENCE};
 
     /// 0.5 on the left and -0.25 on the right through the strip, one block.

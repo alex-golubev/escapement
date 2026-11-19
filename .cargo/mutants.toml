@@ -14,6 +14,9 @@ exclude_globs = [
   "crates/engine-wasm/src/audio_thread.rs",
   # Writes the descriptions for `pnpm gen`; a change shows as a diff of the generated code, not in a Rust test.
   "crates/describe-plugins/**",
+  # The plugins' test helpers, shared with the engine's tests through the `testing` feature: no longer only
+  # `cfg(test)`, which cargo-mutants skips by itself.
+  "crates/engine-plugins/src/testing.rs",
 ]
 
 exclude_re = [

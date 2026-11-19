@@ -1,9 +1,10 @@
 use engine_plugins::catalog::tone;
+use engine_plugins::testing::SAMPLE_RATE;
 
 use super::*;
 use crate::heap;
 use crate::testing::plugins::{CONSTANT, THROUGH};
-use crate::testing::{SAMPLE_RATE, cell, handle};
+use crate::testing::{cell, handle};
 use crate::{BLOCK_FRAMES, CHANNELS};
 
 /// 20 ms at 48 kHz.

@@ -9,6 +9,8 @@ use engine_plugins::catalog::sampler;
 use engine_plugins::catalog::synth;
 use engine_plugins::catalog::tone::{self, FREQUENCY, MAX_GAIN};
 use engine_plugins::smoothing::ramp_samples;
+// The plugins' `peak` of samples, apart from this file's `peak` of blocks the engine renders.
+use engine_plugins::testing::{SAMPLE_RATE, largest_step, peak as loudest, seconds};
 
 use super::*;
 use crate::builder::Builder;
@@ -31,7 +33,7 @@ use crate::testing::edits::{
 };
 use crate::testing::events::decode;
 use crate::testing::pool::store;
-use crate::testing::{BAR, FRAMES_PER_TICK, SAMPLE_RATE, handle, note_room, seconds, ticks_in};
+use crate::testing::{BAR, FRAMES_PER_TICK, handle, note_room, ticks_in};
 use crate::transport::TICKS_PER_QUARTER;
 use crate::{CHANNELS, new, strip};
 
@@ -163,12 +165,6 @@ fn left(engine: &mut Engine, blocks: usize) -> Vec<f32> {
         .collect()
 }
 
-fn largest_step(samples: &[f32]) -> f32 {
-    samples
-        .windows(2)
-        .fold(0.0, |step, pair| step.max((pair[1] - pair[0]).abs()))
-}
-
 /// The mean over each period of the tone: away from zero, the sound has a thump in it.
 fn largest_thump(samples: &[f32]) -> f32 {
     let period = seconds(FREQUENCY.recip());
@@ -181,12 +177,6 @@ fn largest_thump(samples: &[f32]) -> f32 {
 /// Loudest sample over `blocks` blocks.
 fn peak(engine: &mut Engine, blocks: usize) -> f32 {
     loudest(&left(engine, blocks))
-}
-
-fn loudest(samples: &[f32]) -> f32 {
-    samples
-        .iter()
-        .fold(0.0, |peak, sample| peak.max(sample.abs()))
 }
 
 /// Once a volume change has finished.

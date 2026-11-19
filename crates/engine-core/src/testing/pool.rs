@@ -2,7 +2,8 @@
 
 use std::mem::MaybeUninit;
 
-use super::SAMPLE_RATE;
+use engine_plugins::testing::SAMPLE_RATE;
+
 use crate::pool::{Hash, SamplePool};
 use crate::schema::Rejection;
 
