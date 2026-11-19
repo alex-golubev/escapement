@@ -194,11 +194,9 @@ impl AudioEnd {
 
     /// Gives back every held parcel due by the sample `now`, after `release` takes back what it left playing.
     pub(crate) fn release(&mut self, now: u64, mut release: impl FnMut(&mut Parcel)) {
-        while self.held.front().is_some_and(|&(_, due)| due <= now) {
-            if let Some((mut parcel, _)) = self.held.pop_front() {
-                release(&mut parcel);
-                self.give_back(parcel);
-            }
+        while let Some((mut parcel, _)) = self.held.pop_front_if(|&mut (_, due)| due <= now) {
+            release(&mut parcel);
+            self.give_back(parcel);
         }
     }
 
