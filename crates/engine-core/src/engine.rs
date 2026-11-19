@@ -116,7 +116,7 @@ impl Engine {
         telemetry.peaks = self.meter.levels();
         self.meter.count_overs(&mut telemetry.overs);
         telemetry.meters_used = 0;
-        self.graph.each_meter(|meter| meter.report(telemetry));
+        self.graph.report_meters(telemetry);
     }
 
     pub fn telemetry(&self) -> &Telemetry {

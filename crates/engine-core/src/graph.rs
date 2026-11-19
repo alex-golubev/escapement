@@ -10,7 +10,7 @@ use engine_plugins::smoothing::ramp_samples;
 
 use crate::handle::{NodeCell, NodeHandle};
 use crate::node::Node;
-use crate::telemetry::NodeMeter;
+use crate::telemetry::Telemetry;
 use crate::{Block, SILENCE};
 
 pub(crate) const FADE_SECONDS: f32 = 0.02;
@@ -232,18 +232,17 @@ impl Graph {
         }
     }
 
-    /// Hands `report` the meter of each node in the order that has one, live ones only: not those playing out.
-    pub(crate) fn each_meter(&mut self, mut report: impl FnMut(&mut NodeMeter)) {
+    /// The meter's record of each node in the order that has one, live ones only: not those playing out.
+    pub(crate) fn report_meters(&mut self, telemetry: &mut Telemetry) {
         let Self { cells, order, .. } = self;
         for turn in &order.turns {
             if let Seat::Cell(cell) = turn.node
-                && let Some(meter) = cells
+                && let Some(node) = cells
                     .0
                     .get_mut(cell.index())
                     .and_then(|node| node.as_deref_mut())
-                    .and_then(Node::meter_mut)
             {
-                report(meter);
+                node.report_meter(telemetry);
             }
         }
     }
