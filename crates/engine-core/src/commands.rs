@@ -33,29 +33,20 @@ impl Command {
     fn decode(message: &[u8]) -> Result<Self, Rejection> {
         let (kind, record) = split(message).ok_or(Rejection::Malformed)?;
         let command = match CommandKind(kind) {
-            CommandKind::SetParam => record
-                .try_into()
-                .map(|bytes| Self::SetParam(SetParam(bytes))),
-            CommandKind::AfterBatch => record
-                .try_into()
-                .map(|bytes| Self::AfterBatch(AfterBatch(bytes))),
-            CommandKind::NoteOn => record.try_into().map(|bytes| Self::NoteOn(NoteOn(bytes))),
-            CommandKind::SetTempo => record
-                .try_into()
-                .map(|bytes| Self::SetTempo(SetTempo(bytes))),
-            CommandKind::SetTransport => record
-                .try_into()
-                .map(|bytes| Self::SetTransport(SetTransport(bytes))),
-            CommandKind::PanicAudio => record
-                .try_into()
-                .map(|bytes| Self::PanicAudio(PanicAudio(bytes))),
-            CommandKind::HangAudio => record
-                .try_into()
-                .map(|bytes| Self::HangAudio(HangAudio(bytes))),
-            CommandKind::NoteOff => record.try_into().map(|bytes| Self::NoteOff(NoteOff(bytes))),
+            CommandKind::SetParam => record.try_into().map(SetParam).map(Self::SetParam),
+            CommandKind::AfterBatch => record.try_into().map(AfterBatch).map(Self::AfterBatch),
+            CommandKind::NoteOn => record.try_into().map(NoteOn).map(Self::NoteOn),
+            CommandKind::SetTempo => record.try_into().map(SetTempo).map(Self::SetTempo),
+            CommandKind::SetTransport => {
+                record.try_into().map(SetTransport).map(Self::SetTransport)
+            }
+            CommandKind::PanicAudio => record.try_into().map(PanicAudio).map(Self::PanicAudio),
+            CommandKind::HangAudio => record.try_into().map(HangAudio).map(Self::HangAudio),
+            CommandKind::NoteOff => record.try_into().map(NoteOff).map(Self::NoteOff),
             CommandKind::SetStripParam => record
                 .try_into()
-                .map(|bytes| Self::SetStripParam(SetStripParam(bytes))),
+                .map(SetStripParam)
+                .map(Self::SetStripParam),
             _ => return Err(Rejection::UnknownCommand),
         };
         command.map_err(|_| Rejection::Malformed)
