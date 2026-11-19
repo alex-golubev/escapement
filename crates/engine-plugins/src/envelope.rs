@@ -200,8 +200,9 @@ pub struct Envelope {
     sustain: Smoothed,
     /// In samples.
     release: f64,
-    /// Over the stretch of frames `prepare` walked: the sustain level at each, and what a decaying level is multiplied
-    /// by there.
+    /// How many frames `prepare` walked.
+    prepared: usize,
+    /// Over those frames: the sustain level at each, and what a decaying level is multiplied by there.
     sustains: [f32; BLOCK_FRAMES],
     falls: [f64; BLOCK_FRAMES],
 }
@@ -219,6 +220,7 @@ impl Envelope {
             decay: 0.0,
             sustain: Smoothed::for_param(&SUSTAIN, sample_rate),
             release: 0.0,
+            prepared: 0,
             sustains: [0.0; BLOCK_FRAMES],
             falls: [1.0; BLOCK_FRAMES],
         };
@@ -254,8 +256,9 @@ impl Envelope {
         }
     }
 
-    /// Walks the sustain level over the next `frames`, which [`Self::next`] then takes one by one.
+    /// Walks the sustain level over the next `frames`, which [`Self::fill`] then takes.
     pub fn prepare(&mut self, frames: usize) {
+        self.prepared = frames;
         let decay = self.decay.recip();
         let fall = |sustain: f32| f64::from(sustain.max(FLOOR)).powf(decay);
         let (sustains, falls) = (&mut self.sustains[..frames], &mut self.falls[..frames]);
@@ -275,8 +278,20 @@ impl Envelope {
         }
     }
 
+    /// The voice's levels over the prepared frames, a sample apart: how many it sounds, all unless it is over first.
+    pub fn fill(&self, contour: &mut Contour, levels: &mut [f32; BLOCK_FRAMES]) -> usize {
+        let levels = &mut levels[..self.prepared];
+        for (frame, at) in levels.iter_mut().enumerate() {
+            let Some(level) = self.next(contour, frame) else {
+                return frame;
+            };
+            *at = level;
+        }
+        levels.len()
+    }
+
     /// The voice's level at the prepared stretch's `frame`, a sample on from the last; none once it is over.
-    pub fn next(&self, contour: &mut Contour, frame: usize) -> Option<f32> {
+    fn next(&self, contour: &mut Contour, frame: usize) -> Option<f32> {
         let Contour { stage, level } = contour;
         loop {
             match stage {

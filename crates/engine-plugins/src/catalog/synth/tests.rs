@@ -450,6 +450,20 @@ fn noise_has_no_offset() {
 }
 
 #[test]
+fn a_note_s_noise_is_its_oscillator_s_own_drawn_from_when_the_note_sounds() {
+    let (delay, attack) = (seconds(0.01), seconds(0.003));
+    let values = [(SHAPE, Shape::Noise.value()), (ENVELOPE.delay, 0.01)];
+    let sound = play_set(&values, &[(&[on(0, A4)], delay + attack + 1000)]);
+    assert!(sound[..delay].iter().all(|&sample| sample == 0.0));
+    let mut noise = Noise::of(NoteId::new(A), 0);
+    let drawn: Vec<f32> = (0..attack + 1000)
+        .map(|_| VOICE_GAIN * noise.next())
+        .collect();
+    // At full level, past the attack.
+    assert_eq!(sound[delay + attack..], drawn[attack..]);
+}
+
+#[test]
 fn two_synths_layered_on_the_same_steps_play_noises_of_their_own() {
     // The engine names each note of a pattern anew, whichever node plays it.
     let noise = |note| play_shaped(Shape::Noise, &[(&[note_on(0, A4, 1.0, note)], 4800)]);
