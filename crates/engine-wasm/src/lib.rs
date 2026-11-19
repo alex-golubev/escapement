@@ -35,7 +35,7 @@ pub struct BuildThread {
     /// Until handed over.
     engine: Option<Box<Engine>>,
     /// The page's batch, copied in by the build thread.
-    batch: Vec<u8>,
+    batch_bytes: Vec<u8>,
     /// The name of the next sound to store, written by the build thread.
     hash: Hash,
 }
@@ -50,7 +50,7 @@ pub extern "C" fn engine_new(sample_rate: f64) -> *mut BuildThread {
     Box::into_raw(Box::new(BuildThread {
         builder,
         engine: Some(Box::new(engine)),
-        batch: Vec::new(),
+        batch_bytes: Vec::new(),
         hash: [0; 32],
     }))
 }
@@ -65,10 +65,10 @@ pub unsafe extern "C" fn engine_hand_over(build: *mut BuildThread) -> *mut Engin
 /// Room for a batch of `len` bytes, valid until the next call; the build thread copies the whole batch there.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn engine_batch_bytes(build: *mut BuildThread, len: usize) -> *mut u8 {
-    let batch = unsafe { &mut (*build).batch };
+    let bytes = unsafe { &mut (*build).batch_bytes };
     // Zeroes only what it adds: the copy overwrites every byte.
-    batch.resize(len, 0);
-    batch.as_mut_ptr()
+    bytes.resize(len, 0);
+    bytes.as_mut_ptr()
 }
 
 /// Makes a parcel of the batch in its room and sends it to the audio thread.
@@ -76,10 +76,10 @@ pub unsafe extern "C" fn engine_batch_bytes(build: *mut BuildThread, len: usize)
 pub unsafe extern "C" fn engine_build(build: *mut BuildThread, batch: u32) {
     let BuildThread {
         builder,
-        batch: bytes,
+        batch_bytes,
         ..
     } = unsafe { &mut *build };
-    builder.build(batch, bytes);
+    builder.build(batch, batch_bytes);
 }
 
 /// Room for the SHA-256 of the next sound to store or evict; the build thread writes it there before
@@ -99,13 +99,11 @@ pub unsafe extern "C" fn engine_sample_begin(
     channels: usize,
     frames: usize,
 ) -> i32 {
-    let build = unsafe { &mut *build };
-    let hash = build.hash;
+    let BuildThread { builder, hash, .. } = unsafe { &mut *build };
     answer(
-        build
-            .builder
+        builder
             .samples()
-            .begin(hash, sample_rate, channels, frames),
+            .begin(*hash, sample_rate, channels, frames),
     )
 }
 
@@ -127,9 +125,8 @@ pub unsafe extern "C" fn engine_sample_copied(build: *mut BuildThread, count: us
 /// sound is coming in.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn engine_sample_evict(build: *mut BuildThread) {
-    let build = unsafe { &mut *build };
-    let hash = build.hash;
-    build.builder.samples().evict(&hash);
+    let BuildThread { builder, hash, .. } = unsafe { &mut *build };
+    builder.samples().evict(hash);
 }
 
 /// The engine's memory holds less than 2³¹ numbers, so a count fits.
