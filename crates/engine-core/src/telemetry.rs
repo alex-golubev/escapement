@@ -169,17 +169,15 @@ impl BlockMeter {
     }
 }
 
-/// A node's meter: of what the node passes on, named by the node's handle.
+/// A node's meter: of what the node passes on.
 pub(crate) struct NodeMeter {
-    node: NodeHandle,
     meter: BlockMeter,
     overs: [u32; CHANNELS],
 }
 
 impl NodeMeter {
-    pub(crate) fn new(node: NodeHandle, sample_rate: SampleRate) -> Self {
+    pub(crate) fn new(sample_rate: SampleRate) -> Self {
         Self {
-            node,
             meter: BlockMeter::new(sample_rate),
             overs: [0; CHANNELS],
         }
@@ -189,14 +187,15 @@ impl NodeMeter {
         self.meter.update(block, frames);
     }
 
-    /// Writes its record into the board's next place, if there is one left, and counts it in.
-    pub(crate) fn report(&mut self, telemetry: &mut Telemetry) {
+    /// Writes its record, named by its node's handle, into the board's next place, if there is one left, and counts it
+    /// in.
+    pub(crate) fn report(&mut self, node: NodeHandle, telemetry: &mut Telemetry) {
         let Some(record) = telemetry.meters.get_mut(telemetry.meters_used as usize) else {
             return;
         };
         self.meter.count_overs(&mut self.overs);
         *record = MeterRecord {
-            node: self.node.raw(),
+            node: node.raw(),
             peaks: self.meter.levels(),
             overs: self.overs,
         };
@@ -306,11 +305,14 @@ mod tests {
         assert_eq!(level, 0.0);
     }
 
-    /// A block's records: `meters`, in their order.
-    fn report_all(meters: &mut [&mut NodeMeter], telemetry: &mut Telemetry) {
+    /// A block's records: `meters` of their nodes, in their order.
+    fn report_all<'a>(
+        meters: impl IntoIterator<Item = (u32, &'a mut NodeMeter)>,
+        telemetry: &mut Telemetry,
+    ) {
         telemetry.meters_used = 0;
-        for meter in meters {
-            meter.report(telemetry);
+        for (node, meter) in meters {
+            meter.report(NodeHandle::new(node), telemetry);
         }
     }
 
@@ -322,14 +324,17 @@ mod tests {
     }
 
     #[test]
-    fn a_record_names_its_node_and_counts_from_the_node_s_making() {
+    fn a_record_names_the_node_it_is_reported_for_and_counts_from_the_meter_s_making() {
         let mut telemetry = Telemetry::default();
-        let meter = |raw| NodeMeter::new(NodeHandle::new(raw), SAMPLE_RATE);
-        let (mut three, mut seven) = (meter(3), meter(handle(1, 7)));
+        let meter = || NodeMeter::new(SAMPLE_RATE);
+        let (mut three, mut seven) = (meter(), meter());
         three.update(&left_at(0.5), BLOCK_FRAMES);
         seven.update(&left_at(1.5), BLOCK_FRAMES);
         seven.update(&left_at(1.5), BLOCK_FRAMES);
-        report_all(&mut [&mut three, &mut seven], &mut telemetry);
+        report_all(
+            [(3, &mut three), (handle(1, 7), &mut seven)],
+            &mut telemetry,
+        );
         assert_eq!(telemetry.meters_used, 2);
         assert_eq!(
             telemetry.meters[..2],
@@ -347,12 +352,12 @@ mod tests {
             ]
         );
         // Reported again with no block between, it counts nothing twice.
-        report_all(&mut [&mut seven], &mut telemetry);
+        report_all([(handle(1, 7), &mut seven)], &mut telemetry);
         assert_eq!(telemetry.meters[0].overs, [2, 0]);
-        // A node made anew in the cell is another node: its count starts again.
-        let mut anew = meter(handle(2, 7));
+        // A node made anew in the cell comes with a meter of its own: its count starts again.
+        let mut anew = meter();
         anew.update(&left_at(1.2), BLOCK_FRAMES);
-        report_all(&mut [&mut anew], &mut telemetry);
+        report_all([(handle(2, 7), &mut anew)], &mut telemetry);
         assert_eq!(telemetry.meters_used, 1);
         assert_eq!(
             telemetry.meters[0],
@@ -368,10 +373,8 @@ mod tests {
     fn meters_past_the_board_s_room_are_not_reported() {
         let mut telemetry = Telemetry::default();
         let room = u32::try_from(METERS).unwrap();
-        let mut meters: Vec<_> = (1..=room + 1)
-            .map(|cell| NodeMeter::new(NodeHandle::new(cell), SAMPLE_RATE))
-            .collect();
-        report_all(&mut meters.iter_mut().collect::<Vec<_>>(), &mut telemetry);
+        let mut meters: Vec<_> = (0..=room).map(|_| NodeMeter::new(SAMPLE_RATE)).collect();
+        report_all((1..).zip(&mut meters), &mut telemetry);
         assert_eq!(telemetry.meters_used, room);
         assert_eq!(telemetry.meters[METERS - 1].node, room);
     }

@@ -17,7 +17,7 @@ use crate::notes::note_velocity;
 use crate::pool::Sample;
 use crate::schema::Rejection;
 use crate::strip::{Strip, StripNumber};
-use crate::telemetry::NodeMeter;
+use crate::telemetry::{NodeMeter, Telemetry};
 use crate::{Block, SILENCE};
 
 /// Notes a node takes in one block: far more than hands or a pattern's steps give.
@@ -90,7 +90,7 @@ impl Node {
     /// A mixer insert, with a meter if the page asked for one. Allocates, so only on the build thread.
     pub(crate) fn insert(sample_rate: SampleRate, handle: NodeHandle, metered: bool) -> Self {
         Self {
-            meter: metered.then(|| NodeMeter::new(handle, sample_rate)),
+            meter: metered.then(|| NodeMeter::new(sample_rate)),
             ..Self::with(handle, Kind::Insert, sample_rate)
         }
     }
@@ -202,8 +202,11 @@ impl Node {
         &self.output
     }
 
-    pub(crate) fn meter_mut(&mut self) -> Option<&mut NodeMeter> {
-        self.meter.as_mut()
+    /// Its meter's record, named by its handle, if it has a meter.
+    pub(crate) fn report_meter(&mut self, telemetry: &mut Telemetry) {
+        if let Some(meter) = &mut self.meter {
+            meter.report(self.handle, telemetry);
+        }
     }
 
     pub(crate) fn handle(&self) -> NodeHandle {
