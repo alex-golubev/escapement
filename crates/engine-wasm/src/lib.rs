@@ -1,6 +1,6 @@
-//! WebAssembly exports for the build thread and the worklet. Every `build` pointer must come from [`engine_new`] and
-//! every `engine` pointer from [`engine_hand_over`]. Sizes and counts cross as `usize`: on wasm32 it is the same 32-bit
-//! word as `u32`.
+//! WebAssembly exports for the build thread and the worklet. Every `build` pointer must come from [`engine_new`] and be
+//! used only on the build thread; every `engine` pointer must be the one [`engine_hand_over`] gave, never its null, and
+//! be used only on the audio thread. Sizes and counts cross as `usize`: on wasm32 it is the same 32-bit word as `u32`.
 #![expect(
     clippy::missing_safety_doc,
     reason = "one contract for every export, in the crate's doc"
