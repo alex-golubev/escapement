@@ -92,10 +92,13 @@ impl Engine {
     /// updates the telemetry.
     pub(crate) fn process(&mut self, frames: usize) {
         self.apply_commands();
+        // As the block starts, once the commands are in: only they move the tempo.
+        let (transport, telemetry) = (&self.transport, &mut self.telemetry);
+        telemetry.playing = transport.playing().into();
+        telemetry.position = transport.position();
+        telemetry.loop_ticks = transport.loop_ticks().unwrap_or(0);
+        telemetry.tempo = transport.tempo();
         let frames = frames.min(BLOCK_FRAMES);
-        let playing = self.transport.playing();
-        let position = self.transport.position();
-        let loop_ticks = self.transport.loop_ticks();
         let lost =
             self.sequencer
                 .hand_out(&mut self.held, &self.transport, &mut self.graph, frames);
@@ -109,10 +112,6 @@ impl Engine {
         let telemetry = &mut self.telemetry;
         telemetry.blocks = telemetry.blocks.wrapping_add(1);
         add_to_board(&mut telemetry.lost_notes, lost);
-        telemetry.playing = playing.into();
-        telemetry.position = position;
-        telemetry.loop_ticks = loop_ticks.unwrap_or(0);
-        telemetry.tempo = self.transport.tempo();
         self.meter.update(&self.output, frames);
         telemetry.peaks = self.meter.levels();
         self.meter.count_overs(&mut telemetry.overs);
