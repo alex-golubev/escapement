@@ -179,6 +179,7 @@ const instanceOf = (name: PluginName, map: Stored<PluginFields>, report: Report,
   return {
     name,
     plugin,
+    on: booleanOr(report, [...path, 'on'], get(map, 'on'), true),
     params: Object.fromEntries(
       params.map((param) => [
         param.id,

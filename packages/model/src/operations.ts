@@ -279,6 +279,18 @@ export const setTrackParam = (doc: Y.Doc, by: Writer, track: Id, param: ParamId<
     )
   )
 
+/** The track's instrument on, or off: silent, as the track would be unheard. One this build can't play is refused. */
+export const setInstrumentOn = (doc: Y.Doc, by: Writer, track: Id, on: boolean): boolean =>
+  transact(
+    doc,
+    by,
+    Option.gen(function* () {
+      const instrument = yield* Option.flatMap(liveTrack(projectMaps(doc), track), (map) => mapAt(map, 'instrument'))
+      yield* readPluginName(instrument)
+      return write(instrument, 'on', on, true)
+    })
+  )
+
 /** A parameter of a plugin on the master, such as the filter's cutoff. */
 export const setMasterParam = (doc: Y.Doc, by: Writer, slot: Id, param: ParamId<Plugin>, value: number): boolean =>
   transact(doc, by, setParam(doc, masterSlot(doc, slot), param, value))
@@ -368,6 +380,7 @@ const newInstance = <P extends Plugin>(plugin: P, sounds: SampleSounds<P> = {}):
   const bySample: { readonly [sample: string]: Sha256 | undefined } = sounds
   return {
     plugin: { id: plugin.id, version: plugin.version },
+    on: true,
     params: newMap<Record<string, number>>({}),
     samples: newMap<Record<string, Sha256>>(Record.filter(bySample, Predicate.isNotUndefined))
   }

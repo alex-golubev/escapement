@@ -31,6 +31,7 @@ pub const DESCRIPTION: PluginDescription = PluginDescription {
     label: "Filter",
     params: &[CUTOFF_PARAM],
     samples: &[],
+    voices: 0,
 };
 
 pub const CUTOFF: ParamNumber = ParamNumber::of(DESCRIPTION.params, CUTOFF_PARAM.id);

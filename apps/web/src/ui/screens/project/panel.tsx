@@ -91,7 +91,7 @@ export const Panel = () => {
     ),
     onSome: ({ below, track }) => {
       const { kind, fills, body } = Shown.match(below, {
-        Track: () => ({ kind: 'Track', fills: false, body: <TrackChain key={track} track={track} /> }),
+        Track: () => ({ kind: 'Device chain', fills: false, body: <TrackChain key={track} track={track} /> }),
         Notes: ({ clip }) => ({ kind: 'Notes', fills: true, body: <PianoRoll clip={clip} length={length} /> })
       })
       return (

@@ -170,7 +170,9 @@ const Catalog = Schema.fromJsonString(
         version: Schema.Int,
         label: Schema.String,
         params: Params,
-        samples: Schema.Array(Schema.Struct({ id: Schema.String, label: Schema.String }))
+        samples: Schema.Array(Schema.Struct({ id: Schema.String, label: Schema.String })),
+        /** Notes it sounds at once: 0 for one that plays none. */
+        voices: Schema.Int
       })
     ),
     strip: Params,

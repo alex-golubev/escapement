@@ -68,6 +68,7 @@ fn plugin(entry: &CatalogEntry) -> Value {
         label,
         params,
         samples,
+        voices,
     } = description;
     let params: Vec<_> = params.iter().map(param).collect();
     let samples: Vec<_> = samples.iter().map(sample).collect();
@@ -78,6 +79,7 @@ fn plugin(entry: &CatalogEntry) -> Value {
         "label": label,
         "params": params,
         "samples": samples,
+        "voices": voices,
     })
 }
 

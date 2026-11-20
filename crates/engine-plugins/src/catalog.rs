@@ -43,8 +43,8 @@ mod tests {
     use super::*;
     use crate::smoothing::ramp_samples;
     use crate::testing::{
-        NOTE_NAME, SAMPLE_RATE, difference, first_block_with_note, largest_step, note_off, render,
-        seconds, silence, sine,
+        NOTE_NAME, SAMPLE_RATE, difference, first_block, first_block_with_note, largest_step,
+        note_off, render, seconds, silence, sine,
     };
     use crate::{BLOCK_FRAMES, CHANNELS, Event, ParamDescription, ParamNumber};
 
@@ -103,6 +103,30 @@ mod tests {
             assert!(find(id, version + 1).is_none());
         }
         assert!(find(0, 1).is_none());
+    }
+
+    /// A plugin's voices are what its card says of it: none for one that plays as it would without notes.
+    #[test]
+    fn a_plugin_sounds_notes_if_and_only_if_it_has_voices() {
+        for entry in CATALOG {
+            let played = |events: &[Event]| {
+                let mut plugin = (entry.create)(SAMPLE_RATE);
+                render(
+                    entry.description,
+                    plugin.as_mut(),
+                    events,
+                    &sine(BLOCK_FRAMES),
+                )
+            };
+            let with_note = played(&first_block_with_note(entry.description, &[]));
+            let without = played(&first_block(entry.description, &[]));
+            assert_eq!(
+                with_note != without,
+                entry.description.voices > 0,
+                "{}",
+                entry.name
+            );
+        }
     }
 
     #[test]

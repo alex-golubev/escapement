@@ -24,7 +24,8 @@
       "preset": "none",
       "correctness": {
         "noUnusedImports": "error",
-        "noUnusedVariables": "error"
+        "noUnusedVariables": "error",
+        "useHookAtTopLevel": "error"
       },
       "suspicious": {
         "noImportCycles": "error"

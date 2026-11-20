@@ -50,11 +50,11 @@ export const View = Schema.Struct({
 
 export type View = typeof View.Type
 
-/** As a new project is shown: the Arrangement at its start, with nothing under it yet, in 40% of the room. */
+/** As a new project is shown: the Arrangement at its start, with nothing under it yet, in 44% of the room. */
 export const firstView: View = {
   centre: 'arrangement',
   below: Option.none(),
-  panel: { share: 40, folded: false },
+  panel: { share: 44, folded: false },
   scroll: { arrangement: { down: 0, across: 0 }, rack: 0 }
 }
 

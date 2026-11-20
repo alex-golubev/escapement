@@ -26,7 +26,7 @@ impl Fnv {
         self.number(float.to_bits());
     }
 
-    /// In 32 bits, so a 64-bit build counts as wasm does: a description's lists and texts are short.
+    /// A length or a count in 32 bits, so a 64-bit build counts as wasm does: a description's are small.
     fn length(&mut self, length: usize) {
         self.number(u32::try_from(length).expect("a length below 2³²"));
     }
@@ -115,6 +115,7 @@ pub fn fingerprint(descriptions: &Descriptions<'_>) -> u32 {
             label,
             params,
             samples,
+            voices,
         } = description;
         hash.text(name);
         hash.number(*id);
@@ -127,6 +128,7 @@ pub fn fingerprint(descriptions: &Descriptions<'_>) -> u32 {
             hash.text(id);
             hash.text(label);
         }
+        hash.length(*voices);
     }
     hash.params(node_params);
     hash.float(silence);
@@ -201,6 +203,7 @@ mod tests {
         label: "Filter",
         params: &[PARAM],
         samples: &[SAMPLE],
+        voices: 0,
     };
 
     const SILENCE: f32 = 1e-15;
@@ -226,6 +229,12 @@ mod tests {
         })
     }
 
+    fn with_plugin(change: impl FnOnce(&mut PluginDescription)) -> PluginDescription {
+        let mut plugin = PLUGIN;
+        change(&mut plugin);
+        plugin
+    }
+
     fn with_param(change: impl FnOnce(&mut ParamDescription)) -> PluginDescription {
         let mut param = PARAM;
         change(&mut param);
@@ -249,34 +258,13 @@ mod tests {
         let base = of("filter", PLUGIN);
         let mut changed = vec![
             of("filters", PLUGIN),
-            of("filter", PluginDescription { id: 3, ..PLUGIN }),
+            of("filter", with_plugin(|plugin| plugin.id = 3)),
+            of("filter", with_plugin(|plugin| plugin.version = 2)),
+            of("filter", with_plugin(|plugin| plugin.label = "Low-pass")),
+            of("filter", with_plugin(|plugin| plugin.params = &[])),
             of(
                 "filter",
-                PluginDescription {
-                    version: 2,
-                    ..PLUGIN
-                },
-            ),
-            of(
-                "filter",
-                PluginDescription {
-                    label: "Low-pass",
-                    ..PLUGIN
-                },
-            ),
-            of(
-                "filter",
-                PluginDescription {
-                    params: &[],
-                    ..PLUGIN
-                },
-            ),
-            of(
-                "filter",
-                PluginDescription {
-                    params: &[PARAM, PARAM],
-                    ..PLUGIN
-                },
+                with_plugin(|plugin| plugin.params = &[PARAM, PARAM]),
             ),
             of("filter", with_param(|param| param.id = "frequency")),
             of("filter", with_param(|param| param.label = "Frequency")),
@@ -287,22 +275,14 @@ mod tests {
             of("filter", with_param(|param| param.max = 19_000.0)),
             of("filter", with_param(|param| param.default = 1001.0)),
             of("filter", with_param(|param| param.smoothing_seconds = 0.03)),
+            of("filter", with_plugin(|plugin| plugin.samples = &[])),
             of(
                 "filter",
-                PluginDescription {
-                    samples: &[],
-                    ..PLUGIN
-                },
-            ),
-            of(
-                "filter",
-                PluginDescription {
-                    samples: &[SAMPLE, SAMPLE],
-                    ..PLUGIN
-                },
+                with_plugin(|plugin| plugin.samples = &[SAMPLE, SAMPLE]),
             ),
             of("filter", with_sample(|sample| sample.id = "hiss")),
             of("filter", with_sample(|sample| sample.label = "Hiss")),
+            of("filter", with_plugin(|plugin| plugin.voices = 16)),
             of("filter", with_param(|param| param.values = Values::Whole)),
             of(
                 "filter",

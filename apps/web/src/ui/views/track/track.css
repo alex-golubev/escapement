@@ -1,94 +1,202 @@
-/* A track below: the devices its sound goes through, left to right. */
+/* A track below: the devices its sound goes through, left to right, from the left; wider than the panel, it scrolls. */
 .chain {
-  /* As high as the panel a new project opens with leaves at 1280×720. */
-  --device-h: 12.25rem;
+  /* What the synth's card holds: its head, as high as its square's button, their gap, and its face, 9.71875rem. */
+  --device-h: calc(var(--toggle) + 0.5rem + 9.71875rem);
   display: flex;
   align-items: flex-start;
-  gap: calc(var(--u) * 2);
+  gap: 0.75rem;
   width: max-content;
 }
 
-/* A device's card, as high as the others: its name, then its face, the knobs small, so more of them stand in a row. */
+/* A device's card, as wide as what it has, as high as the others, padding and border aside: its head, then its face. */
 .device {
-  --knob-d: 1.875rem;
+  --knob-d: 2rem;
+  box-sizing: content-box;
   display: flex;
   flex-direction: column;
-  gap: calc(var(--u) * 2.5);
+  gap: 0.5rem;
   height: var(--device-h);
-  padding: calc(var(--u) * 2) calc(var(--u) * 3.5) calc(var(--u) * 3);
+  padding: 0.75rem;
   border: 1px solid var(--line);
   border-radius: var(--r-md);
-  background: var(--s-raise);
+  background: var(--s-strip);
 }
 
-/* A knob's name and number beside it, not under: a row of knobs as high as a knob. */
+/* Its words without the spacing of the captions elsewhere. */
+.device .cap {
+  letter-spacing: normal;
+}
+
+/* Its square and name, and at the right a word on how it plays. */
+.device__head {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--u) * 2);
+}
+
+.device__name {
+  color: var(--t-hi);
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.device__note {
+  margin-left: auto;
+  padding-left: calc(var(--u) * 2);
+}
+
+/* A small square, lit while the device plays; the button round it is easier to hit, the square where it stands. */
+.device__on {
+  display: grid;
+  place-items: center;
+  width: var(--toggle);
+  height: var(--toggle);
+  flex: none;
+  margin: 0 calc((0.5rem - var(--toggle)) / 2);
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+}
+
+.device__on::before {
+  content: "";
+  width: 0.5rem;
+  height: 0.5rem;
+  background: var(--t-lo);
+}
+
+.device__on:hover:not([aria-pressed="true"])::before {
+  background: var(--t-mid);
+}
+
+.device__on[aria-pressed="true"]::before {
+  background: var(--shared);
+}
+
+/* A picture of what it does, deeper than the card, its name small in a corner over it. */
+.device__window {
+  position: relative;
+  display: grid;
+  height: 6rem;
+  padding: calc(var(--u) * 2) 0;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--s-sunk);
+}
+
+.device__window > .cap {
+  position: absolute;
+  right: calc(var(--u) * 2);
+  bottom: var(--u);
+  font-size: 0.5625rem;
+}
+
+/* A knob, its name and number on one line under it, small: the name dim, the number light. */
 .device .param {
   display: grid;
-  grid-template-columns: var(--knob-d) auto;
-  column-gap: calc(var(--u) * 2);
-  row-gap: 0.125rem;
-  align-items: center;
-  justify-items: start;
+  grid-template-columns: auto auto;
+  gap: var(--u) 1ch;
+  justify-content: center;
+  align-items: baseline;
+  font-size: 0.5625rem;
+}
+
+.device .param :is(.cap, .param__value) {
+  font-size: inherit;
+  line-height: 1.5;
 }
 
 .device .param .knob {
-  grid-row: 1 / span 2;
+  grid-column: 1 / -1;
+  justify-self: center;
 }
 
 .device .param .cap {
-  grid-column: 2;
-  grid-row: 1;
+  grid-row: 2;
+  grid-column: 1;
 }
 
-/* Under its name, from the left. */
 .device .param .param__value {
-  grid-column: 2;
   grid-row: 2;
+  grid-column: 2;
   text-align: left;
 }
 
-/* The pictures of the waves, and their hint, name a row of them. */
+/* The pictures of the waves, and their hint, name a row of them; the row on the line of the knobs beside it. */
 .device .choices .cap {
   display: none;
 }
 
-/* One grid for the whole face, so the oscillators' knobs stand in columns and the envelope's rows are theirs. */
-.synth-face {
-  display: grid;
-  grid-template-columns:
-    [osc-start] repeat(5, max-content) [osc-end] calc(var(--u) * 4)
-    [envelope-start] repeat(3, max-content) [envelope-end];
-  gap: calc(var(--u) * 3) calc(var(--u) * 2.5);
+.device .choices__row {
   align-items: center;
+  height: var(--knob-d);
+}
+
+/* The oscillators at the left, the envelope at the right, as high as each other. */
+.synth-face {
+  display: flex;
+  gap: 1.5rem;
+}
+
+/* One grid for the three, so their controls stand in columns, the knobs' as wide as each other: the first at the top,
+   the last at the bottom. */
+.synth-face__oscillators {
+  display: grid;
+  grid-template-columns: max-content max-content repeat(3, 1fr);
+  align-content: space-between;
+  column-gap: calc(var(--u) * 2);
 }
 
 .synth-face__osc {
   display: grid;
-  grid-column: osc;
+  grid-column: 1 / -1;
   grid-template-columns: subgrid;
-  align-items: center;
+  align-items: start;
 }
 
-.synth-face__envelope {
-  display: grid;
-  grid-column: envelope;
-  grid-row: 1 / span 3;
-  grid-template: subgrid / subgrid;
-  align-items: center;
-}
-
-/* A group's name on the line of its first controls. */
-.synth-face__name {
-  align-self: start;
+/* An oscillator's name on the line of its knobs. */
+.synth-face__osc .synth-face__name {
   line-height: var(--knob-d);
 }
 
-/* The envelope's over its three rows, so its knobs take the next two columns. */
-.synth-face__envelope .synth-face__name {
-  grid-row: 1 / span 3;
+/* Its window over its knobs, as wide as they are. */
+.synth-face__envelope {
+  display: flex;
+  flex-direction: column;
+  gap: 0.625rem;
 }
 
-/* A track not heard dims what sounds, as its head does. */
-.chain[data-unheard="true"] :is(.param, .choices) {
+/* Lines across it at even heights, as a meter has. */
+.synth-face__envelope .device__window {
+  background-image: linear-gradient(var(--line-soft) 1px, transparent 1px);
+  background-position: 0 0.625rem;
+  background-size: 100% 1.25rem;
+}
+
+.synth-face__knobs {
+  display: grid;
+  grid-auto-columns: 1fr;
+  grid-auto-flow: column;
+  gap: calc(var(--u) * 2);
+}
+
+/* The line across the window, as thick however wide the window is. */
+.synth-face__curve {
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  fill: none;
+  stroke: var(--shared);
+  stroke-width: 1.5;
+  stroke-linejoin: round;
+}
+
+.synth-face__curve path {
+  vector-effect: non-scaling-stroke;
+}
+
+/* A track not heard dims what sounds, as its head does; a device off, its own. */
+:is(.chain[data-unheard="true"], .device[data-off="true"]) :is(.param, .choices, .device__window svg) {
   opacity: 0.4;
 }

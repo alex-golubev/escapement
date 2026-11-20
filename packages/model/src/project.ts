@@ -14,6 +14,8 @@ import type { Id } from './id'
 type InstanceOf<N extends PluginName> = {
   readonly name: N
   readonly plugin: (typeof plugins)[N]
+  /** Off, it is left out of what plays: an instrument falls silent, an effect lets its input through. */
+  readonly on: boolean
   readonly params: Readonly<Record<ParamId<(typeof plugins)[N]>, number>>
   readonly samples: SampleSounds<(typeof plugins)[N]>
 }

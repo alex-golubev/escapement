@@ -28,6 +28,7 @@ pub const DESCRIPTION: PluginDescription = PluginDescription {
     label: "Test tone",
     params: &[VOLUME_PARAM],
     samples: &[],
+    voices: 0,
 };
 
 pub const VOLUME: ParamNumber = ParamNumber::of(DESCRIPTION.params, VOLUME_PARAM.id);

@@ -55,6 +55,7 @@ test('the project tests start from reads as it was made, with nothing replaced',
       instrument: Option.some({
         name: 'sampler',
         plugin: plugins.sampler,
+        on: true,
         params: {},
         samples: { sample: sound }
       })
@@ -132,6 +133,19 @@ test('reading never writes to the document, even what it replaces', () => {
   expect(Y.encodeStateAsUpdate(doc)).toEqual(before)
   const empty = new Y.Doc()
   expect(updatesDuring(empty, () => readProject(empty))).toBe(0)
+})
+
+test("a device's on missing reads as on, as one older than the field; broken, as on too, reported", () => {
+  const doc = newProject()
+  const { track, slot } = parts(doc)
+  rawMap(doc, 'tracks', track.id, 'instrument').delete('on')
+  rawMap(doc, 'master', 'slots', slot.id).set('on', 'off')
+  const { value, replacements } = readProject(doc)
+  expect(Option.getOrThrow(value.tracks[0].instrument).on).toBe(true)
+  expect(value.master.slots[0].on).toBe(true)
+  expect(replacements.map(({ path, found, read }) => [path.join('/'), found, read])).toEqual([
+    [`master/slots/${slot.id}/on`, 'off', 'default']
+  ])
 })
 
 describe('a value of the wrong type reads as its default', () => {

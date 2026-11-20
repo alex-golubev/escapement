@@ -71,6 +71,43 @@ test("each track sounds through a strip of its own: its fader and M quiet it alo
   )
 })
 
+/** Until the master's meters both rest at their floor, checked at every frame. */
+const silent = (page: Page) =>
+  page.waitForFunction(
+    () => {
+      const levels = Array.from(document.querySelectorAll<HTMLElement>('.strip--master .meter__fill'), (fill) =>
+        Number(fill.style.getPropertyValue('--level'))
+      )
+      return levels.length === 2 && levels.every((level) => level === 0)
+    },
+    undefined,
+    { timeout: 10_000, polling: 'raf' }
+  )
+
+test('an instrument turned off by its square in one tab is off in another, and falls silent there, its M as it was', async ({
+  page,
+  context
+}) => {
+  await newProject(page)
+  await addTrack(page, 'Synth')
+  await newClip(page, 0, 0, 'Synth')
+  await putNote(page, 0)
+  const other = await context.newPage()
+  await other.goto(page.url())
+  await nameOf(other, 'Synth').click()
+  await listening(other)
+  await other.getByRole('button', { name: 'Play', exact: true }).click()
+  await heardOn(other, { silent: [], sounding: [0, 1] })
+  await nameOf(page, 'Synth').click()
+  await page.getByRole('button', { name: 'Synth synth: on', exact: true }).click()
+  const square = other.getByRole('button', { name: 'Synth synth: on', exact: true })
+  await expect(square).toHaveAttribute('aria-pressed', 'false')
+  await silent(other)
+  await expect(other.getByRole('button', { name: 'Synth: mute', exact: true })).toHaveAttribute('aria-pressed', 'false')
+  await square.click()
+  await heardOn(other, { silent: [], sounding: [0, 1] })
+})
+
 test("the strips stand whole in the middle, the master right after them; a strip's name shows its track below, and a track deleted takes its strip, undo bringing it back", async ({
   page
 }) => {
@@ -94,7 +131,7 @@ test("the strips stand whole in the middle, the master right after them; a strip
   expect((master?.x ?? 0) - ((last?.x ?? 0) + (last?.width ?? 0))).toBeLessThan(20)
 
   await nameOf(page, 'Synth 2').click()
-  await expect(below(page)).toHaveText('Synth 2|Track')
+  await expect(below(page)).toHaveText('Synth 2|Device chain')
   await showCentre(page, 'Arrange')
   const head = await nameOf(page, 'Synth 2').boundingBox()
   await page.mouse.click((head?.x ?? 0) + 10, (head?.y ?? 0) + 5, { button: 'right' })
