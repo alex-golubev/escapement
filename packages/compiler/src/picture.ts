@@ -120,12 +120,12 @@ export interface Picture {
   /** `to` hears `from`. */
   readonly connections: ReadonlyArray<readonly [from: string, to: string]>
   readonly output: Option.Option<string>
-  /** The keys of the tracks' nodes heard: one that stops being heard has its notes let go of. */
+  /** The keys of the nodes of the tracks that sound: one that stops has its notes let go of. */
   readonly heard: ReadonlyArray<string>
   /** The notes of each pattern a clip plays on its track, by `patternKey`: the clips play only those. */
   readonly patterns: Readonly<Record<string, ReadonlyArray<PictureNote>>>
   readonly clips: ReadonlyArray<PictureClip>
-  /** Of the tracks heard, while the arrangement doesn't play. */
+  /** Of the tracks that sound, while the arrangement doesn't play. */
   readonly auditions: ReadonlyArray<PictureAudition>
   readonly tempo: Option.Option<number>
   readonly transport: Option.Option<Transport>
@@ -335,6 +335,7 @@ export const pictureOf = (
     )
   )
   const heard = heardOf(project, listening)
+  /** The tracks that sound: heard, and their instrument on. */
   const sounding = byContent((get) => {
     const into = new Set(get(heard))
     return get(tracks)
@@ -342,7 +343,7 @@ export const pictureOf = (
       .filter((id) => into.has(id) && get(isOn(id)))
   })
   const played = playedOf(project)
-  /** The notes of a pattern a clip plays on a track: none while the track isn't heard. Keyed by the pair, as equal. */
+  /** The notes of a pattern a clip plays on a track: none while it doesn't sound. Keyed by the pair, as equal. */
   const notesPlayed = Atom.family(([track, pattern]: readonly [track: Id, pattern: Id]) =>
     byContent((get) =>
       Boolean.match(get(sounding).includes(track), {
