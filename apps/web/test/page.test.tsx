@@ -726,7 +726,7 @@ const nameButton = (grid: HTMLElement, name: string) =>
 const trackBelow = (target: HTMLElement, name: string) =>
   Option.filter(
     Option.fromNullishOr(target.querySelector<HTMLElement>('.panel__body')),
-    () => below(target) === `${name}|Track`
+    () => below(target) === `${name}|Device chain`
   )
 
 /** The Kick's volume knob, in its head. */
@@ -1056,7 +1056,7 @@ test("the mixer has a strip for each track, in their order, then the master's: a
       expect(fader.getAttribute('aria-valuetext')).toBe('+5.6 dB')
       kick.querySelector<HTMLButtonElement>('.strip__name')?.click()
       yield* drawn()
-      expect(below(target)).toBe('Kick|Track')
+      expect(below(target)).toBe('Kick|Device chain')
       expect(kick.getAttribute('data-chosen')).toBe('true')
       control(kick, 'Kick: mute').click()
       yield* drawn()
@@ -1787,7 +1787,7 @@ test('a button of the middle shows its view there in place of the one before, dr
       expect(middle(target)).toBe('Mixer')
       expect(target.querySelector('section[aria-label="Mixer"] .strip')).not.toBeNull()
       expect(target.querySelector('.arrangement')).toBeNull()
-      expect(below(target)).toBe('Kick|Track')
+      expect(below(target)).toBe('Kick|Device chain')
       yield* pressCentre(target, 'Debug')
       expect(centreButtons(target)).toEqual([
         ['Arrange', false],
@@ -1797,7 +1797,7 @@ test('a button of the middle shows its view there in place of the one before, dr
       expect(target.querySelector('section[aria-label="Mixer"]')).toBeNull()
       yield* pressCentre(target, 'Arrange')
       expect(middle(target)).toBe('Arrangement')
-      expect(below(target)).toBe('Kick|Track')
+      expect(below(target)).toBe('Kick|Device chain')
     })
   ))
 
@@ -1817,7 +1817,7 @@ test("a track's name shows it below: the devices its sound goes through, a sampl
     Effect.gen(function* () {
       nameButton(grid, 'Kick').click()
       yield* drawn(50)
-      expect(below(target)).toBe('Kick|Track')
+      expect(below(target)).toBe('Kick|Device chain')
       expect(middle(target)).toBe('Arrangement')
       const kick = Option.getOrThrow(trackBelow(target, 'Kick'))
       expect(devicesIn(kick)).toEqual(['Sampler'])
@@ -1906,12 +1906,12 @@ test("a click on another track's name shows that one in its place, its head mark
       expect(marked()).toEqual(['true', 'false'])
       nameButton(grid, 'Snare').click()
       yield* drawn(50)
-      expect(below(target)).toBe('Snare|Track')
+      expect(below(target)).toBe('Snare|Device chain')
       expect(marked()).toEqual(['false', 'true'])
       expect(grid.querySelector('.track-head[data-chosen="true"] .track-head__name')?.textContent).toBe('Snare')
       nameButton(grid, 'Snare').click()
       yield* drawn(50)
-      expect(below(target)).toBe('Snare|Track')
+      expect(below(target)).toBe('Snare|Device chain')
       expect(Option.isSome(trackBelow(target, 'Snare'))).toBe(true)
     })
   ))
@@ -1921,7 +1921,7 @@ test('+ shows the track it adds below', () =>
     Effect.gen(function* () {
       button('Add a track').click()
       yield* drawn(50)
-      expect(below(target)).toBe('Synth|Track')
+      expect(below(target)).toBe('Synth|Device chain')
     })
   ))
 
@@ -2143,7 +2143,7 @@ test('the view is kept for the project: opened again, it shows the middle and wh
         ({ target }) =>
           Effect.gen(function* () {
             expect(middle(target)).toBe('Debug')
-            expect(below(target)).toBe('Snare|Track')
+            expect(below(target)).toBe('Snare|Device chain')
             yield* pressCentre(target, 'Arrange')
             expect(target.querySelector('.track-head[data-chosen="true"] .track-head__name')?.textContent).toBe('Snare')
           }),
@@ -2237,7 +2237,7 @@ test("the panel's arrow folds it to its title line and unfolds it; folded, a tra
     })
   ))
 
-test('opened again, the panel is folded as it was left; a double click on the border unfolds it to 40%', () => {
+test('opened again, the panel is folded as it was left; a double click on the border unfolds it to 44%', () => {
   const doc = projectDoc()
   const views = viewsWith(doc, savedView({ panel: { share: 62.5, folded: true } }))
   return page(
@@ -2246,14 +2246,14 @@ test('opened again, the panel is folded as it was left; a double click on the bo
         expect(foldOf(target)).toMatchObject({ folded: true, under: false })
         const border = Option.getOrThrow(Option.fromNullishOr(target.querySelector('[role="separator"]')))
         expect(border.getAttribute('data-hint')).toBe(
-          'Drag to make the panel higher or lower, past its least to fold it; double-click for 40% again'
+          'Drag to make the panel higher or lower, past its least to fold it; double-click for 44% again'
         )
         border.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))
         yield* drawn()
         expect(foldOf(target)).toMatchObject({ folded: false, under: true })
         yield* saved
         const kept = yield* views.get(`layout:${Option.getOrThrow(readProjectId(doc))}`).pipe(Effect.orDie)
-        expect(JSON.parse(kept ?? '{}').panel).toEqual({ share: 40, folded: false })
+        expect(JSON.parse(kept ?? '{}').panel).toEqual({ share: 44, folded: false })
       }),
     {},
     {},
@@ -2305,14 +2305,14 @@ test('the track shown below goes with its track, by Cmd+Z on + or deleted while 
       Effect.gen(function* () {
         button('Add a track').click()
         yield* drawn(50)
-        expect(below(target)).toBe('Synth|Track')
+        expect(below(target)).toBe('Synth|Device chain')
         press(document.body, { key: 'z', metaKey: true })
         yield* drawn(50)
         expect(below(target)).toBe('')
         expect(target.querySelector('.panel')?.textContent).toBe(nothingBelow)
         press(document.body, { key: 'z', metaKey: true, shiftKey: true })
         yield* drawn(50)
-        expect(below(target)).toBe('Synth|Track')
+        expect(below(target)).toBe('Synth|Device chain')
         nameButton(grid, 'Kick').click()
         yield* saved
       }),
@@ -2321,7 +2321,7 @@ test('the track shown below goes with its track, by Cmd+Z on + or deleted while 
     { views, doc }
   )
     .then(() =>
-      page(({ target }) => Effect.sync(() => expect(below(target)).toBe('Kick|Track')), {}, {}, { views, doc })
+      page(({ target }) => Effect.sync(() => expect(below(target)).toBe('Kick|Device chain')), {}, {}, { views, doc })
     )
     .then(() => {
       doc.transact(() => doc.getMap('tracks').delete(readProject(doc).value.tracks[0].id))
@@ -3485,7 +3485,7 @@ test("a double click on a clip shows its notes below and chooses its track, and 
       )
       nameButton(grid, 'Kick').click()
       yield* drawn(50)
-      expect(below(target)).toBe('Kick|Track')
+      expect(below(target)).toBe('Kick|Device chain')
       expect(nameButton(grid, 'Kick').getAttribute('data-hint')).toMatch(/^Kick is below, chosen for you only\./)
       grid.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true, clientX: 10, clientY: 30 }))
       yield* drawn()

@@ -6,7 +6,7 @@
   min-height: 0;
   overflow: hidden;
   border-radius: var(--r-lg);
-  background: var(--s-strip);
+  background: var(--s-sunk);
 }
 
 /* As high empty as not, so the panel doesn't jump. */
@@ -14,13 +14,12 @@
   display: flex;
   flex: none;
   align-items: center;
-  gap: calc(var(--u) * 2);
+  gap: 0.75rem;
   /* All there is of the panel folded: the workspace sets it, as high as the library folds the panel. */
   height: var(--panel-title);
-  padding: 0 0.75rem;
-  border-bottom: 1px solid var(--line-soft);
+  padding: 0 0.875rem;
+  border-bottom: 1px solid var(--line);
   font-size: 0.75rem;
-  letter-spacing: 0.06em;
   text-transform: uppercase;
   white-space: nowrap;
 }
@@ -47,7 +46,8 @@
 .panel__name {
   overflow: hidden;
   color: var(--t-hi);
-  font-weight: 600;
+  font-weight: 700;
+  letter-spacing: 0.05em;
   text-overflow: ellipsis;
 }
 
@@ -56,20 +56,21 @@
 }
 
 .panel__kind {
-  color: var(--t-mid);
+  color: var(--t-lo);
 }
 
 /* A swipe across it scrolls it, not the page back. */
 .panel__body {
   flex: 1;
   min-height: 0;
-  padding: calc(var(--u) * 2);
+  padding: 0.75rem 0.875rem 0.875rem;
   overflow: auto;
   overscroll-behavior-x: none;
 }
 
-/* A body that fills the panel, as the piano roll's grid does, has nothing past it to scroll to. */
+/* A body that fills the panel, as the piano roll's grid does, has nothing past it to scroll to, and a narrow edge. */
 .panel__body[data-fills="true"] {
+  padding: calc(var(--u) * 2);
   overflow: hidden;
 }
 

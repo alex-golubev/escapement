@@ -3,7 +3,7 @@ export const savedView = (changed: object) => ({
   version: 4,
   centre: 'arrangement',
   below: null,
-  panel: { share: 40, folded: false },
+  panel: { share: 44, folded: false },
   scroll: { arrangement: { down: 0, across: 0 }, rack: 0 },
   ...changed
 })

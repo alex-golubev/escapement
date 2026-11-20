@@ -59,7 +59,7 @@ test("a track's menu opens at the pointer in place of the browser's, or under it
   expect(Math.abs((opened?.y ?? 0) - at.y)).toBeLessThanOrEqual(1)
   await expect(menu.getByRole('menuitem')).toHaveText(['Rename', 'Colour', 'Delete'])
   // A right click is no click: the track chosen, the last added, stays so, and the clips under the heads take nothing.
-  await expect(below(page)).toHaveText('Synth 3|Track')
+  await expect(below(page)).toHaveText('Synth 3|Device chain')
   await page.keyboard.press('Escape')
   await expect(menu).toBeHidden()
   // Nor does it keep what it offered.
@@ -173,7 +173,7 @@ test('a track renamed in place takes the name in its head, the panel and its kno
   await page.keyboard.press('Enter')
   const renamed = nameOf(page, 'Lead')
   await expect(renamed).toBeFocused()
-  await expect(below(page)).toHaveText('Lead|Track')
+  await expect(below(page)).toHaveText('Lead|Device chain')
   await expect(page.getByRole('slider', { name: 'Lead: pan', exact: true }).first()).toBeVisible()
   const clip = (await arrangementAt(page))(0, 0)
   await page.mouse.dblclick(clip.x, clip.y)
@@ -196,7 +196,7 @@ test('a track deleted takes its head, its clips and its place in the panel, the 
   await threeTracks(page)
   await newClip(page, 0, 1, 'Synth 2')
   await nameOf(page, 'Synth 2').click()
-  await expect(below(page)).toHaveText('Synth 2|Track')
+  await expect(below(page)).toHaveText('Synth 2|Device chain')
   await chosen(page, 'Synth 2', 'Delete')
   await expect(heads(page)).toHaveText(['Synth', 'Synth 3'])
   await expect(below(page)).toHaveText('')
@@ -206,7 +206,7 @@ test('a track deleted takes its head, its clips and its place in the panel, the 
 
   await page.keyboard.press('ControlOrMeta+z')
   await expect(heads(page)).toHaveText(['Synth', 'Synth 2', 'Synth 3'])
-  await expect(below(page)).toHaveText('Synth 2|Track')
+  await expect(below(page)).toHaveText('Synth 2|Device chain')
   await expect.poll(() => drawnAt(page, [[0, 1]])).toEqual([true])
 
   // A head going otherwise, here a track added and taken back, gives the focus on as well.

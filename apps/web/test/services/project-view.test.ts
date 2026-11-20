@@ -165,7 +165,7 @@ it.effect(
       const { view } = yield* viewIn(yield* memory, doc)
       const registry = yield* AtomRegistry.AtomRegistry
       const panel = () => registry.get(view.panel)
-      expect(panel()).toEqual({ share: 40, folded: false })
+      expect(panel()).toEqual({ share: 44, folded: false })
       view.resized(62.5, false)
       view.fold(true)
       expect(panel()).toEqual({ share: 62.5, folded: true })
@@ -205,7 +205,7 @@ it.live('the scroll is written once it stands, the rest at once; opened again, t
         view.fold(true)
         yield* Effect.yieldNow
         expect(written.map(({ panel, scroll }) => ({ panel, scroll }))).toEqual([
-          { panel: { share: 40, folded: true }, scroll: { arrangement: { down: 0, across: 0 }, rack: 0 } }
+          { panel: { share: 44, folded: true }, scroll: { arrangement: { down: 0, across: 0 }, rack: 0 } }
         ])
         yield* Effect.sleep('400 millis')
         expect(written.map(({ scroll }) => scroll)).toEqual([
@@ -224,6 +224,6 @@ it.live('the scroll is written once it stands, the rest at once; opened again, t
       down: registry.get(reopened.arrangementScroll.down),
       across: registry.get(reopened.arrangementScroll.across),
       rack: registry.get(reopened.rackScroll)
-    }).toEqual({ panel: { share: 40, folded: true }, down: 1.5, across: 3.75, rack: 3.75 })
+    }).toEqual({ panel: { share: 44, folded: true }, down: 1.5, across: 3.75, rack: 3.75 })
   }).pipe(inRegistry)
 )

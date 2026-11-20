@@ -190,7 +190,9 @@ test("a clip plays on its track's instrument: moved to another track, it plays t
 
 /** The synth's card below, its track shown there. */
 const synthCard = (page: Page) =>
-  page.getByRole('region', { name: 'Synth, track', exact: true }).getByRole('region', { name: 'Synth', exact: true })
+  page
+    .getByRole('region', { name: 'Synth, device chain', exact: true })
+    .getByRole('region', { name: 'Synth', exact: true })
 
 test("a synth's track below shows its card whole, every control in sight, with nothing to scroll", async ({ page }) => {
   await newProject(page)
@@ -226,7 +228,7 @@ test("a knob on a synth's card turns its sound: Delay at its longest keeps its s
   await newClip(page, 0, 1, 'Synth 2')
   await putNote(page, 0)
   await nameOf(page, 'Synth').click()
-  await expect(below(page)).toHaveText('Synth|Track')
+  await expect(below(page)).toHaveText('Synth|Device chain')
   await listening(page)
   await pressPlay(page, true)
   await heardOn(page, { silent: [], sounding: [0] })

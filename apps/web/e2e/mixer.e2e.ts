@@ -131,7 +131,7 @@ test("the strips stand whole in the middle, the master right after them; a strip
   expect((master?.x ?? 0) - ((last?.x ?? 0) + (last?.width ?? 0))).toBeLessThan(20)
 
   await nameOf(page, 'Synth 2').click()
-  await expect(below(page)).toHaveText('Synth 2|Track')
+  await expect(below(page)).toHaveText('Synth 2|Device chain')
   await showCentre(page, 'Arrange')
   const head = await nameOf(page, 'Synth 2').boundingBox()
   await page.mouse.click((head?.x ?? 0) + 10, (head?.y ?? 0) + 5, { button: 'right' })
